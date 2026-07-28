@@ -79,6 +79,12 @@ public sealed class S3ServiceModule : IServiceModule
             return;
         }
 
+        if (route.Operation == S3Operation.PostObject)
+        {
+            await ObjectHandlers.HandlePostObjectAsync(context, route, _http, _credentials, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
         var accessKey = context.Items["aws2azure.accessKeyId"] as string;
         if (string.IsNullOrEmpty(accessKey))
         {

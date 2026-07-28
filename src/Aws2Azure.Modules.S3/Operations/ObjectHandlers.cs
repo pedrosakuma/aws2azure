@@ -1,4 +1,8 @@
 using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Core.SigV4;
@@ -6,6 +10,8 @@ using Aws2Azure.Modules.S3.Errors;
 using Aws2Azure.Modules.S3.Internal;
 using Aws2Azure.Modules.S3.Streaming;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 
 namespace Aws2Azure.Modules.S3.Operations;
@@ -17,6 +23,9 @@ namespace Aws2Azure.Modules.S3.Operations;
 /// </summary>
 internal static class ObjectHandlers
 {
+    private const long MinPresignedPostFormFieldBytes = 64 * 1024;
+    private const long MaxBufferedPresignedPostFileBytes = 64L * 1024 * 1024;
+
     public static async Task HandleAsync(
         HttpContext context,
         S3RouteResult route,
@@ -25,14 +34,14 @@ internal static class ObjectHandlers
         ICredentialResolver? credentials = null)
     {
         var bucket = route.Bucket!;
-        var key = route.Key!;
+        var key = route.Key;
 
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
             await EmitErrorAsync(context, bucketError, route.Operation).ConfigureAwait(false);
             return;
         }
-        if (!S3ObjectKey.IsValid(key))
+        if (route.Operation != S3Operation.PostObject && !S3ObjectKey.IsValid(key!))
         {
             await EmitErrorAsync(context, S3ErrorMapping.InvalidObjectKey(), route.Operation).ConfigureAwait(false);
             return;
@@ -41,21 +50,168 @@ internal static class ObjectHandlers
         switch (route.Operation)
         {
             case S3Operation.PutObject:
-                await PutAsync(context, blob, bucket, key, credentials, cancellationToken).ConfigureAwait(false);
+                await PutAsync(context, blob, bucket, key!, credentials, cancellationToken).ConfigureAwait(false);
                 break;
             case S3Operation.GetObject:
-                await GetAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                await GetAsync(context, blob, bucket, key!, cancellationToken).ConfigureAwait(false);
                 break;
             case S3Operation.HeadObject:
-                await HeadAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                await HeadAsync(context, blob, bucket, key!, cancellationToken).ConfigureAwait(false);
                 break;
             case S3Operation.DeleteObject:
-                await DeleteAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                await DeleteAsync(context, blob, bucket, key!, cancellationToken).ConfigureAwait(false);
                 break;
             case S3Operation.CopyObject:
-                await CopyAsync(context, blob, bucket, key, cancellationToken).ConfigureAwait(false);
+                await CopyAsync(context, blob, bucket, key!, cancellationToken).ConfigureAwait(false);
                 break;
         }
+    }
+
+    public static async Task HandlePostObjectAsync(
+        HttpContext context,
+        S3RouteResult route,
+        AzureHttpClient http,
+        ICredentialResolver credentials,
+        CancellationToken cancellationToken)
+    {
+        var bucket = route.Bucket!;
+        if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
+        {
+            await S3ErrorMapping.WriteAsync(context, bucketError).ConfigureAwait(false);
+            return;
+        }
+
+        if (!TryCreateMultipartReader(context.Request, out var reader))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "Presigned POST uploads require multipart/form-data with a valid boundary.")).ConfigureAwait(false);
+            return;
+        }
+
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        MultipartSection? fileSection = null;
+        string? fileContentType = null;
+        string? fileName = null;
+        long fileLength = 0;
+
+        try
+        {
+            while (true)
+            {
+                var section = await reader.ReadNextSectionAsync(cancellationToken).ConfigureAwait(false);
+                if (section is null)
+                {
+                    break;
+                }
+
+                if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var disposition))
+                {
+                    continue;
+                }
+
+                var fieldName = disposition.Name.Value?.Trim('"');
+                if (string.IsNullOrEmpty(fieldName))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(disposition.FileName.Value) || !string.IsNullOrEmpty(disposition.FileNameStar.Value))
+                {
+                    fileSection = section;
+                    fileContentType = section.ContentType;
+                    fileName = disposition.FileNameStar.Value ?? disposition.FileName.Value;
+                    break;
+                }
+
+                var value = await ReadSmallFormValueAsync(section.Body, cancellationToken).ConfigureAwait(false);
+                fields[fieldName] = value;
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(ex.Message)).ConfigureAwait(false);
+            return;
+        }
+
+        if (fileSection is null)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "Presigned POST form is missing the file body.")).ConfigureAwait(false);
+            return;
+        }
+
+        if (!fields.TryGetValue("key", out var rawKey) || string.IsNullOrEmpty(rawKey))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "Presigned POST form is missing the key field.")).ConfigureAwait(false);
+            return;
+        }
+
+        var key = ResolvePostObjectKey(rawKey, fileName);
+        if (!S3ObjectKey.IsValid(key))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidObjectKey()).ConfigureAwait(false);
+            return;
+        }
+
+        var validatedFields = new Dictionary<string, string>(fields, StringComparer.OrdinalIgnoreCase)
+        {
+            ["key"] = key,
+        };
+
+        var prevalidatedPolicy = PresignedPostPolicy.Validate(
+            bucket,
+            validatedFields,
+            fileLength: 0,
+            credentials,
+            skipContentLengthRange: true);
+        if (!prevalidatedPolicy.Success)
+        {
+            await S3ErrorMapping.WriteAsync(context, prevalidatedPolicy.Error!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        byte[] fileBody;
+        try
+        {
+            fileBody = await ReadPostObjectFileAsync(fileSection.Body, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException ex)
+        {
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                StatusCodes.Status400BadRequest,
+                "EntityTooLarge",
+                ex.Message)).ConfigureAwait(false);
+            return;
+        }
+        fileLength = fileBody.LongLength;
+        var policy = PresignedPostPolicy.Validate(bucket, validatedFields, fileLength, credentials);
+        if (!policy.Success)
+        {
+            await S3ErrorMapping.WriteAsync(context, policy.Error!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        context.Items["aws2azure.accessKeyId"] = policy.AccessKeyId;
+        if (!string.IsNullOrEmpty(policy.Region))
+        {
+            context.Items["aws2azure.region"] = policy.Region;
+        }
+
+        if (credentials.GetAzureCredentialsFor(policy.AccessKeyId!, AzureService.Blob) is not BlobCredentials blobCredentials)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoCredentials()).ConfigureAwait(false);
+            return;
+        }
+
+        var blob = new BlobClient(http, blobCredentials);
+        if (blob.IsInternalContainer(bucket))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
+            return;
+        }
+
+        await PostObjectAsync(context, blob, bucket, key, fields, fileBody, fileContentType, policy.SuccessStatusCode, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task CopyAsync(HttpContext context, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
@@ -71,13 +227,12 @@ internal static class ObjectHandlers
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
+        var sourceVersionId = parsed.VersionId;
         if (blob.IsInternalContainer(sourceBucket))
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
             return;
         }
-
-        var sourceUri = blob.BuildBlobUri(sourceBucket, sourceKey);
 
         // S3 rejects same-bucket/same-key CopyObject unless the request
         // changes something (metadata, storage class, encryption…). We only
@@ -85,7 +240,8 @@ internal static class ObjectHandlers
         // no-op and must surface as InvalidRequest to match SDK expectations.
         var directive = ReadDirective(context.Request, "x-amz-metadata-directive");
         var replace = string.Equals(directive, "REPLACE", StringComparison.OrdinalIgnoreCase);
-        if (!replace && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
+        if (!replace && string.IsNullOrEmpty(sourceVersionId)
+            && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
             && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
         {
             await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(400, "InvalidRequest",
@@ -101,32 +257,34 @@ internal static class ObjectHandlers
             return;
         }
 
-        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(destBucket, destKey));
-        // The CopyObject request body is always empty; the source lives in
-        // the x-ms-copy-source header. Setting a zero-length StringContent
-        // gives us a Content.Headers bag for Content-Type forwarding.
-        azureReq.Content = new ByteArrayContent(Array.Empty<byte>());
-        azureReq.Content.Headers.ContentLength = 0;
-        azureReq.Headers.TryAddWithoutValidation("x-ms-copy-source", sourceUri.AbsoluteUri);
-
         // Concrete-ETag copy-source preconditions: once the proxy
         // translates Azure ETags on read responses, the client round-trips
         // the translated value here and Azure cannot reverse it, so a valid
         // CAS would incorrectly 412. Fail loud rather than risk wrong-side
         // copies. The "*" sentinel is still forwarded below — Azure honors
         // it with identical semantics to S3.
-        if (HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-match") ||
-            HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-none-match"))
+        var sourceConditionals = await TryEvaluateCopySourcePreconditionsAsync(
+            context, blob, sourceBucket, sourceKey, sourceVersionId, S3Operation.CopyObject, ct).ConfigureAwait(false);
+        if (sourceConditionals.Error is { } preconditionError)
         {
-            await S3ErrorMapping.WriteAsync(context,
-                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
-                    "NotImplemented",
-                    "aws2azure: CopyObject with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
-                .ConfigureAwait(false);
+            await S3ErrorMapping.WriteAsync(context, preconditionError).ConfigureAwait(false);
             return;
         }
 
+        var sourceUri = BuildSourceObjectUri(
+            blob,
+            sourceBucket,
+            sourceKey,
+            sourceConditionals.PinnedVersionId ?? sourceVersionId);
+        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(destBucket, destKey));
+        azureReq.Content = new ByteArrayContent(Array.Empty<byte>());
+        azureReq.Content.Headers.ContentLength = 0;
+        azureReq.Headers.TryAddWithoutValidation("x-ms-copy-source", sourceUri.AbsoluteUri);
         HeaderForwarding.ForwardCopySourceConditionals(context.Request, azureReq);
+        if (sourceConditionals.SourceIfMatch is { } sourceIfMatch)
+        {
+            azureReq.Headers.TryAddWithoutValidation("x-ms-source-if-match", sourceIfMatch);
+        }
 
         // Metadata directive: COPY (default) preserves source metadata —
         // Azure's Copy Blob does the same when no x-ms-meta-* are sent.
@@ -181,7 +339,7 @@ internal static class ObjectHandlers
         if (replace)
         {
             var (err, propsETag, propsLastModified) =
-                await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, ct).ConfigureAwait(false);
+                await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
             if (err is { } mapping)
             {
                 await S3ErrorMapping.WriteAsync(context, mapping).ConfigureAwait(false);
@@ -189,6 +347,16 @@ internal static class ObjectHandlers
             }
             if (propsLastModified is not null) lastModified = propsLastModified.Value;
             if (!string.IsNullOrEmpty(propsETag)) rawAzureEtag = propsETag;
+
+            var (metadataError, metadataETag, metadataLastModified) =
+                await SetDestinationMetadataAsync(context.Request, blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
+            if (metadataError is { } metadataMapping)
+            {
+                await S3ErrorMapping.WriteAsync(context, metadataMapping).ConfigureAwait(false);
+                return;
+            }
+            if (metadataLastModified is not null) lastModified = metadataLastModified.Value;
+            if (!string.IsNullOrEmpty(metadataETag)) rawAzureEtag = metadataETag;
         }
 
         // Issue a HEAD against the destination to obtain the authoritative
@@ -243,12 +411,16 @@ internal static class ObjectHandlers
     /// </summary>
     private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
         SetDestinationPropertiesAsync(
-            HttpRequest source, BlobClient blob, string destBucket, string destKey, CancellationToken ct)
+            HttpRequest source, BlobClient blob, string destBucket, string destKey, string? ifMatchEtag, CancellationToken ct)
     {
         var uri = new Uri(blob.BuildBlobUri(destBucket, destKey).AbsoluteUri + "?comp=properties");
         using var req = new HttpRequestMessage(HttpMethod.Put, uri);
         req.Content = new ByteArrayContent(Array.Empty<byte>());
         req.Content.Headers.ContentLength = 0;
+        if (!string.IsNullOrEmpty(ifMatchEtag))
+        {
+            req.Headers.TryAddWithoutValidation("If-Match", ifMatchEtag);
+        }
 
         ForwardBlobProperty(source, req, HeaderNames.ContentType,        "x-ms-blob-content-type");
         ForwardBlobProperty(source, req, HeaderNames.ContentEncoding,    "x-ms-blob-content-encoding");
@@ -261,6 +433,29 @@ internal static class ObjectHandlers
         {
             return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
         }
+        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+    }
+
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
+        SetDestinationMetadataAsync(
+            HttpRequest source, BlobClient blob, string destBucket, string destKey, string? ifMatchEtag, CancellationToken ct)
+    {
+        var uri = new Uri(blob.BuildBlobUri(destBucket, destKey).AbsoluteUri + "?comp=metadata");
+        using var req = new HttpRequestMessage(HttpMethod.Put, uri);
+        req.Content = new ByteArrayContent(Array.Empty<byte>());
+        req.Content.Headers.ContentLength = 0;
+        if (!string.IsNullOrEmpty(ifMatchEtag))
+        {
+            req.Headers.TryAddWithoutValidation("If-Match", ifMatchEtag);
+        }
+        HeaderForwarding.ForwardMetadata(source, req);
+
+        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
+        }
+
         return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
     }
 
@@ -429,6 +624,7 @@ internal static class ObjectHandlers
 
         context.Response.StatusCode = (int)azureResp.StatusCode;
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+        ApplyGetResponseOverrides(context.Request, context.Response);
 
         if (azureResp.StatusCode == System.Net.HttpStatusCode.NotModified)
         {
@@ -559,6 +755,298 @@ internal static class ObjectHandlers
         }
 
         await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.DeleteObject)).ConfigureAwait(false);
+    }
+
+    private static async Task PostObjectAsync(
+        HttpContext context,
+        BlobClient blob,
+        string bucket,
+        string key,
+        IReadOnlyDictionary<string, string> fields,
+        byte[] fileBody,
+        string? fileContentType,
+        int successStatusCode,
+        CancellationToken ct)
+    {
+        using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
+        {
+            Content = new ByteArrayContent(fileBody),
+        };
+        azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
+        azureReq.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob");
+
+        if (!TryApplyPostObjectHeaders(fields, azureReq, fileContentType, out var headerError))
+        {
+            await S3ErrorMapping.WriteAsync(context, headerError!.Value).ConfigureAwait(false);
+            return;
+        }
+
+        using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+        if (!azureResp.IsSuccessStatusCode)
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
+            return;
+        }
+
+        context.Response.StatusCode = successStatusCode;
+        HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+        if (successStatusCode == StatusCodes.Status204NoContent)
+        {
+            context.Response.ContentLength = 0;
+        }
+    }
+
+    private static bool TryApplyPostObjectHeaders(
+        IReadOnlyDictionary<string, string> fields,
+        HttpRequestMessage request,
+        string? fileContentType,
+        out S3ErrorMapping.Mapping? error)
+    {
+        error = null;
+        var contentType = TryGetField(fields, HeaderNames.ContentType, out var explicitContentType)
+            ? explicitContentType
+            : fileContentType;
+        if (!string.IsNullOrEmpty(contentType))
+        {
+            if (!System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(contentType, out var parsedContentType))
+            {
+                error = S3ErrorMapping.InvalidArgument("Presigned POST Content-Type is not valid.");
+                return false;
+            }
+
+            request.Content!.Headers.ContentType = parsedContentType;
+        }
+
+        CopyPostField(fields, request, HeaderNames.ContentEncoding, HeaderNames.ContentEncoding);
+        CopyPostField(fields, request, HeaderNames.ContentLanguage, HeaderNames.ContentLanguage);
+        CopyPostField(fields, request, HeaderNames.ContentDisposition, HeaderNames.ContentDisposition);
+        CopyPostField(fields, request, HeaderNames.CacheControl, HeaderNames.CacheControl);
+
+        foreach (var field in fields)
+        {
+            if (!field.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrEmpty(field.Value))
+            {
+                continue;
+            }
+
+            request.Headers.TryAddWithoutValidation("x-ms-meta-" + field.Key["x-amz-meta-".Length..], field.Value);
+        }
+
+        return true;
+    }
+
+    private static void CopyPostField(
+        IReadOnlyDictionary<string, string> fields,
+        HttpRequestMessage request,
+        string fieldName,
+        string targetHeader)
+    {
+        if (TryGetField(fields, fieldName, out var value) && !string.IsNullOrEmpty(value))
+        {
+            request.Content!.Headers.TryAddWithoutValidation(targetHeader, value);
+        }
+    }
+
+    private static bool TryCreateMultipartReader(HttpRequest request, out MultipartReader reader)
+    {
+        reader = default!;
+        if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType)
+            || StringSegment.IsNullOrEmpty(mediaType.Boundary))
+        {
+            return false;
+        }
+
+        reader = new MultipartReader(mediaType.Boundary.Value!, request.Body);
+        return true;
+    }
+
+    private static async Task<string> ReadSmallFormValueAsync(Stream body, CancellationToken cancellationToken)
+    {
+        using var memory = new MemoryStream();
+        var buffer = new byte[4096];
+        while (true)
+        {
+            var read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            if (memory.Length + read > MinPresignedPostFormFieldBytes)
+            {
+                throw new InvalidDataException("Presigned POST form field exceeds the allowed size.");
+            }
+
+            memory.Write(buffer, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(memory.GetBuffer(), 0, (int)memory.Length);
+    }
+
+    private static async Task<byte[]> ReadPostObjectFileAsync(Stream body, CancellationToken cancellationToken)
+    {
+        using var memory = new MemoryStream();
+        var buffer = new byte[81920];
+        while (true)
+        {
+            var read = await body.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            if (memory.Length + read > MaxBufferedPresignedPostFileBytes)
+            {
+                throw new InvalidDataException("Presigned POST file exceeds the buffered upload size limit.");
+            }
+
+            memory.Write(buffer, 0, read);
+        }
+        return memory.ToArray();
+    }
+
+    private static string ResolvePostObjectKey(string rawKey, string? fileName)
+    {
+        var normalizedFileName = NormalizePostedFileName(fileName);
+        if (string.IsNullOrEmpty(fileName)
+            || rawKey.IndexOf("${filename}", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return rawKey;
+        }
+
+        return rawKey.Replace("${filename}", normalizedFileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizePostedFileName(string? fileName)
+    {
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return fileName;
+        }
+
+        var slash = fileName.LastIndexOfAny(['/', '\\']);
+        return slash >= 0 ? fileName[(slash + 1)..] : fileName;
+    }
+
+    private static bool TryGetField(IReadOnlyDictionary<string, string> fields, string name, out string value)
+    {
+        foreach (var field in fields)
+        {
+            if (string.Equals(field.Key, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = field.Value;
+                return true;
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static string? ReadHeader(HttpResponseMessage response, string name)
+    {
+        if (response.Headers.TryGetValues(name, out var values))
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        if (response.Content?.Headers.TryGetValues(name, out var contentValues) == true)
+        {
+            foreach (var value in contentValues)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static Uri BuildSourceObjectUri(BlobClient blob, string bucket, string key, string? versionId) =>
+        string.IsNullOrEmpty(versionId)
+            ? blob.BuildBlobUri(bucket, key)
+            : blob.BuildBlobUri(bucket, key, "?versionid=" + Uri.EscapeDataString(versionId));
+
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? SourceIfMatch, string? PinnedVersionId)> TryEvaluateCopySourcePreconditionsAsync(
+        HttpContext context,
+        BlobClient blob,
+        string sourceBucket,
+        string sourceKey,
+        string? sourceVersionId,
+        S3Operation operation,
+        CancellationToken ct)
+    {
+        var hasIfMatch = HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-match");
+        var hasIfNoneMatch = HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-none-match");
+        if (!hasIfMatch && !hasIfNoneMatch)
+        {
+            return (null, null, null);
+        }
+
+        using var head = await blob.HeadBlobAsync(sourceBucket, sourceKey, sourceVersionId, ct).ConfigureAwait(false);
+        if (!head.IsSuccessStatusCode)
+        {
+            return (S3ErrorMapping.FromAzure(head, operation), null, null);
+        }
+
+        var sourceEtag = TranslateResponseEtagForS3(head);
+        if (string.IsNullOrEmpty(sourceEtag))
+        {
+            return (new S3ErrorMapping.Mapping(StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Azure source blob HEAD did not return an ETag."), null, null);
+        }
+
+        var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(
+            context.Request.Headers,
+            "x-amz-copy-source-if-match",
+            "x-amz-copy-source-if-none-match",
+            sourceEtag,
+            isReadOperation: false);
+        if (shortCircuit == StatusCodes.Status412PreconditionFailed)
+        {
+            return (new S3ErrorMapping.Mapping(StatusCodes.Status412PreconditionFailed,
+                "PreconditionFailed",
+                "At least one of the pre-conditions you specified did not hold."), null, null);
+        }
+
+        var pinnedVersionId = sourceVersionId ?? ReadHeader(head, "x-ms-version-id");
+        if (hasIfNoneMatch && string.IsNullOrEmpty(pinnedVersionId))
+        {
+            return (new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
+                "NotImplemented",
+                "aws2azure: x-amz-copy-source-if-none-match requires versionId for a safe copy."), null, null);
+        }
+
+        return (null, hasIfMatch && string.IsNullOrEmpty(pinnedVersionId) ? head.Headers.ETag?.Tag : null, pinnedVersionId);
+    }
+
+    private static void ApplyGetResponseOverrides(HttpRequest request, HttpResponse response)
+    {
+        ApplyOverride(request, response, "response-content-type", HeaderNames.ContentType);
+        ApplyOverride(request, response, "response-content-disposition", HeaderNames.ContentDisposition);
+        ApplyOverride(request, response, "response-content-encoding", HeaderNames.ContentEncoding);
+        ApplyOverride(request, response, "response-content-language", HeaderNames.ContentLanguage);
+        ApplyOverride(request, response, "response-cache-control", HeaderNames.CacheControl);
+        ApplyOverride(request, response, "response-expires", HeaderNames.Expires);
+    }
+
+    private static void ApplyOverride(HttpRequest request, HttpResponse response, string queryKey, string headerName)
+    {
+        var value = request.Query[queryKey].ToString();
+        if (!string.IsNullOrEmpty(value))
+        {
+            response.Headers[headerName] = value;
+        }
     }
 
     private static Task EmitErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping, S3Operation op) =>

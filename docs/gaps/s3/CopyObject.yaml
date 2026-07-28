@@ -7,10 +7,8 @@ sub_features:
   status: implemented
   gap: URL-decoded before issuing to Azure. The bucket/key separator is accepted as a literal '/' (hand-built/legacy callers) or as a percent-encoded '%2F' — the official AWS SDKs fully percent-encode the value when marshalling CopyObjectRequest, so '{bucket}%2F{key}' is the default wire form.
 - name: source conditional headers (if-match / if-none-match / if-modified-since / if-unmodified-since)
-  status: partial
-  gap: if-modified-since / if-unmodified-since forward verbatim. Concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match return 501 NotImplemented (proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space); the '*' sentinel is honored.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated proxy-side and then guarded on the Azure copy request; concrete if-none-match is supported when the source is version-pinned (explicit versionId or Azure current-version pinning), otherwise the proxy returns NotImplemented rather than risk a wrong-source copy.
 - name: x-amz-metadata-directive=COPY (default)
   status: implemented
   gap: Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics.
@@ -18,10 +16,8 @@ sub_features:
   status: implemented
   gap: Request's metadata + Content-Type override source via standard header forwarding.
 - name: versionId source qualifier
-  status: unsupported
-  gap: Rejected with InvalidArgument; versioning is a later slice.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: ?versionId on x-amz-copy-source maps to Azure's ?versionid source selector and round-trips the opaque version id.
 - name: cross-account copy (source in a different Azure storage account)
   status: unsupported
   gap: Azure cross-account copy is asynchronous; rejected with NotImplemented to avoid reporting fake success.

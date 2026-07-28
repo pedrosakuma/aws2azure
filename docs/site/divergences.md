@@ -263,7 +263,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetBucketWebsite | — | GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetObject | ✅ | Streaming end-to-end: response body is forwarded without buffering. |
 | s3 | GetObject | ✅ | x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing. |
-| s3 | GetObject | ✅ | Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host, and response-content-* query overrides are not honoured. |
+| s3 | GetObject | ✅ | Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host. |
 | s3 | GetObject | ✅ | Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2] |
 | s3 | GetObject | ✅ | Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId] |
 | s3 | GetObject | ✅ | NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName] |

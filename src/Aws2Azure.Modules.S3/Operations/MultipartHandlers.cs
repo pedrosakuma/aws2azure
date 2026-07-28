@@ -34,6 +34,7 @@ internal static class MultipartHandlers
     /// 10,000 parts × ~256 bytes per &lt;Part&gt; entry leaves plenty of
     /// headroom while keeping memory bounded.</summary>
     private const int MaxCompleteBodyBytes = 4 * 1024 * 1024;
+    private const long MinNonFinalPartBytes = 5L * 1024 * 1024;
     private static readonly TimeSpan LeaseOperationTimeout = TimeSpan.FromSeconds(45);
 
     public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct, ICredentialResolver? credentials = null) =>
@@ -240,6 +241,7 @@ internal static class MultipartHandlers
         }
         var sourceBucket = parsed.Bucket!;
         var sourceKey = parsed.Key!;
+        var sourceVersionId = parsed.VersionId;
         if (blob.IsInternalContainer(sourceBucket))
         {
             await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.NoSuchBucket()).ConfigureAwait(false);
@@ -251,7 +253,8 @@ internal static class MultipartHandlers
         // source's own uncommitted-block list, which the eventual Complete
         // would silently reconcile against the live blob. Rejecting up-front
         // matches S3's "InvalidRequest" behaviour for the same scenario.
-        if (string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
+        if (string.IsNullOrEmpty(sourceVersionId)
+            && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
             && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
         {
             await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(400, "InvalidRequest",
@@ -283,10 +286,26 @@ internal static class MultipartHandlers
             return;
         }
 
-        var sourceUri = blob.BuildSourceReadSasUri(sourceBucket, sourceKey, TimeSpan.FromHours(1));
         var blockId = UploadIdCodec.BlockId(token.Value.NonceHex, partNumber);
         var destUri = blob.BuildBlobUri(destBucket, destKey, "?comp=block&blockid=" + Uri.EscapeDataString(blockId));
 
+        // Concrete-ETag copy-source preconditions: proxy-translated S3
+        // ETags do not round-trip back to Azure's raw ETag space, so a
+        // valid CAS would incorrectly 412. Reject with 501 — "*" is still
+        // forwarded below with identical semantics to S3.
+        var sourceConditionals = await TryEvaluateCopySourcePreconditionsAsync(
+            ctx, blob, sourceBucket, sourceKey, sourceVersionId, S3Operation.UploadPartCopy, ct).ConfigureAwait(false);
+        if (sourceConditionals.Error is { } preconditionError)
+        {
+            await S3ErrorMapping.WriteAsync(ctx, preconditionError).ConfigureAwait(false);
+            return;
+        }
+
+        var sourceUri = blob.BuildSourceReadSasUri(
+            sourceBucket,
+            sourceKey,
+            TimeSpan.FromHours(1),
+            sourceConditionals.PinnedVersionId ?? sourceVersionId);
         using var azureReq = new HttpRequestMessage(HttpMethod.Put, destUri)
         {
             Content = new ByteArrayContent(Array.Empty<byte>()),
@@ -298,22 +317,11 @@ internal static class MultipartHandlers
             azureReq.Headers.TryAddWithoutValidation("x-ms-source-range", range);
         }
 
-        // Concrete-ETag copy-source preconditions: proxy-translated S3
-        // ETags do not round-trip back to Azure's raw ETag space, so a
-        // valid CAS would incorrectly 412. Reject with 501 — "*" is still
-        // forwarded below with identical semantics to S3.
-        if (HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-match") ||
-            HeaderForwarding.HasConcreteEtagPrecondition(ctx.Request, "x-amz-copy-source-if-none-match"))
-        {
-            await S3ErrorMapping.WriteAsync(ctx,
-                new S3ErrorMapping.Mapping(StatusCodes.Status501NotImplemented,
-                    "NotImplemented",
-                    "aws2azure: UploadPartCopy with a concrete-ETag x-amz-copy-source-if-match / x-amz-copy-source-if-none-match precondition is not supported (only '*' is honored). Proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space."))
-                .ConfigureAwait(false);
-            return;
-        }
-
         HeaderForwarding.ForwardCopySourceConditionals(ctx.Request, azureReq);
+        if (sourceConditionals.SourceIfMatch is { } sourceIfMatch)
+        {
+            azureReq.Headers.TryAddWithoutValidation("x-ms-source-if-match", sourceIfMatch);
+        }
 
         using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
         if (!azureResp.IsSuccessStatusCode)
@@ -452,6 +460,38 @@ internal static class MultipartHandlers
                     StatusCodes.Status400BadRequest, "MalformedXML",
                     parsed.Error ?? "The XML you provided was not well-formed.")).ConfigureAwait(false);
                 return;
+            }
+
+            if (parsed.Parts.Count > 1)
+            {
+                using var blockListResponse = await blob.GetBlockListAsync(bucket, key, "uncommitted", deadlineCts.Token).ConfigureAwait(false);
+                if (!blockListResponse.IsSuccessStatusCode)
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(blockListResponse, S3Operation.CompleteMultipartUpload)).ConfigureAwait(false);
+                    return;
+                }
+
+                var blockListXml = await blockListResponse.Content.ReadAsByteArrayAsync(deadlineCts.Token).ConfigureAwait(false);
+                var blockList = BlockListParser.Parse(new MemoryStream(blockListXml));
+                if (TryFindInvalidPartError(
+                        token.Value.NonceHex,
+                        parsed.Parts,
+                        blockList,
+                        out var invalidPartError))
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, invalidPartError).ConfigureAwait(false);
+                    return;
+                }
+
+                if (TryFindEntityTooSmallError(
+                        token.Value.NonceHex,
+                        parsed.Parts,
+                        blockList,
+                        out var tooSmallError))
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, tooSmallError).ConfigureAwait(false);
+                    return;
+                }
             }
 
             var blockIds = new List<string>(parsed.Parts.Count);
@@ -875,7 +915,148 @@ internal static class MultipartHandlers
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    private static bool TryFindEntityTooSmallError(
+        string nonceHex,
+        IReadOnlyList<CompleteMultipartUploadParser.PartRef> parts,
+        BlockListParser.BlockList blockList,
+        out S3ErrorMapping.Mapping error)
+    {
+        error = default;
+        var sizes = new Dictionary<int, long>(blockList.Uncommitted.Count);
+        for (var i = 0; i < blockList.Uncommitted.Count; i++)
+        {
+            var block = blockList.Uncommitted[i];
+            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
+                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                sizes[partNumber] = block.Size;
+            }
+        }
+
+        for (var i = 0; i < parts.Count - 1; i++)
+        {
+            var partNumber = parts[i].PartNumber;
+            if (sizes.TryGetValue(partNumber, out var size) && size < MinNonFinalPartBytes)
+            {
+                error = new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    "EntityTooSmall",
+                    "Your proposed upload is smaller than the minimum allowed object size.");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindInvalidPartError(
+        string nonceHex,
+        IReadOnlyList<CompleteMultipartUploadParser.PartRef> parts,
+        BlockListParser.BlockList blockList,
+        out S3ErrorMapping.Mapping error)
+    {
+        error = default;
+        var uploadedParts = new HashSet<int>();
+        for (var i = 0; i < blockList.Uncommitted.Count; i++)
+        {
+            var block = blockList.Uncommitted[i];
+            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
+                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                uploadedParts.Add(partNumber);
+            }
+        }
+
+        for (var i = 0; i < parts.Count; i++)
+        {
+            if (!uploadedParts.Contains(parts[i].PartNumber))
+            {
+                error = new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    "InvalidPart",
+                    "One or more of the specified parts could not be found.");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // ---------- helpers ----------
+
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? SourceIfMatch, string? PinnedVersionId)> TryEvaluateCopySourcePreconditionsAsync(
+        HttpContext context,
+        BlobClient blob,
+        string sourceBucket,
+        string sourceKey,
+        string? sourceVersionId,
+        S3Operation operation,
+        CancellationToken cancellationToken)
+    {
+        var hasIfMatch = HeaderForwarding.HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-match");
+        var hasIfNoneMatch = HeaderForwarding.HasConcreteEtagPrecondition(context.Request, "x-amz-copy-source-if-none-match");
+        if (!hasIfMatch && !hasIfNoneMatch)
+        {
+            return (null, null, null);
+        }
+
+        using var head = await blob.HeadBlobAsync(sourceBucket, sourceKey, sourceVersionId, cancellationToken).ConfigureAwait(false);
+        if (!head.IsSuccessStatusCode)
+        {
+            return (S3ErrorMapping.FromAzure(head, operation), null, null);
+        }
+
+        var translatedEtag = TranslateResponseEtagForS3(head);
+        if (string.IsNullOrEmpty(translatedEtag))
+        {
+            return (new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Azure source blob HEAD did not return an ETag."), null, null);
+        }
+
+        var shortCircuit = HeaderForwarding.EvaluateEtagConditionals(
+            context.Request.Headers,
+            "x-amz-copy-source-if-match",
+            "x-amz-copy-source-if-none-match",
+            translatedEtag,
+            isReadOperation: false);
+        if (shortCircuit == StatusCodes.Status412PreconditionFailed)
+        {
+            return (new S3ErrorMapping.Mapping(
+                StatusCodes.Status412PreconditionFailed,
+                "PreconditionFailed",
+                "At least one of the pre-conditions you specified did not hold."), null, null);
+        }
+
+        var pinnedVersionId = sourceVersionId ?? ReadHeader(head, "x-ms-version-id");
+        if (hasIfNoneMatch && string.IsNullOrEmpty(pinnedVersionId))
+        {
+            return (new S3ErrorMapping.Mapping(
+                StatusCodes.Status501NotImplemented,
+                "NotImplemented",
+                "aws2azure: x-amz-copy-source-if-none-match requires versionId for a safe copy."), null, null);
+        }
+
+        return (null, hasIfMatch && string.IsNullOrEmpty(pinnedVersionId) ? head.Headers.ETag?.Tag : null, pinnedVersionId);
+    }
+
+    private static string? TranslateResponseEtagForS3(HttpResponseMessage response)
+    {
+        var raw = ReadHeader(response, "ETag");
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
+        }
+
+        string? md5Base64 = null;
+        if (response.Content?.Headers.ContentMD5 is { Length: 16 } md5Bytes)
+        {
+            md5Base64 = Convert.ToBase64String(md5Bytes);
+        }
+
+        return "\"" + HeaderForwarding.TranslateAzureEtagToS3(raw, md5Base64) + "\"";
+    }
 
     private static S3ErrorMapping.Mapping NoSuchUpload() =>
         new(404, "NoSuchUpload",

@@ -164,7 +164,7 @@ public class S3ListXmlTests
         using var ms = new MemoryStream();
         await S3XmlWriter.WriteListVersionsResultAsync(
             ms, "b", null, null, 1000, isTruncated: true, keyMarker: null,
-            nextKeyMarker: "k.txt", encodeUrl: false, versions: versions,
+            versionIdMarker: "v-start", nextKeyMarker: "k.txt", nextVersionIdMarker: "v-next", encodeUrl: false, versions: versions,
             commonPrefixes: Array.Empty<string>());
         var doc = XDocument.Parse(Encoding.UTF8.GetString(ms.ToArray()));
 
@@ -173,7 +173,9 @@ public class S3ListXmlTests
         Assert.Equal(2, v.Length);
         Assert.Equal("v2", v[0].Element(S3Ns + "VersionId")!.Value);
         Assert.Equal("true", v[0].Element(S3Ns + "IsLatest")!.Value);
+        Assert.Equal("v-start", doc.Root!.Element(S3Ns + "VersionIdMarker")!.Value);
         Assert.Equal("k.txt", doc.Root!.Element(S3Ns + "NextKeyMarker")!.Value);
+        Assert.Equal("v-next", doc.Root!.Element(S3Ns + "NextVersionIdMarker")!.Value);
     }
 
     [Fact]
@@ -186,7 +188,7 @@ public class S3ListXmlTests
         };
         using var ms = new MemoryStream();
         await S3XmlWriter.WriteListVersionsResultAsync(
-            ms, "b", null, null, 1000, false, null, null, false, versions, Array.Empty<string>());
+            ms, "b", null, null, 1000, false, null, null, null, null, false, versions, Array.Empty<string>());
         var doc = XDocument.Parse(Encoding.UTF8.GetString(ms.ToArray()));
         Assert.Equal("null", doc.Root!.Element(S3Ns + "Version")!.Element(S3Ns + "VersionId")!.Value);
     }

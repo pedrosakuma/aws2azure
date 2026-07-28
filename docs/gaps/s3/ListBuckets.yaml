@@ -4,10 +4,8 @@ azure_equivalent: GET https://{account}.blob.core.windows.net/?comp=list
 status: implemented
 sub_features:
 - name: pagination
-  status: unsupported
-  gap: Azure returns the full container list in a single response for typical bucket counts; the proxy does not synthesize pagination tokens.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: The proxy follows Azure's NextMarker chain until exhaustion and returns the complete bucket list in one S3 response.
 - name: owner-identity
   status: partial
   notes: S3 Owner/ID + DisplayName are synthesized from the authenticated AWS access key id (no Azure-side equivalent).

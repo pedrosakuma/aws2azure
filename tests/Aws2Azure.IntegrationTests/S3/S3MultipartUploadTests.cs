@@ -33,10 +33,11 @@ public class S3MultipartUploadTests
         var uploadId = initDoc.Root!.Element(S3Ns + "UploadId")!.Value;
         Assert.False(string.IsNullOrEmpty(uploadId));
 
-        // 2) UploadPart × 3 — each part is 5 MiB except the last (S3-style),
-        //    but we use small parts here because Azurite has no size minimum.
-        var p1 = MakePart('a', 1024);
-        var p2 = MakePart('b', 2048);
+        // 2) UploadPart × 3 — real S3 requires every non-final part to be at
+        //    least 5 MiB, so keep the integration happy-path aligned with that
+        //    wire contract even though Azurite itself is more lenient.
+        var p1 = MakePart('a', 5 * 1024 * 1024);
+        var p2 = MakePart('b', 5 * 1024 * 1024);
         var p3 = MakePart('c', 512);
 
         var etag1 = await UploadPart(bucket, key, uploadId, 1, p1);

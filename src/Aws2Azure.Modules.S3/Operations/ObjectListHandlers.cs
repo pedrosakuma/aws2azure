@@ -104,6 +104,7 @@ internal static class ObjectListHandlers
         var seenPrefixes = new HashSet<string>(StringComparer.Ordinal);
         string? azureMarker = azureStartMarker;
         string? truncatedAzureMarker = null;
+        string? lastEmittedMarker = null;
         var truncated = false;
 
         // Loop over Azure pages until we either fill the S3 max-keys budget
@@ -149,6 +150,7 @@ internal static class ObjectListHandlers
                 var b = page.Blobs[i];
                 contents.Add(new S3XmlWriter.ListedObject(
                     b.Name, b.LastModified, b.ETag, b.ContentLength, DefaultStorageClass));
+                lastEmittedMarker = b.Name;
             }
             if (!truncated)
             {
@@ -163,6 +165,7 @@ internal static class ObjectListHandlers
                     if (seenPrefixes.Add(p))
                     {
                         commonPrefixes.Add(p);
+                        lastEmittedMarker = p;
                     }
                 }
             }
@@ -176,7 +179,7 @@ internal static class ObjectListHandlers
                 // re-fetch the same page (acceptable: S3 only promises that
                 // the *first* page of the next call starts at-or-after the
                 // last returned key, never that it's exactly contiguous).
-                truncatedAzureMarker = azureMarker;
+                truncatedAzureMarker = lastEmittedMarker ?? azureMarker;
                 break;
             }
 
@@ -232,9 +235,10 @@ internal static class ObjectListHandlers
         }
     }
 
-    // ListObjectVersions: single Azure page (versions listing) shaped into the
-    // S3 ListVersionsResult. Pagination via key-marker → Azure marker; delete
-    // markers are not modelled (no S3↔Azure delete-marker mapping).
+    // ListObjectVersions: Azure version listings shaped into the S3
+    // ListVersionsResult. Delete markers are not modelled (no S3↔Azure
+    // delete-marker mapping). version-id-marker resumes within a single key by
+    // scanning forward until the requested (key, versionId) boundary is seen.
     private static async Task HandleListVersionsAsync(
         HttpContext context, string bucket, BlobClient blob, CancellationToken cancellationToken)
     {
@@ -255,18 +259,40 @@ internal static class ObjectListHandlers
             return;
         }
         var keyMarker = StringOrNull(query, "key-marker");
+        var versionIdMarker = StringOrNull(query, "version-id-marker");
+        if (!string.IsNullOrEmpty(versionIdMarker) && string.IsNullOrEmpty(keyMarker))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "version-id-marker requires key-marker.")).ConfigureAwait(false);
+            return;
+        }
 
         var versions = new List<S3XmlWriter.ListedVersion>(Math.Min(maxKeys, 64));
         var commonPrefixes = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var truncated = false;
         string? nextKeyMarker = null;
+        string? nextVersionIdMarker = null;
+        string? lastEmittedKey = null;
+        string? lastEmittedVersionId = null;
+        string? lastEmittedPrefix = null;
+        var lastEmittedWasVersion = false;
+        var markerVersionConsumed = string.IsNullOrEmpty(versionIdMarker);
+        string? azureMarker = string.IsNullOrEmpty(versionIdMarker) ? keyMarker : null;
 
-        if (maxKeys > 0)
+        while (maxKeys > 0)
         {
-            var azureMax = Math.Min(maxKeys, AzureMaxResults);
+            if (versions.Count + commonPrefixes.Count >= maxKeys)
+            {
+                truncated = true;
+                nextKeyMarker = lastEmittedWasVersion ? lastEmittedKey : lastEmittedPrefix;
+                nextVersionIdMarker = lastEmittedWasVersion ? lastEmittedVersionId : null;
+                break;
+            }
+
+            var azureMax = Math.Min(maxKeys - (versions.Count + commonPrefixes.Count), AzureMaxResults);
             using var response = await blob.ListBlobsAsync(
-                bucket, prefix, delimiter, keyMarker, azureMax, includeVersions: true, cancellationToken).ConfigureAwait(false);
+                bucket, prefix, delimiter, azureMarker, azureMax, includeVersions: true, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 await S3ErrorMapping.WriteAsync(context,
@@ -278,6 +304,10 @@ internal static class ObjectListHandlers
 
             foreach (var v in page.Versions)
             {
+                if (!ShouldIncludeVersion(v, keyMarker, versionIdMarker, ref markerVersionConsumed))
+                {
+                    continue;
+                }
                 if (versions.Count + commonPrefixes.Count >= maxKeys)
                 {
                     truncated = true;
@@ -286,43 +316,94 @@ internal static class ObjectListHandlers
                 versions.Add(new S3XmlWriter.ListedVersion(
                     v.Name, v.VersionId ?? string.Empty, v.IsCurrent,
                     v.LastModified, v.ETag ?? string.Empty, v.ContentLength, DefaultStorageClass));
+                lastEmittedKey = v.Name;
+                lastEmittedVersionId = string.IsNullOrEmpty(v.VersionId) ? "null" : v.VersionId;
+                lastEmittedWasVersion = true;
             }
             if (!truncated)
             {
                 foreach (var p in page.BlobPrefixes)
                 {
+                    if (!IsAfterKeyMarker(p, keyMarker))
+                    {
+                        continue;
+                    }
                     if (versions.Count + commonPrefixes.Count >= maxKeys)
                     {
                         truncated = true;
                         break;
                     }
-                    if (seen.Add(p)) { commonPrefixes.Add(p); }
+                    if (seen.Add(p))
+                    {
+                        commonPrefixes.Add(p);
+                        lastEmittedPrefix = p;
+                        lastEmittedWasVersion = false;
+                    }
                 }
             }
 
-            // Azure's opaque NextMarker is the only resumable continuation; we
-            // never emit a NextVersionIdMarker, so resume is a page boundary.
-            // Re-fetching the page marker may re-return listed versions but
-            // never skips them. If our budget filled before the page ended,
-            // fall back to the request marker (page partially consumed).
-            if (!string.IsNullOrEmpty(page.NextMarker))
+            if (truncated)
             {
-                truncated = true;
-                nextKeyMarker = page.NextMarker;
+                nextKeyMarker = lastEmittedWasVersion ? lastEmittedKey : lastEmittedPrefix;
+                nextVersionIdMarker = lastEmittedWasVersion ? lastEmittedVersionId : null;
+                break;
             }
-            else if (truncated)
+            if (string.IsNullOrEmpty(page.NextMarker))
             {
-                nextKeyMarker = keyMarker;
+                break;
             }
+            azureMarker = page.NextMarker;
         }
 
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "application/xml; charset=utf-8";
         await S3XmlWriter.WriteListVersionsResultAsync(
             context.Response.Body, bucket, prefix, delimiter, maxKeys,
-            isTruncated: truncated, keyMarker: keyMarker, nextKeyMarker: truncated ? nextKeyMarker : null,
+            isTruncated: truncated, keyMarker: keyMarker, versionIdMarker: versionIdMarker,
+            nextKeyMarker: truncated ? nextKeyMarker : null, nextVersionIdMarker: truncated ? nextVersionIdMarker : null,
             encodeUrl: encodeUrl, versions: versions, commonPrefixes: commonPrefixes).ConfigureAwait(false);
     }
+
+    private static bool ShouldIncludeVersion(
+        AzureBlobXmlReader.BlobVersionEntry version,
+        string? keyMarker,
+        string? versionIdMarker,
+        ref bool markerVersionConsumed)
+    {
+        if (string.IsNullOrEmpty(keyMarker))
+        {
+            return true;
+        }
+
+        var compare = MultipartUploadStateStore.CompareUtf8(version.Name, keyMarker);
+        if (compare > 0)
+        {
+            return true;
+        }
+        if (compare < 0)
+        {
+            return false;
+        }
+        if (string.IsNullOrEmpty(versionIdMarker))
+        {
+            return false;
+        }
+        if (markerVersionConsumed)
+        {
+            return true;
+        }
+
+        var currentVersionId = string.IsNullOrEmpty(version.VersionId) ? "null" : version.VersionId;
+        if (string.Equals(currentVersionId, versionIdMarker, StringComparison.Ordinal))
+        {
+            markerVersionConsumed = true;
+        }
+
+        return false;
+    }
+
+    private static bool IsAfterKeyMarker(string value, string? keyMarker) =>
+        string.IsNullOrEmpty(keyMarker) || MultipartUploadStateStore.CompareUtf8(value, keyMarker) > 0;
 
     private static bool TryParseMaxKeys(IQueryCollection query, out int maxKeys, out string? error)
     {

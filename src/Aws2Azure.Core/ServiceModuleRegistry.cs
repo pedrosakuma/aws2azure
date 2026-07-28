@@ -104,6 +104,10 @@ public sealed class ServiceModuleRegistry
             var result = _sigV4.Validate(sigRequest);
             if (!result.IsValid)
             {
+                if (ShouldDeferS3MultipartFormAuth(module, context, result))
+                {
+                    goto SigV4Complete;
+                }
                 await EmitAuthError(context, module, result);
                 RecordEndMetrics(metricsCtx, context.Response.StatusCode, 0, translationStart, null);
                 return;
@@ -156,6 +160,7 @@ public sealed class ServiceModuleRegistry
             }
         }
 
+SigV4Complete:
         // Mark end of SigV4 phase. Set up timing context for backend calls.
         // Both HttpContext.Items (for explicit use) and AsyncLocal (for ambient use)
         // are populated so modules can use either approach.
@@ -294,6 +299,25 @@ public sealed class ServiceModuleRegistry
 
     private static ValueTask EmitAuthError(HttpContext context, IServiceModule module, SigV4ValidationResult result)
         => module.EmitSigV4FailureAsync(context, result.Status, result.Reason ?? string.Empty);
+
+    private static bool ShouldDeferS3MultipartFormAuth(
+        IServiceModule module,
+        HttpContext context,
+        SigV4ValidationResult result)
+    {
+        if (!string.Equals(module.ServiceName, "s3", StringComparison.Ordinal)
+            || result.Status != SigV4ValidationStatus.Malformed
+            || !string.Equals(result.Reason, "no Authorization header and no X-Amz-Signature query parameter", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return context.Request.Method == HttpMethods.Post
+            && context.Request.Query.Count == 0
+            && context.Request.HasFormContentType
+            && context.Request.ContentType is { } contentType
+            && contentType.StartsWith("multipart/form-data", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void RecordEndMetrics(
         RequestMetricsContext? metricsCtx, 

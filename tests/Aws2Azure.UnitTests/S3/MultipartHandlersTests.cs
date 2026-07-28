@@ -148,6 +148,127 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task Upload_part_copy_with_versioned_source_and_concrete_if_match_heads_source_and_forwards_version()
+    {
+        var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "dest-bucket", "dest.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(HeadBlob("\"0xSOURCE\"", sourceMd5));
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, lastModified: new DateTimeOffset(2026, 7, 11, 12, 0, 0, TimeSpan.Zero)));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var translatedSourceEtag = "\"" + Convert.ToHexString(MD5.HashData("source"u8.ToArray())).ToLowerInvariant() + "\"";
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=3",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/source-bucket/source.txt?versionId=ver-1"),
+                new KeyValuePair<string, string>("x-amz-copy-source-if-match", translatedSourceEtag)
+            ]);
+
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPartCopy, "dest-bucket", "dest.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(handler.Requests, request =>
+            request.Method == HttpMethod.Head &&
+            string.Equals(request.RequestUri!.PathAndQuery, "/source-bucket/source.txt?versionid=ver-1", StringComparison.Ordinal));
+
+        var copyRequest = Assert.Single(handler.Requests, static request => request.Headers.ContainsKey("x-ms-copy-source"));
+        Assert.Contains("versionid=ver-1", Assert.Single(copyRequest.Headers["x-ms-copy-source"]), StringComparison.Ordinal);
+        Assert.DoesNotContain("x-ms-source-if-match", copyRequest.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Complete_rejects_non_final_part_smaller_than_minimum_size()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <UncommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>5242879</Size></Block>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 2)}}</Name><Size>1</Size></Block>
+                  </UncommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var complete = TestHttpContext.CreateContext(
+            body: """
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber></Part>
+                     <Part><PartNumber>2</PartNumber></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, complete.Response.StatusCode);
+        Assert.Contains("EntityTooSmall", await TestHttpContext.ReadBodyAsync(complete), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Complete_returns_invalid_part_before_entity_too_small_when_manifest_references_missing_part()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <UncommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>1</Size></Block>
+                  </UncommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var complete = TestHttpContext.CreateContext(
+            body: """
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber></Part>
+                     <Part><PartNumber>7</PartNumber></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, complete.Response.StatusCode);
+        Assert.Contains("InvalidPart", await TestHttpContext.ReadBodyAsync(complete), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Abort_multipart_upload_deletes_state_and_future_use_returns_no_such_upload()
     {
         var handler = new ScriptedHandler();
@@ -693,6 +814,20 @@ public sealed class MultipartHandlersTests
         if (lastModified is not null)
         {
             response.Content.Headers.LastModified = lastModified;
+        }
+        return response;
+    }
+
+    private static HttpResponseMessage HeadBlob(string eTag, string? contentMd5Base64 = null)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>()),
+        };
+        response.Headers.TryAddWithoutValidation("ETag", eTag);
+        if (!string.IsNullOrEmpty(contentMd5Base64))
+        {
+            response.Content.Headers.TryAddWithoutValidation("Content-MD5", contentMd5Base64);
         }
         return response;
     }

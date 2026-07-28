@@ -1,5 +1,6 @@
 using Aws2Azure.Modules.S3.Errors;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -15,13 +16,14 @@ namespace Aws2Azure.Modules.S3.Internal;
 /// <c>%2F</c>: the official AWS SDKs fully percent-encode the value
 /// (including the separator) when marshalling <c>CopyObjectRequest</c>, so
 /// the wire form is <c>{bucket}%2F{key}</c>. Both forms are accepted.
-/// Optional trailing <c>?versionId=…</c> is rejected in this slice — we
-/// have no versioning story yet and silently ignoring the qualifier would
-/// land the wrong object.
+/// Optional trailing <c>?versionId=…</c> is parsed and returned separately so
+/// copy flows can resolve a specific Azure blob version. The query delimiter
+/// must remain literal; an encoded <c>%3FversionId=…</c> sequence is treated
+/// as part of the object key so keys containing that text still round-trip.
 /// </summary>
 internal static class CopySourceParser
 {
-    public readonly record struct ParseResult(bool Success, string? Bucket, string? Key, string? Error);
+    public readonly record struct ParseResult(bool Success, string? Bucket, string? Key, string? VersionId, string? Error);
 
     public static ParseResult Parse(string? raw)
     {
@@ -36,19 +38,6 @@ internal static class CopySourceParser
         }
 
         var s = raw;
-        var qmark = s.IndexOf('?', StringComparison.Ordinal);
-        if (qmark >= 0)
-        {
-            var qs = s[(qmark + 1)..];
-            // versionId qualifies a specific historical object — without a
-            // versioning implementation we must reject rather than copy the
-            // current version under a different identity.
-            if (qs.Contains("versionId=", StringComparison.Ordinal))
-            {
-                return Fail("aws2azure: x-amz-copy-source versionId is not supported.");
-            }
-            s = s[..qmark];
-        }
 
         // Strip a single leading '/'.
         if (s.Length > 0 && s[0] == '/')
@@ -69,6 +58,7 @@ internal static class CopySourceParser
 
         var bucket = s[..sepIndex];
         var encodedKey = s[(sepIndex + sepLen)..];
+        SplitVersionQualifier(ref encodedKey, out var versionId);
 
         if (!IsWellFormedPercentEncoding(encodedKey))
         {
@@ -85,10 +75,10 @@ internal static class CopySourceParser
             return Fail("x-amz-copy-source key segment cannot be empty.");
         }
 
-        return new ParseResult(true, bucket, decodedKey, null);
+        return new ParseResult(true, bucket, decodedKey, versionId, null);
     }
 
-    public readonly record struct ValidatedSource(bool Success, string? Bucket, string? Key, S3ErrorMapping.Mapping Error);
+    public readonly record struct ValidatedSource(bool Success, string? Bucket, string? Key, string? VersionId, S3ErrorMapping.Mapping Error);
 
     public static ValidatedSource ParseAndValidate(HttpRequest request)
     {
@@ -113,7 +103,7 @@ internal static class CopySourceParser
                 "The specified copy-source object key is not valid."));
         }
 
-        return new ValidatedSource(true, bucket, key, default);
+        return new ValidatedSource(true, bucket, key, parsed.VersionId, default);
     }
 
     private static (int Index, int Length) FindSeparator(string s)
@@ -158,9 +148,42 @@ internal static class CopySourceParser
     private static bool IsHex(char c) =>
         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 
+    private static void SplitVersionQualifier(ref string value, out string? versionId)
+    {
+        versionId = null;
+
+        var literalQmark = value.IndexOf('?', StringComparison.Ordinal);
+        if (literalQmark >= 0)
+        {
+            TryReadVersionId(value[(literalQmark + 1)..], out versionId);
+            value = value[..literalQmark];
+            return;
+        }
+
+    }
+
+    private static void TryReadVersionId(string queryString, out string? versionId)
+    {
+        versionId = null;
+        var parsedQuery = QueryHelpers.ParseQuery("?" + queryString);
+        if (!parsedQuery.TryGetValue("versionId", out var versionValues))
+        {
+            return;
+        }
+
+        foreach (var value in versionValues)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                versionId = value;
+                return;
+            }
+        }
+    }
+
     private static ParseResult Fail(string message) =>
-        new(false, null, null, message);
+        new(false, null, null, null, message);
 
     private static ValidatedSource Invalid(S3ErrorMapping.Mapping error) =>
-        new(false, null, null, error);
+        new(false, null, null, null, error);
 }

@@ -21,20 +21,14 @@ sub_features:
   gap: aws2azure does not implement STS — credentials are static config entries. If a client includes X-Amz-Security-Token in a presigned URL it is part of the canonical query (and therefore signature-protected), but aws2azure does not validate it as a session token.
   disposition: by_design
 - name: Presigned POST (browser form uploads)
-  status: unsupported
-  gap: Browser-based POST policies are a separate signing variant; not yet implemented.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: Browser-style multipart/form-data POST policies are validated proxy-side from form fields and then uploaded to Azure as a normal Put Blob. success_action_status=201 and success_action_redirect remain unsupported.
 - name: Presigned multipart upload subresources
-  status: partial
-  gap: ?uploads / ?uploadId / ?partNumber are routed by S3Router and dispatched to MultipartHandlers, and the SigV4 presigned validator is request-shape-agnostic — so presigned multipart should work — but this combination is not currently exercised by aws2azure's integration tests. Validate end-to-end before relying on it.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: Presigned query authentication now has end-to-end coverage for ?uploads, UploadPart, and CompleteMultipartUpload.
 - name: response-content-* query overrides
-  status: unsupported
-  gap: GetObject does not honour response-content-type / response-content-disposition / response-content-encoding / response-content-language / response-cache-control / response-expires overrides; see GetObject.yaml.
-  disposition: feasible_backlog
-  tracking_issue: '#690'
+  status: implemented
+  notes: Presigned GetObject requests honour the same response-content-* overrides as header-authenticated GetObject.
 - name: Azure Blob SAS issuance / redirect mode
   status: unsupported
   gap: By design — aws2azure operates in proxy mode and never hands Azure SAS tokens to the client, so storage-account keys never leave the proxy. Clients always hit the proxy URL, not the Azure Blob endpoint.

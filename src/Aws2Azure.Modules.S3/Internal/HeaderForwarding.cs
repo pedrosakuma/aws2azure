@@ -115,10 +115,28 @@ internal static class HeaderForwarding
 
     public static void ForwardCopySourceConditionals(HttpRequest source, HttpRequestMessage target)
     {
-        ForwardHeader(source, target, "x-amz-copy-source-if-match", "x-ms-source-if-match");
-        ForwardHeader(source, target, "x-amz-copy-source-if-none-match", "x-ms-source-if-none-match");
+        ForwardStarConditional(source, target, "x-amz-copy-source-if-match", "x-ms-source-if-match");
+        ForwardStarConditional(source, target, "x-amz-copy-source-if-none-match", "x-ms-source-if-none-match");
         ForwardHeader(source, target, "x-amz-copy-source-if-modified-since", "x-ms-source-if-modified-since");
         ForwardHeader(source, target, "x-amz-copy-source-if-unmodified-since", "x-ms-source-if-unmodified-since");
+    }
+
+    private static void ForwardStarConditional(HttpRequest source, HttpRequestMessage target, string sourceHeader, string targetHeader)
+    {
+        if (!source.Headers.TryGetValue(sourceHeader, out var values))
+        {
+            return;
+        }
+
+        foreach (var raw in values)
+        {
+            var v = (raw ?? string.Empty).Trim();
+            if (v == "*")
+            {
+                target.Headers.TryAddWithoutValidation(targetHeader, "*");
+                return;
+            }
+        }
     }
 
     public static void ForwardMetadata(HttpRequest source, HttpRequestMessage target)
@@ -402,9 +420,17 @@ internal static class HeaderForwarding
     /// 304/412 in those cases.
     /// </remarks>
     public static int? EvaluateEtagConditionals(HttpRequest source, string translatedEtagWithQuotes, bool isReadOperation)
+        => EvaluateEtagConditionals(source.Headers, HeaderNames.IfMatch, HeaderNames.IfNoneMatch, translatedEtagWithQuotes, isReadOperation);
+
+    internal static int? EvaluateEtagConditionals(
+        IHeaderDictionary headers,
+        string ifMatchHeader,
+        string ifNoneMatchHeader,
+        string translatedEtagWithQuotes,
+        bool isReadOperation)
     {
         // If-None-Match: any ETag value matches → 304 (read) / 412 (write).
-        if (source.Headers.TryGetValue(HeaderNames.IfNoneMatch, out var noneValues))
+        if (headers.TryGetValue(ifNoneMatchHeader, out var noneValues))
         {
             foreach (var raw in noneValues)
             {
@@ -416,7 +442,7 @@ internal static class HeaderForwarding
         }
 
         // If-Match: must match the current ETag, otherwise 412.
-        if (source.Headers.TryGetValue(HeaderNames.IfMatch, out var matchValues))
+        if (headers.TryGetValue(ifMatchHeader, out var matchValues))
         {
             var any = false;
             foreach (var raw in matchValues)

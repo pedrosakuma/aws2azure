@@ -151,20 +151,25 @@ public class S3CopyObjectTests
     }
 
     [SkippableFact]
-    public async Task CopyObject_versionId_qualifier_returns_InvalidArgument()
+    public async Task CopyObject_literal_versionId_text_in_source_key_is_not_treated_as_qualifier()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
 
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
         await PutBucket(bucket);
-        await PutObject(bucket, "src.txt", Encoding.UTF8.GetBytes("x"));
+        var sourceKeyEncoded = "src%3FversionId%3Dliteral.txt";
+        using (var put = await SendAsync(HttpMethod.Put, $"/{bucket}/{sourceKeyEncoded}", Encoding.UTF8.GetBytes("literal-version-text")))
+        {
+            Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        }
 
-        using var resp = await CopyRaw(copySourceRaw: $"/{bucket}/src.txt?versionId=abc",
+        using var resp = await CopyRaw(copySourceRaw: $"{bucket}%2F{sourceKeyEncoded}",
             dstBucket: bucket, dstKey: "dst.txt");
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        var xml = await resp.Content.ReadAsStringAsync();
-        Assert.Contains("<Code>InvalidArgument</Code>", xml);
-        Assert.Contains("versionId", xml);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        using var get = await SendAsync(HttpMethod.Get, $"/{bucket}/dst.txt", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+        Assert.Equal("literal-version-text", Encoding.UTF8.GetString(await get.Content.ReadAsByteArrayAsync()));
     }
 
     [SkippableFact]
@@ -205,7 +210,7 @@ public class S3CopyObjectTests
     }
 
     [SkippableFact]
-    public async Task CopyObject_with_concrete_copy_source_if_match_returns_501()
+    public async Task CopyObject_with_concrete_copy_source_if_match_returns_precondition_failed()
     {
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
         await PutBucket(bucket);
@@ -213,9 +218,9 @@ public class S3CopyObjectTests
 
         using var resp = await Copy(bucket, "src.txt", bucket, "dst.txt",
             extraHeaders: new[] { ("x-amz-copy-source-if-match", "\"deadbeefdeadbeefdeadbeefdeadbeef\"") });
-        Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, resp.StatusCode);
         var xml = await resp.Content.ReadAsStringAsync();
-        Assert.Contains("NotImplemented", xml);
+        Assert.Contains("PreconditionFailed", xml);
 
         // The '*' sentinel must still work (Azure honors it).
         using var ok = await Copy(bucket, "src.txt", bucket, "dst2.txt",
