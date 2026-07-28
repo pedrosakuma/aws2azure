@@ -115,8 +115,7 @@
 ## ListShards
 
 - **Status:** 🟡 partial
-- **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#689](https://github.com/pedrosakuma/aws2azure/issues/689)
+- **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Event Hubs Service Bus management REST API`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
@@ -126,14 +125,17 @@
 |---|---|---|---|---|---|---|---|
 | ExclusiveStartShardId + MaxResults pagination | ✅ implemented | — | — | — | Paginates the Event Hubs partition list and emits aws2azure NextToken cursors when more mapped shards remain. |  |  |
 | HMAC-signed NextToken cursors | ✅ implemented | — | — | — | Uses the Event Hubs shard iterator signing key (or an ephemeral fallback) to sign 5-minute list-shards cursors. |  |  |
-| AT_LATEST / FROM_TRIM_HORIZON shard filters | ✅ implemented | — | — | — | These filter types are accepted as no-ops because Event Hubs always exposes the full open-partition set. |  |  |
+| AT_LATEST / FROM_TRIM_HORIZON / FROM_TIMESTAMP shard filters | ✅ implemented | — | — | — | AT_LATEST and FROM_TRIM_HORIZON are accepted as no-ops because Event Hubs always exposes the current open-partition set; FROM_TIMESTAMP is likewise a no-op because AWS requires all open shards to be returned and Event Hubs does not surface closed historical partitions. |  |  |
+| AFTER_SHARD_ID shard filter | ✅ implemented | — | — | — | Uses the fixed shard-id ordering derived from Event Hubs partition ids and applies the same exclusive lower bound as ExclusiveStartShardId. |  |  |
+| AT_TRIM_HORIZON shard filter | 🟡 partial | 🔵 by design | — | — | Rejected with InvalidArgumentException. | Event Hubs Premium and Dedicated can add partitions after hub creation, but the management/runtime APIs do not expose when each partition first became available. | Use FROM_TRIM_HORIZON when callers only need the currently open shard set. |
+| AT_TIMESTAMP shard filter | 🟡 partial | 🔵 by design | — | — | Rejected with InvalidArgumentException. | Event Hubs does not expose per-partition open timestamps, so the proxy cannot determine which partitions were open at an arbitrary historical instant after a partition-count increase. | Use FROM_TIMESTAMP when callers need the current open shard set from a historical timestamp forward. |
 
 ### Behaviour differences
 
 - Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>.
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
 - NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes.
-- Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException.
+- AT_TRIM_HORIZON and AT_TIMESTAMP remain unsupported because Event Hubs can add partitions after creation in Premium/Dedicated tiers, but its APIs do not expose the per-partition open timestamps needed to answer those historical shard-topology queries.
 - Core shard listing and pagination are validated against a live Azure Event Hubs namespace.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 
@@ -141,6 +143,7 @@
 
 - <https://docs.aws.amazon.com/kinesis/latest/APIReference/API_ListShards.html>
 - <https://learn.microsoft.com/en-us/rest/api/eventhub/>
+- <https://learn.microsoft.com/en-us/azure/event-hubs/dynamically-add-partitions>
 
 ## PutRecord
 

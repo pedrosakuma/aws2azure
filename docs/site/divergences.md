@@ -200,7 +200,7 @@ the documented behaviour differences and the real-Azure seal state.
 | kinesis | ListShards | ✅ | Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. |
 | kinesis | ListShards | ✅ | HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments. |
 | kinesis | ListShards | ✅ | NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes. |
-| kinesis | ListShards | ✅ | Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException. |
+| kinesis | ListShards | ✅ | AT_TRIM_HORIZON and AT_TIMESTAMP remain unsupported because Event Hubs can add partitions after creation in Premium/Dedicated tiers, but its APIs do not expose the per-partition open timestamps needed to answer those historical shard-topology queries. |
 | kinesis | ListShards | ✅ | Core shard listing and pagination are validated against a live Azure Event Hubs namespace. |
 | kinesis | ListShards | ✅ | Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM. |
 | kinesis | PutRecord | ✅ | SequenceNumber is synthetic and proxy-generated from a per-process monotonic counter; it is not the Event Hubs broker-assigned sequence number or offset. |
