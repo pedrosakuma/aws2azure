@@ -1,24 +1,24 @@
 service: s3
 operation: PutObjectTagging
-azure_equivalent: "PUT {blob}?comp=tags"
+azure_equivalent: PUT {blob}?comp=tags
 status: implemented
 sub_features:
-  - name: "replace existing tag set"
-    status: implemented
-    notes: "Mirrors S3 semantics: PUT replaces the tag set atomically."
-  - name: "10-tag limit per object"
-    status: implemented
-    notes: "Enforced before the Azure call."
-  - name: "128-char key / 256-char value limits"
-    status: implemented
-    notes: "Enforced before the Azure call."
-  - name: "versionId qualifier"
-    status: implemented
-    notes: "Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and pin the current Azure version before Set Blob Tags so x-amz-version-id identifies the updated version."
+- name: replace existing tag set
+  status: implemented
+  notes: 'Mirrors S3 semantics: PUT replaces the tag set atomically.'
+- name: 10-tag limit per object
+  status: implemented
+  notes: Enforced before the Azure call.
+- name: 128-char key / 256-char value limits
+  status: implemented
+  notes: Enforced before the Azure call.
+- name: versionId qualifier
+  status: implemented
+  notes: Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and pin the current Azure version before Set Blob Tags so x-amz-version-id identifies the updated version.
 behavior_differences:
-  - "AWS uses 200 OK with empty body; the proxy matches that."
-  - "Version selection depends on Azure Blob versioning being enabled by the operator."
-  - "Azure BlobVersionNotFound maps to S3 NoSuchVersion."
+- AWS uses 200 OK with empty body; the proxy matches that.
+- Version selection depends on Azure Blob versioning being enabled by the operator.
+- Azure BlobVersionNotFound maps to S3 NoSuchVersion.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
-  - https://learn.microsoft.com/rest/api/storageservices/set-blob-tags
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectTagging.html
+- https://learn.microsoft.com/rest/api/storageservices/set-blob-tags

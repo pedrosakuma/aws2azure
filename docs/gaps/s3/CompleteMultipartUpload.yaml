@@ -1,28 +1,31 @@
 service: s3
 operation: CompleteMultipartUpload
-azure_equivalent: "Lease state record + Put Block List"
+azure_equivalent: Lease state record + Put Block List
 status: implemented
 sub_features:
-  - name: lease-based-convergence
-    status: implemented
-    notes: "Complete acquires the multipart state's 60-second lease before committing the block list and deleting the state record, preventing concurrent Complete/Abort races from committing two outcomes."
-  - name: metadata-fidelity
-    status: implemented
-    notes: "Headers captured at CreateMultipartUpload (Content-Type/Encoding/Language/Disposition/Cache-Control and x-amz-meta-*) are replayed onto Put Block List so the completed blob preserves the documented metadata surface."
-  - name: part-ordering
-    status: implemented
-    notes: "Parts must arrive in ascending PartNumber order without duplicates; malformed manifests reuse S3's InvalidPartOrder/MalformedXML semantics."
-  - name: per-part-etag-validation
-    status: unsupported
-    notes: "The proxy still cannot validate client-supplied per-part ETags against Azure's staged blocks because Azure exposes no equivalent per-block MD5 lookup. This remains an explicit permanent gap."
-  - name: minimum-part-size
-    status: unsupported
-    notes: "S3's 5 MiB minimum for non-final parts is not enforced."
+- name: lease-based-convergence
+  status: implemented
+  notes: Complete acquires the multipart state's 60-second lease before committing the block list and deleting the state record, preventing concurrent Complete/Abort races from committing two outcomes.
+- name: metadata-fidelity
+  status: implemented
+  notes: Headers captured at CreateMultipartUpload (Content-Type/Encoding/Language/Disposition/Cache-Control and x-amz-meta-*) are replayed onto Put Block List so the completed blob preserves the documented metadata surface.
+- name: part-ordering
+  status: implemented
+  notes: Parts must arrive in ascending PartNumber order without duplicates; malformed manifests reuse S3's InvalidPartOrder/MalformedXML semantics.
+- name: per-part-etag-validation
+  status: unsupported
+  notes: The proxy still cannot validate client-supplied per-part ETags against Azure's staged blocks because Azure exposes no equivalent per-block MD5 lookup. This remains an explicit permanent gap.
+  disposition: by_design
+- name: minimum-part-size
+  status: unsupported
+  notes: S3's 5 MiB minimum for non-final parts is not enforced.
+  disposition: feasible_backlog
+  tracking_issue: '#690'
 behavior_differences:
-  - "Response ETag has the S3 multipart shape \"{hash}-{count}\" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart."
-  - "Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList)."
-  - "Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart."
-  - "Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release."
+- Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart.
+- Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList).
+- Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart.
+- Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
-  - https://learn.microsoft.com/rest/api/storageservices/put-block-list
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+- https://learn.microsoft.com/rest/api/storageservices/put-block-list

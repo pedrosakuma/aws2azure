@@ -1,15 +1,17 @@
 service: s3
 operation: PutBucketOwnershipControls
-azure_equivalent: "Conditional container-metadata update (persisted compatibility intent only)"
+azure_equivalent: Conditional container-metadata update (persisted compatibility intent only)
 status: partial
 sub_features:
-  - name: "configuration storage"
-    status: implemented
-    notes: "Persists one valid ObjectOwnership rule with bounded ETag/If-Match retry while preserving unrelated container metadata."
-  - name: "ACL ownership enforcement"
-    status: unsupported
-    notes: "BucketOwnerPreferred/ObjectWriter are recorded but do not enable non-owner ACL grants; BucketOwnerEnforced does not alter Azure authorization."
+- name: configuration storage
+  status: implemented
+  notes: Persists one valid ObjectOwnership rule with bounded ETag/If-Match retry while preserving unrelated container metadata.
+- name: ACL ownership enforcement
+  status: unsupported
+  notes: BucketOwnerPreferred/ObjectWriter are recorded but do not enable non-owner ACL grants; BucketOwnerEnforced does not alter Azure authorization.
+  disposition: by_design
 behavior_differences:
-  - "This is an intent surface, not an enforcement surface. Azure account/container authorization remains operator-managed."
+- This is an intent surface, not an enforcement surface. Azure account/container authorization remains operator-managed.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketOwnershipControls.html
+disposition: by_design

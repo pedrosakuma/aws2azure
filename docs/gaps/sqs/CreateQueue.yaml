@@ -1,50 +1,61 @@
 service: sqs
 operation: CreateQueue
-azure_equivalent: "PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)"
+azure_equivalent: PUT https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: Attribute.VisibilityTimeout
-    status: implemented
-    notes: "Maps to Service Bus LockDuration (ISO-8601 duration)."
-  - name: Attribute.MessageRetentionPeriod
-    status: implemented
-    notes: "Maps to DefaultMessageTimeToLive."
-  - name: Attribute.MaximumMessageSize
-    status: implemented
-    notes: "Recorded as MaxMessageSizeInKilobytes (1024..1048576 bytes / 1 KiB..1 MiB). SQS raised its hard cap from 256 KiB to 1 MiB in August 2025; the proxy now mirrors that range. Backing Service Bus tier still constrains the *effective* limit: SB Standard rejects anything over 256 KiB, SB Premium honours up to 100 MiB (configurable). Per-queue MaximumMessageSize is set at create time but not re-validated per send — SB itself rejects oversized payloads on the runtime POST."
-  - name: Attribute.DelaySeconds
-    status: partial
-    notes: "Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2."
-  - name: Attribute.ReceiveMessageWaitTimeSeconds
-    status: partial
-    notes: "Accepted; long-polling emulation lands in Slice 4."
-  - name: Attribute.FifoQueue / ContentBasedDeduplication
-    status: partial
-    notes: "Maps to RequiresSession + RequiresDuplicateDetection. FIFO routing is implemented end-to-end on the AMQP transport (MessageGroupId -> SB SessionId on send; session-aware receive pins one consumer per group for strict per-group ordering — see ReceiveMessage). Strict ordering requires `transport: Amqp`; the REST transport cannot express session-receive and therefore does not provide strict per-group ordering (won't implement — inherent SB REST limitation)."
-  - name: Attribute.RedrivePolicy
-    status: partial
-    notes: "SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. Because Service Bus does not apply ForwardDeadLetteredMessagesTo to an explicit dead-letter settlement, the AMQP receive path forwards an over-limit copy to the configured target and then completes the source delivery before it can be returned to the AWS client. The legacy REST receive transport retains Service Bus's native additional delivery. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle)."
-  - name: Attribute.RedriveAllowPolicy
-    status: unsupported
-    gap: "Accepted silently; SB has no per-queue ACL controlling which sources may forward into a DLQ."
-  - name: Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled
-    status: unsupported
-    gap: "Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band)."
-  - name: Attribute.Policy
-    status: unsupported
-    gap: "Resource-based access policies are AWS IAM; no Service Bus equivalent on REST."
-  - name: tags
-    status: unsupported
-    gap: "Service Bus REST has no per-queue tagging surface; tracked for Slice 5 namespace-metadata workaround."
+- name: Attribute.VisibilityTimeout
+  status: implemented
+  notes: Maps to Service Bus LockDuration (ISO-8601 duration).
+- name: Attribute.MessageRetentionPeriod
+  status: implemented
+  notes: Maps to DefaultMessageTimeToLive.
+- name: Attribute.MaximumMessageSize
+  status: implemented
+  notes: 'Recorded as MaxMessageSizeInKilobytes (1024..1048576 bytes / 1 KiB..1 MiB). SQS raised its hard cap from 256 KiB to 1 MiB in August 2025; the proxy now mirrors that range. Backing Service Bus tier still constrains the *effective* limit: SB Standard rejects anything over 256 KiB, SB Premium honours up to 100 MiB (configurable). Per-queue MaximumMessageSize is set at create time but not re-validated per send — SB itself rejects oversized payloads on the runtime POST.'
+- name: Attribute.DelaySeconds
+  status: partial
+  notes: Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2.
+  disposition: feasible_backlog
+  tracking_issue: '#693'
+- name: Attribute.ReceiveMessageWaitTimeSeconds
+  status: partial
+  notes: Accepted; long-polling emulation lands in Slice 4.
+  disposition: feasible_backlog
+  tracking_issue: '#693'
+- name: Attribute.FifoQueue / ContentBasedDeduplication
+  status: partial
+  notes: 'Maps to RequiresSession + RequiresDuplicateDetection. FIFO routing is implemented end-to-end on the AMQP transport (MessageGroupId -> SB SessionId on send; session-aware receive pins one consumer per group for strict per-group ordering — see ReceiveMessage). Strict ordering requires `transport: Amqp`; the REST transport cannot express session-receive and therefore does not provide strict per-group ordering (won''t implement — inherent SB REST limitation).'
+  disposition: by_design
+- name: Attribute.RedrivePolicy
+  status: partial
+  notes: SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. Because Service Bus does not apply ForwardDeadLetteredMessagesTo to an explicit dead-letter settlement, the AMQP receive path forwards an over-limit copy to the configured target and then completes the source delivery before it can be returned to the AWS client. The legacy REST receive transport retains Service Bus's native additional delivery. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle).
+  disposition: by_design
+- name: Attribute.RedriveAllowPolicy
+  status: unsupported
+  gap: Accepted silently; SB has no per-queue ACL controlling which sources may forward into a DLQ.
+  disposition: by_design
+- name: Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled
+  status: unsupported
+  gap: Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band).
+  disposition: by_design
+- name: Attribute.Policy
+  status: unsupported
+  gap: Resource-based access policies are AWS IAM; no Service Bus equivalent on REST.
+  disposition: by_design
+- name: tags
+  status: unsupported
+  gap: Service Bus REST has no per-queue tagging surface; tracked for Slice 5 namespace-metadata workaround.
+  disposition: feasible_backlog
+  tracking_issue: '#693'
 behavior_differences:
-  - "RedrivePolicy maps to Service Bus MaxDeliveryCount and ForwardDeadLetteredMessagesTo. Because Service Bus may transfer the first over-limit delivery and manual dead-lettering bypasses automatic forwarding, the AMQP receive path sends a copy to the configured target before completing the source. This ordering is loss-averse and preserves SQS at-least-once semantics: a source-complete failure after a successful target send can produce a duplicate on retry. The legacy REST receive transport retains the native additional delivery."
-  - "Queue name validation enforces SQS rules (1-80 alnum/-_, '.fifo' suffix) before reaching Azure; Azure container names are stricter on some characters."
-  - "Idempotency: an existing queue with matching attributes returns the same QueueUrl; mismatched attributes surface QueueNameExists. We compare LockDuration, TTL, MaxMessageSize, RequiresSession, RequiresDuplicateDetection — a small set vs SQS's full attribute parity."
-  - "Core standard-queue creation is validated against real Azure Service Bus; FIFO session receive remains a separately documented gap and blocks SendMessage/ReceiveMessage seals."
+- 'RedrivePolicy maps to Service Bus MaxDeliveryCount and ForwardDeadLetteredMessagesTo. Because Service Bus may transfer the first over-limit delivery and manual dead-lettering bypasses automatic forwarding, the AMQP receive path sends a copy to the configured target before completing the source. This ordering is loss-averse and preserves SQS at-least-once semantics: a source-complete failure after a successful target send can produce a duplicate on retry. The legacy REST receive transport retains the native additional delivery.'
+- Queue name validation enforces SQS rules (1-80 alnum/-_, '.fifo' suffix) before reaching Azure; Azure container names are stricter on some characters.
+- 'Idempotency: an existing queue with matching attributes returns the same QueueUrl; mismatched attributes surface QueueNameExists. We compare LockDuration, TTL, MaxMessageSize, RequiresSession, RequiresDuplicateDetection — a small set vs SQS''s full attribute parity.'
+- Core standard-queue creation is validated against real Azure Service Bus; FIFO session receive remains a separately documented gap and blocks SendMessage/ReceiveMessage seals.
 references:
-  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html
-  - https://learn.microsoft.com/rest/api/servicebus/create-queue
+- https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_CreateQueue.html
+- https://learn.microsoft.com/rest/api/servicebus/create-queue

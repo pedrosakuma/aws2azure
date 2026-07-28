@@ -1,24 +1,26 @@
 service: s3
 operation: DeleteObjects
-azure_equivalent: "Multiple DELETEs against Blob (no native batch endpoint)"
+azure_equivalent: Multiple DELETEs against Blob (no native batch endpoint)
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: quiet-mode
-    status: implemented
-  - name: versionid
-    status: unsupported
-    notes: "Returns top-level MalformedXML when <VersionId> is present in the request body."
-  - name: mfa-delete
-    status: unsupported
+- name: quiet-mode
+  status: implemented
+- name: versionid
+  status: unsupported
+  notes: Returns top-level MalformedXML when <VersionId> is present in the request body.
+  disposition: by_design
+- name: mfa-delete
+  status: unsupported
+  disposition: by_design
 behavior_differences:
-  - "Fanned out as parallel single-blob DELETEs (cap of 16 concurrent) — no transactional guarantee across keys."
-  - "Missing key is reported as Deleted (matching S3 idempotency); missing bucket short-circuits the fan-out with a top-level NoSuchBucket error."
-  - "Request body is capped at 2 MiB and Content-MD5 (or x-amz-sdk-checksum-algorithm) is required; mismatched digests surface as BadDigest."
-  - "Returns top-level MalformedXML when <VersionId> is present in the request body (no versioning support)."
+- Fanned out as parallel single-blob DELETEs (cap of 16 concurrent) — no transactional guarantee across keys.
+- Missing key is reported as Deleted (matching S3 idempotency); missing bucket short-circuits the fan-out with a top-level NoSuchBucket error.
+- Request body is capped at 2 MiB and Content-MD5 (or x-amz-sdk-checksum-algorithm) is required; mismatched digests surface as BadDigest.
+- Returns top-level MalformedXML when <VersionId> is present in the request body (no versioning support).
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
-  - https://learn.microsoft.com/rest/api/storageservices/delete-blob
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
+- https://learn.microsoft.com/rest/api/storageservices/delete-blob

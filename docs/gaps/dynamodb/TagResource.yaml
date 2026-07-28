@@ -1,17 +1,17 @@
 service: dynamodb
 operation: TagResource
-azure_equivalent: "Azure Cosmos DB account/resource tags (control plane)"
+azure_equivalent: Azure Cosmos DB account/resource tags (control plane)
 status: implemented
 sub_features:
-  - name: Tag persistence and round-trip
-    status: implemented
-    notes: "Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource."
-  - name: Merge duplicate keys
-    status: implemented
-    notes: "New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags."
+- name: Tag persistence and round-trip
+  status: implemented
+  notes: Persists table tags in the aws2azure TableMetadata sidecar document inside the Cosmos container and returns them from ListTagsOfResource.
+- name: Merge duplicate keys
+  status: implemented
+  notes: New values overwrite existing keys while preserving unrelated tags; the final tag set is limited to 50 tags.
 behavior_differences:
-  - "Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags."
-  - "Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries."
-  - "Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending."
+- Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags.
+- Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries.
+- Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending.
 references:
-  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html

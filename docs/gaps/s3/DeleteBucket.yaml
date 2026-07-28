@@ -1,15 +1,15 @@
 service: s3
 operation: DeleteBucket
-azure_equivalent: "DELETE https://{account}.blob.core.windows.net/{container}?restype=container"
+azure_equivalent: DELETE https://{account}.blob.core.windows.net/{container}?restype=container
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features: []
 behavior_differences:
-  - "Azure container delete is asynchronous; subsequent CreateContainer on the same name may return ContainerBeingDeleted (mapped to OperationAborted)."
-  - "S3 BucketNotEmpty is mapped from Azure ConditionNotMet/Conflict cases that surface only when the container retention policy intervenes."
+- Azure container delete is asynchronous; subsequent CreateContainer on the same name may return ContainerBeingDeleted (mapped to OperationAborted).
+- S3 BucketNotEmpty is mapped from Azure ConditionNotMet/Conflict cases that surface only when the container retention policy intervenes.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucket.html
-  - https://learn.microsoft.com/rest/api/storageservices/delete-container
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucket.html
+- https://learn.microsoft.com/rest/api/storageservices/delete-container

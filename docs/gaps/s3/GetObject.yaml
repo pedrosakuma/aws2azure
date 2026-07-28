@@ -1,42 +1,42 @@
 service: s3
 operation: GetObject
-azure_equivalent: "GET https://{account}.blob.core.windows.net/{container}/{blob}"
+azure_equivalent: GET https://{account}.blob.core.windows.net/{container}/{blob}
 status: implemented
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: Range requests (bytes=X-Y)
-    status: implemented
-  - name: conditional headers (If-Match / If-None-Match / If-Modified-Since / If-Unmodified-Since)
-    status: implemented
-    gap: "The proxy translates ETags, so concrete-ETag conditionals are evaluated proxy-side after Azure returns 200 (Azure cannot recognize the S3-shaped value). A failed If-Match on a read yields 412 PreconditionFailed with a faithful <Error> envelope; If-None-Match match yields 304."
-  - name: standard response headers (ETag, Last-Modified, Content-Type, Content-Length, Content-Encoding, Cache-Control, Accept-Ranges, Content-Range)
-    status: implemented
-  - name: user metadata (x-amz-meta-*)
-    status: implemented
-    gap: "Translated from Azure x-ms-meta-*."
-  - name: response header overrides (response-content-type, response-content-disposition, …)
-    status: unsupported
-  - name: server-side encryption customer keys (SSE-C)
-    status: unsupported
-  - name: versioning (versionId query)
-    status: partial
-    gap: "?versionId selector maps to Azure ?versionid (opaque x-ms-version-id round-trips); x-amz-version-id is emitted from x-ms-version-id. Requires account-level Blob versioning enabled out-of-band; no delete markers in ListObjectVersions yet."
+- name: Range requests (bytes=X-Y)
+  status: implemented
+- name: conditional headers (If-Match / If-None-Match / If-Modified-Since / If-Unmodified-Since)
+  status: implemented
+  gap: The proxy translates ETags, so concrete-ETag conditionals are evaluated proxy-side after Azure returns 200 (Azure cannot recognize the S3-shaped value). A failed If-Match on a read yields 412 PreconditionFailed with a faithful <Error> envelope; If-None-Match match yields 304.
+- name: standard response headers (ETag, Last-Modified, Content-Type, Content-Length, Content-Encoding, Cache-Control, Accept-Ranges, Content-Range)
+  status: implemented
+- name: user metadata (x-amz-meta-*)
+  status: implemented
+  gap: Translated from Azure x-ms-meta-*.
+- name: response header overrides (response-content-type, response-content-disposition, …)
+  status: unsupported
+  disposition: feasible_backlog
+  tracking_issue: '#690'
+- name: server-side encryption customer keys (SSE-C)
+  status: unsupported
+  disposition: by_design
+- name: versioning (versionId query)
+  status: partial
+  gap: ?versionId selector maps to Azure ?versionid (opaque x-ms-version-id round-trips); x-amz-version-id is emitted from x-ms-version-id. Requires account-level Blob versioning enabled out-of-band; no delete markers in ListObjectVersions yet.
+  disposition: by_design
 behavior_differences:
-  - "Streaming end-to-end: response body is forwarded without buffering."
-  - "x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing."
-  - "Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host, and response-content-* query overrides are not honoured."
-  # --- Conformance (Tier-2 LocalStack differential) accepted divergences ---
-  # AWS SDKs dispatch error handling on HTTP status + <Code>, which the proxy
-  # reproduces faithfully; the following non-contractual extras that real S3
-  # emits on the error path are not reproduced and are accepted here.
-  - "Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2]"
-  - "Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId]"
-  - "NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName]"
-  - "NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key]"
-  - "PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition]"
+- 'Streaming end-to-end: response body is forwarded without buffering.'
+- x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing.
+- Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host, and response-content-* query overrides are not honoured.
+- Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2]
+- Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId]
+- NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName]
+- NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key]
+- PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition]
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
-  - https://learn.microsoft.com/rest/api/storageservices/get-blob
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+- https://learn.microsoft.com/rest/api/storageservices/get-blob

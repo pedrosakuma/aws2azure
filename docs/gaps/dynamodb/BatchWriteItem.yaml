@@ -1,44 +1,46 @@
 service: dynamodb
 operation: BatchWriteItem
-azure_equivalent: "Azure Cosmos DB (Core SQL API)"
+azure_equivalent: Azure Cosmos DB (Core SQL API)
 status: partial
 verified_real_azure:
-  date: "2026-07-16"
+  date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
   workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
-  - name: PutRequest fan-out
-    status: implemented
-    notes: "Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity."
-  - name: DeleteRequest fan-out
-    status: implemented
-    notes: "Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency."
-  - name: Bounded parallelism
-    status: implemented
-    notes: "Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated)."
-  - name: 25-item-per-call cap
-    status: implemented
-    notes: "Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit."
-  - name: Item shape validation (Put)
-    status: implemented
-    notes: "Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write."
-  - name: Duplicate-key rejection
-    status: implemented
-    notes: "Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB."
-  - name: Throttling → UnprocessedItems
-    status: implemented
-    notes: "Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch."
-  - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
-    status: unsupported
-    notes: "Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics."
+- name: PutRequest fan-out
+  status: implemented
+  notes: 'Each PutRequest issues a Cosmos POST with `x-ms-documentdb-is-upsert: true`, matching the existing PutItem fast-path. Item attributes are stored flat on the Cosmos document (same shape as PutItem) for round-trip fidelity.'
+- name: DeleteRequest fan-out
+  status: implemented
+  notes: Each DeleteRequest routes to a Cosmos DELETE on the (pk, id) derived from the key. Deletes of missing items are successful no-ops — matches DynamoDB idempotency.
+- name: Bounded parallelism
+  status: implemented
+  notes: Up to 10 concurrent Cosmos writes per batch (SemaphoreSlim-gated).
+- name: 25-item-per-call cap
+  status: implemented
+  notes: Requests over 25 writes (across all tables) rejected with ValidationException, matching the DynamoDB hard limit.
+- name: Item shape validation (Put)
+  status: implemented
+  notes: Every attribute in PutRequest.Item must be a single-property typed AttributeValue (same validator as PutItem). Malformed entries rejected with ValidationException before any Cosmos write.
+- name: Duplicate-key rejection
+  status: implemented
+  notes: Two writes targeting the same (table, pk, id) in a single call are rejected with ValidationException — matches DynamoDB.
+- name: Throttling → UnprocessedItems
+  status: implemented
+  notes: Cosmos 429 on any individual write surfaces the original PutRequest/DeleteRequest envelope in `UnprocessedItems`, preserving ordering within the table. Hard errors (5xx, 4xx other than 429/404) fail the whole batch.
+- name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
+  status: unsupported
+  notes: Silently ignored; responses omit ConsumedCapacity and ItemCollectionMetrics.
+  disposition: by_design
 behavior_differences:
-  - "Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale."
-  - "16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits."
-  - "Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits."
-  - "Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour."
-  - "Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted."
-  - "Core batch put/delete behavior is validated against real Azure Cosmos DB; throttling and specialized edge paths retain their narrower deterministic coverage."
-  - "Each Put unit's standalone document body is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off); each unit is its own `POST /docs` upsert, so the gateway auto-detects the marker (no negotiation header or special Content-Type). Delete units carry no body. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed by the nightly acceptance test."
-  - "Perf baseline throughput for this operation (~5/s for 25-item batches, see `docs/perf/baseline-latest.md`) is an inherent cost of the fan-out design, not a regression: each of the 25 Put/Delete units is its own Cosmos REST call (bounded parallelism, see 'Bounded parallelism' above), and the perf harness additionally retries `UnprocessedItems` with backoff within the measured window. Confirmed stable across historical runs (`docs/perf/history.csv`) and within the perf-gate floor (`docs/perf/baseline-reference.json`). Investigated and closed via issue #519 — do not re-flag as a regression without new evidence."
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale.
+- 16 MB request body cap (DynamoDB) not enforced — bounded only by Kestrel limits.
+- Per-item 400 KB cap not enforced — bounded only by Cosmos document size limits.
+- Cosmos 429 maps to `UnprocessedItems` rather than `ProvisionedThroughputExceededException`; matches DDB SDK retry behaviour.
+- Order is preserved within a table when echoing into `UnprocessedItems`, but Cosmos calls execute in parallel — no guarantee that writes within a table commit in the order they were submitted.
+- Core batch put/delete behavior is validated against real Azure Cosmos DB; throttling and specialized edge paths retain their narrower deterministic coverage.
+- Each Put unit's standalone document body is sent as CosmosBinary (the `0x80` format) when the opt-in `DynamoDb.CosmosBinaryRequests` is enabled (default off); each unit is its own `POST /docs` upsert, so the gateway auto-detects the marker (no negotiation header or special Content-Type). Delete units carry no body. The chosen format is observable on `aws2azure_dynamodb_write_body_total{format=binary|text}`. The Cosmos DB Linux emulator neither emits nor reliably accepts CosmosBinary, so the binary write path is validated against real Azure only — confirmed parsed + indexed by the nightly acceptance test.
+- 'Perf baseline throughput for this operation (~5/s for 25-item batches, see `docs/perf/baseline-latest.md`) is an inherent cost of the fan-out design, not a regression: each of the 25 Put/Delete units is its own Cosmos REST call (bounded parallelism, see ''Bounded parallelism'' above), and the perf harness additionally retries `UnprocessedItems` with backoff within the measured window. Confirmed stable across historical runs (`docs/perf/history.csv`) and within the perf-gate floor (`docs/perf/baseline-reference.json`). Investigated and closed via issue #519 — do not re-flag as a regression without new evidence.'
 references:
-  - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html
+disposition: by_design

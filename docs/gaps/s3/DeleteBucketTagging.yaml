@@ -1,12 +1,12 @@
 service: s3
 operation: DeleteBucketTagging
-azure_equivalent: "Conditional GET + PUT {container}?restype=container&comp=metadata"
+azure_equivalent: Conditional GET + PUT {container}?restype=container&comp=metadata
 status: implemented
 sub_features:
-  - name: "idempotent clear"
-    status: implemented
-    notes: "Removes only the proxy-owned bucket-tagging key and preserves unrelated metadata."
+- name: idempotent clear
+  status: implemented
+  notes: Removes only the proxy-owned bucket-tagging key and preserves unrelated metadata.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketTagging.html
 behavior_differences:
-  - "Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and removes only its bucket-tagging key."
+- Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and removes only its bucket-tagging key.

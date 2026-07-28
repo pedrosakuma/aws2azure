@@ -1,15 +1,17 @@
 service: s3
 operation: GetBucketRequestPayment
-azure_equivalent: "(no equivalent — proxy returns the S3 default body)"
+azure_equivalent: (no equivalent — proxy returns the S3 default body)
 status: partial
 sub_features:
-  - name: "BucketOwner contract"
-    status: implemented
-    notes: "Always reports BucketOwner, including after an accepted PutBucketRequestPayment BucketOwner no-op."
-  - name: "Requester Pays"
-    status: unsupported
-    notes: "Azure billing is account-scoped and cannot charge the S3 requester."
+- name: BucketOwner contract
+  status: implemented
+  notes: Always reports BucketOwner, including after an accepted PutBucketRequestPayment BucketOwner no-op.
+- name: Requester Pays
+  status: unsupported
+  notes: Azure billing is account-scoped and cannot charge the S3 requester.
+  disposition: by_design
 behavior_differences:
-  - "GET deterministically returns 200 with <Payer>BucketOwner</Payer>; Requester Pays is never activated."
+- GET deterministically returns 200 with <Payer>BucketOwner</Payer>; Requester Pays is never activated.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketRequestPayment.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketRequestPayment.html
+disposition: by_design

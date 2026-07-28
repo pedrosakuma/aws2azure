@@ -1,190 +1,125 @@
 service: s3
 design_gaps:
-  - area: No IAM / ACL / bucket-policy authorization model
-    status: by_design
-    summary: >-
-      Authorization is the static AWS-key-to-Azure-credential mapping validated
-      by SigV4; there is no server-side IAM. ACLs are synthesised as
-      owner-only and bucket-policy enforcement is not translated.
-    impact: >-
-      Fine-grained S3 access control remains outside the proxy.
-    workaround: >-
-      Enforce authorization with Azure RBAC, SAS, and network controls.
-    references:
-      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
-  - area: No enforceable server-side-encryption configuration surface
-    status: by_design
-    summary: >-
-      Azure Blob Storage encrypts at rest transparently. The proxy can persist
-      some S3 encryption intent, but it does not map SSE request headers to
-      distinct Azure key material or KMS workflows.
-    impact: >-
-      Applications that require SSE-C/SSE-KMS semantics cannot preserve them.
-    workaround: >-
-      Configure encryption and customer-managed keys at the Azure Storage
-      account level.
-  - area: Multipart upload keeps bounded durable proxy state
-    status: by_design
-    summary: >-
-      Azure Blob Storage has no native cross-blob multipart-upload enumeration
-      primitive, so aws2azure persists one bounded state record per active
-      multipart upload in a hidden Azure container. Record names begin with the
-      zero-padded initiation timestamp, record bodies store only the headers
-      needed to finish the upload (16 KiB cap), and Create/List opportunistically
-      delete a bounded number of expired records.
-    impact: >-
-      Multipart enumeration and metadata fidelity now survive proxy restart, but
-      the proxy deliberately owns a small amount of durable control-plane state.
-    workaround: >-
-      Treat the hidden multipart-state container as proxy-owned implementation
-      data; do not manage or replicate it through S3.
-  - area: Multipart per-part ETag validation cannot be reproduced
-    status: by_design
-    summary: >-
-      Even with durable multipart state, Azure still exposes no primitive that
-      lets the proxy re-read the true MD5/ETag of each staged uncommitted block.
-      CompleteMultipartUpload and ListParts therefore cannot validate or replay
-      AWS's per-part ETag contract exactly.
-    impact: >-
-      Workloads that overwrite a PartNumber with different bytes and rely on AWS
-      rejecting the stale ETag at CompleteMultipartUpload will observe different
-      behaviour.
-    workaround: >-
-      Gate those workloads out or avoid re-uploading the same PartNumber with
-      different content inside one multipart session.
-  - area: Bucket sub-resource configs are not translated
-    status: unsupported
-    summary: >-
-      Lifecycle, replication, website hosting, event notifications, Requester
-      Pays, acceleration, and logging bucket configurations have no Blob-storage
-      equivalent in the wire-protocol path.
-    impact: >-
-      Automated tiering/expiry, cross-region replication, static-website
-      hosting, and S3 event automation configured through these APIs have no
-      effect.
-    workaround: >-
-      Use Azure Blob lifecycle-management policies, object replication, static
-      website settings, and Event Grid subscriptions configured directly on the
-      storage account.
+- area: No IAM / ACL / bucket-policy authorization model
+  status: by_design
+  summary: Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only and bucket-policy enforcement is not translated.
+  impact: Fine-grained S3 access control remains outside the proxy.
+  workaround: Enforce authorization with Azure RBAC, SAS, and network controls.
+  references:
+  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
+- area: No enforceable server-side-encryption configuration surface
+  status: by_design
+  summary: Azure Blob Storage encrypts at rest transparently. The proxy can persist some S3 encryption intent, but it does not map SSE request headers to distinct Azure key material or KMS workflows.
+  impact: Applications that require SSE-C/SSE-KMS semantics cannot preserve them.
+  workaround: Configure encryption and customer-managed keys at the Azure Storage account level.
+- area: Multipart upload keeps bounded durable proxy state
+  status: by_design
+  summary: Azure Blob Storage has no native cross-blob multipart-upload enumeration primitive, so aws2azure persists one bounded state record per active multipart upload in a hidden Azure container. Record names begin with the zero-padded initiation timestamp, record bodies store only the headers needed to finish the upload (16 KiB cap), and Create/List opportunistically delete a bounded number of expired records.
+  impact: Multipart enumeration and metadata fidelity now survive proxy restart, but the proxy deliberately owns a small amount of durable control-plane state.
+  workaround: Treat the hidden multipart-state container as proxy-owned implementation data; do not manage or replicate it through S3.
+- area: Multipart per-part ETag validation cannot be reproduced
+  status: by_design
+  summary: Even with durable multipart state, Azure still exposes no primitive that lets the proxy re-read the true MD5/ETag of each staged uncommitted block. CompleteMultipartUpload and ListParts therefore cannot validate or replay AWS's per-part ETag contract exactly.
+  impact: Workloads that overwrite a PartNumber with different bytes and rely on AWS rejecting the stale ETag at CompleteMultipartUpload will observe different behaviour.
+  workaround: Gate those workloads out or avoid re-uploading the same PartNumber with different content inside one multipart session.
+- area: Bucket sub-resource configs are not translated
+  status: unsupported
+  summary: Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path.
+  impact: Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event automation configured through these APIs have no effect.
+  workaround: Use Azure Blob lifecycle-management policies, object replication, static website settings, and Event Grid subscriptions configured directly on the storage account.
+  disposition: by_design
 workload_patterns:
-  - id: s3_basic_object_crud
-    name: Basic object CRUD
-    compatibility: supported
-    summary: >-
-      Upload, download, inspect, list, and delete ordinary objects through the
-      standard S3 data-plane operations.
-    operations:
-      - PutObject
-      - GetObject
-      - HeadObject
-      - ListObjectsV2
-      - DeleteObject
-    guidance: >-
-      Suitable when applications need ordinary object CRUD and do not rely on
-      S3 IAM/policy enforcement.
-  - id: s3_multipart_upload
-    name: Multipart upload
-    compatibility: conditional
-    summary: >-
-      Multipart initiation, part upload/copy/listing, in-progress upload
-      enumeration, completion, and abort map to Azure block-blob primitives plus
-      a bounded durable proxy-owned state index.
-    operations:
-      - CreateMultipartUpload
-      - UploadPart
-      - UploadPartCopy
-      - ListMultipartUploads
-      - ListParts
-      - CompleteMultipartUpload
-      - AbortMultipartUpload
-    design_gaps:
-      - Multipart upload keeps bounded durable proxy state
-      - Multipart per-part ETag validation cannot be reproduced
-    guidance: >-
-      Suitable when workloads benefit from restart-stable enumeration and copy
-      fidelity, and do not require AWS to reject stale per-part ETags with full
-      InvalidPart fidelity.
-  - id: s3_versioning_object_lock
-    name: Versioning and object-lock administration
-    compatibility: conditional
-    summary: >-
-      Object versions, retention, and legal holds are exposed, but account-level
-      Blob features must already be configured and bucket-level lock setup has
-      no data-plane equivalent.
-    operations:
-      - GetBucketVersioning
-      - PutBucketVersioning
-      - ListObjectVersions
-      - GetObjectRetention
-      - PutObjectRetention
-      - GetObjectLegalHold
-      - PutObjectLegalHold
-      - GetObjectLockConfiguration
-      - PutObjectLockConfiguration
-    guidance: >-
-      Validate the exact flow against real Azure and configure Blob versioning
-      and immutability outside the proxy before adoption.
-  - id: s3_metadata_compatibility_controls
-    name: Metadata and compatibility control round-trip
-    compatibility: conditional
-    summary: >-
-      Bucket tags, versioning intent, ownership controls, public-access-block,
-      and SSE-S3/AES256 intent persist in Azure container metadata and survive
-      proxy restart; request payment and acceleration expose stable disabled
-      contracts.
-    operations:
-      - GetBucketTagging
-      - PutBucketTagging
-      - DeleteBucketTagging
-      - GetBucketVersioning
-      - PutBucketVersioning
-      - GetBucketOwnershipControls
-      - PutBucketOwnershipControls
-      - DeleteBucketOwnershipControls
-      - GetPublicAccessBlock
-      - PutPublicAccessBlock
-      - DeletePublicAccessBlock
-      - GetBucketEncryption
-      - PutBucketEncryption
-      - DeleteBucketEncryption
-      - GetBucketRequestPayment
-      - PutBucketRequestPayment
-      - GetBucketAccelerateConfiguration
-      - PutBucketAccelerateConfiguration
-    design_gaps:
-      - No IAM / ACL / bucket-policy authorization model
-      - No enforceable server-side-encryption configuration surface
-      - Bucket sub-resource configs are not translated
-    guidance: >-
-      Use these operations only when applications require configuration
-      round-trip compatibility. Enforce authorization, public access,
-      encryption keys, billing, and acceleration through Azure/operator
-      controls; do not treat persisted intent as enforcement.
-  - id: s3_policy_lifecycle_automation
-    name: Bucket policy, lifecycle, and event automation
-    compatibility: blocked
-    summary: >-
-      Workloads that configure authorization, lifecycle, replication, website,
-      logging, or notifications through S3 APIs cannot preserve those semantics.
-    operations:
-      - GetBucketPolicy
-      - PutBucketPolicy
-      - GetBucketLifecycleConfiguration
-      - PutBucketLifecycleConfiguration
-      - DeleteBucketLifecycle
-      - GetBucketWebsite
-      - PutBucketWebsite
-      - DeleteBucketWebsite
-      - GetBucketLogging
-      - PutBucketLogging
-      - GetBucketNotificationConfiguration
-      - PutBucketNotificationConfiguration
-      - GetBucketReplication
-      - PutBucketReplication
-      - DeleteBucketReplication
-    design_gaps:
-      - No IAM / ACL / bucket-policy authorization model
-      - Bucket sub-resource configs are not translated
-    guidance: >-
-      Move these controls to Azure RBAC, Storage lifecycle policies, object
-      replication, static website settings, and Event Grid before migration.
+- id: s3_basic_object_crud
+  name: Basic object CRUD
+  compatibility: supported
+  summary: Upload, download, inspect, list, and delete ordinary objects through the standard S3 data-plane operations.
+  operations:
+  - PutObject
+  - GetObject
+  - HeadObject
+  - ListObjectsV2
+  - DeleteObject
+  guidance: Suitable when applications need ordinary object CRUD and do not rely on S3 IAM/policy enforcement.
+- id: s3_multipart_upload
+  name: Multipart upload
+  compatibility: conditional
+  summary: Multipart initiation, part upload/copy/listing, in-progress upload enumeration, completion, and abort map to Azure block-blob primitives plus a bounded durable proxy-owned state index.
+  operations:
+  - CreateMultipartUpload
+  - UploadPart
+  - UploadPartCopy
+  - ListMultipartUploads
+  - ListParts
+  - CompleteMultipartUpload
+  - AbortMultipartUpload
+  design_gaps:
+  - Multipart upload keeps bounded durable proxy state
+  - Multipart per-part ETag validation cannot be reproduced
+  guidance: Suitable when workloads benefit from restart-stable enumeration and copy fidelity, and do not require AWS to reject stale per-part ETags with full InvalidPart fidelity.
+- id: s3_versioning_object_lock
+  name: Versioning and object-lock administration
+  compatibility: conditional
+  summary: Object versions, retention, and legal holds are exposed, but account-level Blob features must already be configured and bucket-level lock setup has no data-plane equivalent.
+  operations:
+  - GetBucketVersioning
+  - PutBucketVersioning
+  - ListObjectVersions
+  - GetObjectRetention
+  - PutObjectRetention
+  - GetObjectLegalHold
+  - PutObjectLegalHold
+  - GetObjectLockConfiguration
+  - PutObjectLockConfiguration
+  guidance: Validate the exact flow against real Azure and configure Blob versioning and immutability outside the proxy before adoption.
+- id: s3_metadata_compatibility_controls
+  name: Metadata and compatibility control round-trip
+  compatibility: conditional
+  summary: Bucket tags, versioning intent, ownership controls, public-access-block, and SSE-S3/AES256 intent persist in Azure container metadata and survive proxy restart; request payment and acceleration expose stable disabled contracts.
+  operations:
+  - GetBucketTagging
+  - PutBucketTagging
+  - DeleteBucketTagging
+  - GetBucketVersioning
+  - PutBucketVersioning
+  - GetBucketOwnershipControls
+  - PutBucketOwnershipControls
+  - DeleteBucketOwnershipControls
+  - GetPublicAccessBlock
+  - PutPublicAccessBlock
+  - DeletePublicAccessBlock
+  - GetBucketEncryption
+  - PutBucketEncryption
+  - DeleteBucketEncryption
+  - GetBucketRequestPayment
+  - PutBucketRequestPayment
+  - GetBucketAccelerateConfiguration
+  - PutBucketAccelerateConfiguration
+  design_gaps:
+  - No IAM / ACL / bucket-policy authorization model
+  - No enforceable server-side-encryption configuration surface
+  - Bucket sub-resource configs are not translated
+  guidance: Use these operations only when applications require configuration round-trip compatibility. Enforce authorization, public access, encryption keys, billing, and acceleration through Azure/operator controls; do not treat persisted intent as enforcement.
+- id: s3_policy_lifecycle_automation
+  name: Bucket policy, lifecycle, and event automation
+  compatibility: blocked
+  summary: Workloads that configure authorization, lifecycle, replication, website, logging, or notifications through S3 APIs cannot preserve those semantics.
+  operations:
+  - GetBucketPolicy
+  - PutBucketPolicy
+  - GetBucketLifecycleConfiguration
+  - PutBucketLifecycleConfiguration
+  - DeleteBucketLifecycle
+  - GetBucketWebsite
+  - PutBucketWebsite
+  - DeleteBucketWebsite
+  - GetBucketLogging
+  - PutBucketLogging
+  - GetBucketNotificationConfiguration
+  - PutBucketNotificationConfiguration
+  - GetBucketReplication
+  - PutBucketReplication
+  - DeleteBucketReplication
+  design_gaps:
+  - No IAM / ACL / bucket-policy authorization model
+  - Bucket sub-resource configs are not translated
+  guidance: Move these controls to Azure RBAC, Storage lifecycle policies, object replication, static website settings, and Event Grid before migration.

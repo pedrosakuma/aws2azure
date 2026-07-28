@@ -1,18 +1,21 @@
 service: s3
 operation: PutBucketEncryption
-azure_equivalent: "Conditional container-metadata update for SSE-S3 intent"
+azure_equivalent: Conditional container-metadata update for SSE-S3 intent
 status: partial
 sub_features:
-  - name: "SSE-S3 AES256 intent"
-    status: implemented
-    notes: "Accepts one AES256 rule without KMS key material or BucketKeyEnabled=true and persists it with bounded ETag/If-Match retry."
-  - name: "SSE-KMS"
-    status: unsupported
-    notes: "aws:kms, KMSMasterKeyID, and bucket keys return 501 NotImplemented."
-  - name: "SSE-C"
-    status: unsupported
-    notes: "Customer-provided keys remain unsupported on object operations; BlockedEncryptionTypes rules are recognized but return 501 because the proxy cannot enforce them."
+- name: SSE-S3 AES256 intent
+  status: implemented
+  notes: Accepts one AES256 rule without KMS key material or BucketKeyEnabled=true and persists it with bounded ETag/If-Match retry.
+- name: SSE-KMS
+  status: unsupported
+  notes: aws:kms, KMSMasterKeyID, and bucket keys return 501 NotImplemented.
+  disposition: by_design
+- name: SSE-C
+  status: unsupported
+  notes: Customer-provided keys remain unsupported on object operations; BlockedEncryptionTypes rules are recognized but return 501 because the proxy cannot enforce them.
+  disposition: by_design
 behavior_differences:
-  - "The AES256 document records application intent only and does not alter Azure Storage encryption configuration."
+- The AES256 document records application intent only and does not alter Azure Storage encryption configuration.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html
+disposition: by_design

@@ -1,15 +1,17 @@
 service: s3
 operation: GetBucketOwnershipControls
-azure_equivalent: "Container metadata (persisted compatibility intent only)"
+azure_equivalent: Container metadata (persisted compatibility intent only)
 status: partial
 sub_features:
-  - name: "persisted ownership mode"
-    status: implemented
-    notes: "Returns the stored BucketOwnerEnforced, BucketOwnerPreferred, or ObjectWriter document and survives proxy restart."
-  - name: "ACL ownership enforcement"
-    status: unsupported
-    notes: "The value is compatibility intent only; Azure RBAC/Shared Key/SAS authorization is unchanged and non-owner ACL grants remain unsupported."
+- name: persisted ownership mode
+  status: implemented
+  notes: Returns the stored BucketOwnerEnforced, BucketOwnerPreferred, or ObjectWriter document and survives proxy restart.
+- name: ACL ownership enforcement
+  status: unsupported
+  notes: The value is compatibility intent only; Azure RBAC/Shared Key/SAS authorization is unchanged and non-owner ACL grants remain unsupported.
+  disposition: by_design
 behavior_differences:
-  - "A missing intent returns 404 OwnershipControlsNotFoundError. A present intent is not an Azure authorization control."
+- A missing intent returns 404 OwnershipControlsNotFoundError. A present intent is not an Azure authorization control.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketOwnershipControls.html
+disposition: by_design

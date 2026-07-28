@@ -1,15 +1,17 @@
 service: s3
 operation: PutPublicAccessBlock
-azure_equivalent: "Conditional container-metadata update (persisted compatibility intent only)"
+azure_equivalent: Conditional container-metadata update (persisted compatibility intent only)
 status: partial
 sub_features:
-  - name: "four-flag configuration storage"
-    status: implemented
-    notes: "Persists the four boolean fields with bounded ETag/If-Match retry while preserving unrelated metadata; omitted fields default to false."
-  - name: "public-access enforcement"
-    status: unsupported
-    notes: "Does not change Azure container access level, account AllowBlobPublicAccess, RBAC, SAS, or network policy."
+- name: four-flag configuration storage
+  status: implemented
+  notes: Persists the four boolean fields with bounded ETag/If-Match retry while preserving unrelated metadata; omitted fields default to false.
+- name: public-access enforcement
+  status: unsupported
+  notes: Does not change Azure container access level, account AllowBlobPublicAccess, RBAC, SAS, or network policy.
+  disposition: by_design
 behavior_differences:
-  - "The AWS document round-trips for compatibility but has no enforcement effect."
+- The AWS document round-trips for compatibility but has no enforcement effect.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutPublicAccessBlock.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutPublicAccessBlock.html
+disposition: by_design

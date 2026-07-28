@@ -1,12 +1,14 @@
 service: s3
 operation: GetBucketWebsite
-azure_equivalent: "(no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)"
+azure_equivalent: (no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)
 status: unsupported
 sub_features:
-  - name: "configuration storage"
-    status: unsupported
-    notes: "Azure Static Websites are account-scoped and configured via the management plane; no per-container equivalent."
+- name: configuration storage
+  status: unsupported
+  notes: Azure Static Websites are account-scoped and configured via the management plane; no per-container equivalent.
+  disposition: by_design
 behavior_differences:
-  - "GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError."
+- GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+disposition: by_design

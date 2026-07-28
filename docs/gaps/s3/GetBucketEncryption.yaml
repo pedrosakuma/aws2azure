@@ -1,16 +1,18 @@
 service: s3
 operation: GetBucketEncryption
-azure_equivalent: "Container metadata for SSE-S3 intent; Azure Storage encryption remains account-managed"
+azure_equivalent: Container metadata for SSE-S3 intent; Azure Storage encryption remains account-managed
 status: partial
 sub_features:
-  - name: "SSE-S3 AES256 intent"
-    status: implemented
-    notes: "Returns a persisted AES256 ServerSideEncryptionConfiguration and survives proxy restart."
-  - name: "SSE-KMS and SSE-C"
-    status: unsupported
-    notes: "Customer-managed KMS identity and customer-provided key semantics are not representable through this data-plane proxy."
+- name: SSE-S3 AES256 intent
+  status: implemented
+  notes: Returns a persisted AES256 ServerSideEncryptionConfiguration and survives proxy restart.
+- name: SSE-KMS and SSE-C
+  status: unsupported
+  notes: Customer-managed KMS identity and customer-provided key semantics are not representable through this data-plane proxy.
+  disposition: by_design
 behavior_differences:
-  - "AES256 is compatibility intent only. Azure encrypts data at rest according to storage-account settings, not this metadata value."
-  - "When no explicit intent is stored, the response reports the AWS default SSE-S3 AES256 configuration."
+- AES256 is compatibility intent only. Azure encrypts data at rest according to storage-account settings, not this metadata value.
+- When no explicit intent is stored, the response reports the AWS default SSE-S3 AES256 configuration.
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketEncryption.html
+disposition: by_design

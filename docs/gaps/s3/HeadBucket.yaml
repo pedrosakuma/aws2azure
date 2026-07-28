@@ -1,13 +1,14 @@
 service: s3
 operation: HeadBucket
-azure_equivalent: "HEAD https://{account}.blob.core.windows.net/{container}?restype=container"
+azure_equivalent: HEAD https://{account}.blob.core.windows.net/{container}?restype=container
 status: implemented
 sub_features:
-  - name: x-amz-bucket-region
-    status: unsupported
-    gap: "Region is implicit in the configured Azure storage account; the header is not emitted."
+- name: x-amz-bucket-region
+  status: unsupported
+  gap: Region is implicit in the configured Azure storage account; the header is not emitted.
+  disposition: by_design
 behavior_differences:
-  - "404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none)."
+- '404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none).'
 references:
-  - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html
-  - https://learn.microsoft.com/rest/api/storageservices/get-container-properties
+- https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html
+- https://learn.microsoft.com/rest/api/storageservices/get-container-properties
