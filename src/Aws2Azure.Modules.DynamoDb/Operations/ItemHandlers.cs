@@ -108,7 +108,7 @@ internal static partial class ItemHandlers
                 "ExpressionAttributeNames/Values were supplied but no ConditionExpression references them.");
         }
 
-        if (!IsAllowedReturnValuesForWrite(req.ReturnValues, out var rvError))
+        if (!IsAllowedPutItemReturnValues(req.ReturnValues, out var returnValues, out var rvError))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvError);
         }
@@ -118,11 +118,11 @@ internal static partial class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
-        return PutItemCoreAsync(ctx, body, req, condition, rvccf, cosmos, sprocCtx, ct);
+        return PutItemCoreAsync(ctx, body, req, condition, returnValues, rvccf, cosmos, sprocCtx, ct);
     }
 
     private static async Task PutItemCoreAsync(
-        HttpContext ctx, byte[] body, PutItemRequest req, ConditionNode? condition, string rvccf,
+        HttpContext ctx, byte[] body, PutItemRequest req, ConditionNode? condition, string returnValues, string rvccf,
         CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
@@ -186,7 +186,7 @@ internal static partial class ItemHandlers
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
         var docLink = collLink + "/docs/" + id;
 
-        if (condition is null)
+        if (condition is null && returnValues == "NONE")
         {
             // Fast path: no condition → unconditional upsert (existing
             // behaviour, preserves the property that PutItem is idempotent
@@ -239,21 +239,20 @@ internal static partial class ItemHandlers
                 id,
                 docBuf.Memory,
                 condition,
+                returnValues,
+                rvccf,
                 ct).ConfigureAwait(false);
 
             if (sprocResult.Attempted)
             {
                 if (sprocResult.Success)
                 {
-                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
-                        ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
+                    await WritePutItemSuccessAsync(ctx, returnValues, sprocResult.OldItem).ConfigureAwait(false);
                     return;
                 }
                 if (sprocResult.ConditionFailed)
                 {
-                    // Condition failed - return ConditionalCheckFailedException
-                    // TODO: For ReturnValuesOnConditionCheckFailure, we'd need the old item from sproc
-                    await ConditionFailureResponder.WriteAsync(ctx, null, rvccf).ConfigureAwait(false);
+                    await ConditionFailureResponder.WriteAsync(ctx, sprocResult.OldItem, rvccf).ConfigureAwait(false);
                     return;
                 }
                 // Sproc failed with an error but mode is Preferred - fall through to retry loop
@@ -313,17 +312,20 @@ internal static partial class ItemHandlers
                 }
             }
 
-            bool pass;
-            try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
-            catch (ConditionEvaluationException cex)
+            if (condition is not null)
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
-                return;
-            }
-            if (!pass)
-            {
-                await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
-                return;
+                bool pass;
+                try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
+                catch (ConditionEvaluationException cex)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
+                    return;
+                }
+                if (!pass)
+                {
+                    await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
+                    return;
+                }
             }
 
             HttpResponseMessage writeResp;
@@ -373,8 +375,7 @@ internal static partial class ItemHandlers
                 }
             }
 
-            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new PutItemResponse(),
-                ItemJsonContext.Default.PutItemResponse).ConfigureAwait(false);
+            await WritePutItemSuccessAsync(ctx, returnValues, existingItem).ConfigureAwait(false);
             return;
         }
 
@@ -609,7 +610,7 @@ internal static partial class ItemHandlers
                 "ExpressionAttributeNames/Values were supplied but no ConditionExpression references them.");
         }
 
-        if (!IsAllowedReturnValuesForWrite(req.ReturnValues, out var rvError))
+        if (!IsAllowedDeleteItemReturnValues(req.ReturnValues, out var returnValues, out var rvError))
         {
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvError);
         }
@@ -619,11 +620,11 @@ internal static partial class ItemHandlers
             return CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", rvccfErr);
         }
 
-        return DeleteItemCoreAsync(ctx, req, condition, rvccf, cosmos, sprocCtx, ct);
+        return DeleteItemCoreAsync(ctx, req, condition, returnValues, rvccf, cosmos, sprocCtx, ct);
     }
 
     private static async Task DeleteItemCoreAsync(
-        HttpContext ctx, DeleteItemRequest req, ConditionNode? condition, string rvccf,
+        HttpContext ctx, DeleteItemRequest req, ConditionNode? condition, string returnValues, string rvccf,
         CosmosClient cosmos, SprocContext? sprocCtx, CancellationToken ct)
     {
         using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
@@ -655,7 +656,7 @@ internal static partial class ItemHandlers
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName + "/docs/" + id;
         var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(pk);
 
-        if (condition is null)
+        if (condition is null && returnValues == "NONE")
         {
             // Fast path: unconditional delete (existing behaviour). DDB's
             // DeleteItem is idempotent — a missing item is a success.
@@ -705,20 +706,20 @@ internal static partial class ItemHandlers
                 pk,
                 id,
                 condition,
+                returnValues,
+                rvccf,
                 ct).ConfigureAwait(false);
 
             if (sprocResult.Attempted)
             {
                 if (sprocResult.Success)
                 {
-                    await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
-                        ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+                    await WriteDeleteItemSuccessAsync(ctx, returnValues, sprocResult.OldItem).ConfigureAwait(false);
                     return;
                 }
                 if (sprocResult.ConditionFailed)
                 {
-                    // Condition failed - return ConditionalCheckFailedException
-                    await ConditionFailureResponder.WriteAsync(ctx, null, rvccf).ConfigureAwait(false);
+                    await ConditionFailureResponder.WriteAsync(ctx, sprocResult.OldItem, rvccf).ConfigureAwait(false);
                     return;
                 }
                 // Sproc failed with an error but mode is Preferred - fall through to retry loop
@@ -778,25 +779,27 @@ internal static partial class ItemHandlers
                 }
             }
 
-            bool pass;
-            try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
-            catch (ConditionEvaluationException cex)
+            if (condition is not null)
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
-                return;
-            }
-            if (!pass)
-            {
-                await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
-                return;
+                bool pass;
+                try { pass = ConditionEvaluator.Evaluate(condition, existingItem); }
+                catch (ConditionEvaluationException cex)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", cex.Message).ConfigureAwait(false);
+                    return;
+                }
+                if (!pass)
+                {
+                    await ConditionFailureResponder.WriteAsync(ctx, existingItem, rvccf).ConfigureAwait(false);
+                    return;
+                }
             }
 
             if (existingItem is null)
             {
                 // Condition passed against a missing item → nothing to
                 // delete. DDB returns success with no Attributes.
-                await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
-                    ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+                await WriteDeleteItemSuccessAsync(ctx, returnValues, null).ConfigureAwait(false);
                 return;
             }
 
@@ -832,8 +835,7 @@ internal static partial class ItemHandlers
                 return;
             }
 
-            await CosmosOpsShared.WriteJsonAsync(ctx, 200, new DeleteItemResponse(),
-                ItemJsonContext.Default.DeleteItemResponse).ConfigureAwait(false);
+            await WriteDeleteItemSuccessAsync(ctx, returnValues, existingItem).ConfigureAwait(false);
             return;
         }
 
@@ -850,5 +852,37 @@ internal static partial class ItemHandlers
             foreach (var v in vs) return v;
         }
         return null;
+    }
+
+    private static Task WritePutItemSuccessAsync(
+        HttpContext ctx,
+        string returnValues,
+        Dictionary<string, JsonElement>? oldItem)
+    {
+        var response = new PutItemResponse
+        {
+            Attributes = returnValues == "ALL_OLD" ? oldItem : null,
+        };
+        return CosmosOpsShared.WriteJsonAsync(
+            ctx,
+            StatusCodes.Status200OK,
+            response,
+            ItemJsonContext.Default.PutItemResponse);
+    }
+
+    private static Task WriteDeleteItemSuccessAsync(
+        HttpContext ctx,
+        string returnValues,
+        Dictionary<string, JsonElement>? oldItem)
+    {
+        var response = new DeleteItemResponse
+        {
+            Attributes = returnValues == "ALL_OLD" ? oldItem : null,
+        };
+        return CosmosOpsShared.WriteJsonAsync(
+            ctx,
+            StatusCodes.Status200OK,
+            response,
+            ItemJsonContext.Default.DeleteItemResponse);
     }
 }

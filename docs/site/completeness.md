@@ -9,8 +9,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 8 | 0 | 46 |
-| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
+| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 4 | 0 | 46 |
+| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 1 | 6 | 0 | 0 | 0 | 9 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 12 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
@@ -27,12 +27,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Feasible backlog
 
-- Sub-feature [DeleteItem](dynamodb.md#deleteitem) / ExpressionAttributeNames / ExpressionAttributeValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
-- Sub-feature [DeleteItem](dynamodb.md#deleteitem) / ReturnValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [DescribeTable](dynamodb.md#describetable) / ItemCount / TableSizeBytes (live metrics) — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
 - Sub-feature [DescribeTable](dynamodb.md#describetable) / GSI/LSI description — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
-- Sub-feature [PutItem](dynamodb.md#putitem) / ExpressionAttributeNames / ExpressionAttributeValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
-- Sub-feature [PutItem](dynamodb.md#putitem) / ReturnValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / Update — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / ReturnValuesOnConditionCheckFailure — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 
@@ -94,13 +90,13 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 0 | 7 | 0 |
+| 🟡 partial | 1 | 6 | 0 |
 | ⚪ stub | 0 | 0 | 0 |
 | ⛔ unsupported | 0 | 0 | 0 |
 
 ### Feasible backlog
 
-_No remaining feasible backlog is documented for this service._
+- Operation [ListShards](kinesis.md#listshards) — [#689](https://github.com/pedrosakuma/aws2azure/issues/689)
 
 ### Workload maturity
 
@@ -115,11 +111,8 @@ _No remaining feasible backlog is documented for this service._
 - Operation [DescribeStream](kinesis.md#describestream) — 🔵 by design
 - Operation [GetRecords](kinesis.md#getrecords) — 🔵 by design
 - Operation [GetShardIterator](kinesis.md#getsharditerator) — 🔵 by design
-- Operation [ListShards](kinesis.md#listshards) — 🔵 by design
 - Operation [PutRecord](kinesis.md#putrecord) — 🔵 by design
 - Operation [PutRecords](kinesis.md#putrecords) — 🔵 by design
-- Sub-feature [ListShards](kinesis.md#listshards) / AT_TIMESTAMP shard filter — 🔵 by design
-- Sub-feature [ListShards](kinesis.md#listshards) / AT_TRIM_HORIZON shard filter — 🔵 by design
 
 ## s3
 

@@ -104,10 +104,9 @@ internal sealed class UpdateItemRequest
 }
 
 /// <summary>
-/// PutItem response. DynamoDB normally returns an empty object except
-/// when <c>ReturnValues = ALL_OLD</c>. The proxy only supports NONE in
-/// this slice; the <c>Attributes</c> property is reserved for the
-/// future ReturnValues plumbing.
+/// PutItem response. DynamoDB returns an empty object unless
+/// <c>ReturnValues = ALL_OLD</c>, in which case <c>Attributes</c> carries
+/// the replaced item image.
 /// </summary>
 internal sealed class PutItemResponse
 {
