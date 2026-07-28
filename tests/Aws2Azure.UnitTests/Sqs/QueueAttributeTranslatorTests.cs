@@ -68,13 +68,14 @@ public class QueueAttributeTranslatorTests
     [Fact]
     public void To_sqs_emits_defaults_when_props_absent()
     {
-        var attrs = QueueAttributeTranslator.ToSqsAttributes(new QueueDescriptionProperties());
+        var attrs = QueueAttributeTranslator.ToSqsAttributes("q1", new QueueDescriptionProperties());
         Assert.Equal("30", attrs["VisibilityTimeout"]);
         Assert.Equal("345600", attrs["MessageRetentionPeriod"]);
         Assert.Equal("1048576", attrs["MaximumMessageSize"]);
         Assert.Equal("0", attrs["DelaySeconds"]);
         Assert.Equal("0", attrs["ReceiveMessageWaitTimeSeconds"]);
         Assert.False(attrs.ContainsKey("FifoQueue"));
+        Assert.Equal("arn:aws:sqs:us-east-1:000000000000:q1", attrs["QueueArn"]);
     }
 
     [Fact]
@@ -85,9 +86,31 @@ public class QueueAttributeTranslatorTests
             RequiresSession = true,
             RequiresDuplicateDetection = true,
         };
-        var attrs = QueueAttributeTranslator.ToSqsAttributes(props);
+        var attrs = QueueAttributeTranslator.ToSqsAttributes("orders.fifo", props);
         Assert.Equal("true", attrs["FifoQueue"]);
         Assert.Equal("true", attrs["ContentBasedDeduplication"]);
+    }
+
+    [Fact]
+    public void To_sqs_emits_runtime_counts_and_timestamps()
+    {
+        var props = new QueueDescriptionProperties
+        {
+            ApproximateNumberOfMessages = 5,
+            ActiveMessageCount = 3,
+            ScheduledMessageCount = 1,
+            DeadLetterMessageCount = 1,
+            CreatedAt = new System.DateTimeOffset(2026, 7, 28, 10, 0, 0, System.TimeSpan.Zero),
+            UpdatedAt = new System.DateTimeOffset(2026, 7, 28, 11, 0, 0, System.TimeSpan.Zero),
+        };
+
+        var attrs = QueueAttributeTranslator.ToSqsAttributes("counts", props);
+
+        Assert.Equal("3", attrs["ApproximateNumberOfMessages"]);
+        Assert.Equal("1", attrs["ApproximateNumberOfMessagesDelayed"]);
+        Assert.Equal("0", attrs["ApproximateNumberOfMessagesNotVisible"]);
+        Assert.Equal(props.CreatedAt!.Value.ToUnixTimeSeconds().ToString(), attrs["CreatedTimestamp"]);
+        Assert.Equal(props.UpdatedAt!.Value.ToUnixTimeSeconds().ToString(), attrs["LastModifiedTimestamp"]);
     }
 
     [Fact]

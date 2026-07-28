@@ -1,5 +1,6 @@
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Azure.Messaging.ServiceBus.Administration;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Sqs;
@@ -111,6 +112,117 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             var failure = Assert.Single(deleted.Failed);
             Assert.Equal("invalid", failure.Id);
             Assert.True(failure.SenderFault);
+        }
+        finally
+        {
+            if (queueUrl is not null)
+            {
+                try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task Queue_metadata_and_tags_round_trip_against_real_service_bus()
+    {
+        Skip.IfNot(fixture.ServiceBusConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
+
+        var queueName = "aws2azure-meta-" + Guid.NewGuid().ToString("N")[..10];
+        using var client = fixture.CreateSqsClient();
+        var admin = new ServiceBusAdministrationClient(fixture.CreateServiceBusConnectionString());
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        string? queueUrl = null;
+
+        try
+        {
+            var created = await client.CreateQueueAsync(new CreateQueueRequest
+            {
+                QueueName = queueName,
+                Attributes = new Dictionary<string, string>
+                {
+                    ["DelaySeconds"] = "3",
+                    ["ReceiveMessageWaitTimeSeconds"] = "2",
+                },
+                Tags = new Dictionary<string, string>
+                {
+                    ["env"] = "prod",
+                    ["owner"] = "platform",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+            queueUrl = created.QueueUrl;
+
+            var initialAttributes = await client.GetQueueAttributesAsync(new GetQueueAttributesRequest
+            {
+                QueueUrl = queueUrl,
+                AttributeNames = new List<string>
+                {
+                    "DelaySeconds",
+                    "ReceiveMessageWaitTimeSeconds",
+                    "QueueArn",
+                    "CreatedTimestamp",
+                    "LastModifiedTimestamp",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal("3", initialAttributes.Attributes["DelaySeconds"]);
+            Assert.Equal("2", initialAttributes.Attributes["ReceiveMessageWaitTimeSeconds"]);
+            Assert.Equal($"arn:aws:sqs:us-east-1:000000000000:{queueName}", initialAttributes.Attributes["QueueArn"]);
+            Assert.True(long.Parse(initialAttributes.Attributes["CreatedTimestamp"]) > 0);
+            Assert.True(long.Parse(initialAttributes.Attributes["LastModifiedTimestamp"]) > 0);
+
+            var initialTags = await client.ListQueueTagsAsync(new ListQueueTagsRequest
+            {
+                QueueUrl = queueUrl,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal("prod", initialTags.Tags["env"]);
+            Assert.Equal("platform", initialTags.Tags["owner"]);
+
+            await client.SetQueueAttributesAsync(new SetQueueAttributesRequest
+            {
+                QueueUrl = queueUrl,
+                Attributes = new Dictionary<string, string>
+                {
+                    ["ReceiveMessageWaitTimeSeconds"] = "5",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+
+            var updatedAttributes = await client.GetQueueAttributesAsync(new GetQueueAttributesRequest
+            {
+                QueueUrl = queueUrl,
+                AttributeNames = new List<string>
+                {
+                    "DelaySeconds",
+                    "ReceiveMessageWaitTimeSeconds",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal("3", updatedAttributes.Attributes["DelaySeconds"]);
+            Assert.Equal("5", updatedAttributes.Attributes["ReceiveMessageWaitTimeSeconds"]);
+
+            await client.TagQueueAsync(new TagQueueRequest
+            {
+                QueueUrl = queueUrl,
+                Tags = new Dictionary<string, string>
+                {
+                    ["team"] = "core",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+
+            await client.UntagQueueAsync(new UntagQueueRequest
+            {
+                QueueUrl = queueUrl,
+                TagKeys = new List<string> { "env" },
+            }, timeout.Token).ConfigureAwait(false);
+
+            var finalTags = await client.ListQueueTagsAsync(new ListQueueTagsRequest
+            {
+                QueueUrl = queueUrl,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.False(finalTags.Tags.ContainsKey("env"));
+            Assert.Equal("platform", finalTags.Tags["owner"]);
+            Assert.Equal("core", finalTags.Tags["team"]);
+
+            var azureQueue = await admin.GetQueueAsync(queueName, timeout.Token).ConfigureAwait(false);
+            Assert.False(string.IsNullOrWhiteSpace(azureQueue.Value.UserMetadata));
         }
         finally
         {

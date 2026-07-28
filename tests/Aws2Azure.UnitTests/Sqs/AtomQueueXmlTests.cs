@@ -81,6 +81,34 @@ public class AtomQueueXmlTests
     }
 
     [Fact]
+    public void Reader_parses_count_details()
+    {
+        var wrappedXml =
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<entry xmlns=\"" + AtomNs + "\">" +
+              "<title>q1</title>" +
+              "<content type=\"application/xml\">" +
+                "<QueueDescription xmlns=\"" + SbNs + "\">" +
+                  "<MessageCount>5</MessageCount>" +
+                  "<CountDetails>" +
+                    "<ActiveMessageCount>3</ActiveMessageCount>" +
+                    "<ScheduledMessageCount>1</ScheduledMessageCount>" +
+                    "<DeadLetterMessageCount>1</DeadLetterMessageCount>" +
+                  "</CountDetails>" +
+                "</QueueDescription>" +
+              "</content>" +
+            "</entry>";
+
+        var entry = AtomQueueXmlReader.ParseQueueEntry(wrappedXml);
+
+        Assert.NotNull(entry);
+        Assert.Equal(5, entry!.Properties.ApproximateNumberOfMessages);
+        Assert.Equal(3, entry.Properties.ActiveMessageCount);
+        Assert.Equal(1, entry.Properties.ScheduledMessageCount);
+        Assert.Equal(1, entry.Properties.DeadLetterMessageCount);
+    }
+
+    [Fact]
     public void Feed_parser_returns_every_queue_entry()
     {
         var feedXml =

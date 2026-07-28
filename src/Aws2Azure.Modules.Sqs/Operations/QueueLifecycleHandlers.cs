@@ -58,6 +58,18 @@ internal static class QueueLifecycleHandlers
 
         var attributes = SqsQueueAttributeParser.ExtractAttributes(
             parsed, "Attribute", contiguousQueryIndexes: true, jsonAttributesWin: true);
+        if (!SqsQueueTagStore.TryParseCreateQueueTags(parsed, out var tags, out var tagParseError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("tags", tagParseError ?? "Tags are invalid.")).ConfigureAwait(false);
+            return;
+        }
+        if (SqsQueueTagStore.ValidateTagMap(tags) is { } tagValidationError)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("tags", tagValidationError)).ConfigureAwait(false);
+            return;
+        }
         var err = QueueAttributeTranslator.ToServiceBusProperties(queueName, attributes, out var props);
         if (err.IsError)
         {
@@ -65,6 +77,16 @@ internal static class QueueLifecycleHandlers
                 ? SqsErrorMapping.InvalidAttributeName(err.AttributeName)
                 : SqsErrorMapping.InvalidAttributeValue(err.AttributeName, err.Message);
             await WriteErrorAsync(context, parsed.Protocol, mapping).ConfigureAwait(false);
+            return;
+        }
+
+        if (!TryApplyProxyMetadata(
+                props,
+                tags,
+                out var metadataError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InvalidParameterValue("tags", metadataError!)).ConfigureAwait(false);
             return;
         }
 
@@ -97,6 +119,8 @@ internal static class QueueLifecycleHandlers
             }
         }
 
+        SqsQueueMetadataCache.Set(sb, queueName, props);
+
         await SqsResponseWriter.WriteCreateQueueAsync(context, parsed.Protocol,
             QueueUrlBuilder.Build(context, queueName)).ConfigureAwait(false);
     }
@@ -110,6 +134,7 @@ internal static class QueueLifecycleHandlers
         var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
         if (entry is null) return false;
 
+        var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
         return SecondsClose(requested.LockDurationSeconds,
                             entry.Properties.LockDurationSeconds,
                             QueueAttributeTranslator.DefaultVisibilityTimeoutSeconds)
@@ -117,8 +142,16 @@ internal static class QueueLifecycleHandlers
                             entry.Properties.DefaultMessageTimeToLiveSeconds,
                             QueueAttributeTranslator.DefaultMessageRetentionPeriodSeconds)
             && MaxMessageSizeMatches(requested.MaxMessageSizeBytes, entry.Properties.MaxMessageSizeBytes)
+            && (requested.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds)
+                == (metadata.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds)
+            && (requested.ReceiveMessageWaitTimeSeconds ?? QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds)
+                == (metadata.ReceiveMessageWaitTimeSeconds ?? QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds)
             && (requested.RequiresSession ?? false) == (entry.Properties.RequiresSession ?? false)
-            && (requested.RequiresDuplicateDetection ?? false) == (entry.Properties.RequiresDuplicateDetection ?? false);
+            && (requested.RequiresDuplicateDetection ?? false) == (entry.Properties.RequiresDuplicateDetection ?? false)
+            && string.Equals(requested.ForwardDeadLetteredMessagesTo ?? string.Empty,
+                             entry.Properties.ForwardDeadLetteredMessagesTo ?? string.Empty,
+                             StringComparison.Ordinal)
+            && (requested.MaxDeliveryCount ?? 10) == (entry.Properties.MaxDeliveryCount ?? 10);
     }
 
     /// <summary>
@@ -173,6 +206,7 @@ internal static class QueueLifecycleHandlers
                 SqsErrorMapping.FromServiceBus(response)).ConfigureAwait(false);
             return;
         }
+        SqsQueueMetadataCache.Invalidate(sb, queueName);
         await SqsResponseWriter.WriteDeleteQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
     }
 
@@ -347,8 +381,13 @@ internal static class QueueLifecycleHandlers
             return;
         }
 
+        var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
+        entry.Properties.DelaySeconds = metadata.DelaySeconds;
+        entry.Properties.ReceiveMessageWaitTimeSeconds = metadata.ReceiveMessageWaitTimeSeconds;
+        SqsQueueMetadataCache.Set(sb, queueName, metadata);
+
         var requested = ExtractAttributeNames(parsed, "AttributeName");
-        var allAttributes = QueueAttributeTranslator.ToSqsAttributes(entry.Properties);
+        var allAttributes = QueueAttributeTranslator.ToSqsAttributes(queueName, entry.Properties);
         var filtered = FilterAttributes(allAttributes, requested);
 
         await SqsResponseWriter.WriteGetQueueAttributesAsync(context, parsed.Protocol, filtered)
@@ -430,4 +469,29 @@ internal static class QueueLifecycleHandlers
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
         SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
+
+    private static bool TryApplyProxyMetadata(
+        QueueDescriptionProperties props,
+        IReadOnlyDictionary<string, string> tags,
+        out string? error)
+    {
+        var metadata = new SqsQueueTagStore.QueueMetadata(new Dictionary<string, string>(tags, StringComparer.Ordinal))
+        {
+            DelaySeconds = NormalizeStoredValue(props.DelaySeconds),
+            ReceiveMessageWaitTimeSeconds = NormalizeStoredValue(props.ReceiveMessageWaitTimeSeconds),
+        };
+
+        if (!SqsQueueTagStore.TryEncodeMetadata(metadata, out var userMetadata))
+        {
+            error = $"Serialized queue metadata exceeds the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters.";
+            return false;
+        }
+
+        props.UserMetadata = string.IsNullOrEmpty(userMetadata) ? null : userMetadata;
+        error = null;
+        return true;
+    }
+
+    private static int? NormalizeStoredValue(int? value)
+        => value is > 0 ? value : null;
 }

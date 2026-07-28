@@ -151,10 +151,11 @@ internal static class QueueAttributeTranslator
     /// Converts a parsed Atom <c>QueueDescription</c> back into the SQS
     /// flat attribute bag returned by <c>GetQueueAttributes</c>.
     /// </summary>
-    public static IReadOnlyDictionary<string, string> ToSqsAttributes(QueueDescriptionProperties props)
+    public static IReadOnlyDictionary<string, string> ToSqsAttributes(string queueName, QueueDescriptionProperties props)
     {
         var d = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        var approximateVisible = props.ActiveMessageCount ?? props.ApproximateNumberOfMessages;
         d["VisibilityTimeout"] = ((int)(props.LockDurationSeconds ?? DefaultVisibilityTimeoutSeconds))
             .ToString(CultureInfo.InvariantCulture);
         d["MessageRetentionPeriod"] = ((int)(props.DefaultMessageTimeToLiveSeconds ?? DefaultMessageRetentionPeriodSeconds))
@@ -191,10 +192,39 @@ internal static class QueueAttributeTranslator
         // SQS exposes ApproximateNumberOfMessages, CreatedTimestamp,
         // LastModifiedTimestamp, QueueArn. CreatedTimestamp / LastModifiedTimestamp
         // come from the Atom <entry> envelope, set by the caller.
-        if (props.ApproximateNumberOfMessages is { } cnt)
+        if (approximateVisible is { } cnt)
         {
             d["ApproximateNumberOfMessages"] = cnt.ToString(CultureInfo.InvariantCulture);
         }
+        if (props.ScheduledMessageCount is { } delayed)
+        {
+            d["ApproximateNumberOfMessagesDelayed"] = delayed.ToString(CultureInfo.InvariantCulture);
+        }
+        if (props.ApproximateNumberOfMessages is { } total &&
+            approximateVisible is { } visible)
+        {
+            var notVisible = total
+                - visible
+                - (props.ScheduledMessageCount ?? 0)
+                - (props.DeadLetterMessageCount ?? 0)
+                - (props.TransferMessageCount ?? 0)
+                - (props.TransferDeadLetterMessageCount ?? 0);
+            if (notVisible < 0)
+            {
+                notVisible = 0;
+            }
+
+            d["ApproximateNumberOfMessagesNotVisible"] = notVisible.ToString(CultureInfo.InvariantCulture);
+        }
+        if (props.CreatedAt is { } createdAt)
+        {
+            d["CreatedTimestamp"] = createdAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        }
+        if (props.UpdatedAt is { } updatedAt)
+        {
+            d["LastModifiedTimestamp"] = updatedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        }
+        d["QueueArn"] = "arn:aws:sqs:us-east-1:" + QueueUrlBuilder.PlaceholderAccountId + ":" + queueName;
         return d;
     }
 
@@ -224,6 +254,11 @@ internal static class QueueAttributeTranslator
             RequiresSession                    = patch.RequiresSession                    ?? existing.RequiresSession,
             RequiresDuplicateDetection         = patch.RequiresDuplicateDetection         ?? existing.RequiresDuplicateDetection,
             ApproximateNumberOfMessages        = existing.ApproximateNumberOfMessages,
+            ActiveMessageCount                 = existing.ActiveMessageCount,
+            ScheduledMessageCount              = existing.ScheduledMessageCount,
+            DeadLetterMessageCount             = existing.DeadLetterMessageCount,
+            TransferMessageCount               = existing.TransferMessageCount,
+            TransferDeadLetterMessageCount     = existing.TransferDeadLetterMessageCount,
             CreatedAt                          = existing.CreatedAt,
             UpdatedAt                          = existing.UpdatedAt,
             UserMetadata                       = existing.UserMetadata,
@@ -396,6 +431,11 @@ internal sealed class QueueDescriptionProperties
     public bool? RequiresSession { get; set; }
     public bool? RequiresDuplicateDetection { get; set; }
     public long? ApproximateNumberOfMessages { get; set; }
+    public long? ActiveMessageCount { get; set; }
+    public long? ScheduledMessageCount { get; set; }
+    public long? DeadLetterMessageCount { get; set; }
+    public long? TransferMessageCount { get; set; }
+    public long? TransferDeadLetterMessageCount { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
     public string? UserMetadata { get; set; }

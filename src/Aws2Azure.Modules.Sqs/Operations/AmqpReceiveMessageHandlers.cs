@@ -127,7 +127,21 @@ internal static partial class AmqpReceiveMessageHandlers
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiveLimitInvalid()).ConfigureAwait(false);
             return;
         }
-        if (!AmqpReceiveParameters.TryParseBoundedInt(parsed, "WaitTimeSeconds", min: 0, max: MaxWaitTimeSeconds, defaultValue: 0, out var waitSeconds))
+        var defaultWaitSeconds = QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds;
+        if (!parsed.Parameters.ContainsKey("WaitTimeSeconds") && management is not null)
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(management, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            defaultWaitSeconds = lookup.Metadata.ReceiveMessageWaitTimeSeconds
+                ?? QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds;
+        }
+
+        if (!AmqpReceiveParameters.TryParseBoundedInt(parsed, "WaitTimeSeconds", min: 0, max: MaxWaitTimeSeconds, defaultValue: defaultWaitSeconds, out var waitSeconds))
         {
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiveWaitTimeInvalid()).ConfigureAwait(false);
             return;

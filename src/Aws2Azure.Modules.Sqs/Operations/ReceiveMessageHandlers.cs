@@ -79,7 +79,21 @@ internal static class ReceiveMessageHandlers
             return;
         }
 
-        if (!TryParseBoundedInt(parsed, "WaitTimeSeconds", min: 0, max: MaxWaitTimeSeconds, defaultValue: 0, out var waitSeconds))
+        var defaultWaitSeconds = QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds;
+        if (!parsed.Parameters.ContainsKey("WaitTimeSeconds"))
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(sb, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            defaultWaitSeconds = lookup.Metadata.ReceiveMessageWaitTimeSeconds
+                ?? QueueAttributeTranslator.DefaultReceiveMessageWaitTimeSeconds;
+        }
+
+        if (!TryParseBoundedInt(parsed, "WaitTimeSeconds", min: 0, max: MaxWaitTimeSeconds, defaultValue: defaultWaitSeconds, out var waitSeconds))
         {
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiveWaitTimeInvalid()).ConfigureAwait(false);
             return;

@@ -50,16 +50,24 @@ internal static class AmqpSendMessageHandlers
         SqsParseResult parsed,
         IAmqpSenderProvider senders,
         CancellationToken ct) =>
+        HandleAsync(context, parsed, senders, management: null, ct);
+
+    public static Task HandleAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        IAmqpSenderProvider senders,
+        ServiceBusClient? management,
+        CancellationToken ct) =>
         parsed.Operation switch
         {
-            SqsOperation.SendMessage => SendMessageAsync(context, parsed, senders, ct),
+            SqsOperation.SendMessage => SendMessageAsync(context, parsed, senders, management, ct),
             _                         => SendMessageHandlers.WriteErrorAsync(
                                             context, parsed.Protocol,
                                             SqsErrorMapping.NotImplemented(parsed.Operation)),
         };
 
     private static async Task SendMessageAsync(
-        HttpContext context, SqsParseResult parsed, IAmqpSenderProvider senders, CancellationToken ct)
+        HttpContext context, SqsParseResult parsed, IAmqpSenderProvider senders, ServiceBusClient? management, CancellationToken ct)
     {
         var queueName = SendMessageHandlers.ExtractQueueName(parsed);
         if (queueName is null)
@@ -77,7 +85,20 @@ internal static class AmqpSendMessageHandlers
         }
         var bodyBytes = Encoding.UTF8.GetBytes(body);
 
-        if (!SendMessageHandlers.TryParseDelaySeconds(parsed, out var delaySeconds, out var delayError))
+        var defaultDelaySeconds = QueueAttributeTranslator.DefaultDelaySeconds;
+        if (!parsed.Parameters.ContainsKey("DelaySeconds") && management is not null)
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(management, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            defaultDelaySeconds = lookup.Metadata.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds;
+        }
+
+        if (!SendMessageHandlers.TryParseDelaySeconds(parsed, defaultDelaySeconds, out var delaySeconds, out var delayError))
         {
             await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol, delayError!.Value).ConfigureAwait(false);
             return;

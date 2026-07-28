@@ -21,7 +21,7 @@ public class RedrivePolicyTranslatorTests
         Assert.Equal("my-dlq", props.ForwardDeadLetteredMessagesTo);
         Assert.Equal(5, props.MaxDeliveryCount);
 
-        var sqsRound = QueueAttributeTranslator.ToSqsAttributes(props);
+        var sqsRound = QueueAttributeTranslator.ToSqsAttributes("source", props);
         Assert.True(sqsRound.TryGetValue("RedrivePolicy", out var json));
         Assert.Contains("\"maxReceiveCount\":5", json);
         Assert.Contains(

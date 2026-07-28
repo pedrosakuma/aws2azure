@@ -114,12 +114,6 @@ internal static class SendMessageHandlers
         }
         var bodyBytes = Encoding.UTF8.GetBytes(body);
 
-        if (!TryParseDelaySeconds(parsed, out var delaySeconds, out var delayError))
-        {
-            await WriteErrorAsync(context, parsed.Protocol, delayError!.Value).ConfigureAwait(false);
-            return;
-        }
-
         var attrResult = ParseMessageAttributes(parsed, "MessageAttribute");
         if (attrResult.IsError)
         {
@@ -143,6 +137,26 @@ internal static class SendMessageHandlers
             await WriteErrorAsync(context, parsed.Protocol, fifoError).ConfigureAwait(false);
             return;
         }
+
+        var defaultDelaySeconds = QueueAttributeTranslator.DefaultDelaySeconds;
+        if (!parsed.Parameters.ContainsKey("DelaySeconds"))
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(sb, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            defaultDelaySeconds = lookup.Metadata.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds;
+        }
+
+        if (!TryParseDelaySeconds(parsed, defaultDelaySeconds, out var delaySeconds, out var delayError))
+        {
+            await WriteErrorAsync(context, parsed.Protocol, delayError!.Value).ConfigureAwait(false);
+            return;
+        }
+
         var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
 
         // Mint a stable idempotency key BEFORE entering the HTTP retry path
@@ -245,6 +259,18 @@ internal static class SendMessageHandlers
             return;
         }
 
+        if (NeedsQueueDefaultDelay(entries))
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(sb, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            ApplyQueueDefaultDelay(entries, lookup.Metadata.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds);
+        }
+
         // Mint stable per-entry idempotency keys BEFORE the HTTP retry
         // path so every retry of the same batch carries the same
         // MessageId per entry. Same rationale as the single-send path;
@@ -296,7 +322,7 @@ internal static class SendMessageHandlers
 
     internal sealed record BatchEntry(
         string Id, byte[] BodyBytes,
-        string? GroupId, string? DeduplicationId, int DelaySeconds,
+        string? GroupId, string? DeduplicationId, int DelaySeconds, bool DelaySecondsSpecified,
         Dictionary<string, SqsMessageAttribute> Attributes);
 
     internal static List<BatchEntry>? ParseBatchEntriesQuery(IReadOnlyDictionary<string, string> parameters)
@@ -360,7 +386,7 @@ internal static class SendMessageHandlers
             if (attrResult.IsError) return null;
 
             entries.Add(new BatchEntry(
-                id, Encoding.UTF8.GetBytes(body), groupId, dedupId, delay,
+                id, Encoding.UTF8.GetBytes(body), groupId, dedupId, delay, bag.ContainsKey("DelaySeconds"),
                 new Dictionary<string, SqsMessageAttribute>(attrResult.Attributes!, StringComparer.Ordinal)));
         }
         return entries;
@@ -395,7 +421,14 @@ internal static class SendMessageHandlers
             foreach (var kv in attrResult.Attributes!) attrs[kv.Key] = kv.Value;
         }
 
-        value = new BatchEntry(id, Encoding.UTF8.GetBytes(body), groupId, dedupId, delay, attrs);
+        value = new BatchEntry(
+            id,
+            Encoding.UTF8.GetBytes(body),
+            groupId,
+            dedupId,
+            delay,
+            e.TryGetProperty("DelaySeconds", out _),
+            attrs);
         return true;
     }
 
@@ -522,9 +555,9 @@ internal static class SendMessageHandlers
         SqsParameterHelpers.TryGetParam(parsed, key, out value);
 
     internal static bool TryParseDelaySeconds(
-        SqsParseResult parsed, out int delaySeconds, out SqsErrorMapping.Mapping? error)
+        SqsParseResult parsed, int defaultValue, out int delaySeconds, out SqsErrorMapping.Mapping? error)
     {
-        delaySeconds = 0;
+        delaySeconds = defaultValue;
         error = null;
         if (!parsed.Parameters.TryGetValue("DelaySeconds", out var raw) || string.IsNullOrEmpty(raw))
         {
@@ -539,6 +572,32 @@ internal static class SendMessageHandlers
         }
         delaySeconds = v;
         return true;
+    }
+
+    internal static bool NeedsQueueDefaultDelay(IReadOnlyList<BatchEntry> entries)
+    {
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (!entries[i].DelaySecondsSpecified)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static void ApplyQueueDefaultDelay(List<BatchEntry> entries, int defaultDelaySeconds)
+    {
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i].DelaySecondsSpecified)
+            {
+                continue;
+            }
+
+            entries[i] = entries[i] with { DelaySeconds = defaultDelaySeconds };
+        }
     }
 
     internal static SqsMessageAttributeParser.ParseResult ParseMessageAttributes(

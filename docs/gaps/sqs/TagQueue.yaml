@@ -1,6 +1,6 @@
 service: sqs
 operation: TagQueue
-azure_equivalent: GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.
+azure_equivalent: GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.
 status: partial
 sub_features:
 - name: Queue existence validation
@@ -13,17 +13,16 @@ sub_features:
   status: implemented
   notes: Enforces at most 50 tags, key length 1..128, and value length 0..256 before writing.
 - name: UserMetadata capacity guard
-  status: partial
-  notes: Requests whose compact base64 blob would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Requests whose compact base64 metadata envelope would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue.
 behavior_differences:
-- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. This preserves AWS tag keys and values exactly but consumes the queue's native UserMetadata field.
+- Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. The same envelope also carries any persisted queue-default DelaySeconds / ReceiveMessageWaitTimeSeconds values.
 - If QueueDescription.UserMetadata is already non-empty and does not contain aws2azure's tag blob, TagQueue fails with InvalidParameterValue instead of overwriting operator-owned metadata.
 - TagQueue uses the Service Bus management ETag from GET as the PUT If-Match value. A 412 Precondition Failed triggers a bounded refetch/remerge retry so concurrent queue property changes are not clobbered.
 - Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so valid SQS tag sets near the 50-tag / 128-key / 256-value maximum may be rejected when the serialized blob does not fit.
-- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_TagQueue.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api
-disposition: by_design
+disposition: feasible_backlog
+tracking_issue: '#693'
