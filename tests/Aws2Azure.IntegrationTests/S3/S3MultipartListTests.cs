@@ -2,8 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Xml.Linq;
-using Amazon.S3;
-using Amazon.S3.Model;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.S3;
@@ -78,50 +76,37 @@ public class S3MultipartListTests
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
 
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
-        using var client = CreateClient();
-        await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
+        await PutBucket(bucket);
 
-        var first = await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
-        {
-            BucketName = bucket,
-            Key = "a.txt",
-        }).ConfigureAwait(false);
-        var second = await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
-        {
-            BucketName = bucket,
-            Key = "é.txt",
-        }).ConfigureAwait(false);
-        var third = await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
-        {
-            BucketName = bucket,
-            Key = "😀.txt",
-        }).ConfigureAwait(false);
+        var firstUploadId = await Initiate(bucket, "a.txt");
+        var secondUploadId = await Initiate(bucket, "é.txt");
+        var thirdUploadId = await Initiate(bucket, "😀.txt");
 
         await _fx.RestartProxyAsync().ConfigureAwait(false);
 
-        var page1 = await client.ListMultipartUploadsAsync(new ListMultipartUploadsRequest
-        {
-            BucketName = bucket,
-            MaxUploads = 2,
-        }).ConfigureAwait(false);
+        using var p1 = await SendAsync(HttpMethod.Get, $"/{bucket}?uploads&max-uploads=2", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, p1.StatusCode);
+        var d1 = XDocument.Parse(await p1.Content.ReadAsStringAsync());
+        var page1 = ParseUploads(d1);
 
-        Assert.True(page1.IsTruncated);
-        Assert.Equal(new[] { "a.txt", "é.txt" }, page1.MultipartUploads.Select(u => u.Key).ToArray());
-        Assert.Equal("é.txt", page1.NextKeyMarker);
-        Assert.Equal(second.UploadId, page1.NextUploadIdMarker);
+        Assert.Equal("true", d1.Root!.Element(S3Ns + "IsTruncated")!.Value);
+        Assert.Equal(new[] { "a.txt", "é.txt" }, page1.Select(u => u.Key).ToArray());
+        Assert.Equal("é.txt", d1.Root!.Element(S3Ns + "NextKeyMarker")!.Value);
+        Assert.Equal(secondUploadId, d1.Root!.Element(S3Ns + "NextUploadIdMarker")!.Value);
 
-        var page2 = await client.ListMultipartUploadsAsync(new ListMultipartUploadsRequest
-        {
-            BucketName = bucket,
-            MaxUploads = 2,
-            KeyMarker = page1.NextKeyMarker,
-            UploadIdMarker = page1.NextUploadIdMarker,
-        }).ConfigureAwait(false);
+        var nextKeyMarker = Uri.EscapeDataString(d1.Root!.Element(S3Ns + "NextKeyMarker")!.Value);
+        var nextUploadIdMarker = Uri.EscapeDataString(d1.Root!.Element(S3Ns + "NextUploadIdMarker")!.Value);
+        using var p2 = await SendAsync(HttpMethod.Get,
+            $"/{bucket}?uploads&max-uploads=2&key-marker={nextKeyMarker}&upload-id-marker={nextUploadIdMarker}",
+            Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, p2.StatusCode);
+        var d2 = XDocument.Parse(await p2.Content.ReadAsStringAsync());
+        var page2 = ParseUploads(d2);
 
-        Assert.False(page2.IsTruncated);
-        Assert.Equal(new[] { "😀.txt" }, page2.MultipartUploads.Select(u => u.Key).ToArray());
-        Assert.Equal(third.UploadId, page2.MultipartUploads.Single().UploadId);
-        Assert.DoesNotContain(page2.MultipartUploads, u => u.UploadId == first.UploadId && u.Key == first.Key);
+        Assert.Equal("false", d2.Root!.Element(S3Ns + "IsTruncated")!.Value);
+        Assert.Equal(new[] { "😀.txt" }, page2.Select(u => u.Key).ToArray());
+        Assert.Equal(thirdUploadId, page2.Single().UploadId);
+        Assert.DoesNotContain(page2, u => u.UploadId == firstUploadId && u.Key == "a.txt");
     }
 
     [SkippableFact]
@@ -130,11 +115,10 @@ public class S3MultipartListTests
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
 
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
-        using var client = CreateClient();
-        await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }).ConfigureAwait(false);
-        await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest { BucketName = bucket, Key = "logs/2026/a.txt" }).ConfigureAwait(false);
-        await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest { BucketName = bucket, Key = "logs/2027/b.txt" }).ConfigureAwait(false);
-        await client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest { BucketName = bucket, Key = "other/c.txt" }).ConfigureAwait(false);
+        await PutBucket(bucket);
+        await Initiate(bucket, "logs/2026/a.txt");
+        await Initiate(bucket, "logs/2027/b.txt");
+        await Initiate(bucket, "other/c.txt");
 
         using var resp = await SendAsync(HttpMethod.Get, $"/{bucket}?uploads&prefix=logs/&delimiter=/", Array.Empty<byte>());
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
@@ -186,25 +170,29 @@ public class S3MultipartListTests
         Assert.Contains("<Code>NoSuchBucket</Code>", await resp.Content.ReadAsStringAsync());
     }
 
-    private AmazonS3Client CreateClient() => new(
-        _fx.AccessKeyId,
-        _fx.Secret,
-        new AmazonS3Config
-        {
-            ServiceURL = _fx.Client.BaseAddress!.ToString(),
-            ForcePathStyle = true,
-            UseHttp = true,
-            AuthenticationRegion = "us-east-1",
-            MaxErrorRetry = 0,
-        });
-
     private async Task<string> Initiate(string bucket, string key)
     {
-        using var resp = await SendAsync(HttpMethod.Post, $"/{bucket}/{key}?uploads", Array.Empty<byte>());
+        using var resp = await SendAsync(HttpMethod.Post, $"/{bucket}/{EncodeKeyPath(key)}?uploads", Array.Empty<byte>());
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         return XDocument.Parse(await resp.Content.ReadAsStringAsync())
             .Root!.Element(S3Ns + "UploadId")!.Value;
     }
+
+    /// <summary>
+    /// Percent-encodes each path segment of an S3 key individually so keys
+    /// containing non-ASCII characters (e.g. accented letters, emoji) survive
+    /// <see cref="Uri"/> construction, while preserving '/' as a literal path
+    /// separator for nested keys.
+    /// </summary>
+    private static string EncodeKeyPath(string key)
+        => string.Join('/', key.Split('/').Select(Uri.EscapeDataString));
+
+    private static List<(string Key, string UploadId)> ParseUploads(XDocument doc)
+        => doc.Root!.Elements(S3Ns + "Upload")
+            .Select(u => (
+                Key: u.Element(S3Ns + "Key")!.Value,
+                UploadId: u.Element(S3Ns + "UploadId")!.Value))
+            .ToList();
 
     private async Task UploadPart(string bucket, string key, string uploadId, int partNumber, byte[] body)
     {

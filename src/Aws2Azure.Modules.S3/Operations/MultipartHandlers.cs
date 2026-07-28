@@ -1019,16 +1019,24 @@ internal static class MultipartHandlers
         UploadIdCodec.UploadToken token,
         CancellationToken cancellationToken)
     {
-        if (!token.LegacyLayout)
-        {
-            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
-            return false;
-        }
-
+        // The state record for this upload was not found. That is normal for
+        // (a) a legacy pre-migration token that never had a durable record, or
+        // (b) an upload whose bucket was deleted (cascading cleanup already
+        // removed the record along with the container). Distinguish those from
+        // "this upload never existed / already completed or aborted" by
+        // checking whether the bucket/container itself still exists — a
+        // missing container must surface as NoSuchBucket regardless of the
+        // token's layout, not as NoSuchUpload.
         var generation = await stateStore.ReadContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
         if (generation.Kind == MultipartUploadStateStore.ResultKind.Success)
         {
-            return true;
+            if (token.LegacyLayout)
+            {
+                return true;
+            }
+
+            await S3ErrorMapping.WriteAsync(ctx, NoSuchUpload()).ConfigureAwait(false);
+            return false;
         }
 
         await S3ErrorMapping.WriteAsync(
