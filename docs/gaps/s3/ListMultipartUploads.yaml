@@ -1,7 +1,7 @@
 service: s3
 operation: ListMultipartUploads
 azure_equivalent: "Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)"
-status: implemented
+status: partial
 sub_features:
   - name: deterministic-enumeration
     status: implemented

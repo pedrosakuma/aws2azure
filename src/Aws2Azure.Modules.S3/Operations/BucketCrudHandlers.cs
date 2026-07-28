@@ -116,13 +116,13 @@ internal static class BucketCrudHandlers
             return;
         }
 
-        var generation = ReadHeader(response, "ETag");
-        if (!string.IsNullOrEmpty(generation))
+        var stateStore = new MultipartUploadStateStore(blob);
+        var generation = await stateStore.ReadOrCreateContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
+        if (generation.Kind == MultipartUploadStateStore.ResultKind.Success && !string.IsNullOrEmpty(generation.Generation))
         {
-            var stateStore = new MultipartUploadStateStore(blob);
             try
             {
-                await stateStore.DeleteStaleBucketRecordsAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);
+                await stateStore.DeleteStaleBucketRecordsAsync(bucket, generation.Generation!, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -167,24 +167,28 @@ internal static class BucketCrudHandlers
             return;
         }
 
-        var generation = ReadHeader(probe, "ETag");
-        if (string.IsNullOrEmpty(generation))
+        var ifMatch = ReadHeader(probe, "ETag");
+        var stateStore = new MultipartUploadStateStore(blob);
+        var generation = BlobClient.ReadContainerMetadata(probe).TryGetValue("aws2azuregeneration", out var marker)
+            && !string.IsNullOrEmpty(marker)
+            ? marker
+            : ifMatch;
+        if (string.IsNullOrEmpty(generation) || string.IsNullOrEmpty(ifMatch))
         {
             await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
                 StatusCodes.Status500InternalServerError,
                 "InternalError",
-                "aws2azure: Azure container probe did not return an ETag for DeleteBucket generation binding.")).ConfigureAwait(false);
+                "aws2azure: Azure container probe did not return a multipart generation marker for DeleteBucket binding.")).ConfigureAwait(false);
             return;
         }
 
-        using var response = await blob.DeleteContainerAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);
+        using var response = await blob.DeleteContainerAsync(bucket, ifMatch!, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.DeleteBucket)).ConfigureAwait(false);
             return;
         }
 
-        var stateStore = new MultipartUploadStateStore(blob);
         try
         {
             await stateStore.DeleteBucketRecordsAsync(bucket, generation!, cancellationToken).ConfigureAwait(false);

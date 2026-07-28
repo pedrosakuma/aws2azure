@@ -213,22 +213,21 @@ the documented behaviour differences and the real-Azure seal state.
 | kinesis | PutRecords | ✅ | Batch sends are still grouped per partition, but broker dispositions are tracked per message; records accepted before a later reject remain successful in the PutRecords response so callers do not retry already-committed messages. |
 | kinesis | PutRecords | ✅ | ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash. |
 | kinesis | PutRecords | ✅ | Batch record publication and per-entry result handling are validated against production Azure Event Hubs through the real-Azure conformance workflow. |
-| s3 | AbortMultipartUpload | — | Server-side no-op once the UploadId is validated. Azure auto-removes uncommitted blocks ~7 days after their last upload, which matches the UploadId TTL — so an aborted upload's blocks expire on the same schedule as a forgotten one. |
-| s3 | AbortMultipartUpload | — | The destination bucket is still probed so a missing container surfaces NoSuchBucket instead of 204. |
-| s3 | AbortMultipartUpload | — | Subsequent UploadPart calls on the same UploadId continue to succeed until the TTL expires (no active invalidation). To prevent reuse, callers should treat the UploadId as discarded after Abort. |
-| s3 | CompleteMultipartUpload | — | Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag (no per-part MD5s are retained). SDKs that only pattern-match the dash-suffix accept it as multipart. |
+| s3 | AbortMultipartUpload | — | Abort does not delete Azure's uncommitted blocks eagerly; removing the durable state record is what invalidates the UploadId immediately. Azure later garbage-collects the abandoned blocks on its normal schedule. |
+| s3 | AbortMultipartUpload | — | Subsequent UploadPart/ListParts/CompleteMultipartUpload calls on the same UploadId return NoSuchUpload because the proxy state record is gone, even if Azure still retains the uncommitted blocks temporarily. |
+| s3 | CompleteMultipartUpload | — | Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart. |
 | s3 | CompleteMultipartUpload | — | Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList). |
-| s3 | CompleteMultipartUpload | — | Request body cap of 4 MiB (>10× the worst-case 10,000-part payload). |
-| s3 | CompleteMultipartUpload | — | Client-supplied per-part <ETag> values are not validated. Blocks are addressed by (uploadId.nonce, PartNumber) only — if the same PartNumber was UploadPart'd twice with different bytes, Complete will commit the latest version regardless of which ETag the client sends. S3 would reject the stale ETag with InvalidPart. Workflows that don't overwrite parts within an upload are unaffected. |
-| s3 | CompleteMultipartUpload | — | S3's minimum part size (5 MiB for all but the final part) is NOT enforced. aws2azure commits the supplied block list without size validation; S3 would otherwise reject with EntityTooSmall. The Azure block-size ceiling (~4000 MiB per block, 190.7 TiB per blob) still applies. |
+| s3 | CompleteMultipartUpload | — | Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart. |
+| s3 | CompleteMultipartUpload | — | Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release. |
 | s3 | CopyObject | — | Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200. |
 | s3 | CopyObject | — | ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object. |
 | s3 | CreateBucket | ✅ | Bucket name == container name; Azure container naming is stricter than S3 (3–63 lowercase, digits, single hyphens, no leading/trailing hyphen). |
 | s3 | CreateBucket | ✅ | Location response header is host-relative ('/{bucket}') since the proxy doesn't know its public hostname. |
 | s3 | CreateBucket | ✅ | Region-sensitive idempotency is reproduced from the signed credential scope: in us-east-1 re-creating a bucket you already own returns 200 OK (idempotent), matching real S3; other regions return 409 BucketAlreadyOwnedByYou. Azure's ContainerAlreadyExists drives this; Azure does not expose 'owned by someone else' separately, so BucketAlreadyExists (foreign owner) cannot be distinguished and is always treated as owned-by-you. |
 | s3 | CreateBucket | ✅ | BucketAlreadyOwnedByYou error envelopes omit the informational <BucketName> element real S3 includes. [conformance:bucketalreadyownedbyyou-recreate::missing-field:BucketName] |
-| s3 | CreateMultipartUpload | — | UploadId is a 32-byte stateless token (base64url, 43 chars) HMAC-bound to (account, container, key) using the Azure account key. No Azure call is made on initiate. |
-| s3 | CreateMultipartUpload | — | UploadIds expire after 7 days, matching Azure's uncommitted-block GC window. Late UploadPart / Complete / Abort calls surface NoSuchUpload. |
+| s3 | CreateMultipartUpload | — | UploadId remains a 32-byte base64url token HMAC-bound to (account, bucket, key) and expiring after 7 days, but multipart is no longer purely stateless: a proxy-owned durable index record is also created so in-progress uploads can be enumerated and later completed with the original metadata. |
+| s3 | CreateMultipartUpload | — | Initiation fails with InvalidArgument when the captured metadata/property headers would exceed the 16 KiB durable-state cap. |
+| s3 | CreateMultipartUpload | — | The hidden multipart-state container is internal-only and not reachable through S3 bucket routes or copy-source headers. |
 | s3 | DeleteBucket | ✅ | Azure container delete is asynchronous; subsequent CreateContainer on the same name may return ContainerBeingDeleted (mapped to OperationAborted). |
 | s3 | DeleteBucket | ✅ | S3 BucketNotEmpty is mapped from Azure ConditionNotMet/Conflict cases that surface only when the container retention policy intervenes. |
 | s3 | DeleteBucketEncryption | — | Deleting the intent does not disable or reconfigure Azure encryption. |
@@ -286,8 +285,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | HeadObject | ✅ | Presigned HEAD is accepted (see PresignedUrl.yaml). |
 | s3 | ListBuckets | — | CreationDate is populated from the container Last-Modified header — close enough for S3 SDKs but not strictly equivalent. |
 | s3 | ListBuckets | — | Single fixed storage account per process (BlobCredentials); cross-account listing is out of scope. |
-| s3 | ListMultipartUploads | — | Returns a well-formed empty <ListMultipartUploadsResult> (IsTruncated=false, no <Upload> entries) rather than 501. This keeps SDK retry/recovery flows from erroring out, but callers cannot use this endpoint to discover orphaned uploads. |
-| s3 | ListMultipartUploads | — | Bucket existence is still validated — missing bucket → NoSuchBucket. |
+| s3 | ListMultipartUploads | — | Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API. |
+| s3 | ListMultipartUploads | — | Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path. |
 | s3 | ListObjectVersions | ✅ | VersionId 'null' is used when account versioning is off (the blob has no version id). |
 | s3 | ListObjectVersions | ✅ | Owner element omitted. |
 | s3 | ListObjects | — | Legacy V1 listing kept alongside V2 for SDKs that have not migrated. |
@@ -295,10 +294,9 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | ListObjectsV2 | ✅ | Pagination is server-driven against Azure; the proxy paginates internally to fill max-keys. |
 | s3 | ListObjectsV2 | ✅ | Blob storage is flat — delimiter-based grouping is computed by Azure and surfaced as CommonPrefixes. |
 | s3 | ListObjectsV2 | ✅ | CommonPrefixes are de-duplicated across Azure pages. |
-| s3 | ListParts | — | <ETag> values returned by ListParts are synthetic (derived from the Azure block name) and are NOT equal to the per-part ETags returned by UploadPart. Azure's Get Block List response does not expose per-block MD5s and the proxy retains no upload state. Clients that compare these values to records saved at upload time will see mismatches. |
-| s3 | ListParts | — | <LastModified> for every part is the UploadId's creation timestamp (no per-block timestamp exists in Azure). |
-| s3 | ListParts | — | <Owner> / <Initiator> are omitted (S3 sources them from the IAM principal; aws2azure does not model IAM). |
-| s3 | ListParts | — | Empty / missing blob → empty ListPartsResult (S3 returns 404 NoSuchUpload only when the UploadId is unknown; aws2azure already rejects unknown UploadIds at the HMAC check). |
+| s3 | ListParts | — | <ETag> values returned by ListParts are synthetic (derived from the Azure block name) and are NOT equal to the per-part ETags returned by UploadPart. Azure's Get Block List response does not expose per-block MD5s, so this permanent incompatibility remains explicit. |
+| s3 | ListParts | — | <LastModified> for every part is the multipart upload's initiation timestamp from the durable state record; Azure exposes no per-block timestamp. |
+| s3 | ListParts | — | <Owner> / <Initiator> are omitted because aws2azure does not model IAM principals. |
 | s3 | PresignedUrl | — | By default (empty s3.presignedTrustedSigningHosts) presigned URLs MUST be signed against the proxy host (set the AWS SDK's endpoint_url / ServiceURL to the proxy). A URL signed against s3.amazonaws.com cannot be replayed at the proxy — the host is a signed header. |
 | s3 | PresignedUrl | — | Opt-in host-rewrite mode (s3.presignedTrustedSigningHosts) additionally accepts presigned URLs signed against listed AWS origin hosts and rewritten to a path-style proxy request; see docs/presigned-urls.md for the per-topology tradeoffs. |
 | s3 | PresignedUrl | — | The proxy operates in 'Option A — proxy mode': it validates the presigned signature, then proxies the operation to Azure Blob using its configured Azure credentials. No Azure SAS is returned or redirected. |
@@ -334,12 +332,11 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PutObjectTagging | — | Version selection depends on Azure Blob versioning being enabled by the operator. |
 | s3 | PutObjectTagging | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
 | s3 | PutPublicAccessBlock | — | The AWS document round-trips for compatibility but has no enforcement effect. |
-| s3 | UploadPart | — | Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's per-blob block-ID uniformity rule. |
-| s3 | UploadPart | — | Part numbers must be in [1, 10000] (S3 limit). Azure supports up to 50,000 blocks per blob — surplus capacity is unused. |
-| s3 | UploadPartCopy | — | Per-part ETag is synthesised from the (uploadId, partNumber) pair (same algorithm ListParts uses), NOT the MD5 of the copied bytes. Azure's Put Block From URL response only includes Content-MD5 when the request supplied x-ms-source-content-md5; otherwise it returns x-ms-content-crc64, which has no S3 equivalent. The synthetic ETag is stable per (uploadId, partNumber) and is what the proxy expects to see echoed back in CompleteMultipartUpload — but it is NOT a content hash and must not be compared with the per-part ETag returned by a non-copy UploadPart. |
-| s3 | UploadPartCopy | — | UploadPartCopy with source==destination (same bucket+key) is rejected with InvalidRequest. Azure would otherwise stage the new block on the source blob itself, letting the eventual CompleteMultipartUpload silently reconcile against a moving target. |
-| s3 | UploadPartCopy | — | Source URL SAS expires 1 hour after the UploadPartCopy request; a very large source copied over a very slow link could theoretically race the expiry. In practice Azure's intra-account server-side fetch is fast enough that this is academic. |
-| s3 | UploadPartCopy | — | Integration tests against Azurite skip the end-to-end happy-path scenarios because Azurite does not implement Put Block From URL (responds 501 InternalError). The implementation is verified against real Azure Blob Storage in the cloud-integration nightly. |
+| s3 | UploadPart | — | Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's block-ID uniformity rule. |
+| s3 | UploadPart | — | Part numbers must be in [1, 10000] (S3 limit). Azure's higher block-count ceiling is intentionally unused. |
+| s3 | UploadPartCopy | — | Per-part ETag is synthesised from the (uploadId, partNumber) pair when Azure omits Content-MD5. The value is stable for the upload flow but is NOT a content hash and does not equal the UploadPart ETag returned for an equivalent non-copy body. |
+| s3 | UploadPartCopy | — | UploadPartCopy with source==destination is rejected with InvalidRequest so the eventual CompleteMultipartUpload cannot silently reconcile against the live source blob. |
+| s3 | UploadPartCopy | — | The hidden multipart-state container is never usable as x-amz-copy-source. |
 | secretsmanager | CreateSecret | ✅ | Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses. |
 | secretsmanager | CreateSecret | ✅ | Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface. |
 | secretsmanager | CreateSecret | ✅ | Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK. |

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,8 +20,9 @@ public sealed class MultipartHandlersTests
     private const string AccountKeyBase64 = "dGVzdC1rZXktQS0xMjM0NTY3ODkwYWJjZGVm";
     private static readonly byte[] AccountKeyBytes = Convert.FromBase64String(AccountKeyBase64);
     private static readonly XNamespace S3Ns = "http://s3.amazonaws.com/doc/2006-03-01/";
-    private const string Generation = "\"gen-1\"";
-    private const string RecreatedGeneration = "\"gen-2\"";
+    private const string ContainerEtag = "\"etag-1\"";
+    private const string Generation = "gen-1";
+    private const string RecreatedGeneration = "gen-2";
     private const string LeaseId = "lease-123";
 
     [Fact]
@@ -35,6 +37,9 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(StateHead(upload));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
 
         var uploadPart = TestHttpContext.CreateContext(
             body: "hello multipart",
@@ -49,7 +54,9 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(StateGet(upload));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
         handler.Enqueue(StateDeleted());
 
         var complete = TestHttpContext.CreateContext(
@@ -66,15 +73,15 @@ public sealed class MultipartHandlersTests
         Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
         Assert.Equal("\"abcd0000000000000000000000000000-1\"", ElementValue(await TestHttpContext.ReadBodyAsync(complete), "ETag"));
 
-        Assert.Equal(13, handler.Requests.Count);
-        Assert.Equal(HttpMethod.Put, handler.Requests[3].Method);
-        Assert.Equal(HttpMethod.Put, handler.Requests[10].Method);
-        Assert.Equal(HttpMethod.Delete, handler.Requests[12].Method);
-        Assert.EndsWith("/bucket/object.txt?comp=blocklist", handler.Requests[11].RequestUri!.PathAndQuery, StringComparison.Ordinal);
-        Assert.Equal("application/xml", Assert.Single(handler.Requests[11].ContentHeaders["Content-Type"]));
+        Assert.Equal(19, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Put, handler.Requests[4].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[16].Method);
+        Assert.Equal(HttpMethod.Delete, handler.Requests[18].Method);
+        Assert.EndsWith("/bucket/object.txt?comp=blocklist", handler.Requests[16].RequestUri!.PathAndQuery, StringComparison.Ordinal);
+        Assert.Equal("application/xml", Assert.Single(handler.Requests[16].ContentHeaders["Content-Type"]));
         Assert.Equal(
             [UploadIdCodec.BlockId(upload.Token.NonceHex, 1)],
-            XDocument.Parse(handler.Requests[11].Body!).Root!.Elements("Latest").Select(static e => e.Value).ToArray());
+            XDocument.Parse(handler.Requests[16].Body!).Root!.Elements("Latest").Select(static e => e.Value).ToArray());
     }
 
     [Fact]
@@ -88,6 +95,9 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(StateHead(upload));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, lastModified: new DateTimeOffset(2026, 7, 11, 12, 0, 0, TimeSpan.Zero)));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
 
         var context = TestHttpContext.CreateContext(
             method: HttpMethods.Put,
@@ -105,7 +115,7 @@ public sealed class MultipartHandlersTests
         var blockId = UploadIdCodec.BlockId(upload.Token.NonceHex, 3);
         Assert.Equal("\"" + Md5Hex(blockId) + "\"", ElementValue(await TestHttpContext.ReadBodyAsync(context), "ETag"));
 
-        var request = handler.Requests[^1];
+        var request = handler.Requests[^4];
         Assert.Equal(HttpMethod.Put, request.Method);
         Assert.Equal("bytes=1-3", Assert.Single(request.Headers["x-ms-source-range"]));
         Assert.StartsWith("https://acct.blob.core.windows.net/source-bucket/source.txt?sv=", Assert.Single(request.Headers["x-ms-copy-source"]), StringComparison.Ordinal);
@@ -160,6 +170,7 @@ public sealed class MultipartHandlersTests
         Assert.Equal(HttpMethod.Delete, handler.Requests[^1].Method);
 
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.Enqueue(ContainerHead());
         var reuse = TestHttpContext.CreateContext(
             body: "stale",
             method: HttpMethods.Put,
@@ -195,6 +206,8 @@ public sealed class MultipartHandlersTests
                 </BlockList>
                 """))
         });
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
 
         var context = TestHttpContext.CreateContext(
             method: HttpMethods.Get,
@@ -281,11 +294,90 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task List_multipart_uploads_does_not_repeat_common_prefix_equal_to_key_marker()
+    {
+        var first = await CaptureUploadAsync("bucket", "logs/2026/a.txt");
+        var second = await CaptureUploadAsync("bucket", "logs/2027/a.txt");
+
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList(StateBlob(first), StateBlob(second)));
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket",
+            queryString: "?uploads&prefix=logs/&delimiter=/&key-marker=" + Uri.EscapeDataString("logs/2026/"));
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.ListMultipartUploads, "bucket", null), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var commonPrefixes = XDocument.Parse(await TestHttpContext.ReadBodyAsync(context))
+            .Root!
+            .Elements(S3Ns + "CommonPrefixes")
+            .Select(prefix => prefix.Element(S3Ns + "Prefix")!.Value)
+            .ToArray();
+        Assert.Equal(["logs/2027/"], commonPrefixes);
+    }
+
+    [Fact]
+    public async Task List_multipart_uploads_with_same_key_resumes_by_upload_id_marker_without_skipping()
+    {
+        var olderCreatedAt = DateTimeOffset.UtcNow;
+        var newerCreatedAt = olderCreatedAt.AddSeconds(1);
+        var older = ManualUpload("bucket", "same-key.txt", olderCreatedAt, 0xFF);
+        var newer = ManualUpload("bucket", "same-key.txt", newerCreatedAt, 0x00);
+
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList(StateBlob(older), StateBlob(newer)));
+
+        var page1 = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket",
+            queryString: "?uploads&max-uploads=1");
+        await MultipartHandlers.HandleAsync(page1, Route(S3Operation.ListMultipartUploads, "bucket", null), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, page1.Response.StatusCode);
+        var page1Xml = await TestHttpContext.ReadBodyAsync(page1);
+        Assert.Equal("same-key.txt", ElementValue(page1Xml, "NextKeyMarker"));
+        var nextUploadIdMarker = ElementValue(page1Xml, "NextUploadIdMarker");
+
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(BlobList(StateBlob(older), StateBlob(newer)));
+
+        var page2 = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket",
+            queryString: "?uploads&max-uploads=1&key-marker=" + Uri.EscapeDataString("same-key.txt") + "&upload-id-marker=" + Uri.EscapeDataString(nextUploadIdMarker));
+        await MultipartHandlers.HandleAsync(page2, Route(S3Operation.ListMultipartUploads, "bucket", null), blob, CancellationToken.None);
+
+        var uploadIds = XDocument.Parse(await TestHttpContext.ReadBodyAsync(page2))
+            .Root!
+            .Elements(S3Ns + "Upload")
+            .Select(upload => upload.Element(S3Ns + "UploadId")!.Value)
+            .ToArray();
+        Assert.Single(uploadIds);
+        Assert.DoesNotContain(nextUploadIdMarker, uploadIds);
+    }
+
+    [Fact]
     public async Task Create_rejects_bucket_generation_race_and_cleans_written_state()
     {
         var handler = new ScriptedHandler();
         handler.Enqueue(ContainerHead(Generation));
         handler.Enqueue(StateContainerCreated());
+        handler.Enqueue(InternalStateContainerHead());
         handler.Enqueue(BlobList());
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
         handler.Enqueue(ContainerHead(RecreatedGeneration));
@@ -303,6 +395,78 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task Upload_part_surfaces_state_store_errors_instead_of_no_such_upload()
+    {
+        var upload = await CaptureUploadAsync("bucket", "object.txt");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Forbidden));
+
+        var context = TestHttpContext.CreateContext(
+            body: "data",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.DoesNotContain("NoSuchUpload", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Upload_part_rejects_bucket_recreation_detected_after_block_write()
+    {
+        var upload = await CaptureUploadAsync("bucket", "object.txt");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead(Generation));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead(RecreatedGeneration));
+        handler.Enqueue(StateDeleted());
+
+        var context = TestHttpContext.CreateContext(
+            body: "data",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Contains("OperationAborted", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Delete, handler.Requests[^1].Method);
+    }
+
+    [Fact]
+    public async Task Upload_part_returns_operation_aborted_when_abort_deletes_state_mid_write()
+    {
+        var upload = await CaptureUploadAsync("bucket", "object.txt");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead(Generation));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead(Generation));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        var context = TestHttpContext.CreateContext(
+            body: "data",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Contains("OperationAborted", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Stale_upload_state_from_recreated_bucket_returns_no_such_upload()
     {
         var upload = await CaptureUploadAsync("bucket", "object.txt");
@@ -311,6 +475,7 @@ public sealed class MultipartHandlersTests
         var blob = NewBlobClient(http);
 
         handler.Enqueue(StateHead(upload, containerGeneration: Generation));
+        handler.Enqueue(ContainerHead(RecreatedGeneration));
         handler.Enqueue(ContainerHead(RecreatedGeneration));
 
         var context = TestHttpContext.CreateContext(
@@ -338,6 +503,7 @@ public sealed class MultipartHandlersTests
     {
         handler.Enqueue(ContainerHead());
         handler.Enqueue(StateContainerCreated());
+        handler.Enqueue(InternalStateContainerHead());
         handler.Enqueue(BlobList());
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
         handler.Enqueue(ContainerHead());
@@ -372,14 +538,50 @@ public sealed class MultipartHandlersTests
         return await InitiateAsync(handler, blob, bucket, key);
     }
 
-    private static HttpResponseMessage ContainerHead(string eTag = Generation)
+    private static CapturedUpload ManualUpload(string bucket, string key, DateTimeOffset createdAt, byte nonceByte)
+    {
+        var raw = new byte[UploadIdCodec.RawLength];
+        BinaryPrimitives.WriteInt64BigEndian(raw.AsSpan(0, 8), createdAt.ToUnixTimeMilliseconds());
+        raw.AsSpan(8, UploadIdCodec.NonceBytes).Fill(nonceByte);
+
+        using var hmac = new HMACSHA256(AccountKeyBytes);
+        var nameBytes = Encoding.UTF8.GetBytes(AccountName);
+        var bucketBytes = Encoding.UTF8.GetBytes(bucket);
+        var keyBytes = Encoding.UTF8.GetBytes(key);
+        var separator = new byte[] { 0 };
+        hmac.TransformBlock(nameBytes, 0, nameBytes.Length, null, 0);
+        hmac.TransformBlock(separator, 0, separator.Length, null, 0);
+        hmac.TransformBlock(bucketBytes, 0, bucketBytes.Length, null, 0);
+        hmac.TransformBlock(separator, 0, separator.Length, null, 0);
+        hmac.TransformBlock(keyBytes, 0, keyBytes.Length, null, 0);
+        hmac.TransformBlock(separator, 0, separator.Length, null, 0);
+        hmac.TransformBlock(raw, 8, UploadIdCodec.NonceBytes, null, 0);
+        var timestampBytes = raw.AsSpan(0, 8).ToArray();
+        hmac.TransformFinalBlock(timestampBytes, 0, timestampBytes.Length);
+        hmac.Hash!.AsSpan(0, UploadIdCodec.TagBytes).CopyTo(raw.AsSpan(16, UploadIdCodec.TagBytes));
+
+        var uploadId = UploadIdCodec.Base64Url.Encode(raw);
+        var token = UploadIdCodec.TryDecode(uploadId, AccountName, bucket, key, AccountKeyBytes)
+            ?? throw new Xunit.Sdk.XunitException("Manual upload ID should decode.");
+        return new CapturedUpload(bucket, key, uploadId, token, string.Empty);
+    }
+
+    private static HttpResponseMessage ContainerHead(string generation = Generation, string eTag = ContainerEtag)
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK);
         response.Headers.TryAddWithoutValidation("ETag", eTag);
+        response.Headers.TryAddWithoutValidation("x-ms-meta-aws2azuregeneration", generation);
         return response;
     }
 
     private static HttpResponseMessage StateContainerCreated() => new(HttpStatusCode.Created);
+
+    private static HttpResponseMessage InternalStateContainerHead()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.TryAddWithoutValidation("x-ms-meta-aws2azureowner", "multipart-state-v1");
+        return response;
+    }
 
     private static HttpResponseMessage LeaseAcquired()
     {

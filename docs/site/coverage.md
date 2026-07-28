@@ -30,11 +30,11 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | kinesis | [ListShards](kinesis.md#listshards) | 🟡 partial | ✅ | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | 🟡 partial | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [PutRecords](kinesis.md#putrecords) | 🟡 partial | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
-| s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | — | `(no-op; uncommitted blocks GC after 7 days)` |
-| s3 | [CompleteMultipartUpload](s3.md#completemultipartupload) | ✅ implemented | — | `Put Block List` |
+| s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | — | `Lease state record + delete proxy-owned multipart state blob` |
+| s3 | [CompleteMultipartUpload](s3.md#completemultipartupload) | ✅ implemented | — | `Lease state record + Put Block List` |
 | s3 | [CopyObject](s3.md#copyobject) | ✅ implemented | — | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
 | s3 | [CreateBucket](s3.md#createbucket) | ✅ implemented | ✅ | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
-| s3 | [CreateMultipartUpload](s3.md#createmultipartupload) | ✅ implemented | — | `Stateless UploadId (no Azure call until UploadPart)` |
+| s3 | [CreateMultipartUpload](s3.md#createmultipartupload) | ✅ implemented | — | `HEAD container + proxy-owned durable multipart state record` |
 | s3 | [DeleteBucket](s3.md#deletebucket) | ✅ implemented | ✅ | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteBucketCors](s3.md#deletebucketcors) | ⚪ stub | — | `(no equivalent — proxy treats it as a no-op)` |
 | s3 | [DeleteBucketEncryption](s3.md#deletebucketencryption) | 🟡 partial | — | `Conditional container-metadata update` |
@@ -74,11 +74,11 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [HeadBucket](s3.md#headbucket) | ✅ implemented | — | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](s3.md#headobject) | ✅ implemented | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](s3.md#listbuckets) | ✅ implemented | — | `GET https://{account}.blob.core.windows.net/?comp=list` |
-| s3 | [ListMultipartUploads](s3.md#listmultipartuploads) | 🟡 partial | — | `(none — Azure Blob has no in-progress-upload enumeration)` |
+| s3 | [ListMultipartUploads](s3.md#listmultipartuploads) | 🟡 partial | — | `Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)` |
 | s3 | [ListObjectVersions](s3.md#listobjectversions) | 🟡 partial | ✅ | `GET {container}?restype=container&comp=list&include=versions` |
 | s3 | [ListObjects](s3.md#listobjects) | ✅ implemented | — | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](s3.md#listobjectsv2) | ✅ implemented | ✅ | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
-| s3 | [ListParts](s3.md#listparts) | ✅ implemented | — | `Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
+| s3 | [ListParts](s3.md#listparts) | ✅ implemented | — | `Proxy state HEAD/verification + Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
 | s3 | [PresignedUrl](s3.md#presignedurl) | ✅ implemented | — | `(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)` |
 | s3 | [PutBucketAccelerateConfiguration](s3.md#putbucketaccelerateconfiguration) | 🟡 partial | — | `(no equivalent — Suspended is an accepted stable no-op)` |
 | s3 | [PutBucketAcl](s3.md#putbucketacl) | 🟡 partial | — | `(no Azure equivalent — validates owner-only intent and replies 200)` |
@@ -102,8 +102,8 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [PutObjectTagging](s3.md#putobjecttagging) | ✅ implemented | — | `PUT {blob}?comp=tags` |
 | s3 | [PutPublicAccessBlock](s3.md#putpublicaccessblock) | 🟡 partial | — | `Conditional container-metadata update (persisted compatibility intent only)` |
 | s3 | [RestoreObject](s3.md#restoreobject) | ⛔ unsupported | — | `(no equivalent — proxy returns 501 NotImplemented)` |
-| s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | — | `Put Block (?comp=block&blockid=…)` |
-| s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | — | `Put Block From URL (?comp=block&blockid=…)` |
+| s3 | [UploadPart](s3.md#uploadpart) | ✅ implemented | — | `Proxy state HEAD/verification + Put Block (?comp=block&blockid=…)` |
+| s3 | [UploadPartCopy](s3.md#uploadpartcopy) | ✅ implemented | — | `Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)` |
 | secretsmanager | [CreateSecret](secretsmanager.md#createsecret) | ✅ implemented | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DeleteSecret](secretsmanager.md#deletesecret) | ✅ implemented | ✅ | `DELETE https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DescribeSecret](secretsmanager.md#describesecret) | ✅ implemented | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4` |

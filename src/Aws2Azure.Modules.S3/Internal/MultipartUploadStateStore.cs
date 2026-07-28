@@ -24,6 +24,10 @@ internal sealed class MultipartUploadStateStore
     private const string UploadIdMetadataName = "aws2azureuploadid";
     private const string InitiatedMsMetadataName = "aws2azureinitiatedms";
     private const string ContainerGenerationMetadataName = "aws2azurecontaineretag";
+    private const string ContainerGenerationMarkerMetadataName = "aws2azuregeneration";
+    private const string StateContainerOwnerMetadataName = "aws2azureowner";
+    private const string StateContainerOwnerMetadataValue = "multipart-state-v1";
+    private const int ContainerGenerationMutationMaxAttempts = 4;
 
     private readonly BlobClient _blob;
 
@@ -79,6 +83,25 @@ internal sealed class MultipartUploadStateStore
         string? NextUploadIdMarker,
         S3ErrorMapping.Mapping? Error);
 
+    public readonly record struct VerificationResult(
+        ResultKind Kind,
+        S3ErrorMapping.Mapping? Error);
+
+    public readonly record struct GenerationResult(
+        ResultKind Kind,
+        string? Generation,
+        string? ETag,
+        S3ErrorMapping.Mapping? Error);
+
+    private readonly record struct VisibleSummariesResult(
+        ResultKind Kind,
+        List<MultipartUploadStateSummary> Summaries,
+        S3ErrorMapping.Mapping? Error);
+
+    private readonly record struct LegacyStateContainerCheckResult(
+        bool IsLegacyStateContainer,
+        S3ErrorMapping.Mapping? Error);
+
     public async Task<S3ErrorMapping.Mapping?> CreateAsync(
         string bucket,
         string key,
@@ -88,7 +111,10 @@ internal sealed class MultipartUploadStateStore
         HttpRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsureStateContainerExistsAsync(cancellationToken).ConfigureAwait(false);
+        if (await EnsureStateContainerExistsAsync(cancellationToken).ConfigureAwait(false) is { } ensureError)
+        {
+            return ensureError;
+        }
         await CleanupExpiredRecordsAsync(bucket, CreateCleanupDeleteLimit, cancellationToken).ConfigureAwait(false);
 
         var body = SerializeCapturedHeaders(request);
@@ -138,12 +164,12 @@ internal sealed class MultipartUploadStateStore
         }
 
         var generation = await VerifyContainerGenerationAsync(bucket, summary.ContainerGeneration, cancellationToken).ConfigureAwait(false);
-        return generation switch
+        return generation.Kind switch
         {
             ResultKind.Success => new SummaryResult(ResultKind.Success, summary, null),
             ResultKind.BucketMissing => new SummaryResult(ResultKind.BucketMissing, null, null),
             ResultKind.NotFound => new SummaryResult(ResultKind.NotFound, null, null),
-            _ => new SummaryResult(ResultKind.NotFound, null, null)
+            _ => new SummaryResult(ResultKind.Error, null, generation.Error)
         };
     }
 
@@ -174,9 +200,11 @@ internal sealed class MultipartUploadStateStore
         }
 
         var generation = await VerifyContainerGenerationAsync(bucket, summary.ContainerGeneration, cancellationToken).ConfigureAwait(false);
-        if (generation != ResultKind.Success)
+        if (generation.Kind != ResultKind.Success)
         {
-            return new ReadResult(generation == ResultKind.BucketMissing ? ResultKind.BucketMissing : ResultKind.NotFound, null, null);
+            return generation.Kind == ResultKind.Error
+                ? new ReadResult(ResultKind.Error, null, generation.Error)
+                : new ReadResult(generation.Kind == ResultKind.BucketMissing ? ResultKind.BucketMissing : ResultKind.NotFound, null, null);
         }
 
         var body = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
@@ -262,6 +290,30 @@ internal sealed class MultipartUploadStateStore
                 : S3ErrorMapping.FromAzure(response, S3Operation.AbortMultipartUpload);
     }
 
+    public async Task<S3ErrorMapping.Mapping?> InvalidateLeasedAsync(
+        MultipartUploadStateSummary summary,
+        string leaseId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            _blob.BuildBlobUri(_blob.MultipartStateContainerName, summary.RecordName, "?comp=metadata"));
+        request.Options.Set(AzureHttpClient.NoRetryOption, true);
+        request.Content = new ByteArrayContent(Array.Empty<byte>());
+        request.Content.Headers.ContentLength = 0;
+        request.Headers.TryAddWithoutValidation("x-ms-lease-id", leaseId);
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + KeyMetadataName, EncodeMetadataString(summary.Key));
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + UploadIdMetadataName, summary.UploadId);
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + InitiatedMsMetadataName, summary.Initiated.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture));
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + ContainerGenerationMetadataName, "retired-" + Guid.NewGuid().ToString("N"));
+        using var response = await _blob.SendBlobRequestAsync(request, cancellationToken).ConfigureAwait(false);
+        return response.StatusCode == HttpStatusCode.NotFound
+            ? null
+            : response.IsSuccessStatusCode
+                ? null
+                : S3ErrorMapping.FromAzure(response, S3Operation.CompleteMultipartUpload);
+    }
+
     public async Task<S3ErrorMapping.Mapping?> DeleteAsync(
         string bucket,
         string uploadId,
@@ -286,13 +338,19 @@ internal sealed class MultipartUploadStateStore
     {
         await CleanupExpiredRecordsAsync(bucket, ListCleanupDeleteLimit, cancellationToken).ConfigureAwait(false);
 
-        var currentGeneration = await GetCurrentContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
+        var currentGeneration = await ReadCurrentContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
         if (currentGeneration.Kind != ResultKind.Success || currentGeneration.Generation is null)
         {
-            return new ListResult(currentGeneration.Kind, Array.Empty<S3XmlWriter.ListedUpload>(), Array.Empty<string>(), false, null, null, null);
+            return new ListResult(currentGeneration.Kind, Array.Empty<S3XmlWriter.ListedUpload>(), Array.Empty<string>(), false, null, null, currentGeneration.Error);
         }
 
-        var summaries = await ListVisibleSummariesAsync(bucket, currentGeneration.Generation, cancellationToken).ConfigureAwait(false);
+        var visibleSummaries = await ListVisibleSummariesAsync(bucket, currentGeneration.Generation, currentGeneration.ETag, cancellationToken).ConfigureAwait(false);
+        if (visibleSummaries.Kind != ResultKind.Success)
+        {
+            return new ListResult(visibleSummaries.Kind, Array.Empty<S3XmlWriter.ListedUpload>(), Array.Empty<string>(), false, null, null, visibleSummaries.Error);
+        }
+
+        var summaries = visibleSummaries.Summaries;
         summaries.Sort(static (left, right) =>
         {
             var keyCompare = CompareUtf8(left.Key, right.Key);
@@ -342,6 +400,12 @@ internal sealed class MultipartUploadStateStore
                     lastIndex++;
                 }
 
+                if (!IsAfterKeyMarker(commonPrefix, markerKey))
+                {
+                    i = lastIndex;
+                    continue;
+                }
+
                 if (seenPrefixes.Add(commonPrefix))
                 {
                     commonPrefixes.Add(commonPrefix);
@@ -389,21 +453,38 @@ internal sealed class MultipartUploadStateStore
             cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<ResultKind> VerifyContainerGenerationAsync(
+    public async Task<VerificationResult> VerifyContainerGenerationAsync(
         string bucket,
         string expectedGeneration,
         CancellationToken cancellationToken)
     {
-        var current = await GetCurrentContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
-        if (current.Kind != ResultKind.Success || current.Generation is null)
+        var current = await ReadCurrentContainerGenerationAsync(bucket, cancellationToken).ConfigureAwait(false);
+        if (current.Kind != ResultKind.Success)
         {
-            return current.Kind;
+            return new VerificationResult(current.Kind, current.Error);
         }
 
-        return string.Equals(current.Generation, expectedGeneration, StringComparison.Ordinal)
-            ? ResultKind.Success
-            : ResultKind.NotFound;
+        var actual = IsLegacyContainerGeneration(expectedGeneration)
+            ? current.ETag
+            : current.Generation;
+        if (string.IsNullOrEmpty(actual))
+        {
+            return new VerificationResult(ResultKind.Error, new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Azure container generation marker is missing."));
+        }
+
+        return string.Equals(actual, expectedGeneration, StringComparison.Ordinal)
+            ? new VerificationResult(ResultKind.Success, null)
+            : new VerificationResult(ResultKind.NotFound, null);
     }
+
+    public Task<GenerationResult> ReadOrCreateContainerGenerationAsync(string bucket, CancellationToken cancellationToken) =>
+        ReadCurrentContainerGenerationCoreAsync(bucket, createIfMissing: true, cancellationToken);
+
+    public Task<GenerationResult> ReadContainerGenerationAsync(string bucket, CancellationToken cancellationToken) =>
+        ReadCurrentContainerGenerationAsync(bucket, cancellationToken);
 
     public static int CompareUtf8(string left, string right)
     {
@@ -431,17 +512,124 @@ internal sealed class MultipartUploadStateStore
         }
     }
 
-    private async Task EnsureStateContainerExistsAsync(CancellationToken cancellationToken)
+    private async Task<S3ErrorMapping.Mapping?> EnsureStateContainerExistsAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(_blob.BuildContainerUri(_blob.MultipartStateContainerName).AbsoluteUri + "?restype=container"));
         request.Options.Set(AzureHttpClient.NoRetryOption, true);
         request.Content = new ByteArrayContent(Array.Empty<byte>());
         request.Content.Headers.ContentLength = 0;
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + StateContainerOwnerMetadataName, StateContainerOwnerMetadataValue);
         using var response = await _blob.SendBlobRequestAsync(request, cancellationToken).ConfigureAwait(false);
-        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.Conflict)
+        if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.Conflict)
         {
-            return;
+            return S3ErrorMapping.FromAzure(response, S3Operation.CreateMultipartUpload);
         }
+
+        using var properties = await _blob.GetContainerPropertiesAsync(_blob.MultipartStateContainerName, cancellationToken).ConfigureAwait(false);
+        if (!properties.IsSuccessStatusCode)
+        {
+            return S3ErrorMapping.FromAzure(properties, S3Operation.CreateMultipartUpload);
+        }
+
+        var metadata = BlobClient.ReadContainerMetadata(properties);
+        if (metadata.TryGetValue(StateContainerOwnerMetadataName, out var owner))
+        {
+            if (!string.Equals(owner, StateContainerOwnerMetadataValue, StringComparison.Ordinal))
+            {
+                return new S3ErrorMapping.Mapping(
+                    StatusCodes.Status500InternalServerError,
+                    "InternalError",
+                    "aws2azure: Reserved multipart state container exists but is not proxy-owned.");
+            }
+
+            return null;
+        }
+
+        var etag = ReadHeader(properties, "ETag");
+        if (string.IsNullOrEmpty(etag))
+        {
+            return new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Reserved multipart state container is missing an ETag for ownership migration.");
+        }
+
+        var legacyContainer = await CheckLegacyStateContainerAsync(cancellationToken).ConfigureAwait(false);
+        if (legacyContainer.Error is not null)
+        {
+            return legacyContainer.Error;
+        }
+        if (!legacyContainer.IsLegacyStateContainer)
+        {
+            return new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Reserved multipart state container exists but is not proxy-owned.");
+        }
+
+        metadata[StateContainerOwnerMetadataName] = StateContainerOwnerMetadataValue;
+        using var update = await _blob.SetContainerMetadataAsync(
+            _blob.MultipartStateContainerName,
+            new Dictionary<string, string>(metadata, StringComparer.Ordinal),
+            etag,
+            cancellationToken).ConfigureAwait(false);
+        if (!update.IsSuccessStatusCode && update.StatusCode != HttpStatusCode.PreconditionFailed)
+        {
+            return S3ErrorMapping.FromAzure(update, S3Operation.CreateMultipartUpload);
+        }
+
+        using var verified = await _blob.GetContainerPropertiesAsync(_blob.MultipartStateContainerName, cancellationToken).ConfigureAwait(false);
+        if (!verified.IsSuccessStatusCode)
+        {
+            return S3ErrorMapping.FromAzure(verified, S3Operation.CreateMultipartUpload);
+        }
+
+        metadata = BlobClient.ReadContainerMetadata(verified);
+        if (!metadata.TryGetValue(StateContainerOwnerMetadataName, out owner) ||
+            !string.Equals(owner, StateContainerOwnerMetadataValue, StringComparison.Ordinal))
+        {
+            return new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Reserved multipart state container exists but could not be claimed for proxy ownership.");
+        }
+
+        return null;
+    }
+
+    private async Task<LegacyStateContainerCheckResult> CheckLegacyStateContainerAsync(CancellationToken cancellationToken)
+    {
+        using var response = await _blob.ListBlobsWithMetadataAsync(
+            _blob.MultipartStateContainerName,
+            prefix: null,
+            marker: null,
+            maxResults: 16,
+            cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new LegacyStateContainerCheckResult(false, null);
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            return new LegacyStateContainerCheckResult(false, S3ErrorMapping.FromAzure(response, S3Operation.CreateMultipartUpload));
+        }
+
+        var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var page = ParseBlobMetadataPage(xml);
+        if (page.Blobs.Count == 0)
+        {
+            return new LegacyStateContainerCheckResult(false, null);
+        }
+
+        for (var i = 0; i < page.Blobs.Count; i++)
+        {
+            if (!LooksLikeMultipartStateBlob(page.Blobs[i].Name, page.Blobs[i].Metadata))
+            {
+                return new LegacyStateContainerCheckResult(false, null);
+            }
+        }
+
+        return new LegacyStateContainerCheckResult(true, null);
     }
 
     private async Task CleanupExpiredRecordsAsync(string bucket, int deleteLimit, CancellationToken cancellationToken)
@@ -547,12 +735,14 @@ internal sealed class MultipartUploadStateStore
         }
     }
 
-    private async Task<List<MultipartUploadStateSummary>> ListVisibleSummariesAsync(
+    private async Task<VisibleSummariesResult> ListVisibleSummariesAsync(
         string bucket,
         string currentGeneration,
+        string? currentEtag,
         CancellationToken cancellationToken)
     {
         var results = new List<MultipartUploadStateSummary>();
+        var expiryThreshold = DateTimeOffset.UtcNow.Subtract(UploadIdCodec.MaxAge);
         string? marker = null;
         var prefix = bucket + "/";
         while (true)
@@ -565,11 +755,11 @@ internal sealed class MultipartUploadStateStore
                 cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return results;
+                return new VisibleSummariesResult(ResultKind.Success, results, null);
             }
             if (!response.IsSuccessStatusCode)
             {
-                return results;
+                return new VisibleSummariesResult(ResultKind.Error, results, S3ErrorMapping.FromAzure(response, S3Operation.ListMultipartUploads));
             }
 
             var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -581,7 +771,15 @@ internal sealed class MultipartUploadStateStore
                     continue;
                 }
 
-                if (string.Equals(summary.ContainerGeneration, currentGeneration, StringComparison.Ordinal))
+                if (summary.Initiated < expiryThreshold)
+                {
+                    continue;
+                }
+
+                if (string.Equals(summary.ContainerGeneration, currentGeneration, StringComparison.Ordinal) ||
+                    (IsLegacyContainerGeneration(summary.ContainerGeneration) &&
+                     !string.IsNullOrEmpty(currentEtag) &&
+                     string.Equals(summary.ContainerGeneration, currentEtag, StringComparison.Ordinal)))
                 {
                     results.Add(summary);
                 }
@@ -589,28 +787,78 @@ internal sealed class MultipartUploadStateStore
 
             if (string.IsNullOrEmpty(page.NextMarker))
             {
-                return results;
+                return new VisibleSummariesResult(ResultKind.Success, results, null);
             }
 
             marker = page.NextMarker;
         }
     }
 
-    private async Task<(ResultKind Kind, string? Generation)> GetCurrentContainerGenerationAsync(
+    private Task<GenerationResult> ReadCurrentContainerGenerationAsync(string bucket, CancellationToken cancellationToken) =>
+        ReadCurrentContainerGenerationCoreAsync(bucket, createIfMissing: false, cancellationToken);
+
+    private async Task<GenerationResult> ReadCurrentContainerGenerationCoreAsync(
         string bucket,
+        bool createIfMissing,
         CancellationToken cancellationToken)
     {
-        using var response = await _blob.GetContainerPropertiesAsync(bucket, cancellationToken).ConfigureAwait(false);
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        for (var attempt = 0; attempt < ContainerGenerationMutationMaxAttempts; attempt++)
         {
-            return (ResultKind.BucketMissing, null);
-        }
-        if (!response.IsSuccessStatusCode)
-        {
-            return (ResultKind.Error, null);
+            using var response = await _blob.GetContainerPropertiesAsync(bucket, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new GenerationResult(ResultKind.BucketMissing, null, null, null);
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                return new GenerationResult(ResultKind.Error, null, null, S3ErrorMapping.FromAzure(response, S3Operation.ListMultipartUploads));
+            }
+
+            var etag = ReadHeader(response, "ETag");
+            var metadata = BlobClient.ReadContainerMetadata(response);
+            if (metadata.TryGetValue(ContainerGenerationMarkerMetadataName, out var generation) &&
+                !string.IsNullOrEmpty(generation))
+            {
+                return new GenerationResult(ResultKind.Success, generation, etag, null);
+            }
+
+            if (!createIfMissing)
+            {
+                return new GenerationResult(ResultKind.Success, etag, etag, null);
+            }
+
+            if (string.IsNullOrEmpty(etag))
+            {
+                return new GenerationResult(ResultKind.Error, null, null, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status500InternalServerError,
+                    "InternalError",
+                    "aws2azure: Azure container probe did not return an ETag for multipart generation binding."));
+            }
+
+            generation = Guid.NewGuid().ToString("N");
+            var updatedMetadata = new Dictionary<string, string>(metadata, StringComparer.Ordinal)
+            {
+                [ContainerGenerationMarkerMetadataName] = generation,
+            };
+
+            using var write = await _blob.SetContainerMetadataAsync(bucket, updatedMetadata, etag, cancellationToken).ConfigureAwait(false);
+            if (write.IsSuccessStatusCode)
+            {
+                return new GenerationResult(ResultKind.Success, generation, ReadHeader(write, "ETag") ?? etag, null);
+            }
+
+            if (write.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                continue;
+            }
+
+            return new GenerationResult(ResultKind.Error, null, null, S3ErrorMapping.FromAzure(write, S3Operation.CreateMultipartUpload));
         }
 
-        return (ResultKind.Success, ReadHeader(response, "ETag"));
+        return new GenerationResult(ResultKind.Error, null, null, new S3ErrorMapping.Mapping(
+            StatusCodes.Status409Conflict,
+            "OperationAborted",
+            "A conflicting conditional operation is currently in progress against this resource."));
     }
 
     private async Task<S3ErrorMapping.Mapping?> SendLeaseRequestAsync(
@@ -892,9 +1140,32 @@ internal sealed class MultipartUploadStateStore
             return false;
         }
 
-        return !string.IsNullOrEmpty(uploadIdMarker)
-            && string.CompareOrdinal(summary.UploadId, uploadIdMarker) > 0;
+        if (string.IsNullOrEmpty(uploadIdMarker))
+        {
+            return false;
+        }
+
+        if (UploadIdCodec.TryReadCreatedAt(uploadIdMarker, out var markerCreatedAt))
+        {
+            var initiatedCompare = summary.Initiated.CompareTo(markerCreatedAt);
+            if (initiatedCompare > 0)
+            {
+                return true;
+            }
+            if (initiatedCompare < 0)
+            {
+                return false;
+            }
+        }
+
+        return string.CompareOrdinal(summary.UploadId, uploadIdMarker) > 0;
     }
+
+    private static bool IsAfterKeyMarker(string value, string? keyMarker) =>
+        string.IsNullOrEmpty(keyMarker) || CompareUtf8(value, keyMarker) > 0;
+
+    private static bool IsLegacyContainerGeneration(string generation) =>
+        !string.IsNullOrEmpty(generation) && generation[0] == '"';
 
     private static bool TryGetCommonPrefix(string key, string? prefix, string delimiter, out string commonPrefix)
     {
@@ -914,6 +1185,13 @@ internal sealed class MultipartUploadStateStore
         commonPrefix = key[..(index + delimiter.Length)];
         return true;
     }
+
+    private static bool LooksLikeMultipartStateBlob(string recordName, IReadOnlyDictionary<string, string> metadata) =>
+        TryReadRecordInitiatedMs(recordName, out _)
+        && metadata.ContainsKey(KeyMetadataName)
+        && metadata.ContainsKey(UploadIdMetadataName)
+        && metadata.ContainsKey(InitiatedMsMetadataName)
+        && metadata.ContainsKey(ContainerGenerationMetadataName);
 
     private static bool HasFurtherMatches(
         IReadOnlyList<MultipartUploadStateSummary> summaries,

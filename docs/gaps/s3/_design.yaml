@@ -52,20 +52,36 @@ design_gaps:
     workaround: >-
       Gate those workloads out or avoid re-uploading the same PartNumber with
       different content inside one multipart session.
+  - area: Bucket sub-resource configs are not translated
+    status: unsupported
+    summary: >-
+      Lifecycle, replication, website hosting, event notifications, Requester
+      Pays, acceleration, and logging bucket configurations have no Blob-storage
+      equivalent in the wire-protocol path.
+    impact: >-
+      Automated tiering/expiry, cross-region replication, static-website
+      hosting, and S3 event automation configured through these APIs have no
+      effect.
+    workaround: >-
+      Use Azure Blob lifecycle-management policies, object replication, static
+      website settings, and Event Grid subscriptions configured directly on the
+      storage account.
 workload_patterns:
   - id: s3_basic_object_crud
     name: Basic object CRUD
     compatibility: supported
     summary: >-
-      Upload, download, inspect, list, copy, and delete ordinary objects through
-      the standard S3 data-plane operations.
+      Upload, download, inspect, list, and delete ordinary objects through the
+      standard S3 data-plane operations.
     operations:
       - PutObject
       - GetObject
       - HeadObject
       - ListObjectsV2
-      - CopyObject
       - DeleteObject
+    guidance: >-
+      Suitable when applications need ordinary object CRUD and do not rely on
+      S3 IAM/policy enforcement.
   - id: s3_multipart_upload
     name: Multipart upload
     compatibility: conditional
@@ -105,6 +121,9 @@ workload_patterns:
       - PutObjectLegalHold
       - GetObjectLockConfiguration
       - PutObjectLockConfiguration
+    guidance: >-
+      Validate the exact flow against real Azure and configure Blob versioning
+      and immutability outside the proxy before adoption.
   - id: s3_metadata_compatibility_controls
     name: Metadata and compatibility control round-trip
     compatibility: conditional
@@ -135,6 +154,7 @@ workload_patterns:
     design_gaps:
       - No IAM / ACL / bucket-policy authorization model
       - No enforceable server-side-encryption configuration surface
+      - Bucket sub-resource configs are not translated
     guidance: >-
       Use these operations only when applications require configuration
       round-trip compatibility. Enforce authorization, public access,
@@ -164,6 +184,7 @@ workload_patterns:
       - DeleteBucketReplication
     design_gaps:
       - No IAM / ACL / bucket-policy authorization model
+      - Bucket sub-resource configs are not translated
     guidance: >-
       Move these controls to Azure RBAC, Storage lifecycle policies, object
       replication, static website settings, and Event Grid before migration.

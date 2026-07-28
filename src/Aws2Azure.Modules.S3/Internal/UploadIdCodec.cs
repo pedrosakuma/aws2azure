@@ -14,10 +14,10 @@ namespace Aws2Azure.Modules.S3.Internal;
 /// <para>
 /// Wire format (32 bytes, base64url-encoded → 43 chars, no padding):
 /// <list type="bullet">
-///   <item><c>nonce</c> (8 bytes) — random per upload, also used to scope
-///   block IDs so two concurrent uploads on the same blob never collide.</item>
 ///   <item><c>createdAtMs</c> (8 bytes, big-endian unix-ms) — used to
 ///   enforce the 7-day TTL that matches Azure's uncommitted-block GC window.</item>
+///   <item><c>nonce</c> (8 bytes) — random per upload, also used to scope
+///   block IDs so two concurrent uploads on the same blob never collide.</item>
 ///   <item><c>tag</c> (16 bytes) — first 128 bits of
 ///   <c>HMAC-SHA256(accountKey, account || 0 || container || 0 || key || 0 || nonce || createdAtMs)</c>.</item>
 /// </list>
@@ -41,7 +41,8 @@ internal static class UploadIdCodec
     public readonly record struct UploadToken(
         ReadOnlyMemory<byte> Nonce,
         DateTimeOffset CreatedAt,
-        string Encoded)
+        string Encoded,
+        bool LegacyLayout)
     {
         public string NonceHex => Convert.ToHexString(Nonce.Span).ToLowerInvariant();
     }
@@ -56,7 +57,7 @@ internal static class UploadIdCodec
         var nonce = RandomNumberGenerator.GetBytes(NonceBytes);
         var createdAt = now ?? DateTimeOffset.UtcNow;
         var raw = Build(accountName, container, key, accountKey, nonce, createdAt);
-        return new UploadToken(nonce, createdAt, Base64Url.Encode(raw));
+        return new UploadToken(nonce, createdAt, Base64Url.Encode(raw), LegacyLayout: false);
     }
 
     /// <summary>
@@ -82,35 +83,8 @@ internal static class UploadIdCodec
             return null;
         }
 
-        var nonce = raw.AsSpan(0, NonceBytes);
-        var tsBytes = raw.AsSpan(NonceBytes, 8);
-        var providedTag = raw.AsSpan(NonceBytes + 8, TagBytes);
-
-        var createdAtMs = BinaryPrimitives.ReadInt64BigEndian(tsBytes);
-        DateTimeOffset createdAt;
-        try
-        {
-            createdAt = DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return null;
-        }
-
-        var current = now ?? DateTimeOffset.UtcNow;
-        if (current - createdAt > MaxAge || createdAt - current > TimeSpan.FromMinutes(5))
-        {
-            return null;
-        }
-
-        Span<byte> expectedTag = stackalloc byte[TagBytes];
-        ComputeTag(accountName, container, key, accountKey, nonce, createdAt, expectedTag);
-        if (!CryptographicOperations.FixedTimeEquals(providedTag, expectedTag))
-        {
-            return null;
-        }
-
-        return new UploadToken(nonce.ToArray(), createdAt, encoded);
+        return TryDecodeCore(raw, encoded, accountName, container, key, accountKey, now, legacyLayout: false)
+            ?? TryDecodeCore(raw, encoded, accountName, container, key, accountKey, now, legacyLayout: true);
     }
 
     /// <summary>
@@ -130,16 +104,8 @@ internal static class UploadIdCodec
             return false;
         }
 
-        var createdAtMs = BinaryPrimitives.ReadInt64BigEndian(raw.AsSpan(NonceBytes, 8));
-        try
-        {
-            createdAt = DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs);
-            return true;
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return false;
-        }
+        return TryReadCreatedAt(raw, legacyLayout: false, out createdAt)
+            || TryReadCreatedAt(raw, legacyLayout: true, out createdAt);
     }
 
     /// <summary>
@@ -179,10 +145,62 @@ internal static class UploadIdCodec
         DateTimeOffset createdAt)
     {
         var raw = new byte[RawLength];
-        nonce.CopyTo(raw.AsSpan(0, NonceBytes));
-        BinaryPrimitives.WriteInt64BigEndian(raw.AsSpan(NonceBytes, 8), createdAt.ToUnixTimeMilliseconds());
-        ComputeTag(accountName, container, key, accountKey, nonce, createdAt, raw.AsSpan(NonceBytes + 8, TagBytes));
+        BinaryPrimitives.WriteInt64BigEndian(raw.AsSpan(0, 8), createdAt.ToUnixTimeMilliseconds());
+        nonce.CopyTo(raw.AsSpan(8, NonceBytes));
+        ComputeTag(accountName, container, key, accountKey, nonce, createdAt, raw.AsSpan(16, TagBytes));
         return raw;
+    }
+
+    private static UploadToken? TryDecodeCore(
+        byte[] raw,
+        string encoded,
+        string accountName,
+        string container,
+        string key,
+        ReadOnlySpan<byte> accountKey,
+        DateTimeOffset? now,
+        bool legacyLayout)
+    {
+        if (!TryReadCreatedAt(raw, legacyLayout, out var createdAt))
+        {
+            return null;
+        }
+
+        var current = now ?? DateTimeOffset.UtcNow;
+        if (current - createdAt > MaxAge || createdAt - current > TimeSpan.FromMinutes(5))
+        {
+            return null;
+        }
+
+        var nonceOffset = legacyLayout ? 0 : 8;
+        var tagOffset = 16;
+        var nonce = raw.AsSpan(nonceOffset, NonceBytes);
+        var providedTag = raw.AsSpan(tagOffset, TagBytes);
+
+        Span<byte> expectedTag = stackalloc byte[TagBytes];
+        ComputeTag(accountName, container, key, accountKey, nonce, createdAt, expectedTag);
+        if (!CryptographicOperations.FixedTimeEquals(providedTag, expectedTag))
+        {
+            return null;
+        }
+
+        return new UploadToken(nonce.ToArray(), createdAt, encoded, legacyLayout);
+    }
+
+    private static bool TryReadCreatedAt(ReadOnlySpan<byte> raw, bool legacyLayout, out DateTimeOffset createdAt)
+    {
+        createdAt = default;
+        var createdAtOffset = legacyLayout ? NonceBytes : 0;
+        var createdAtMs = BinaryPrimitives.ReadInt64BigEndian(raw.Slice(createdAtOffset, 8));
+        try
+        {
+            createdAt = DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     private static void ComputeTag(
