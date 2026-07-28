@@ -114,7 +114,6 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -300,7 +299,6 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
