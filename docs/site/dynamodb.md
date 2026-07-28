@@ -114,7 +114,6 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -124,9 +123,9 @@
 | HASH+RANGE composite key tables | ✅ implemented | — | — | — |  |  |  |
 | Idempotent delete (missing item returns success) | ✅ implemented | — | — | — | Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics. |  |  |
 | ConditionExpression / Expected / ConditionalOperator | ✅ implemented | — | — | — | Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — |  |  |  |
-| ReturnValues | 🟡 partial | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — | Only NONE accepted; ALL_OLD rejected with ValidationException. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | 🔵 by design | — | — |  |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented | — | — | — |  |  |  |
+| ReturnValues | ✅ implemented | — | — | — | Supports NONE and ALL_OLD. ALL_OLD returns the deleted item image when one existed; a missing-item delete still succeeds with no Attributes, matching DynamoDB. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | 🔵 by design | — | — | Requests are accepted but the response always omits ConsumedCapacity / ItemCollectionMetrics because Cosmos DB exposes no faithful DynamoDB-equivalent delete accounting surface. |  |  |
 
 ### Behaviour differences
 
@@ -300,7 +299,6 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ### Sub-features
 
@@ -310,9 +308,9 @@
 | HASH+RANGE composite key tables | ✅ implemented | — | — | — |  |  |  |
 | Full DynamoDB wire-form round-trip (S/N/B/BOOL/NULL/M/L/SS/NS/BS) | ✅ implemented | — | — | — | Attributes stored as inferred Cosmos JSON (no `{S}`/`{N}` wrapping); number values are normalised to DynamoDB's canonical decimal form (no trailing zeros, no exponent, no `-0`) — matching real DDB's documented behaviour. Numbers whose canonical form exceeds IEEE 754 double round-trip safety are stored via the `{"_a2a:N":"<canonical>"}` envelope so 16–38 digit precision survives Cosmos storage byte-identical. |  |  |
 | ConditionExpression / Expected / ConditionalOperator | ✅ implemented | — | — | — | Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create. |  |  |
-| ExpressionAttributeNames / ExpressionAttributeValues | ⛔ unsupported | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — |  |  |  |
-| ReturnValues | 🟡 partial | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — | Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException. |  |  |
-| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | 🔵 by design | — | — | Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics. |  |  |
+| ExpressionAttributeNames / ExpressionAttributeValues | ✅ implemented | — | — | — |  |  |  |
+| ReturnValues | ✅ implemented | — | — | — | Supports NONE and ALL_OLD. ALL_OLD returns the previous item image for unconditional and conditional writes; UPDATED_* remains invalid for PutItem exactly as in AWS. |  |  |
+| ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | 🔵 by design | — | — | Requests are accepted but the response always omits ConsumedCapacity / ItemCollectionMetrics because Cosmos DB exposes no faithful DynamoDB-equivalent item write accounting surface. |  |  |
 
 ### Behaviour differences
 
@@ -494,7 +492,7 @@
 | Serialized transaction body limit | 🟡 partial | 🔵 by design | — | — | The exact UTF-8 stored-procedure parameter body is assembled in a 2 MiB-bounded pooled IBufferWriter. Serialization stops as soon as the limit is crossed, so an oversized body is never fully materialized. Oversize requests are rejected deterministically with ValidationException before stored-procedure provisioning or execution. DynamoDB permits an aggregate 4 MiB transaction, so the proxy's accepted aggregate is lower. |  |  |
 | ClientRequestToken (idempotency) | ✅ implemented | — | — | ✅ | Tokens are validated at 1–36 characters. `atomicTransactWrite_v5` writes a collision-proof reserved record in the same Cosmos logical partition and transaction as the user writes. Its stable SHA-256 fingerprint is based on normalized transaction semantics: resolved condition ASTs, canonical DynamoDB numbers/base64, sorted map properties and set members, and the ordered operation list, so JSON property order and equivalent numeric/set encodings do not cause false mismatches. Canonical bytes feed SHA-256 incrementally through a fixed pooled UTF-8 scratch buffer; the handler does not retain a second full transaction representation. Equivalent retries replay the original success or positional condition-cancellation outcome without applying writes again; a different fingerprint within the active window returns IdempotentParameterMismatchException. The script samples Cosmos server time immediately before the atomic token upsert/completion, so validation reads and condition work do not consume any of the advertised 10-minute post-completion window. It records created/expiry timestamps, assigns a 660-second native ttl, and performs a bounded partition-local sweep when container TTL is not armed. Expired records are safely replaced. Preflight and script validation errors are not cached. The contract is scoped to this operation's supported single-table/single-partition boundary; callers must not reuse one token for a transaction in another partition. |  |  |
 | Deployment-stable Cosmos transaction authority | ✅ implemented | — | — | — | Account topology is resolved before transaction stored-procedure provisioning/execution. Single-write accounts use their explicit writable regional endpoint. Multi-write accounts require target.preferredRegions[0], which remains authoritative across process restarts regardless of which other writable regions are currently discoverable. If that first region is absent, unavailable, timed out, or rejects writes, the operation fails retryably without replaying its writes or durable idempotency record in a later region. |  |  |
-| ReturnValuesOnConditionCheckFailure | ⛔ unsupported | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — | Any use is rejected with ValidationException; ALL_OLD items are not fabricated or silently omitted. |  |  |
+| ReturnValuesOnConditionCheckFailure | ⛔ unsupported | 🛠️ feasible backlog | [#687](https://github.com/pedrosakuma/aws2azure/issues/687) | — | Any use is rejected with ValidationException. The certified `atomicTransactWrite_v5` payload returns only positional cancellation codes; faithfully returning ALL_OLD images would require a new stored-procedure identity that persists those pre-write snapshots atomically with the cancellation outcome. The proxy intentionally does not race a post-failure GET to fabricate potentially newer items. |  |  |
 | ReturnConsumedCapacity / ReturnItemCollectionMetrics | ⛔ unsupported | 🔵 by design | — | — | Omitted or NONE is accepted. Other values are rejected with ValidationException rather than silently dropping response fields. |  |  |
 
 ### Behaviour differences

@@ -131,6 +131,8 @@ internal static class SprocDispatcher
         string docId,
         ReadOnlyMemory<byte> cosmosDocJson,
         ConditionNode? condition,
+        string returnValues,
+        string returnValuesOnConditionCheckFailure,
         CancellationToken ct)
     {
         var dispatch = await TryExecuteSingleWriteAsync(
@@ -145,11 +147,21 @@ internal static class SprocDispatcher
 
         if (result.Success)
         {
-            return SprocWriteResult.Succeeded();
+            if (returnValues == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.Succeeded(result.ResponseBody, oldItem);
+            }
+            return SprocWriteResult.Succeeded(result.ResponseBody);
         }
 
         if (result.ConditionFailed)
         {
+            if (returnValuesOnConditionCheckFailure == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.ConditionNotMet(oldItem);
+            }
             return SprocWriteResult.ConditionNotMet();
         }
 
@@ -221,6 +233,8 @@ internal static class SprocDispatcher
         string partitionKey,
         string docId,
         ConditionNode? condition,
+        string returnValues,
+        string returnValuesOnConditionCheckFailure,
         CancellationToken ct)
     {
         var dispatch = await TryExecuteSingleWriteAsync(
@@ -235,11 +249,21 @@ internal static class SprocDispatcher
 
         if (result.Success)
         {
+            if (returnValues == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.Succeeded(result.ResponseBody, oldItem);
+            }
             return SprocWriteResult.Succeeded(result.ResponseBody);
         }
 
         if (result.ConditionFailed)
         {
+            if (returnValuesOnConditionCheckFailure == "ALL_OLD")
+            {
+                var (oldItem, _) = ParseSprocResponse(result.ResponseBody);
+                return SprocWriteResult.ConditionNotMet(oldItem);
+            }
             return SprocWriteResult.ConditionNotMet();
         }
 

@@ -63,7 +63,7 @@ sub_features:
   notes: Account topology is resolved before transaction stored-procedure provisioning/execution. Single-write accounts use their explicit writable regional endpoint. Multi-write accounts require target.preferredRegions[0], which remains authoritative across process restarts regardless of which other writable regions are currently discoverable. If that first region is absent, unavailable, timed out, or rejects writes, the operation fails retryably without replaying its writes or durable idempotency record in a later region.
 - name: ReturnValuesOnConditionCheckFailure
   status: unsupported
-  notes: Any use is rejected with ValidationException; ALL_OLD items are not fabricated or silently omitted.
+  notes: Any use is rejected with ValidationException. The certified `atomicTransactWrite_v5` payload returns only positional cancellation codes; faithfully returning ALL_OLD images would require a new stored-procedure identity that persists those pre-write snapshots atomically with the cancellation outcome. The proxy intentionally does not race a post-failure GET to fabricate potentially newer items.
   disposition: feasible_backlog
   tracking_issue: '#687'
 - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics

@@ -9,7 +9,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 8 | 0 | 46 |
+| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 4 | 0 | 46 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 12 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
@@ -27,12 +27,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Feasible backlog
 
-- Sub-feature [DeleteItem](dynamodb.md#deleteitem) / ExpressionAttributeNames / ExpressionAttributeValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
-- Sub-feature [DeleteItem](dynamodb.md#deleteitem) / ReturnValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [DescribeTable](dynamodb.md#describetable) / ItemCount / TableSizeBytes (live metrics) — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
 - Sub-feature [DescribeTable](dynamodb.md#describetable) / GSI/LSI description — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
-- Sub-feature [PutItem](dynamodb.md#putitem) / ExpressionAttributeNames / ExpressionAttributeValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
-- Sub-feature [PutItem](dynamodb.md#putitem) / ReturnValues — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / Update — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / ReturnValuesOnConditionCheckFailure — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 

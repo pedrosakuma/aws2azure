@@ -43,6 +43,32 @@ public class DynamoDbItemOpsTests
                 $"PutItem → {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}");
         }
 
+        // PutItem with ReturnValues=ALL_OLD and placeholder-backed condition.
+        var replaceBody = $$"""
+        {
+          "TableName": "{{table}}",
+          "Item": {
+            "pk":   { "S": "order-1" },
+            "name": { "S": "widget-v2" },
+            "qty":  { "N": "4" }
+          },
+          "ConditionExpression": "#name = :expected",
+          "ExpressionAttributeNames": { "#name": "name" },
+          "ExpressionAttributeValues": { ":expected": { "S": "widget" } },
+          "ReturnValues": "ALL_OLD"
+        }
+        """;
+        using (var req = DynamoDbRequestBuilder.Build("PutItem", replaceBody, _fx.AccessKeyId, _fx.Secret, _fx.Client.BaseAddress!))
+        using (var resp = await _fx.Client.SendAsync(req))
+        {
+            var text = await resp.Content.ReadAsStringAsync();
+            Assert.True(resp.IsSuccessStatusCode, $"PutItem replace → {(int)resp.StatusCode} {text}");
+            using var doc = JsonDocument.Parse(text);
+            var attrs = doc.RootElement.GetProperty("Attributes");
+            Assert.Equal("widget", attrs.GetProperty("name").GetProperty("S").GetString());
+            Assert.Equal("3", attrs.GetProperty("qty").GetProperty("N").GetString());
+        }
+
         // GetItem (strong consistency)
         var getBody = $$"""
         {
@@ -58,8 +84,8 @@ public class DynamoDbItemOpsTests
             Assert.True(resp.IsSuccessStatusCode, $"GetItem → {(int)resp.StatusCode} {text}");
             using var doc = JsonDocument.Parse(text);
             var item = doc.RootElement.GetProperty("Item");
-            Assert.Equal("widget", item.GetProperty("name").GetProperty("S").GetString());
-            Assert.Equal("3", item.GetProperty("qty").GetProperty("N").GetString());
+            Assert.Equal("widget-v2", item.GetProperty("name").GetProperty("S").GetString());
+            Assert.Equal("4", item.GetProperty("qty").GetProperty("N").GetString());
         }
 
         // UpdateItem: SET qty = qty + :inc, REMOVE name
@@ -80,7 +106,7 @@ public class DynamoDbItemOpsTests
             Assert.True(resp.IsSuccessStatusCode, $"UpdateItem → {(int)resp.StatusCode} {text}");
             using var doc = JsonDocument.Parse(text);
             var attrs = doc.RootElement.GetProperty("Attributes");
-            Assert.Equal("5", attrs.GetProperty("qty").GetProperty("N").GetString());
+            Assert.Equal("6", attrs.GetProperty("qty").GetProperty("N").GetString());
             Assert.False(attrs.TryGetProperty("name", out _));
         }
 
@@ -88,14 +114,19 @@ public class DynamoDbItemOpsTests
         var delBody = $$"""
         {
           "TableName": "{{table}}",
-          "Key": { "pk": { "S": "order-1" } }
+          "Key": { "pk": { "S": "order-1" } },
+          "ReturnValues": "ALL_OLD"
         }
         """;
         using (var req = DynamoDbRequestBuilder.Build("DeleteItem", delBody, _fx.AccessKeyId, _fx.Secret, _fx.Client.BaseAddress!))
         using (var resp = await _fx.Client.SendAsync(req))
         {
-            Assert.True(resp.IsSuccessStatusCode,
-                $"DeleteItem → {(int)resp.StatusCode} {await resp.Content.ReadAsStringAsync()}");
+            var text = await resp.Content.ReadAsStringAsync();
+            Assert.True(resp.IsSuccessStatusCode, $"DeleteItem → {(int)resp.StatusCode} {text}");
+            using var doc = JsonDocument.Parse(text);
+            var attrs = doc.RootElement.GetProperty("Attributes");
+            Assert.Equal("6", attrs.GetProperty("qty").GetProperty("N").GetString());
+            Assert.False(attrs.TryGetProperty("name", out _));
         }
 
         // GetItem after delete: 200 with no Item

@@ -7,14 +7,14 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [BatchGetItem](dynamodb.md#batchgetitem) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [BatchWriteItem](dynamodb.md#batchwriteitem) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [CreateTable](dynamodb.md#createtable) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls` |
-| dynamodb | [DeleteItem](dynamodb.md#deleteitem) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [DeleteItem](dynamodb.md#deleteitem) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [DeleteTable](dynamodb.md#deletetable) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |
 | dynamodb | [DescribeTable](dynamodb.md#describetable) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata` |
 | dynamodb | [DescribeTimeToLive](dynamodb.md#describetimetolive) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | dynamodb | [GetItem](dynamodb.md#getitem) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](dynamodb.md#listtables) | ✅ implemented | — | — | — | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
 | dynamodb | [ListTagsOfResource](dynamodb.md#listtagsofresource) | ✅ implemented | — | — | — | `Azure Cosmos DB account/resource tags (control plane)` |
-| dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [PutItem](dynamodb.md#putitem) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](dynamodb.md#query) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](dynamodb.md#scan) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TagResource](dynamodb.md#tagresource) | ✅ implemented | — | — | — | `Azure Cosmos DB account/resource tags (control plane)` |

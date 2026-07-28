@@ -2,10 +2,6 @@ service: dynamodb
 operation: PutItem
 azure_equivalent: Azure Cosmos DB (Core SQL API)
 status: partial
-verified_real_azure:
-  date: '2026-07-16'
-  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
-  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
 sub_features:
 - name: HASH-only key tables
   status: implemented
@@ -18,17 +14,13 @@ sub_features:
   status: implemented
   notes: 'Conditional path performs GET → evaluate → PUT(If-Match) or POST(If-None-Match: *) with up to 4 retries on Cosmos 412/409. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD. attribute_not_exists(pk) is the standard idiom for first-time create.'
 - name: ExpressionAttributeNames / ExpressionAttributeValues
-  status: unsupported
-  disposition: feasible_backlog
-  tracking_issue: '#687'
+  status: implemented
 - name: ReturnValues
-  status: partial
-  notes: Only NONE accepted; ALL_OLD/UPDATED_* rejected with ValidationException.
-  disposition: feasible_backlog
-  tracking_issue: '#687'
+  status: implemented
+  notes: Supports NONE and ALL_OLD. ALL_OLD returns the previous item image for unconditional and conditional writes; UPDATED_* remains invalid for PutItem exactly as in AWS.
 - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
   status: unsupported
-  notes: Silently ignored; response omits ConsumedCapacity / ItemCollectionMetrics.
+  notes: Requests are accepted but the response always omits ConsumedCapacity / ItemCollectionMetrics because Cosmos DB exposes no faithful DynamoDB-equivalent item write accounting surface.
   disposition: by_design
 behavior_differences:
 - 'Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing.'

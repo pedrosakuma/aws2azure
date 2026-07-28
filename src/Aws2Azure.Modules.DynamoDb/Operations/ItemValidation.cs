@@ -604,14 +604,33 @@ internal static partial class ItemHandlers
         };
     }
 
-    private static bool IsAllowedReturnValuesForWrite(string? rv, out string error)
+    private static bool IsAllowedPutItemReturnValues(
+        string? raw,
+        out string canonical,
+        out string error)
     {
-        if (string.IsNullOrEmpty(rv) || rv == "NONE")
+        canonical = string.IsNullOrEmpty(raw) ? "NONE" : raw!;
+        if (canonical is "NONE" or "ALL_OLD")
         {
             error = string.Empty;
             return true;
         }
-        error = $"ReturnValues='{rv}' is not supported in this slice (only NONE).";
+        error = $"ReturnValues='{raw}' is not a valid PutItem ReturnValues mode.";
+        return false;
+    }
+
+    private static bool IsAllowedDeleteItemReturnValues(
+        string? raw,
+        out string canonical,
+        out string error)
+    {
+        canonical = string.IsNullOrEmpty(raw) ? "NONE" : raw!;
+        if (canonical is "NONE" or "ALL_OLD")
+        {
+            error = string.Empty;
+            return true;
+        }
+        error = $"ReturnValues='{raw}' is not a valid DeleteItem ReturnValues mode.";
         return false;
     }
 

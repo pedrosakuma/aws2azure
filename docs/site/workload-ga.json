@@ -5,13 +5,19 @@
     "profile_version": 1,
     "name": "DynamoDB basic table and item CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "candidate",
+    "verdict": "conditional",
     "findings": [
       {
         "code": "partial_operation_accepted",
         "disposition": "advisory",
         "subject": "dynamodb:DeleteItem",
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb:DeleteItem",
+        "message": "Required operation has no real-Azure verification seal."
       },
       {
         "code": "partial_operation_accepted",
@@ -24,6 +30,12 @@
         "disposition": "advisory",
         "subject": "dynamodb:PutItem",
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb:PutItem",
+        "message": "Required operation has no real-Azure verification seal."
       },
       {
         "code": "partial_operation_accepted",
@@ -42,72 +54,6 @@
         "disposition": "advisory",
         "subject": "dynamodb:Key encoding and on-disk storage format",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[0] is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[1] is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[2] is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.correctness_run is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: qualified real-Azure artifact is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027conditional-write-concurrency\u0027 measurement is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027read-after-write\u0027 measurement is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
-      },
-      {
-        "code": "qualification_evidence_invalid",
-        "disposition": "blocking",
-        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
-        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ]
   },
