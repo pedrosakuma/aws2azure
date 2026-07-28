@@ -56,6 +56,7 @@ internal sealed class DescribeStreamSummaryResponseBody
 internal sealed class ListShardsRequest
 {
     public string? StreamName { get; set; }
+    public string? StreamARN { get; set; }
     public string? NextToken { get; set; }
     public string? ExclusiveStartShardId { get; set; }
     public int? MaxResults { get; set; }

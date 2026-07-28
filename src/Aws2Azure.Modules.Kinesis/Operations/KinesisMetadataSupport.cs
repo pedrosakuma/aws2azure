@@ -114,6 +114,31 @@ internal static class KinesisMetadataSupport
     public static string BuildStreamArn(EventHubsCredentials credentials, string streamName)
         => $"arn:aws:kinesis:azure:{credentials.Namespace}:stream/{streamName}";
 
+    public static bool TryValidateStreamArnForStream(
+        EventHubsCredentials credentials,
+        string? streamArn,
+        string streamName,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(streamName);
+
+        error = null;
+        if (string.IsNullOrWhiteSpace(streamArn))
+        {
+            return true;
+        }
+
+        var expectedStreamArn = BuildStreamArn(credentials, streamName);
+        if (!string.Equals(streamArn, expectedStreamArn, StringComparison.Ordinal))
+        {
+            error = "StreamARN must refer to the configured stream identity.";
+            return false;
+        }
+
+        return true;
+    }
+
     public static string ResolveConsumerGroup(EventHubsCredentials credentials, string streamName)
     {
         ArgumentNullException.ThrowIfNull(credentials);
@@ -173,11 +198,8 @@ internal static class KinesisMetadataSupport
     {
         page = [];
         hasMore = false;
-        error = null;
-
-        if (limit is <= 0)
+        if (!TryValidateShardPaginationLimit(limit, out error))
         {
-            error = "Limit/MaxResults must be greater than zero.";
             return false;
         }
 
@@ -201,10 +223,10 @@ internal static class KinesisMetadataSupport
             }
         }
 
-        var take = limit ?? (shards.Count - startIndex);
-        if (take < 0)
+        var take = limit ?? 1000;
+        if (take > 1000)
         {
-            take = 0;
+            take = 1000;
         }
 
         var actual = Math.Min(take, Math.Max(0, shards.Count - startIndex));
@@ -218,16 +240,39 @@ internal static class KinesisMetadataSupport
         return true;
     }
 
+    public static bool TryValidateShardPaginationLimit(int? limit, out string? error)
+    {
+        error = null;
+        if (limit is <= 0)
+        {
+            error = "Limit/MaxResults must be greater than zero.";
+            return false;
+        }
+
+        if (limit > 10000)
+        {
+            error = "Limit/MaxResults must be less than or equal to 10000.";
+            return false;
+        }
+
+        return true;
+    }
+
     public static bool TryValidateListShardsFilter(ShardFilterRequest? filter, out string? error)
     {
         error = null;
-        if (filter is null || string.IsNullOrWhiteSpace(filter.Type))
+        if (filter is null)
         {
             return true;
         }
 
+        if (string.IsNullOrWhiteSpace(filter.Type))
+        {
+            error = "ShardFilter.Type is required when ShardFilter is specified.";
+            return false;
+        }
+
         if (string.Equals(filter.Type, "AT_LATEST", StringComparison.Ordinal)
-            || string.Equals(filter.Type, "AT_TRIM_HORIZON", StringComparison.Ordinal)
             || string.Equals(filter.Type, "FROM_TRIM_HORIZON", StringComparison.Ordinal))
         {
             if (!string.IsNullOrWhiteSpace(filter.ShardId))
@@ -245,6 +290,29 @@ internal static class KinesisMetadataSupport
             return true;
         }
 
+        if (string.Equals(filter.Type, "FROM_TIMESTAMP", StringComparison.Ordinal))
+        {
+            if (!filter.Timestamp.HasValue)
+            {
+                error = "ShardFilter.Timestamp is required for FROM_TIMESTAMP.";
+                return false;
+            }
+
+            if (!TryGetUnixTimestampMilliseconds(filter.Timestamp.Value, out _))
+            {
+                error = "ShardFilter.Timestamp is invalid for FROM_TIMESTAMP.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.ShardId))
+            {
+                error = "ShardFilter.ShardId is not supported for FROM_TIMESTAMP.";
+                return false;
+            }
+
+            return true;
+        }
+
         if (string.Equals(filter.Type, "AFTER_SHARD_ID", StringComparison.Ordinal))
         {
             if (string.IsNullOrWhiteSpace(filter.ShardId))
@@ -256,30 +324,6 @@ internal static class KinesisMetadataSupport
             if (filter.Timestamp.HasValue)
             {
                 error = "ShardFilter.Timestamp is not supported for AFTER_SHARD_ID.";
-                return false;
-            }
-
-            return true;
-        }
-
-        if (string.Equals(filter.Type, "AT_TIMESTAMP", StringComparison.Ordinal)
-            || string.Equals(filter.Type, "FROM_TIMESTAMP", StringComparison.Ordinal))
-        {
-            if (!filter.Timestamp.HasValue)
-            {
-                error = $"ShardFilter.Timestamp is required for {filter.Type}.";
-                return false;
-            }
-
-            if (!TryValidateUnixTimestampSeconds(filter.Timestamp.Value))
-            {
-                error = $"ShardFilter.Timestamp is invalid for {filter.Type}.";
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(filter.ShardId))
-            {
-                error = $"ShardFilter.ShardId is not supported for {filter.Type}.";
                 return false;
             }
 
@@ -333,18 +377,6 @@ internal static class KinesisMetadataSupport
             }
 
             effectiveExclusiveStartShardId = filter.ShardId;
-            return true;
-        }
-
-        if (string.Equals(filter.Type, "AT_TIMESTAMP", StringComparison.Ordinal))
-        {
-            var timestamp = DateTimeOffset.UnixEpoch.AddMilliseconds(filter.Timestamp!.Value * 1000d);
-            if (timestamp < eventHub.CreatedAt)
-            {
-                effectiveExclusiveStartShardId = null;
-                returnEmpty = true;
-            }
-
             return true;
         }
 
@@ -419,14 +451,21 @@ internal static class KinesisMetadataSupport
         return false;
     }
 
-    private static bool TryValidateUnixTimestampSeconds(double value)
+    public static bool TryGetUnixTimestampMilliseconds(double value, out long milliseconds)
     {
-        var milliseconds = value * 1000d;
-        return !double.IsNaN(value)
-               && !double.IsInfinity(value)
-               && !double.IsNaN(milliseconds)
-               && !double.IsInfinity(milliseconds)
-               && milliseconds >= MinUnixTimestampMilliseconds
-               && milliseconds <= MaxUnixTimestampMilliseconds;
+        milliseconds = default;
+        var timestampMilliseconds = value * 1000d;
+        if (double.IsNaN(value)
+            || double.IsInfinity(value)
+            || double.IsNaN(timestampMilliseconds)
+            || double.IsInfinity(timestampMilliseconds)
+            || timestampMilliseconds < MinUnixTimestampMilliseconds
+            || timestampMilliseconds > MaxUnixTimestampMilliseconds)
+        {
+            return false;
+        }
+
+        milliseconds = checked((long)Math.Round(timestampMilliseconds, MidpointRounding.AwayFromZero));
+        return true;
     }
 }

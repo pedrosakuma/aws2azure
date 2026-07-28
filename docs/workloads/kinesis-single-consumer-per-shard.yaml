@@ -15,6 +15,7 @@ requirements:
 accepted_partial_operations:
   - kinesis:DescribeStream
   - kinesis:DescribeStreamSummary
+  - kinesis:ListShards
   - kinesis:GetShardIterator
   - kinesis:GetRecords
 accepted_design_gaps:

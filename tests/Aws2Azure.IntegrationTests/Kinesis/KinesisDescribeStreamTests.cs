@@ -58,16 +58,6 @@ public sealed class KinesisDescribeStreamTests
         }).ConfigureAwait(false);
         Assert.Equal(expectedShardIds[2..], filtered.Shards.Select(s => s.ShardId).ToArray());
 
-        var trimHorizon = await client.ListShardsAsync(new ListShardsRequest
-        {
-            StreamName = KinesisEmulatorProxyFixture.StreamName,
-            ShardFilter = new ShardFilter
-            {
-                Type = "AT_TRIM_HORIZON",
-            },
-        }).ConfigureAwait(false);
-        Assert.Equal(expectedShardIds, trimHorizon.Shards.Select(s => s.ShardId).ToArray());
-
         var summary = await client.DescribeStreamSummaryAsync(new DescribeStreamSummaryRequest
         {
             StreamName = KinesisEmulatorProxyFixture.StreamName,
