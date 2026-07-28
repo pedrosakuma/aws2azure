@@ -41,13 +41,19 @@ public sealed class SqsIdempotencyKeyTests
             ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/plain"),
             ("MessageBody", "hello"));
 
-        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        var handler = new CapturingHandler(request =>
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty),
+                }
+                : new HttpResponseMessage(HttpStatusCode.Created));
         using var http = NewHttpClient(handler);
         var sb = new ServiceBusClient(http, Creds);
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
 
-        Assert.Single(handler.Calls);
-        var bp = ExtractBrokerProperties(handler.Calls[0]);
+        var sendCall = Assert.Single(handler.Calls.FindAll(static call => call.Method == HttpMethod.Post));
+        var bp = ExtractBrokerProperties(sendCall);
         Assert.True(bp.RootElement.TryGetProperty("MessageId", out var midElem),
             "BrokerProperties must carry a MessageId for retry idempotency.");
         var wireMessageId = midElem.GetString();
@@ -69,8 +75,16 @@ public sealed class SqsIdempotencyKeyTests
             ("MessageBody", "hello"));
 
         var first503 = true;
-        var handler = new CapturingHandler(_ =>
+        var handler = new CapturingHandler(request =>
         {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty),
+                };
+            }
+
             if (first503)
             {
                 first503 = false;
@@ -83,11 +97,12 @@ public sealed class SqsIdempotencyKeyTests
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
 
         // Must have retried at least once.
-        Assert.True(handler.Calls.Count >= 2,
-            $"expected ≥ 2 attempts (one 503 + one 201), got {handler.Calls.Count}");
+        var sendCalls = handler.Calls.FindAll(static call => call.Method == HttpMethod.Post);
+        Assert.True(sendCalls.Count >= 2,
+            $"expected ≥ 2 send attempts (one 503 + one 201), got {sendCalls.Count}");
 
-        var first = ExtractBrokerProperties(handler.Calls[0]).RootElement.GetProperty("MessageId").GetString();
-        var second = ExtractBrokerProperties(handler.Calls[1]).RootElement.GetProperty("MessageId").GetString();
+        var first = ExtractBrokerProperties(sendCalls[0]).RootElement.GetProperty("MessageId").GetString();
+        var second = ExtractBrokerProperties(sendCalls[1]).RootElement.GetProperty("MessageId").GetString();
         Assert.Equal(first, second); // retries must NOT mint a new MessageId.
     }
 
@@ -101,12 +116,19 @@ public sealed class SqsIdempotencyKeyTests
             ("MessageGroupId", "g1"),
             ("MessageDeduplicationId", "dedup-42"));
 
-        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        var handler = new CapturingHandler(request =>
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty),
+                }
+                : new HttpResponseMessage(HttpStatusCode.Created));
         using var http = NewHttpClient(handler);
         var sb = new ServiceBusClient(http, Creds);
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
 
-        var bp = ExtractBrokerProperties(handler.Calls[0]);
+        var sendCall = Assert.Single(handler.Calls.FindAll(static call => call.Method == HttpMethod.Post));
+        var bp = ExtractBrokerProperties(sendCall);
         Assert.Equal("dedup-42", bp.RootElement.GetProperty("MessageId").GetString());
     }
 
@@ -124,7 +146,13 @@ public sealed class SqsIdempotencyKeyTests
             ("MessageBody", "hello"),
             ("MessageGroupId", "g1"));
 
-        var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        var handler = new CapturingHandler(request =>
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty),
+                }
+                : new HttpResponseMessage(HttpStatusCode.Created));
         using var http = NewHttpClient(handler);
         var sb = new ServiceBusClient(http, Creds);
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
@@ -171,8 +199,16 @@ public sealed class SqsIdempotencyKeyTests
             ("SendMessageBatchRequestEntry.2.MessageBody", "body-b"));
 
         var first503 = true;
-        var handler = new CapturingHandler(_ =>
+        var handler = new CapturingHandler(request =>
         {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty),
+                };
+            }
+
             if (first503)
             {
                 first503 = false;
@@ -184,11 +220,12 @@ public sealed class SqsIdempotencyKeyTests
         var sb = new ServiceBusClient(http, Creds);
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
 
-        Assert.True(handler.Calls.Count >= 2);
+        var sendCalls = handler.Calls.FindAll(static call => call.Method == HttpMethod.Post);
+        Assert.True(sendCalls.Count >= 2);
 
         // The batch envelope is the request body itself (POST JSON array).
-        var firstBody = handler.Calls[0].BodyText;
-        var secondBody = handler.Calls[1].BodyText;
+        var firstBody = sendCalls[0].BodyText;
+        var secondBody = sendCalls[1].BodyText;
         Assert.Equal(firstBody, secondBody); // identical body across retries (incl. MessageIds).
 
         // Pull the two MessageIds out of the JSON array — they must be
@@ -245,7 +282,7 @@ public sealed class SqsIdempotencyKeyTests
         return JsonDocument.Parse(captured.BrokerProperties!);
     }
 
-    private sealed record CapturedRequest(string? BrokerProperties, string BodyText);
+    private sealed record CapturedRequest(HttpMethod Method, string? BrokerProperties, string BodyText);
 
     private sealed class CapturingHandler : HttpMessageHandler
     {
@@ -261,7 +298,7 @@ public sealed class SqsIdempotencyKeyTests
             }
             var body = request.Content is null ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            Calls.Add(new CapturedRequest(bp, body));
+            Calls.Add(new CapturedRequest(request.Method, bp, body));
             return _responder(request);
         }
     }

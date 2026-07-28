@@ -42,6 +42,7 @@ internal static class BatchAdminHandlers
 {
     internal const int MaxBatchEntries = 10;
     internal const int MaxBatchConcurrency = 5;
+    private const int QueueMetadataUpdateMaxAttempts = 3;
     public static readonly TimeSpan PurgeCoolDown = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan PurgeBudget = TimeSpan.FromSeconds(60);
 
@@ -228,21 +229,6 @@ internal static class BatchAdminHandlers
             await SqsResponseWriter.WriteSetQueueAttributesAsync(context, parsed.Protocol).ConfigureAwait(false);
             return;
         }
-        // SetQueueAttributes is whole-entity replace against SB; attributes
-        // with no native SB field (DelaySeconds, ReceiveMessageWaitTimeSeconds)
-        // cannot be persisted yet because the proxy has no durable
-        // metadata store. Rather than silently dropping them — and lying to
-        // the next GetQueueAttributes / SendMessage caller — surface
-        // InvalidAttributeName until the metadata store lands.
-        foreach (var name in requestedAttrs.Keys)
-        {
-            if (name is "DelaySeconds" or "ReceiveMessageWaitTimeSeconds")
-            {
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InvalidAttributeNameForUpdate(name)).ConfigureAwait(false);
-                return;
-            }
-        }
         var err = QueueAttributeTranslator.ToServiceBusProperties(queueName, requestedAttrs, out var patch);
         if (err.IsError)
         {
@@ -253,40 +239,83 @@ internal static class BatchAdminHandlers
             return;
         }
 
-        // Read existing description so we can PUT a fully-merged Atom entry
-        // (SB has no PATCH for queue updates).
-        using (var getResp = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false))
+        for (var attempt = 0; attempt < QueueMetadataUpdateMaxAttempts; attempt++)
         {
-            if (getResp.StatusCode == HttpStatusCode.NotFound)
+            var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, queueName, ct).ConfigureAwait(false);
+            if (read is null)
             {
-                await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
-                return;
-            }
-            if (!getResp.IsSuccessStatusCode)
-            {
-                await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(getResp)).ConfigureAwait(false);
-                return;
-            }
-            var xml = await getResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
-            if (entry is null)
-            {
-                await WriteErrorAsync(context, parsed.Protocol,
-                    SqsErrorMapping.InternalError("aws2azure: failed to parse Service Bus queue description.")).ConfigureAwait(false);
                 return;
             }
 
-            var merged = QueueAttributeTranslator.Merge(entry.Properties, patch);
+            SqsQueueTagStore.QueueMetadata? proxyMetadata = null;
+            if (patch.DelaySeconds.HasValue || patch.ReceiveMessageWaitTimeSeconds.HasValue)
+            {
+                if (!SqsQueueTagStore.TryDecodeForMutation(
+                        read.Entry.Properties.UserMetadata,
+                        out var decodedMetadata,
+                        out var metadataError))
+                {
+                    var invalidAttribute = patch.DelaySeconds.HasValue
+                        ? "DelaySeconds"
+                        : "ReceiveMessageWaitTimeSeconds";
+                    await WriteErrorAsync(context, parsed.Protocol,
+                        SqsErrorMapping.InvalidAttributeValue(
+                            invalidAttribute,
+                            metadataError ?? "Queue metadata is invalid.")).ConfigureAwait(false);
+                    return;
+                }
+
+                proxyMetadata = decodedMetadata;
+                if (patch.DelaySeconds.HasValue)
+                {
+                    proxyMetadata.DelaySeconds = NormalizeStoredValue(patch.DelaySeconds);
+                }
+
+                if (patch.ReceiveMessageWaitTimeSeconds.HasValue)
+                {
+                    proxyMetadata.ReceiveMessageWaitTimeSeconds = NormalizeStoredValue(patch.ReceiveMessageWaitTimeSeconds);
+                }
+            }
+
+            var merged = QueueAttributeTranslator.Merge(read.Entry.Properties, patch);
+            if (proxyMetadata is not null)
+            {
+                if (!SqsQueueTagStore.TryEncodeMetadata(proxyMetadata, out var userMetadata))
+                {
+                    var invalidAttribute = patch.DelaySeconds.HasValue
+                        ? "DelaySeconds"
+                        : "ReceiveMessageWaitTimeSeconds";
+                    await WriteErrorAsync(context, parsed.Protocol,
+                        SqsErrorMapping.InvalidAttributeValue(
+                            invalidAttribute,
+                            $"Serialized queue metadata exceeds the Azure Service Bus UserMetadata limit of {SqsQueueTagStore.UserMetadataMaxLength} characters."))
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                merged.UserMetadata = string.IsNullOrEmpty(userMetadata) ? null : userMetadata;
+            }
             var atomBody = AtomQueueXmlWriter.BuildQueueEntry(merged);
-            using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false);
+            using var putResp = string.IsNullOrWhiteSpace(read.ETag)
+                ? await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false)
+                : await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
             if (!putResp.IsSuccessStatusCode)
             {
+                if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
+                {
+                    continue;
+                }
+
                 await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(putResp)).ConfigureAwait(false);
                 return;
             }
+
+            SqsQueueMetadataCache.Set(sb, queueName, merged);
+            await SqsResponseWriter.WriteSetQueueAttributesAsync(context, parsed.Protocol).ConfigureAwait(false);
+            return;
         }
 
-        await SqsResponseWriter.WriteSetQueueAttributesAsync(context, parsed.Protocol).ConfigureAwait(false);
+        await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueTagUpdateConflict()).ConfigureAwait(false);
     }
 
     // --- PurgeQueue -----------------------------------------------------
@@ -702,6 +731,56 @@ internal static class BatchAdminHandlers
 
     private static Task WriteErrorAsync(HttpContext context, SqsWireProtocol protocol, SqsErrorMapping.Mapping mapping) =>
         SqsParameterHelpers.WriteErrorAsync(context, protocol, mapping);
+
+    private static int? NormalizeStoredValue(int? value)
+        => value is > 0 ? value : null;
+
+    private static async Task<QueueReadResult?> ReadQueueEntryWithETagAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        ServiceBusClient sb,
+        string queueName,
+        CancellationToken ct)
+    {
+        using var getResp = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+        if (getResp.StatusCode == HttpStatusCode.NotFound)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
+            return null;
+        }
+        if (!getResp.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(getResp)).ConfigureAwait(false);
+            return null;
+        }
+
+        var xml = await getResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+        if (entry is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.InternalError("aws2azure: failed to parse Service Bus queue description.")).ConfigureAwait(false);
+            return null;
+        }
+
+        var eTag = getResp.Headers.ETag?.Tag;
+        if (string.IsNullOrWhiteSpace(eTag) &&
+            getResp.Headers.TryGetValues("ETag", out var values))
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    eTag = value;
+                    break;
+                }
+            }
+        }
+
+        return new QueueReadResult(entry, eTag);
+    }
+
+    private sealed record QueueReadResult(AtomQueueXmlReader.QueueEntry Entry, string? ETag);
 
     // Test-only hook so unit tests can reset cool-down state between runs.
     internal static void ResetPurgeCoolDownForTesting() => _purgeCooldowns.Clear();

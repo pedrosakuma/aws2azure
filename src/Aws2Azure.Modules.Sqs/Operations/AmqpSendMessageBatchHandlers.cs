@@ -35,16 +35,24 @@ internal static class AmqpSendMessageBatchHandlers
         SqsParseResult parsed,
         IAmqpSenderProvider senders,
         CancellationToken ct) =>
+        HandleAsync(context, parsed, senders, management: null, ct);
+
+    public static Task HandleAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        IAmqpSenderProvider senders,
+        ServiceBusClient? management,
+        CancellationToken ct) =>
         parsed.Operation switch
         {
-            SqsOperation.SendMessageBatch => SendMessageBatchAsync(context, parsed, senders, ct),
+            SqsOperation.SendMessageBatch => SendMessageBatchAsync(context, parsed, senders, management, ct),
             _                              => SendMessageHandlers.WriteErrorAsync(
                                                  context, parsed.Protocol,
                                                  SqsErrorMapping.NotImplemented(parsed.Operation)),
         };
 
     private static async Task SendMessageBatchAsync(
-        HttpContext context, SqsParseResult parsed, IAmqpSenderProvider senders, CancellationToken ct)
+        HttpContext context, SqsParseResult parsed, IAmqpSenderProvider senders, ServiceBusClient? management, CancellationToken ct)
     {
         var queueName = SendMessageHandlers.ExtractQueueName(parsed);
         if (queueName is null)
@@ -74,6 +82,20 @@ internal static class AmqpSendMessageBatchHandlers
             await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
                 SqsErrorMapping.TooManyEntriesInBatchRequest(entries.Count)).ConfigureAwait(false);
             return;
+        }
+
+        if (management is not null && SendMessageHandlers.NeedsQueueDefaultDelay(entries))
+        {
+            var lookup = await SqsQueueMetadataCache.GetAsync(management, queueName, ct).ConfigureAwait(false);
+            if (!lookup.Success)
+            {
+                await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+                return;
+            }
+
+            SendMessageHandlers.ApplyQueueDefaultDelay(
+                entries,
+                lookup.Metadata.DelaySeconds ?? QueueAttributeTranslator.DefaultDelaySeconds);
         }
 
         var seen = new HashSet<string>(StringComparer.Ordinal);

@@ -191,6 +191,30 @@ internal static class AtomQueueXmlReader
                     advanced = true;
                     break;
                 }
+                case "ActiveMessageCount":
+                    p.ActiveMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "ScheduledMessageCount":
+                    p.ScheduledMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "DeadLetterMessageCount":
+                    p.DeadLetterMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "TransferMessageCount":
+                    p.TransferMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "TransferDeadLetterMessageCount":
+                    p.TransferDeadLetterMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "CountDetails":
+                    ReadCountDetails(reader, p);
+                    advanced = true;
+                    break;
                 case "RequiresSession":
                     p.RequiresSession = ReadBool(reader);
                     advanced = true;
@@ -251,6 +275,60 @@ internal static class AtomQueueXmlReader
         return DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
             out var dt) ? dt : null;
+    }
+
+    private static long? ReadLong(XmlReader reader)
+    {
+        var raw = reader.ReadElementContentAsString();
+        return long.TryParse(raw, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
+    private static void ReadCountDetails(XmlReader reader, QueueDescriptionProperties props)
+    {
+        if (reader.IsEmptyElement)
+        {
+            return;
+        }
+
+        var depth = reader.Depth;
+        var advanced = false;
+        while (advanced || reader.Read())
+        {
+            advanced = false;
+            if (reader.NodeType == XmlNodeType.EndElement && reader.Depth == depth) break;
+            if (reader.NodeType != XmlNodeType.Element || reader.NamespaceURI != SbNs) continue;
+
+            switch (reader.LocalName)
+            {
+                case "ActiveMessageCount":
+                    props.ActiveMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "ScheduledMessageCount":
+                    props.ScheduledMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "DeadLetterMessageCount":
+                    props.DeadLetterMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "TransferMessageCount":
+                    props.TransferMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                case "TransferDeadLetterMessageCount":
+                    props.TransferDeadLetterMessageCount = ReadLong(reader);
+                    advanced = true;
+                    break;
+                default:
+                    reader.Skip();
+                    advanced = true;
+                    break;
+            }
+        }
     }
 
     private static double? ParseIsoDurationSeconds(string? iso)

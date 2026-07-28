@@ -141,7 +141,7 @@ public sealed class AmqpReceiveMessageHandlersTests
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         Assert.DoesNotContain("<Message>", ReadBody(ctx));
-        Assert.Equal(1, handler.CallCount);
+        Assert.Equal(2, handler.CallCount);
         var forwarded = Assert.Single(harness.Provider.ForwardedMessages);
         Assert.Equal("target-dlq", forwarded.QueueName);
         Assert.Equal("over-limit", Encoding.UTF8.GetString(forwarded.Message.Body.Span));

@@ -13,33 +13,23 @@ sub_features:
   status: implemented
   notes: Derived from MaxMessageSizeInKilobytes; defaults to 1 MiB (1048576 bytes) when absent — matches the current SQS default (raised from 256 KiB to 1 MiB in August 2025).
 - name: Attribute.DelaySeconds
-  status: partial
-  notes: Service Bus has no queue-level default delay; the proxy returns 0. Per-message delay lands in Slice 2.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Returned from aws2azure's QueueDescription.UserMetadata blob when a queue-default DelaySeconds value was created or updated through the proxy.
 - name: Attribute.ReceiveMessageWaitTimeSeconds
-  status: partial
-  notes: Returned as 0 until long-polling lands in Slice 4.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Returned from aws2azure's QueueDescription.UserMetadata blob when a queue-default ReceiveMessageWaitTimeSeconds value was created or updated through the proxy.
 - name: Attribute.ApproximateNumberOfMessages
   status: implemented
   notes: Mapped from Service Bus MessageCount when the property is present in the Atom response.
 - name: Attribute.ApproximateNumberOfMessagesNotVisible / Delayed
-  status: unsupported
-  gap: Service Bus exposes ActiveMessageCount / DeadLetterMessageCount via CountDetails — requires extra parsing planned for Slice 3+.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: ApproximateNumberOfMessagesDelayed maps from ScheduledMessageCount. ApproximateNumberOfMessagesNotVisible is derived best-effort from MessageCount minus visible, scheduled, and transfer/dead-letter counts.
 - name: Attribute.CreatedTimestamp / LastModifiedTimestamp
-  status: unsupported
-  gap: Available in the Atom envelope; the proxy reads them but does not surface them as SQS attributes yet.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Surfaced from the Atom entry's published/updated timestamps.
 - name: Attribute.QueueArn
-  status: unsupported
-  gap: aws2azure has no AWS account model; ARN synthesis is intentionally deferred.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Synthesized as arn:aws:sqs:us-east-1:000000000000:{queue}, matching the proxy's placeholder account convention used elsewhere in the SQS surface.
 - name: Attribute.RedrivePolicy
   status: implemented
   notes: Emitted as JSON {deadLetterTargetArn, maxReceiveCount} when the SB queue has ForwardDeadLetteredMessagesTo set. The synthetic ARN uses arn:aws:sqs:us-east-1:000000000000:{queue}, consistent with the proxy placeholder account and DLQ attribution.
@@ -51,7 +41,9 @@ sub_features:
   status: implemented
 behavior_differences:
 - AttributeNames filtering happens proxy-side after the full Atom response is parsed.
-- Verified against Service Bus emulator only; real-Azure validation pending.
+- Service Bus has no native queue-level DelaySeconds or ReceiveMessageWaitTimeSeconds fields. aws2azure returns the proxy-owned defaults it persisted in QueueDescription.UserMetadata.
+- ApproximateNumberOfMessagesNotVisible is a best-effort projection derived from Service Bus aggregate counters; Service Bus does not expose an exact SQS-style in-flight-only count.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueAttributes.html
 disposition: by_design

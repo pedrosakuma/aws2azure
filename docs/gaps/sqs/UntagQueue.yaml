@@ -1,6 +1,6 @@
 service: sqs
 operation: UntagQueue
-azure_equivalent: GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.
+azure_equivalent: GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.
 status: partial
 sub_features:
 - name: Queue existence validation
@@ -10,17 +10,16 @@ sub_features:
   status: implemented
   notes: Reads the stored tag map from UserMetadata, removes requested keys, and writes the updated QueueDescription.
 - name: UserMetadata capacity guard
-  status: partial
-  notes: Updated tag blobs are kept within Service Bus's 1024-character UserMetadata limit.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Updated metadata envelopes are kept within Service Bus's 1024-character UserMetadata limit.
 behavior_differences:
-- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag clears that UserMetadata value.
+- Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag preserves any persisted queue-default DelaySeconds / ReceiveMessageWaitTimeSeconds values and clears UserMetadata only when no defaults remain.
 - If QueueDescription.UserMetadata is already non-empty and does not contain aws2azure's tag blob, UntagQueue fails with InvalidParameterValue instead of overwriting operator-owned metadata.
 - UntagQueue uses the Service Bus management ETag from GET as the PUT If-Match value. A 412 Precondition Failed triggers a bounded refetch/remerge retry so concurrent queue property changes are not clobbered.
 - Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema; aws2azure rejects updates that cannot fit the serialized tag map.
-- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_UntagQueue.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api
-disposition: by_design
+disposition: feasible_backlog
+tracking_issue: '#693'

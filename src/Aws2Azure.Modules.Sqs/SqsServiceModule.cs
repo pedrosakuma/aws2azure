@@ -178,13 +178,13 @@ public sealed class SqsServiceModule : IServiceModule
                 if (parsed.Operation is SqsOperation.SendMessage)
                 {
                     await Operations.AmqpSendMessageHandlers
-                        .HandleAsync(context, parsed, senders, context.RequestAborted)
+                        .HandleAsync(context, parsed, senders, sbClient, context.RequestAborted)
                         .ConfigureAwait(false);
                 }
                 else
                 {
                     await Operations.AmqpSendMessageBatchHandlers
-                        .HandleAsync(context, parsed, senders, context.RequestAborted)
+                        .HandleAsync(context, parsed, senders, sbClient, context.RequestAborted)
                         .ConfigureAwait(false);
                 }
                 return;

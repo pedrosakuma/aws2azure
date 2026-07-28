@@ -48,7 +48,7 @@ internal static class TailHandlers
     private static async Task ListDeadLetterSourceQueuesAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        var targetName = ResolveQueueNameOrNull(parsed);
+        var targetName = ResolveQueueNameOrNull(context, parsed);
         if (targetName is null || !QueueName.IsValid(targetName))
         {
             await WriteErrorAsync(context, parsed.Protocol,
@@ -204,7 +204,7 @@ internal static class TailHandlers
         var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
         if (entry is null) return;
 
-        var tags = SqsQueueTagStore.Decode(entry.Properties.UserMetadata);
+        var tags = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata).Tags;
         await SqsResponseWriter.WriteListQueueTagsAsync(context, parsed.Protocol, tags).ConfigureAwait(false);
     }
 
@@ -215,6 +215,13 @@ internal static class TailHandlers
         {
             await WriteErrorAsync(context, parsed.Protocol,
                 SqsErrorMapping.InvalidParameterValue("Tags", parseError ?? "Tags are invalid.")).ConfigureAwait(false);
+            return;
+        }
+        if (requestedTags.Count == 0)
+        {
+            if (await EnsureQueueExistsAsync(context, parsed, sb, ct).ConfigureAwait(false) is false) return;
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.MissingParameter("Tags")).ConfigureAwait(false);
             return;
         }
         if (SqsQueueTagStore.ValidateTagMap(requestedTags) is { } validationError)
@@ -252,6 +259,13 @@ internal static class TailHandlers
         {
             await WriteErrorAsync(context, parsed.Protocol,
                 SqsErrorMapping.InvalidParameterValue("TagKeys", parseError ?? "TagKeys are invalid.")).ConfigureAwait(false);
+            return;
+        }
+        if (tagKeys.Count == 0)
+        {
+            if (await EnsureQueueExistsAsync(context, parsed, sb, ct).ConfigureAwait(false) is false) return;
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.MissingParameter("TagKeys")).ConfigureAwait(false);
             return;
         }
         if (SqsQueueTagStore.ValidateTagKeys(tagKeys) is { } validationError)
@@ -308,7 +322,7 @@ internal static class TailHandlers
     private static async Task<bool> EnsureQueueExistsAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        var queueName = ResolveQueueNameOrNull(parsed);
+        var queueName = ResolveQueueNameOrNull(context, parsed);
         if (queueName is null)
         {
             await WriteErrorAsync(context, parsed.Protocol,
@@ -345,7 +359,7 @@ internal static class TailHandlers
     private static async Task<QueueReadResult?> ReadQueueEntryWithETagAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        var queueName = ResolveQueueNameOrNull(parsed);
+        var queueName = ResolveQueueNameOrNull(context, parsed);
         if (queueName is null)
         {
             await WriteErrorAsync(context, parsed.Protocol,
@@ -404,7 +418,7 @@ internal static class TailHandlers
         string parameterName,
         CancellationToken ct)
     {
-        var queueName = ResolveQueueNameOrNull(parsed);
+        var queueName = ResolveQueueNameOrNull(context, parsed);
         if (queueName is null)
         {
             await WriteErrorAsync(context, parsed.Protocol,
@@ -424,7 +438,7 @@ internal static class TailHandlers
 
             if (!SqsQueueTagStore.TryDecodeForMutation(
                     read.Entry.Properties.UserMetadata,
-                    out var tags,
+                    out var metadata,
                     out var metadataError))
             {
                 await WriteErrorAsync(context, parsed.Protocol,
@@ -433,20 +447,20 @@ internal static class TailHandlers
                 return false;
             }
 
-            var mutationError = mutate(tags);
+            var mutationError = mutate(metadata.Tags);
             if (mutationError is not null)
             {
                 await WriteErrorAsync(context, parsed.Protocol,
                     SqsErrorMapping.InvalidParameterValue(parameterName, mutationError)).ConfigureAwait(false);
                 return false;
             }
-            if (SqsQueueTagStore.ValidateTagMap(tags) is { } mergedError)
+            if (SqsQueueTagStore.ValidateTagMap(metadata.Tags) is { } mergedError)
             {
                 await WriteErrorAsync(context, parsed.Protocol,
                     SqsErrorMapping.InvalidParameterValue(parameterName, mergedError)).ConfigureAwait(false);
                 return false;
             }
-            if (!SqsQueueTagStore.TryEncode(tags, out var userMetadata))
+            if (!SqsQueueTagStore.TryEncodeMetadata(metadata, out var userMetadata))
             {
                 await WriteErrorAsync(context, parsed.Protocol,
                     SqsErrorMapping.InvalidParameterValue(parameterName,
@@ -466,6 +480,7 @@ internal static class TailHandlers
             using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
             if (putResp.IsSuccessStatusCode)
             {
+                SqsQueueMetadataCache.Set(sb, queueName, read.Entry.Properties);
                 return true;
             }
             if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
@@ -481,11 +496,27 @@ internal static class TailHandlers
         return false;
     }
 
-    private static string? ResolveQueueNameOrNull(SqsParseResult parsed)
+    private static string? ResolveQueueNameOrNull(HttpContext context, SqsParseResult parsed)
     {
         if (parsed.Parameters.TryGetValue("QueueUrl", out var url) && !string.IsNullOrEmpty(url))
         {
             return QueueUrlBuilder.ExtractQueueName(url) ?? url;
+        }
+
+        var path = context.Request.Path.Value;
+        if (!string.IsNullOrEmpty(path))
+        {
+            var trimmed = path.Trim('/');
+            var slash = trimmed.LastIndexOf('/');
+            if (slash >= 0)
+            {
+                trimmed = trimmed[(slash + 1)..];
+            }
+
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                return trimmed;
+            }
         }
         return null;
     }

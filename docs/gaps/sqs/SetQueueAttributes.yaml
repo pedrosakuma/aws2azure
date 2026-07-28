@@ -11,15 +11,11 @@ sub_features:
   status: implemented
   notes: Bounded by SQS 1 MiB cap (Aug-2025) and the SB tier ceiling (Standard 256 KiB, Premium up to 100 MiB).
 - name: DelaySeconds (queue default)
-  status: unsupported
-  notes: Rejected with InvalidAttributeName on update — SB has no equivalent field and the proxy has no durable per-queue metadata store yet. Tracked for the NFR phase. Per-message DelaySeconds on SendMessage still works.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Stored in aws2azure's QueueDescription.UserMetadata blob and applied as the default per-message ScheduledEnqueueTimeUtc when SendMessage/SendMessageBatch omit DelaySeconds.
 - name: ReceiveMessageWaitTimeSeconds (queue default for long-poll)
-  status: unsupported
-  notes: Same rationale as DelaySeconds — rejected with InvalidAttributeName until a durable metadata store lands. Per-call WaitTimeSeconds on ReceiveMessage is fully supported.
-  disposition: feasible_backlog
-  tracking_issue: '#693'
+  status: implemented
+  notes: Stored in aws2azure's QueueDescription.UserMetadata blob and applied as the default long-poll wait when ReceiveMessage omits WaitTimeSeconds.
 - name: ContentBasedDeduplication / RequiresDuplicateDetection toggle
   status: implemented
   notes: Only on FIFO queues; SB rejects flipping the flag on Standard queues.
@@ -35,11 +31,12 @@ sub_features:
   status: implemented
   notes: 'SB management is whole-entity replace — the proxy first GETs the queue, overlays only the patched fields, then PUTs with If-Match: * to avoid clobbering immutable / unmanaged fields.'
 behavior_differences:
+- Service Bus has no native queue-level DelaySeconds or ReceiveMessageWaitTimeSeconds fields. aws2azure persists those defaults in QueueDescription.UserMetadata and rejects updates if that field already contains non-aws2azure content.
 - Service Bus may transfer the delivery whose count first exceeds MaxDeliveryCount, and explicit dead-letter settlement does not invoke ForwardDeadLetteredMessagesTo. The AMQP transport closes that boundary by reading queue metadata only on redelivery, sending an attributed copy to the target, and then completing the source. Send-before-complete preserves at-least-once semantics and may duplicate after an indeterminate source completion. The legacy REST receive transport retains the additional delivery.
-- 'Updates are not atomic across multiple concurrent SetQueueAttributes calls on the same queue: last write wins. If-Match: * is used (not the ETag we read) because SB does not surface the ETag in management responses on every emulator/version we tested. NFR phase may tighten this with an If-Match: <etag>.'
+- 'Updates prefer the Service Bus management ETag when it is surfaced and retry bounded 412 Precondition Failed responses. Backends that omit ETag still fall back to If-Match: *, so last-write-wins remains possible on those surfaces.'
 - Several SQS-only attributes have no SB equivalent (Policy, KmsMasterKeyId, KmsDataKeyReusePeriodSeconds, SqsManagedSseEnabled, RedriveAllowPolicy). The proxy rejects them with InvalidAttributeName until Slice 5 (RedrivePolicy) and the security-encryption pass land.
 - FIFO-only attributes (FifoQueue, FifoThroughputLimit, DeduplicationScope) cannot be flipped on an existing queue (SB rejects the change); the proxy returns InvalidAttributeName.
-- Verified against in-process fakes; emulator-backed end-to-end validation is blocked because the Service Bus emulator does not expose the management REST API. Real-Azure validation pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html
 - https://learn.microsoft.com/rest/api/servicebus/update-queue

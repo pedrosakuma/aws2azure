@@ -14,7 +14,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 12 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
-| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 0 | 10 | 0 | 14 | 0 | 31 |
+| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 2 | 0 | 28 |
 
 ## dynamodb
 
@@ -350,26 +350,17 @@ _No remaining feasible backlog is documented for this service._
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 0 | 8 | 0 |
+| 🟡 partial | 3 | 5 | 0 |
 | ⚪ stub | 0 | 2 | 0 |
 | ⛔ unsupported | 0 | 0 | 0 |
 
 ### Feasible backlog
 
-- Sub-feature [CreateQueue](sqs.md#createqueue) / Attribute.DelaySeconds — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [CreateQueue](sqs.md#createqueue) / Attribute.ReceiveMessageWaitTimeSeconds — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [CreateQueue](sqs.md#createqueue) / tags — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [GetQueueAttributes](sqs.md#getqueueattributes) / Attribute.DelaySeconds — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [GetQueueAttributes](sqs.md#getqueueattributes) / Attribute.ReceiveMessageWaitTimeSeconds — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [GetQueueAttributes](sqs.md#getqueueattributes) / Attribute.ApproximateNumberOfMessagesNotVisible / Delayed — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [GetQueueAttributes](sqs.md#getqueueattributes) / Attribute.CreatedTimestamp / LastModifiedTimestamp — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [GetQueueAttributes](sqs.md#getqueueattributes) / Attribute.QueueArn — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- Operation [ListQueueTags](sqs.md#listqueuetags) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- Operation [TagQueue](sqs.md#tagqueue) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- Operation [UntagQueue](sqs.md#untagqueue) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
 - Sub-feature [PurgeQueue](sqs.md#purgequeue) / 60s cool-down (PurgeQueueInProgress) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
 - Sub-feature [ReceiveMessage](sqs.md#receivemessage) / FIFO MessageGroupId session receive — [#694](https://github.com/pedrosakuma/aws2azure/issues/694)
-- Sub-feature [SetQueueAttributes](sqs.md#setqueueattributes) / DelaySeconds (queue default) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [SetQueueAttributes](sqs.md#setqueueattributes) / ReceiveMessageWaitTimeSeconds (queue default for long-poll) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [TagQueue](sqs.md#tagqueue) / UserMetadata capacity guard — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [UntagQueue](sqs.md#untagqueue) / UserMetadata capacity guard — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
 
 ### Workload maturity
 
@@ -386,12 +377,9 @@ _No remaining feasible backlog is documented for this service._
 - Operation [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) — 🔵 by design
 - Operation [ChangeMessageVisibility](sqs.md#changemessagevisibility) — 🔵 by design
 - Operation [GetQueueAttributes](sqs.md#getqueueattributes) — 🔵 by design
-- Operation [ListQueueTags](sqs.md#listqueuetags) — 🔵 by design
 - Operation [PurgeQueue](sqs.md#purgequeue) — 🔵 by design
 - Operation [RemovePermission](sqs.md#removepermission) — 🔵 by design
 - Operation [SetQueueAttributes](sqs.md#setqueueattributes) — 🔵 by design
-- Operation [TagQueue](sqs.md#tagqueue) — 🔵 by design
-- Operation [UntagQueue](sqs.md#untagqueue) — 🔵 by design
 - Sub-feature [AddPermission](sqs.md#addpermission) / Cross-account permission persistence — 🔵 by design
 - Sub-feature [ChangeMessageVisibilityBatch](sqs.md#changemessagevisibilitybatch) / Renew semantics — 🔵 by design
 - Sub-feature [ChangeMessageVisibility](sqs.md#changemessagevisibility) / Arbitrary new visibility duration — 🔵 by design

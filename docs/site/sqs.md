@@ -92,20 +92,21 @@
 | Attribute.VisibilityTimeout | ✅ implemented | — | — | — | Maps to Service Bus LockDuration (ISO-8601 duration). |  |  |
 | Attribute.MessageRetentionPeriod | ✅ implemented | — | — | — | Maps to DefaultMessageTimeToLive. |  |  |
 | Attribute.MaximumMessageSize | ✅ implemented | — | — | — | Recorded as MaxMessageSizeInKilobytes (1024..1048576 bytes / 1 KiB..1 MiB). SQS raised its hard cap from 256 KiB to 1 MiB in August 2025; the proxy now mirrors that range. Backing Service Bus tier still constrains the *effective* limit: SB Standard rejects anything over 256 KiB, SB Premium honours up to 100 MiB (configurable). Per-queue MaximumMessageSize is set at create time but not re-validated per send — SB itself rejects oversized payloads on the runtime POST. |  |  |
-| Attribute.DelaySeconds | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Accepted on CreateQueue; honoured per-message via ScheduledEnqueueTimeUtc in Slice 2. |  |  |
-| Attribute.ReceiveMessageWaitTimeSeconds | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Accepted; long-polling emulation lands in Slice 4. |  |  |
+| Attribute.DelaySeconds | ✅ implemented | — | — | — | Persisted in aws2azure's QueueDescription.UserMetadata blob and applied as the default per-message ScheduledEnqueueTimeUtc when SendMessage/SendMessageBatch omit DelaySeconds. |  |  |
+| Attribute.ReceiveMessageWaitTimeSeconds | ✅ implemented | — | — | — | Persisted in aws2azure's QueueDescription.UserMetadata blob and applied as the default long-poll wait when ReceiveMessage omits WaitTimeSeconds. |  |  |
 | Attribute.FifoQueue / ContentBasedDeduplication | 🟡 partial | 🔵 by design | — | — | Maps to RequiresSession + RequiresDuplicateDetection. FIFO routing is implemented end-to-end on the AMQP transport (MessageGroupId -> SB SessionId on send; session-aware receive pins one consumer per group for strict per-group ordering — see ReceiveMessage). Strict ordering requires `transport: Amqp`; the REST transport cannot express session-receive and therefore does not provide strict per-group ordering (won't implement — inherent SB REST limitation). |  |  |
 | Attribute.RedrivePolicy | 🟡 partial | 🔵 by design | — | — | SQS RedrivePolicy JSON ({deadLetterTargetArn,maxReceiveCount}) is parsed and mapped to SB ForwardDeadLetteredMessagesTo (queue-name segment of the ARN) + MaxDeliveryCount. maxReceiveCount is bounded to 1..1000 per SQS. Because Service Bus does not apply ForwardDeadLetteredMessagesTo to an explicit dead-letter settlement, the AMQP receive path forwards an over-limit copy to the configured target and then completes the source delivery before it can be returned to the AWS client. The legacy REST receive transport retains Service Bus's native additional delivery. The target DLQ must already exist (auto-provisioning is intentionally not implemented; client owns DLQ lifecycle). |  |  |
 | Attribute.RedriveAllowPolicy | ⛔ unsupported | 🔵 by design | — | — |  | Accepted silently; SB has no per-queue ACL controlling which sources may forward into a DLQ. |  |
 | Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled | ⛔ unsupported | 🔵 by design | — | — |  | Service Bus encryption is namespace-level (Microsoft-managed by default; customer-managed via Key Vault out of band). |  |
 | Attribute.Policy | ⛔ unsupported | 🔵 by design | — | — |  | Resource-based access policies are AWS IAM; no Service Bus equivalent on REST. |  |
-| tags | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — |  | Service Bus REST has no per-queue tagging surface; tracked for Slice 5 namespace-metadata workaround. |  |
+| tags | ✅ implemented | — | — | — | SQS tags are stored in aws2azure's QueueDescription.UserMetadata blob alongside any persisted queue-default DelaySeconds / ReceiveMessageWaitTimeSeconds values. |  |  |
 
 ### Behaviour differences
 
+- Service Bus has no native queue-level DelaySeconds or ReceiveMessageWaitTimeSeconds fields. aws2azure persists those SQS defaults in its UserMetadata blob and applies them when send/receive calls omit the per-request values.
 - RedrivePolicy maps to Service Bus MaxDeliveryCount and ForwardDeadLetteredMessagesTo. Because Service Bus may transfer the first over-limit delivery and manual dead-lettering bypasses automatic forwarding, the AMQP receive path sends a copy to the configured target before completing the source. This ordering is loss-averse and preserves SQS at-least-once semantics: a source-complete failure after a successful target send can produce a duplicate on retry. The legacy REST receive transport retains the native additional delivery.
 - Queue name validation enforces SQS rules (1-80 alnum/-_, '.fifo' suffix) before reaching Azure; Azure container names are stricter on some characters.
-- Idempotency: an existing queue with matching attributes returns the same QueueUrl; mismatched attributes surface QueueNameExists. We compare LockDuration, TTL, MaxMessageSize, RequiresSession, RequiresDuplicateDetection — a small set vs SQS's full attribute parity.
+- Idempotency: an existing queue with matching attributes returns the same QueueUrl; mismatched attributes surface QueueNameExists. The comparison includes LockDuration, TTL, MaxMessageSize, RequiresSession, RequiresDuplicateDetection, and the persisted DelaySeconds / ReceiveMessageWaitTimeSeconds defaults stored in UserMetadata.
 - Core standard-queue creation is validated against real Azure Service Bus; FIFO session receive remains a separately documented gap and blocks SendMessage/ReceiveMessage seals.
 
 ### References
@@ -197,12 +198,12 @@
 | Attribute.VisibilityTimeout | ✅ implemented | — | — | — | Translated from Service Bus LockDuration. |  |  |
 | Attribute.MessageRetentionPeriod | ✅ implemented | — | — | — | Translated from DefaultMessageTimeToLive. |  |  |
 | Attribute.MaximumMessageSize | ✅ implemented | — | — | — | Derived from MaxMessageSizeInKilobytes; defaults to 1 MiB (1048576 bytes) when absent — matches the current SQS default (raised from 256 KiB to 1 MiB in August 2025). |  |  |
-| Attribute.DelaySeconds | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Service Bus has no queue-level default delay; the proxy returns 0. Per-message delay lands in Slice 2. |  |  |
-| Attribute.ReceiveMessageWaitTimeSeconds | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Returned as 0 until long-polling lands in Slice 4. |  |  |
+| Attribute.DelaySeconds | ✅ implemented | — | — | — | Returned from aws2azure's QueueDescription.UserMetadata blob when a queue-default DelaySeconds value was created or updated through the proxy. |  |  |
+| Attribute.ReceiveMessageWaitTimeSeconds | ✅ implemented | — | — | — | Returned from aws2azure's QueueDescription.UserMetadata blob when a queue-default ReceiveMessageWaitTimeSeconds value was created or updated through the proxy. |  |  |
 | Attribute.ApproximateNumberOfMessages | ✅ implemented | — | — | — | Mapped from Service Bus MessageCount when the property is present in the Atom response. |  |  |
-| Attribute.ApproximateNumberOfMessagesNotVisible / Delayed | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — |  | Service Bus exposes ActiveMessageCount / DeadLetterMessageCount via CountDetails — requires extra parsing planned for Slice 3+. |  |
-| Attribute.CreatedTimestamp / LastModifiedTimestamp | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — |  | Available in the Atom envelope; the proxy reads them but does not surface them as SQS attributes yet. |  |
-| Attribute.QueueArn | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — |  | aws2azure has no AWS account model; ARN synthesis is intentionally deferred. |  |
+| Attribute.ApproximateNumberOfMessagesNotVisible / Delayed | ✅ implemented | — | — | — | ApproximateNumberOfMessagesDelayed maps from ScheduledMessageCount. ApproximateNumberOfMessagesNotVisible is derived best-effort from MessageCount minus visible, scheduled, and transfer/dead-letter counts. |  |  |
+| Attribute.CreatedTimestamp / LastModifiedTimestamp | ✅ implemented | — | — | — | Surfaced from the Atom entry's published/updated timestamps. |  |  |
+| Attribute.QueueArn | ✅ implemented | — | — | — | Synthesized as arn:aws:sqs:us-east-1:000000000000:{queue}, matching the proxy's placeholder account convention used elsewhere in the SQS surface. |  |  |
 | Attribute.RedrivePolicy | ✅ implemented | — | — | — | Emitted as JSON {deadLetterTargetArn, maxReceiveCount} when the SB queue has ForwardDeadLetteredMessagesTo set. The synthetic ARN uses arn:aws:sqs:us-east-1:000000000000:{queue}, consistent with the proxy placeholder account and DLQ attribution. |  |  |
 | Attribute.RedriveAllowPolicy | ⛔ unsupported | 🔵 by design | — | — |  | SB has no per-queue ACL controlling which sources may forward into a DLQ. |  |
 | AttributeNames=All | ✅ implemented | — | — | — |  |  |  |
@@ -210,7 +211,9 @@
 ### Behaviour differences
 
 - AttributeNames filtering happens proxy-side after the full Atom response is parsed.
-- Verified against Service Bus emulator only; real-Azure validation pending.
+- Service Bus has no native queue-level DelaySeconds or ReceiveMessageWaitTimeSeconds fields. aws2azure returns the proxy-owned defaults it persisted in QueueDescription.UserMetadata.
+- ApproximateNumberOfMessagesNotVisible is a best-effort projection derived from Service Bus aggregate counters; Service Bus does not expose an exact SQS-style in-flight-only count.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 
 ### References
 
@@ -264,22 +267,23 @@
 ## ListQueueTags
 
 - **Status:** 🟡 partial
-- **Disposition:** 🔵 by design
-- **Azure equivalent:** `GET QueueDescription and decode aws2azure's base64 tag blob from UserMetadata.`
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- **Azure equivalent:** `GET QueueDescription and decode aws2azure's compact metadata envelope from UserMetadata.`
 
 ### Sub-features
 
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
 | Queue existence validation | ✅ implemented | — | — | — | Returns NonExistentQueue if the SB queue does not exist. |  |  |
-| Tags round-trip | ✅ implemented | — | — | — | Decodes the SQS tag map persisted by TagQueue/UntagQueue in QueueDescription.UserMetadata. |  |  |
+| Tags round-trip | ✅ implemented | — | — | — | Decodes the SQS tag map persisted by CreateQueue/TagQueue/UntagQueue in QueueDescription.UserMetadata. |  |  |
 | Empty / foreign metadata handling | ✅ implemented | — | — | — | Missing, empty, non-base64, or non-aws2azure UserMetadata is treated as an empty SQS tag map. |  |  |
 
 ### Behaviour differences
 
-- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Azure-side tools will see the opaque base64 blob rather than individual tag keys.
+- Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. Azure-side tools will see the opaque base64 blob rather than individual tag keys.
 - Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so TagQueue may reject otherwise-valid SQS tag sets that cannot fit.
-- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 
 ### References
 
@@ -486,8 +490,8 @@
 | VisibilityTimeout → LockDuration | ✅ implemented | — | — | — |  |  |  |
 | MessageRetentionPeriod → DefaultMessageTimeToLive | ✅ implemented | — | — | — |  |  |  |
 | MaximumMessageSize → MaxMessageSizeInKilobytes | ✅ implemented | — | — | — | Bounded by SQS 1 MiB cap (Aug-2025) and the SB tier ceiling (Standard 256 KiB, Premium up to 100 MiB). |  |  |
-| DelaySeconds (queue default) | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Rejected with InvalidAttributeName on update — SB has no equivalent field and the proxy has no durable per-queue metadata store yet. Tracked for the NFR phase. Per-message DelaySeconds on SendMessage still works. |  |  |
-| ReceiveMessageWaitTimeSeconds (queue default for long-poll) | ⛔ unsupported | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Same rationale as DelaySeconds — rejected with InvalidAttributeName until a durable metadata store lands. Per-call WaitTimeSeconds on ReceiveMessage is fully supported. |  |  |
+| DelaySeconds (queue default) | ✅ implemented | — | — | — | Stored in aws2azure's QueueDescription.UserMetadata blob and applied as the default per-message ScheduledEnqueueTimeUtc when SendMessage/SendMessageBatch omit DelaySeconds. |  |  |
+| ReceiveMessageWaitTimeSeconds (queue default for long-poll) | ✅ implemented | — | — | — | Stored in aws2azure's QueueDescription.UserMetadata blob and applied as the default long-poll wait when ReceiveMessage omits WaitTimeSeconds. |  |  |
 | ContentBasedDeduplication / RequiresDuplicateDetection toggle | ✅ implemented | — | — | — | Only on FIFO queues; SB rejects flipping the flag on Standard queues. |  |  |
 | RedrivePolicy → ForwardDeadLetteredMessagesTo | 🟡 partial | 🔵 by design | — | — | JSON is parsed and mapped to ForwardDeadLetteredMessagesTo + MaxDeliveryCount. SB read-merge-write replaces the whole queue entity so the patch is preserved across subsequent SetQueueAttributes calls. On redelivery, the AMQP receive path checks the persisted limit, forwards an over-limit copy to the target, and completes the source before exposing it to the AWS client. The legacy REST receive transport retains the native Service Bus boundary. |  |  |
 | Policy / KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled | ⛔ unsupported | 🔵 by design | — | — | Returned as InvalidAttributeName for the unsupported attribute. SB has its own SAS/MSI/CMK story that does not translate 1:1. |  |  |
@@ -495,11 +499,12 @@
 
 ### Behaviour differences
 
+- Service Bus has no native queue-level DelaySeconds or ReceiveMessageWaitTimeSeconds fields. aws2azure persists those defaults in QueueDescription.UserMetadata and rejects updates if that field already contains non-aws2azure content.
 - Service Bus may transfer the delivery whose count first exceeds MaxDeliveryCount, and explicit dead-letter settlement does not invoke ForwardDeadLetteredMessagesTo. The AMQP transport closes that boundary by reading queue metadata only on redelivery, sending an attributed copy to the target, and then completing the source. Send-before-complete preserves at-least-once semantics and may duplicate after an indeterminate source completion. The legacy REST receive transport retains the additional delivery.
-- Updates are not atomic across multiple concurrent SetQueueAttributes calls on the same queue: last write wins. If-Match: * is used (not the ETag we read) because SB does not surface the ETag in management responses on every emulator/version we tested. NFR phase may tighten this with an If-Match: <etag>.
+- Updates prefer the Service Bus management ETag when it is surfaced and retry bounded 412 Precondition Failed responses. Backends that omit ETag still fall back to If-Match: *, so last-write-wins remains possible on those surfaces.
 - Several SQS-only attributes have no SB equivalent (Policy, KmsMasterKeyId, KmsDataKeyReusePeriodSeconds, SqsManagedSseEnabled, RedriveAllowPolicy). The proxy rejects them with InvalidAttributeName until Slice 5 (RedrivePolicy) and the security-encryption pass land.
 - FIFO-only attributes (FifoQueue, FifoThroughputLimit, DeduplicationScope) cannot be flipped on an existing queue (SB rejects the change); the proxy returns InvalidAttributeName.
-- Verified against in-process fakes; emulator-backed end-to-end validation is blocked because the Service Bus emulator does not expose the management REST API. Real-Azure validation pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 
 ### References
 
@@ -509,8 +514,9 @@
 ## TagQueue
 
 - **Status:** 🟡 partial
-- **Disposition:** 🔵 by design
-- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.`
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.`
 
 ### Sub-features
 
@@ -519,15 +525,15 @@
 | Queue existence validation | ✅ implemented | — | — | — | Returns NonExistentQueue if the SB queue does not exist. |  |  |
 | Tag persistence | ✅ implemented | — | — | — | Merges requested SQS tags into the existing tag map and persists them in QueueDescription.UserMetadata. |  |  |
 | SQS tag limits | ✅ implemented | — | — | — | Enforces at most 50 tags, key length 1..128, and value length 0..256 before writing. |  |  |
-| UserMetadata capacity guard | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Requests whose compact base64 blob would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue. |  |  |
+| UserMetadata capacity guard | ✅ implemented | — | — | — | Requests whose compact base64 metadata envelope would exceed Service Bus's 1024-character UserMetadata limit fail with InvalidParameterValue. |  |  |
 
 ### Behaviour differences
 
-- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. This preserves AWS tag keys and values exactly but consumes the queue's native UserMetadata field.
+- Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. The same envelope also carries any persisted queue-default DelaySeconds / ReceiveMessageWaitTimeSeconds values.
 - If QueueDescription.UserMetadata is already non-empty and does not contain aws2azure's tag blob, TagQueue fails with InvalidParameterValue instead of overwriting operator-owned metadata.
 - TagQueue uses the Service Bus management ETag from GET as the PUT If-Match value. A 412 Precondition Failed triggers a bounded refetch/remerge retry so concurrent queue property changes are not clobbered.
 - Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so valid SQS tag sets near the 50-tag / 128-key / 256-value maximum may be rejected when the serialized blob does not fit.
-- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 
 ### References
 
@@ -537,8 +543,9 @@
 ## UntagQueue
 
 - **Status:** 🟡 partial
-- **Disposition:** 🔵 by design
-- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's base64 tag blob stored in UserMetadata.`
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.`
 
 ### Sub-features
 
@@ -546,15 +553,15 @@
 |---|---|---|---|---|---|---|---|
 | Queue existence validation | ✅ implemented | — | — | — | Returns NonExistentQueue if the SB queue does not exist. |  |  |
 | Tag removal | ✅ implemented | — | — | — | Reads the stored tag map from UserMetadata, removes requested keys, and writes the updated QueueDescription. |  |  |
-| UserMetadata capacity guard | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | Updated tag blobs are kept within Service Bus's 1024-character UserMetadata limit. |  |  |
+| UserMetadata capacity guard | ✅ implemented | — | — | — | Updated metadata envelopes are kept within Service Bus's 1024-character UserMetadata limit. |  |  |
 
 ### Behaviour differences
 
-- Tags are stored as an aws2azure-owned compact binary tag map, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag clears that UserMetadata value.
+- Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. Removing the last tag preserves any persisted queue-default DelaySeconds / ReceiveMessageWaitTimeSeconds values and clears UserMetadata only when no defaults remain.
 - If QueueDescription.UserMetadata is already non-empty and does not contain aws2azure's tag blob, UntagQueue fails with InvalidParameterValue instead of overwriting operator-owned metadata.
 - UntagQueue uses the Service Bus management ETag from GET as the PUT If-Match value. A 412 Precondition Failed triggers a bounded refetch/remerge retry so concurrent queue property changes are not clobbered.
 - Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema; aws2azure rejects updates that cannot fit the serialized tag map.
-- Verified with in-process Service Bus management fakes. The Service Bus emulator does not validate or persist this management-plane UserMetadata path; real-Azure validation remains pending.
+- Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment.
 
 ### References
 
