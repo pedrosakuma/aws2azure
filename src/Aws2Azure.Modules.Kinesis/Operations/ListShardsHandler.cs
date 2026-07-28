@@ -105,13 +105,33 @@ internal static class ListShardsHandler
             return;
         }
 
-        if (!KinesisMetadataSupport.TryApplyShardPagination(
-                eventHub.MappedShards,
+        KinesisShardDescription[] page;
+        bool hasMore;
+        if (!KinesisMetadataSupport.TryResolveListShardsStartShard(
+                eventHub,
+                request?.ShardFilter,
                 startAfterShardId,
-                request?.MaxResults,
-                out var page,
-                out var hasMore,
+                out var effectiveStartAfterShardId,
+                out var returnEmpty,
                 out validationError))
+        {
+            await KinesisErrorResponse.WriteAsync(context, StatusCodes.Status400BadRequest, "ValidationException", validationError!)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (returnEmpty)
+        {
+            page = [];
+            hasMore = false;
+        }
+        else if (!KinesisMetadataSupport.TryApplyShardPagination(
+                     eventHub.MappedShards,
+                     effectiveStartAfterShardId,
+                     request?.MaxResults,
+                     out page,
+                     out hasMore,
+                     out validationError))
         {
             await KinesisErrorResponse.WriteAsync(context, StatusCodes.Status400BadRequest, "ValidationException", validationError!)
                 .ConfigureAwait(false);

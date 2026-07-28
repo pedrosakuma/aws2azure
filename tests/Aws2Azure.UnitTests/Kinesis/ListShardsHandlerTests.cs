@@ -147,20 +147,137 @@ public sealed class ListShardsHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_rejects_unsupported_filter_types()
+    public async Task HandleAsync_supports_after_shard_id_filter()
     {
         var context = CreateContext();
 
         await ListShardsHandler.HandleAsync(
             context,
-            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AFTER_SHARD_ID\"}}"),
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AFTER_SHARD_ID\",\"ShardId\":\"shardId-000000000001\"}}"),
             NewCredentials(),
             new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
             NewFactory(),
             CancellationToken.None);
 
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(
+            ["shardId-000000000002", "shardId-000000000003"],
+            ReadShardIds(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_after_shard_id_filter_returns_empty_page_after_last_shard()
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AFTER_SHARD_ID\",\"ShardId\":\"shardId-000000000003\"}}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Empty(ReadShardIds(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_supports_at_trim_horizon_filter()
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AT_TRIM_HORIZON\"}}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(
+            ["shardId-000000000000", "shardId-000000000001", "shardId-000000000002", "shardId-000000000003"],
+            ReadShardIds(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_supports_at_timestamp_filter_at_stream_creation()
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AT_TIMESTAMP\",\"Timestamp\":1718873100}}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(
+            ["shardId-000000000000", "shardId-000000000001", "shardId-000000000002", "shardId-000000000003"],
+            ReadShardIds(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_at_timestamp_before_stream_creation_returns_no_shards()
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AT_TIMESTAMP\",\"Timestamp\":1718873099.999}}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Empty(ReadShardIds(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_supports_from_timestamp_filter_before_stream_creation()
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"FROM_TIMESTAMP\",\"Timestamp\":0}}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(
+            ["shardId-000000000000", "shardId-000000000001", "shardId-000000000002", "shardId-000000000003"],
+            ReadShardIds(context));
+    }
+
+    [Theory]
+    [InlineData("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AFTER_SHARD_ID\"}}", "ShardFilter.ShardId is required for AFTER_SHARD_ID.")]
+    [InlineData("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AT_TIMESTAMP\"}}", "ShardFilter.Timestamp is required for AT_TIMESTAMP.")]
+    [InlineData("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"FROM_TIMESTAMP\",\"Timestamp\":1.7976931348623157E+308}}", "ShardFilter.Timestamp is invalid for FROM_TIMESTAMP.")]
+    [InlineData("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"AT_TRIM_HORIZON\",\"ShardId\":\"shardId-000000000001\"}}", "ShardFilter.ShardId is not supported for AT_TRIM_HORIZON.")]
+    [InlineData("{\"StreamName\":\"orders\",\"ShardFilter\":{\"Type\":\"UNSUPPORTED\"}}", "UNSUPPORTED")]
+    public async Task HandleAsync_rejects_invalid_filter_shapes(string body, string expectedMessage)
+    {
+        var context = CreateContext();
+
+        await ListShardsHandler.HandleAsync(
+            context,
+            NewParseResult(body),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            NewFactory(),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
-        Assert.Contains("ValidationException", ReadBody(context));
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains(expectedMessage, responseBody);
     }
 
     private static EventHubsCredentials NewCredentials() => new()
@@ -183,6 +300,19 @@ public sealed class ListShardsHandlerTests
 
     private static JsonDocument ReadJson(HttpContext context)
         => JsonDocument.Parse(ReadBody(context));
+
+    private static string[] ReadShardIds(HttpContext context)
+    {
+        using var document = ReadJson(context);
+        var shards = document.RootElement.GetProperty("Shards");
+        var shardIds = new string[shards.GetArrayLength()];
+        for (var i = 0; i < shardIds.Length; i++)
+        {
+            shardIds[i] = shards[i].GetProperty("ShardId").GetString()!;
+        }
+
+        return shardIds;
+    }
 
     private static string FlipChar(string value, int index)
     {

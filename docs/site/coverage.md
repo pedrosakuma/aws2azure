@@ -27,7 +27,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | kinesis | [DescribeStreamSummary](kinesis.md#describestreamsummary) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [GetRecords](kinesis.md#getrecords) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [GetShardIterator](kinesis.md#getsharditerator) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
-| kinesis | [ListShards](kinesis.md#listshards) | 🟡 partial | 🛠️ feasible backlog | [#689](https://github.com/pedrosakuma/aws2azure/issues/689) | ✅ | `Azure Event Hubs Service Bus management REST API` |
+| kinesis | [ListShards](kinesis.md#listshards) | ✅ implemented | — | — | ✅ | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [PutRecord](kinesis.md#putrecord) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [PutRecords](kinesis.md#putrecords) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | s3 | [AbortMultipartUpload](s3.md#abortmultipartupload) | ✅ implemented | — | — | — | `Lease state record + delete proxy-owned multipart state blob` |

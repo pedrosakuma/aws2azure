@@ -66,6 +66,8 @@ internal sealed class ListShardsRequest
 internal sealed class ShardFilterRequest
 {
     public string? Type { get; set; }
+    public string? ShardId { get; set; }
+    public double? Timestamp { get; set; }
 }
 
 internal sealed class PutRecordRequest

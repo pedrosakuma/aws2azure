@@ -258,12 +258,6 @@
         "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "code": "partial_operation_accepted",
-        "disposition": "advisory",
-        "subject": "kinesis:ListShards",
-        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-      },
-      {
         "code": "design_gap_accepted",
         "disposition": "advisory",
         "subject": "kinesis:Iterator link lifetime and durable replay",

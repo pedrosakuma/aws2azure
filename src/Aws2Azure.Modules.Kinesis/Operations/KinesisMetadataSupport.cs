@@ -12,6 +12,8 @@ namespace Aws2Azure.Modules.Kinesis.Operations;
 internal static class KinesisMetadataSupport
 {
     private static readonly byte[] EmptyJsonObject = "{}"u8.ToArray();
+    private static readonly double MinUnixTimestampMilliseconds = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
+    private static readonly double MaxUnixTimestampMilliseconds = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
     internal static readonly EnhancedMonitoringDescription[] DefaultEnhancedMonitoring =
     [
         new EnhancedMonitoringDescription
@@ -225,13 +227,128 @@ internal static class KinesisMetadataSupport
         }
 
         if (string.Equals(filter.Type, "AT_LATEST", StringComparison.Ordinal)
+            || string.Equals(filter.Type, "AT_TRIM_HORIZON", StringComparison.Ordinal)
             || string.Equals(filter.Type, "FROM_TRIM_HORIZON", StringComparison.Ordinal))
         {
+            if (!string.IsNullOrWhiteSpace(filter.ShardId))
+            {
+                error = $"ShardFilter.ShardId is not supported for {filter.Type}.";
+                return false;
+            }
+
+            if (filter.Timestamp.HasValue)
+            {
+                error = $"ShardFilter.Timestamp is not supported for {filter.Type}.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (string.Equals(filter.Type, "AFTER_SHARD_ID", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(filter.ShardId))
+            {
+                error = "ShardFilter.ShardId is required for AFTER_SHARD_ID.";
+                return false;
+            }
+
+            if (filter.Timestamp.HasValue)
+            {
+                error = "ShardFilter.Timestamp is not supported for AFTER_SHARD_ID.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (string.Equals(filter.Type, "AT_TIMESTAMP", StringComparison.Ordinal)
+            || string.Equals(filter.Type, "FROM_TIMESTAMP", StringComparison.Ordinal))
+        {
+            if (!filter.Timestamp.HasValue)
+            {
+                error = $"ShardFilter.Timestamp is required for {filter.Type}.";
+                return false;
+            }
+
+            if (!TryValidateUnixTimestampSeconds(filter.Timestamp.Value))
+            {
+                error = $"ShardFilter.Timestamp is invalid for {filter.Type}.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.ShardId))
+            {
+                error = $"ShardFilter.ShardId is not supported for {filter.Type}.";
+                return false;
+            }
+
             return true;
         }
 
         error = $"ShardFilter.Type '{filter.Type}' is not supported.";
         return false;
+    }
+
+    public static bool TryResolveListShardsStartShard(
+        EventHubDescription eventHub,
+        ShardFilterRequest? filter,
+        string? exclusiveStartShardId,
+        out string? effectiveExclusiveStartShardId,
+        out bool returnEmpty,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(eventHub);
+
+        effectiveExclusiveStartShardId = exclusiveStartShardId;
+        returnEmpty = false;
+        error = null;
+
+        if (!string.IsNullOrWhiteSpace(exclusiveStartShardId)
+            && !TryResolveShardIndex(eventHub.MappedShards, exclusiveStartShardId, out _))
+        {
+            error = $"Shard '{exclusiveStartShardId}' was not found for the stream.";
+            return false;
+        }
+
+        if (filter is null || string.IsNullOrWhiteSpace(filter.Type))
+        {
+            return true;
+        }
+
+        if (string.Equals(filter.Type, "AFTER_SHARD_ID", StringComparison.Ordinal))
+        {
+            if (!TryResolveShardIndex(eventHub.MappedShards, filter.ShardId!, out var filterIndex))
+            {
+                error = $"Shard '{filter.ShardId}' was not found for the stream.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(exclusiveStartShardId)
+                && TryResolveShardIndex(eventHub.MappedShards, exclusiveStartShardId, out var exclusiveStartIndex)
+                && exclusiveStartIndex > filterIndex)
+            {
+                effectiveExclusiveStartShardId = exclusiveStartShardId;
+                return true;
+            }
+
+            effectiveExclusiveStartShardId = filter.ShardId;
+            return true;
+        }
+
+        if (string.Equals(filter.Type, "AT_TIMESTAMP", StringComparison.Ordinal))
+        {
+            var timestamp = DateTimeOffset.UnixEpoch.AddMilliseconds(filter.Timestamp!.Value * 1000d);
+            if (timestamp < eventHub.CreatedAt)
+            {
+                effectiveExclusiveStartShardId = null;
+                returnEmpty = true;
+            }
+
+            return true;
+        }
+
+        return true;
     }
 
     public static bool TryResolveShard(EventHubDescription eventHub, string shardId, out MappedShard? shard)
@@ -282,5 +399,34 @@ internal static class KinesisMetadataSupport
                 StartingSequenceNumber = shard.StartingSequenceNumber,
             },
         };
+    }
+
+    private static bool TryResolveShardIndex(IReadOnlyList<MappedShard> shards, string shardId, out int index)
+    {
+        ArgumentNullException.ThrowIfNull(shards);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shardId);
+
+        for (var i = 0; i < shards.Count; i++)
+        {
+            if (string.Equals(shards[i].ShardId, shardId, StringComparison.Ordinal))
+            {
+                index = i;
+                return true;
+            }
+        }
+
+        index = -1;
+        return false;
+    }
+
+    private static bool TryValidateUnixTimestampSeconds(double value)
+    {
+        var milliseconds = value * 1000d;
+        return !double.IsNaN(value)
+               && !double.IsInfinity(value)
+               && !double.IsNaN(milliseconds)
+               && !double.IsInfinity(milliseconds)
+               && milliseconds >= MinUnixTimestampMilliseconds
+               && milliseconds <= MaxUnixTimestampMilliseconds;
     }
 }

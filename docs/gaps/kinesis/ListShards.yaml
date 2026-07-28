@@ -1,7 +1,7 @@
 service: kinesis
 operation: ListShards
 azure_equivalent: Azure Event Hubs Service Bus management REST API
-status: partial
+status: implemented
 verified_real_azure:
   date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
@@ -13,18 +13,22 @@ sub_features:
 - name: HMAC-signed NextToken cursors
   status: implemented
   notes: Uses the Event Hubs shard iterator signing key (or an ephemeral fallback) to sign 5-minute list-shards cursors.
-- name: AT_LATEST / FROM_TRIM_HORIZON shard filters
+- name: Static-topology shard filters
   status: implemented
-  notes: These filter types are accepted as no-ops because Event Hubs always exposes the full open-partition set.
+  notes: AT_LATEST, AT_TRIM_HORIZON, and FROM_TRIM_HORIZON are accepted as no-ops because Event Hubs always exposes the full open-partition set; FROM_TIMESTAMP is likewise a no-op because all mapped shards remain open for the stream lifetime.
+- name: AFTER_SHARD_ID shard filter
+  status: implemented
+  notes: Uses the fixed shard-id ordering derived from Event Hubs partition ids and applies the same exclusive lower bound as ExclusiveStartShardId.
+- name: AT_TIMESTAMP shard filter
+  status: implemented
+  notes: Uses the Event Hub CreatedAt timestamp as the shared shard start boundary because all partitions are created with the hub and remain open for its lifetime.
 behavior_differences:
 - Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>.
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
 - NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes.
-- Shard filter types other than AT_LATEST and FROM_TRIM_HORIZON currently return ValidationException.
+- AT_TIMESTAMP uses the Event Hub CreatedAt timestamp as the shared shard start time for every mapped shard because Event Hubs partitions are fixed for the hub lifetime.
 - Core shard listing and pagination are validated against a live Azure Event Hubs namespace.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 references:
 - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_ListShards.html
 - https://learn.microsoft.com/en-us/rest/api/eventhub/
-disposition: feasible_backlog
-tracking_issue: '#689'

@@ -43,6 +43,19 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
         Assert.Equal(
             expectedShardIds,
             shards.Shards.Select(item => item.ShardId).Order(StringComparer.Ordinal));
+
+        var filtered = await client.ListShardsAsync(new ListShardsRequest
+        {
+            StreamName = fixture.EventHubStream,
+            ShardFilter = new ShardFilter
+            {
+                Type = "AFTER_SHARD_ID",
+                ShardId = expectedShardIds[0],
+            },
+        }, timeout.Token).ConfigureAwait(false);
+        Assert.Equal(
+            expectedShardIds.Skip(1).ToArray(),
+            filtered.Shards.Select(item => item.ShardId).Order(StringComparer.Ordinal));
     }
 
     [SkippableFact]
