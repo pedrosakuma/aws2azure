@@ -130,6 +130,8 @@ public sealed class WorkloadCompatibilityTests
             Operations = ["PutObject"],
             DesignGaps = ["Known gap"]
         });
+        design.DesignGaps[0].Disposition = "feasible_backlog";
+        design.DesignGaps[0].TrackingIssue = "#690";
         var output = Path.Combine(Path.GetTempPath(), $"aws2azure-gapdocs-{Guid.NewGuid():N}");
 
         try
@@ -144,6 +146,9 @@ public sealed class WorkloadCompatibilityTests
             Assert.Contains("do not certify every sub-feature", markdown, StringComparison.Ordinal);
             var designMarkdown = File.ReadAllText(Path.Combine(output, "design-gaps.md"));
             Assert.Contains("<a id=\"s3-known-gap\"></a>", designMarkdown, StringComparison.Ordinal);
+            var completeness = File.ReadAllText(Path.Combine(output, "completeness.md"));
+            Assert.Contains("| [s3](s3.md) | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |", completeness, StringComparison.Ordinal);
+            Assert.Contains("- Design gap [Known gap](design-gaps.md#s3-known-gap) — [#690]", completeness, StringComparison.Ordinal);
         }
         finally
         {

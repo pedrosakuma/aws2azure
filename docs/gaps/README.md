@@ -30,10 +30,14 @@ service: dynamodb            # required — must match the directory name
 operation: Query             # required — AWS operation name
 azure_equivalent: "Azure Cosmos DB (Core SQL API)"   # required
 status: partial              # implemented | partial | stub | unsupported
+disposition: feasible_backlog # required when status != implemented
+tracking_issue: "#687"        # required only for feasible_backlog
 verified_real_azure: ""      # optional — date / run URL; empty == emulator-only
 sub_features:
   - name: KeyConditionExpression on HASH+RANGE tables
     status: implemented      # implemented | partial | unsupported
+    disposition: ""          # required when status != implemented
+    tracking_issue: ""       # required only for feasible_backlog
     notes: "…"
     gap: "…"                 # what is missing
     workaround: "…"
@@ -57,6 +61,8 @@ service: sqs                 # required — must match the directory name and ha
 design_gaps:                 # required — at least one entry
   - area: FIFO ordering requires the AMQP transport   # required
     status: partial          # by_design | partial | unsupported | planned
+    disposition: feasible_backlog # required when status != by_design
+    tracking_issue: "#694"       # required only for feasible_backlog
     summary: "…"             # required — the gap in one paragraph
     impact: "…"              # optional — what breaks for the caller
     workaround: "…"          # optional — how to live with it
@@ -83,6 +89,22 @@ Status meanings for design gaps:
 | `partial`     | Partially bridged; caveats apply. |
 | `unsupported` | No Azure equivalent; surfaced but not translated. |
 | `planned`     | A known gap with intended future work. |
+
+Disposition meanings:
+
+| Disposition | Meaning |
+|---|---|
+| `feasible_backlog` | Closable with more proxy-side engineering against existing Azure primitives. **Must** declare `tracking_issue: "#123"`. |
+| `by_design` | A deliberate, permanent AWS/Azure divergence the proxy cannot and will not bridge. This is the operation/sub-feature counterpart of a service-level design gap whose status is `by_design`. |
+| `non_goal` | Explicitly out of scope for this project's mission (for example full parity for a low-value corner, reverse-direction behavior, or workflow/control-plane surfaces that would violate the locked design). |
+
+Validation rules:
+
+- Unknown `disposition` values fail validation.
+- Any operation whose `status` is not `implemented` must declare `disposition`.
+- Any sub-feature whose `status` is not `implemented` must declare `disposition`.
+- Any design gap whose `status` is not `by_design` must declare `disposition`.
+- `tracking_issue` must look like `#<number>` and is required only when `disposition: feasible_backlog`; other dispositions must omit it.
 
 Workload pattern IDs are the stable machine contract consumed by workload
 manifests. Rename one only as a deliberate schema-breaking change. A profile

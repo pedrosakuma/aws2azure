@@ -8,6 +8,8 @@ public sealed class OperationDoc
     public string Operation { get; set; } = string.Empty;
     public string AzureEquivalent { get; set; } = string.Empty;
     public string Status { get; set; } = "stub";
+    public string Disposition { get; set; } = string.Empty;
+    public string TrackingIssue { get; set; } = string.Empty;
     public List<SubFeature> SubFeatures { get; set; } = new();
     public List<string> BehaviorDifferences { get; set; } = new();
     public List<string> References { get; set; } = new();
@@ -22,6 +24,8 @@ public sealed class SubFeature
 {
     public string Name { get; set; } = string.Empty;
     public string Status { get; set; } = "unsupported";
+    public string Disposition { get; set; } = string.Empty;
+    public string TrackingIssue { get; set; } = string.Empty;
     public string Notes { get; set; } = string.Empty;
     public string Gap { get; set; } = string.Empty;
     public string Workaround { get; set; } = string.Empty;
@@ -73,6 +77,8 @@ public sealed class DesignGap
 {
     public string Area { get; set; } = string.Empty;
     public string Status { get; set; } = "by_design";
+    public string Disposition { get; set; } = string.Empty;
+    public string TrackingIssue { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public string Impact { get; set; } = string.Empty;
     public string Workaround { get; set; } = string.Empty;
@@ -117,5 +123,9 @@ public static class StatusValues
     public static readonly HashSet<string> WorkloadCompatibility = new(System.StringComparer.OrdinalIgnoreCase)
     {
         "supported", "conditional", "blocked"
+    };
+    public static readonly HashSet<string> Disposition = new(System.StringComparer.OrdinalIgnoreCase)
+    {
+        "feasible_backlog", "by_design", "non_goal"
     };
 }
