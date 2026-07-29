@@ -174,13 +174,15 @@ public sealed class SubscribeHandlerTests
                 if (request.Method == HttpMethod.Delete)
                 {
                     deleteRuleRequests++;
-                    Assert.EndsWith("/rules/%24Default?api-version=2021-05", request.RequestUri.AbsoluteUri, StringComparison.Ordinal);
                     return new HttpResponseMessage(HttpStatusCode.OK);
                 }
 
+                Assert.EndsWith("/rules/%24Default?api-version=2021-05", request.RequestUri.AbsoluteUri, StringComparison.Ordinal);
+                Assert.True(request.Headers.TryGetValues("If-Match", out var ifMatch));
+                Assert.Equal("*", Assert.Single(ifMatch));
                 var ruleRequestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
                 ruleBody = ruleRequestBody;
-                return new HttpResponseMessage(HttpStatusCode.Created);
+                return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
@@ -210,10 +212,10 @@ public sealed class SubscribeHandlerTests
         Assert.Equal("https://example.com", metadata.Endpoint);
         Assert.Equal("{\"tenant\":[\"blue\"]}", metadata.FilterPolicyJson);
         Assert.True(metadata.RawDeliveryEnabled);
-        Assert.Equal(1, deleteRuleRequests);
+        Assert.Equal(0, deleteRuleRequests);
         Assert.NotNull(ruleBody);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
-        Assert.Contains("<Name>aws2azure</Name>", ruleBody);
+        Assert.Contains("<Name>$Default</Name>", ruleBody);
     }
 
     [Fact]
@@ -225,14 +227,9 @@ public sealed class SubscribeHandlerTests
         {
             if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
             {
-                if (request.Method == HttpMethod.Delete)
-                {
-                    return new HttpResponseMessage(HttpStatusCode.OK);
-                }
-
                 var ruleRequestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
                 ruleBody = ruleRequestBody;
-                return new HttpResponseMessage(HttpStatusCode.Created);
+                return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
@@ -262,11 +259,11 @@ public sealed class SubscribeHandlerTests
         Assert.Equal("MessageBody", metadata!.FilterPolicyScope);
         Assert.NotNull(ruleBody);
         Assert.Contains("aws2azure_sns_body_363a64657461696c7c363a74656e616e74", ruleBody);
-        Assert.Contains("<Name>aws2azure</Name>", ruleBody);
+        Assert.Contains("<Name>$Default</Name>", ruleBody);
     }
 
     [Fact]
-    public async Task HandleAsync_removes_custom_rule_when_resubscribe_default_rule_delete_fails()
+    public async Task HandleAsync_reports_error_when_resubscribe_default_rule_update_fails()
     {
         const string topicArn = "arn:aws:sns:us-west-2:000000000000:orders";
         const string endpoint = "https://example.com/hooks/orders";
@@ -277,9 +274,8 @@ public sealed class SubscribeHandlerTests
             endpoint,
             "{\"tenant\":[\"blue\"]}",
             filterPolicyScope: SnsSubscriptionMetadata.MessageAttributesScope);
-        string? fallbackRuleBody = null;
+        string? ruleBody = null;
         var requests = 0;
-        var defaultRuleDeleteRequests = 0;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             requests++;
@@ -290,6 +286,7 @@ public sealed class SubscribeHandlerTests
 
             if (requests == 2)
             {
+                Assert.Equal(HttpMethod.Get, request.Method);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
@@ -302,24 +299,10 @@ public sealed class SubscribeHandlerTests
                 };
             }
 
-            if (requests == 3)
-            {
-                Assert.Equal(HttpMethod.Put, request.Method);
-                Assert.Contains("/rules/aws2azure", request.RequestUri!.ToString());
-                fallbackRuleBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (request.Method == HttpMethod.Delete
-                && request.RequestUri!.ToString().Contains("/rules/%24Default", StringComparison.Ordinal))
-            {
-                defaultRuleDeleteRequests++;
-                return new HttpResponseMessage(HttpStatusCode.Forbidden);
-            }
-
-            Assert.Equal(HttpMethod.Delete, request.Method);
-            Assert.Contains("/rules/aws2azure", request.RequestUri!.ToString());
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Contains("/rules/%24Default", request.RequestUri!.ToString());
+            ruleBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.Forbidden);
         });
 
         var context = SnsManagementClientTestSupport.NewContext();
@@ -337,10 +320,9 @@ public sealed class SubscribeHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.NotNull(fallbackRuleBody);
-        Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", fallbackRuleBody);
-        Assert.Equal(3, defaultRuleDeleteRequests);
-        Assert.Equal(7, requests);
+        Assert.NotNull(ruleBody);
+        Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
+        Assert.Equal(5, requests);
     }
 
     private static SnsParseResult NewParseResult(params (string Key, string Value)[] pairs)

@@ -52,21 +52,19 @@ internal static class SubscribeHandler
             createdSubscription = true;
             if (SnsSubscriptionRuleSupport.RequiresCustomRule(request.Metadata))
             {
+                // Azure always auto-creates the reserved $Default rule when a subscription
+                // is created, so the initial filter is applied by updating it in place
+                // rather than creating a separate rule and deleting $Default. Deleting the
+                // reserved rule has been observed to be rejected by real Azure once the
+                // subscription entity has been touched by external tooling (see #691), so
+                // the rule is never created or deleted here, only updated.
                 await managementClient.PutSubscriptionRuleAsync(
                         credentials,
                         SnsTopicSupport.ResolveNamespaceFqdn(credentials),
                         request.TopicName,
                         subscriptionId,
                         ruleDescription,
-                        updateExisting: false,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                await managementClient.DeleteSubscriptionRuleAsync(
-                        credentials,
-                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                        request.TopicName,
-                        subscriptionId,
-                        SnsSubscriptionFilterSupport.DefaultRuleName,
+                        updateExisting: true,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -94,54 +92,22 @@ internal static class SubscribeHandler
             {
                 SnsLog.MismatchedExistingSubscription(logger, request.TopicName, subscriptionId, request.Protocol, request.Endpoint);
             }
-            else
+            else if (SnsSubscriptionRuleSupport.RequiresCustomRule(request.Metadata))
             {
-                var existingHadDefaultRule = HasDefaultRuleDescription(existing);
-                var createdCustomRule = false;
                 try
                 {
-                    if (SnsSubscriptionRuleSupport.RequiresCustomRule(request.Metadata))
-                    {
-                        await managementClient.PutSubscriptionRuleAsync(
-                                credentials,
-                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                                request.TopicName,
-                                subscriptionId,
-                                ruleDescription,
-                                updateExisting: !existingHadDefaultRule,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                        createdCustomRule = true;
-                        await managementClient.DeleteSubscriptionRuleAsync(
-                                credentials,
-                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                                request.TopicName,
-                                subscriptionId,
-                                SnsSubscriptionFilterSupport.DefaultRuleName,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                    }
+                    await managementClient.PutSubscriptionRuleAsync(
+                            credentials,
+                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                            request.TopicName,
+                            subscriptionId,
+                            ruleDescription,
+                            updateExisting: true,
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (ServiceBusTopicsManagementException ruleException)
                 {
-                    if (createdCustomRule && existingHadDefaultRule)
-                    {
-                        try
-                        {
-                            await managementClient.DeleteSubscriptionRuleAsync(
-                                    credentials,
-                                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                                    request.TopicName,
-                                    subscriptionId,
-                                    SnsSubscriptionFilterSupport.CustomRuleName,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
-                        }
-                        catch
-                        {
-                        }
-                    }
-
                     await SnsTopicSupport.WriteManagementErrorAsync(context, ruleException).ConfigureAwait(false);
                     return;
                 }
@@ -172,7 +138,4 @@ internal static class SubscribeHandler
 
         await SnsResponseWriter.WriteSubscribeResponseAsync(context, subscriptionArn).ConfigureAwait(false);
     }
-
-    private static bool HasDefaultRuleDescription(ServiceBusSubscriptionDescription? existing)
-        => existing?.HasDefaultRuleDescription == true;
 }

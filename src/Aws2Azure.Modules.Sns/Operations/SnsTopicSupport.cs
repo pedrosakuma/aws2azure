@@ -245,11 +245,6 @@ internal static class SnsTopicSupport
 
     public static Task WriteManagementErrorAsync(HttpContext context, ServiceBusTopicsManagementException ex)
     {
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        var debugResponseBodySuffix = $" [DEBUG op={ex.DebugOperationName} entity={ex.DebugEntityName}]"
-            + BuildDebugResponseBodySuffix(ex.ResponseBody)
-            + BuildDebugRequestBodySuffix(ex.OutgoingRequestBody);
-
         return ex.StatusCode switch
         {
             System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden => SnsErrorResponse.WriteErrorAsync(
@@ -257,7 +252,7 @@ internal static class SnsTopicSupport
                 StatusCodes.Status403Forbidden,
                 errorType: "Sender",
                 errorCode: "AuthorizationError",
-                message: "Access denied when calling the Azure Service Bus Topics management API." + debugResponseBodySuffix),
+                message: "Access denied when calling the Azure Service Bus Topics management API."),
             System.Net.HttpStatusCode.NotFound => WriteNotFoundAsync(
                 context,
                 "The requested SNS resource was not found in Azure Service Bus."),
@@ -281,42 +276,8 @@ internal static class SnsTopicSupport
                 StatusCodes.Status502BadGateway,
                 errorType: "Receiver",
                 errorCode: "InternalFailure",
-                message: $"Azure Service Bus Topics management API returned HTTP {(int)ex.StatusCode}.{debugResponseBodySuffix}")
+                message: $"Azure Service Bus Topics management API returned HTTP {(int)ex.StatusCode}.")
         };
     }
 
-    private static string BuildDebugResponseBodySuffix(string? responseBody)
-    {
-        if (string.IsNullOrWhiteSpace(responseBody))
-        {
-            return string.Empty;
-        }
-
-        const int maxLength = 2000;
-        var normalized = responseBody.ReplaceLineEndings(" ").Trim();
-        if (normalized.Length > maxLength)
-        {
-            normalized = normalized[..maxLength] + "...";
-        }
-
-        return " [DEBUG raw-azure-body: " + normalized + "]";
-    }
-
-    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-    private static string BuildDebugRequestBodySuffix(string? outgoingRequestBody)
-    {
-        if (string.IsNullOrWhiteSpace(outgoingRequestBody))
-        {
-            return string.Empty;
-        }
-
-        const int maxLength = 2000;
-        var normalized = outgoingRequestBody.ReplaceLineEndings(" ").Trim();
-        if (normalized.Length > maxLength)
-        {
-            normalized = normalized[..maxLength] + "...";
-        }
-
-        return " [DEBUG outgoing-request-body: " + normalized + "]";
-    }
 }

@@ -124,16 +124,16 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Contains("SqlFilter", ruleBody);
         Assert.Contains("aws2azure_sns_body_363a64657461696c7c363a74656e616e74", ruleBody);
         Assert.Contains("'blue'", ruleBody);
-        Assert.Contains("<Name>aws2azure</Name>", ruleBody);
+        Assert.Contains("<Name>$Default</Name>", ruleBody);
     }
 
     [Fact]
-    public async Task HandleAsync_deletes_default_rule_on_first_filter_even_when_snapshot_omits_default_rule_description()
+    public async Task HandleAsync_updates_default_rule_in_place_on_first_filter()
     {
         var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
         var defaultRuleDeletes = 0;
         string? ruleBody = null;
-        var createRequestHadIfMatch = false;
+        var ruleRequestHadIfMatch = false;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             if (request.Method == HttpMethod.Get)
@@ -151,11 +151,12 @@ public sealed class SetSubscriptionAttributesHandlerTests
             {
                 if (request.Method == HttpMethod.Delete)
                 {
-                    Assert.Contains("/rules/%24Default", request.RequestUri.AbsoluteUri, StringComparison.Ordinal);
                     defaultRuleDeletes++;
                     return new HttpResponseMessage(HttpStatusCode.OK);
                 }
-                createRequestHadIfMatch = request.Headers.IfMatch.Count > 0;
+
+                Assert.Contains("/rules/%24Default", request.RequestUri.AbsoluteUri, StringComparison.Ordinal);
+                ruleRequestHadIfMatch = request.Headers.IfMatch.Count > 0;
                 ruleBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
@@ -174,10 +175,11 @@ public sealed class SetSubscriptionAttributesHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(1, defaultRuleDeletes);
-        Assert.False(createRequestHadIfMatch);
+        Assert.Equal(0, defaultRuleDeletes);
+        Assert.True(ruleRequestHadIfMatch);
         Assert.NotNull(ruleBody);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
+        Assert.Contains("<Name>$Default</Name>", ruleBody);
     }
 
     [Theory]
@@ -370,7 +372,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_updates_existing_custom_rule_when_filter_is_readded_without_default_rule()
+    public async Task HandleAsync_updates_existing_default_rule_when_filter_is_readded()
     {
         var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
         var rulePutIfMatch = string.Empty;
@@ -400,11 +402,6 @@ public sealed class SetSubscriptionAttributesHandlerTests
                 }
 
                 rulePutRequests++;
-                if (request.Headers.IfMatch.Count == 0)
-                {
-                    return new HttpResponseMessage(HttpStatusCode.Conflict);
-                }
-
                 rulePutIfMatch = Assert.Single(request.Headers.IfMatch).ToString();
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
@@ -423,20 +420,17 @@ public sealed class SetSubscriptionAttributesHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(2, rulePutRequests);
+        Assert.Equal(1, rulePutRequests);
         Assert.Equal("*", rulePutIfMatch);
-        Assert.Equal(1, defaultRuleDeletes);
+        Assert.Equal(0, defaultRuleDeletes);
     }
 
     [Fact]
-    public async Task HandleAsync_does_not_add_pass_through_rule_when_default_rule_delete_fails()
+    public async Task HandleAsync_rolls_back_metadata_when_rule_update_fails()
     {
         var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
         var storedMetadata = originalMetadata;
         var rulePutRequests = 0;
-        var defaultRuleDeleteRequests = 0;
-        var customRuleDeleteRequests = 0;
-        var ifMatchValues = new List<string>();
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             if (request.Method == HttpMethod.Get)
@@ -457,94 +451,9 @@ public sealed class SetSubscriptionAttributesHandlerTests
 
             if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
             {
-                if (request.Method == HttpMethod.Delete)
-                {
-                    if (request.RequestUri.AbsoluteUri.Contains("/rules/%24Default", StringComparison.Ordinal))
-                    {
-                        defaultRuleDeleteRequests++;
-                        return new HttpResponseMessage(HttpStatusCode.Forbidden);
-                    }
-
-                    customRuleDeleteRequests++;
-                    return new HttpResponseMessage(HttpStatusCode.OK);
-                }
-
                 rulePutRequests++;
-                Assert.Empty(request.Headers.IfMatch);
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            ifMatchValues.Add(Assert.Single(request.Headers.GetValues("If-Match")));
-            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-            storedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        });
-
-        var context = SnsManagementClientTestSupport.NewContext();
-        await SetSubscriptionAttributesHandler.HandleAsync(
-            context,
-            NewParseResult("FilterPolicy", "{ \"tenant\" : [ \"blue\" ] }"),
-            SnsManagementClientTestSupport.NewCredentials(),
-            managementClient,
-            CancellationToken.None);
-
-        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.Equal(3, defaultRuleDeleteRequests);
-        Assert.Equal(1, customRuleDeleteRequests);
-        Assert.Equal(1, rulePutRequests);
-        Assert.Equal(originalMetadata, storedMetadata);
-        Assert.Equal(new[] { "*", "*" }, ifMatchValues);
-    }
-
-    [Fact]
-    public async Task HandleAsync_rolls_back_updated_custom_rule_when_default_rule_delete_fails()
-    {
-        var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
-        var storedMetadata = originalMetadata;
-        var defaultRuleDeleteRequests = 0;
-        var rulePutRequests = 0;
-        string? restoredRuleBody = null;
-        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
-        {
-            if (request.Method == HttpMethod.Get)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(
-                        SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", storedMetadata),
-                        Encoding.UTF8,
-                        "application/atom+xml"),
-                };
-            }
-
-            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
-            {
-                if (request.Method == HttpMethod.Delete)
-                {
-                    if (request.RequestUri.AbsoluteUri.Contains("/rules/%24Default", StringComparison.Ordinal))
-                    {
-                        defaultRuleDeleteRequests++;
-                        return new HttpResponseMessage(HttpStatusCode.Forbidden);
-                    }
-
-                    return new HttpResponseMessage(HttpStatusCode.OK);
-                }
-
-                rulePutRequests++;
-                var ruleRequestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-                if (rulePutRequests == 1)
-                {
-                    Assert.Empty(request.Headers.IfMatch);
-                    return new HttpResponseMessage(HttpStatusCode.Conflict);
-                }
-
-                Assert.True(request.Headers.IfMatch.Count > 0);
-                if (rulePutRequests == 3)
-                {
-                    restoredRuleBody = ruleRequestBody;
-                }
-
-                return new HttpResponseMessage(HttpStatusCode.OK);
+                Assert.NotEmpty(request.Headers.IfMatch);
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
             }
 
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
@@ -562,78 +471,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
 
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
         Assert.Equal(3, rulePutRequests);
-        Assert.Equal(3, defaultRuleDeleteRequests);
         Assert.Equal(originalMetadata, storedMetadata);
-        Assert.NotNull(restoredRuleBody);
-        Assert.Contains("TrueFilter", restoredRuleBody);
-    }
-
-    [Fact]
-    public async Task HandleAsync_restores_pass_through_rule_when_create_first_upserts_existing_rule_and_default_delete_fails()
-    {
-        var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
-        var storedMetadata = originalMetadata;
-        var defaultRuleDeleteRequests = 0;
-        var rulePutRequests = 0;
-        string? restoredRuleBody = null;
-        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
-        {
-            if (request.Method == HttpMethod.Get)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(
-                        SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", storedMetadata),
-                        Encoding.UTF8,
-                        "application/atom+xml"),
-                };
-            }
-
-            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
-            {
-                if (request.Method == HttpMethod.Delete)
-                {
-                    if (request.RequestUri.AbsoluteUri.Contains("/rules/%24Default", StringComparison.Ordinal))
-                    {
-                        defaultRuleDeleteRequests++;
-                        return new HttpResponseMessage(HttpStatusCode.Forbidden);
-                    }
-
-                    return new HttpResponseMessage(HttpStatusCode.OK);
-                }
-
-                rulePutRequests++;
-                var ruleRequestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-                if (rulePutRequests == 1)
-                {
-                    Assert.Empty(request.Headers.IfMatch);
-                    return new HttpResponseMessage(HttpStatusCode.OK);
-                }
-
-                Assert.True(request.Headers.IfMatch.Count > 0);
-                restoredRuleBody = ruleRequestBody;
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-            storedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        });
-
-        var context = SnsManagementClientTestSupport.NewContext();
-        await SetSubscriptionAttributesHandler.HandleAsync(
-            context,
-            NewParseResult("FilterPolicy", "{ \"tenant\" : [ \"blue\" ] }"),
-            SnsManagementClientTestSupport.NewCredentials(),
-            managementClient,
-            CancellationToken.None);
-
-        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.Equal(2, rulePutRequests);
-        Assert.Equal(3, defaultRuleDeleteRequests);
-        Assert.Equal(originalMetadata, storedMetadata);
-        Assert.NotNull(restoredRuleBody);
-        Assert.Contains("TrueFilter", restoredRuleBody);
     }
 
     private static ServiceBusTopicsManagementClient NewStatefulManagementClient(Func<string> getMetadata, Action<string> setMetadata)

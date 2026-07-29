@@ -9,7 +9,6 @@ namespace Aws2Azure.Modules.Sns.Operations;
 internal static class SnsSubscriptionFilterSupport
 {
     internal const string DefaultRuleName = "$Default";
-    internal const string CustomRuleName = "aws2azure";
     private const string AttributePropertyPrefix = "aws2azure_sns_attr_";
     private const string AttributeNumericPropertySuffix = "_num";
     private const string AttributeArrayPresencePropertySuffix = "_arr";
@@ -23,7 +22,7 @@ internal static class SnsSubscriptionFilterSupport
     {
         ArgumentNullException.ThrowIfNull(metadata);
 
-        description = new ServiceBusSubscriptionRuleDescription(CustomRuleName, null);
+        description = new ServiceBusSubscriptionRuleDescription(DefaultRuleName, null);
         error = null;
 
         if (string.IsNullOrWhiteSpace(metadata.FilterPolicyJson))
@@ -47,7 +46,7 @@ internal static class SnsSubscriptionFilterSupport
             return false;
         }
 
-        description = new ServiceBusSubscriptionRuleDescription(CustomRuleName, sqlExpression);
+        description = new ServiceBusSubscriptionRuleDescription(DefaultRuleName, sqlExpression);
         return true;
     }
 

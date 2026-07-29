@@ -587,7 +587,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, description.SubscriptionName);
         SnsLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
 
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
         var outgoingEntryXml = ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description);
 
         using var response = await SendWithAuthorizationRetryAsync(
@@ -617,9 +616,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                 namespaceFqdn,
                 topicName + "/subscriptions/" + description.SubscriptionName,
                 requestUri,
-                cancellationToken,
-                // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-                outgoingRequestBody: outgoingEntryXml)
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -640,7 +637,6 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(description.RuleName);
 
         var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, description.RuleName);
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
         var outgoingRuleEntryXml = ServiceBusAtomXml.BuildSubscriptionRuleDescriptionEntry(description);
         using var response = await SendWithAuthorizationRetryAsync(
                 nameof(PutSubscriptionRuleAsync),
@@ -673,9 +669,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                 namespaceFqdn,
                 topicName + "/subscriptions/" + subscriptionName + "/rules/" + description.RuleName,
                 requestUri,
-                cancellationToken,
-                // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-                outgoingRequestBody: outgoingRuleEntryXml)
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -761,19 +755,12 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         string namespaceFqdn,
         string entityName,
         Uri requestUri,
-        CancellationToken cancellationToken,
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        string? outgoingRequestBody = null)
+        CancellationToken cancellationToken)
     {
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         SnsLog.TopicRequestFailed(_logger, operationName, namespaceFqdn, entityName, (int)response.StatusCode);
         SnsLog.TopicRequestFailedWithBody(_logger, operationName, FormatRequestUriForLog(requestUri) ?? entityName, (int)response.StatusCode, errorBody);
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody, outgoingRequestBody)
-        {
-            DebugOperationName = operationName,
-            DebugEntityName = entityName,
-        };
+        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
     private static bool ShouldRetryAuthorizationFailure(HttpStatusCode statusCode, int attempt)
@@ -905,24 +892,13 @@ public sealed record ServiceBusSubscriptionRuleDescription(string RuleName, stri
 
 public sealed class ServiceBusTopicsManagementException : Exception
 {
-    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody, string? outgoingRequestBody = null)
+    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody)
         : base($"Service Bus Topics management API returned {(int)statusCode}.")
     {
         StatusCode = statusCode;
         ResponseBody = responseBody;
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        OutgoingRequestBody = outgoingRequestBody;
     }
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
-
-    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-    public string? OutgoingRequestBody { get; }
-
-    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-    public string? DebugOperationName { get; init; }
-
-    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-    public string? DebugEntityName { get; init; }
 }
