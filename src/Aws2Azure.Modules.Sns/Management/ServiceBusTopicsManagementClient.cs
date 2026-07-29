@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -763,7 +764,17 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         SnsLog.TopicRequestFailed(_logger, operationName, namespaceFqdn, entityName, (int)response.StatusCode);
         SnsLog.TopicRequestFailedWithBody(_logger, operationName, FormatRequestUriForLog(requestUri) ?? entityName, (int)response.StatusCode, errorBody);
-        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found (round 2).
+        var debugHeaders = string.Join(
+            ',',
+            response.Headers.Concat(response.Content.Headers)
+                .Select(h => $"{h.Key}={string.Join('|', h.Value)}"));
+        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody)
+        {
+            DebugResponseHeaders = debugHeaders,
+            DebugOperationName = operationName,
+            DebugRequestUri = requestUri.ToString(),
+        };
     }
 
     private static bool ShouldRetryAuthorizationFailure(HttpStatusCode statusCode, int attempt)
@@ -904,4 +915,13 @@ public sealed class ServiceBusTopicsManagementException : Exception
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
+
+    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found (round 2).
+    public string? DebugResponseHeaders { get; init; }
+
+    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found (round 2).
+    public string? DebugOperationName { get; init; }
+
+    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found (round 2).
+    public string? DebugRequestUri { get; init; }
 }
