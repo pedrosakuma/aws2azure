@@ -126,23 +126,21 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
             var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
 
-            // A confirming read of the freshly created subscription before the first
-            // rule write. Real Azure has been observed to reject the very first
-            // subscription-rule PUT immediately after Subscribe with an empty-body 403
-            // (see #691); an intervening read here matches the only known-passing
-            // real-Azure sequence in this suite, where several other calls precede the
-            // first rule write.
-            var warmup = await SendAsync(client, "GetSubscriptionAttributes",
-                [new("SubscriptionArn", subscriptionArn)]).ConfigureAwait(false);
-            SnsServiceBusTestSupport.AssertStatus(warmup, HttpStatusCode.OK, "GetSubscriptionAttributes[warmup]");
-
-            var setFilter = await SendAsync(client, "SetSubscriptionAttributes",
-            [
-                new("SubscriptionArn", subscriptionArn),
-                new("AttributeName", "FilterPolicy"),
-                new("AttributeValue", "{\"tenant\":[\"blue\"]}"),
-            ]).ConfigureAwait(false);
-            SnsServiceBusTestSupport.AssertStatus(setFilter, HttpStatusCode.OK, "SetSubscriptionAttributes[FilterPolicy]");
+            // The very first write to the reserved $Default subscription rule immediately
+            // after Subscribe has been observed to intermittently return an empty-body
+            // authorization-denied response on real Azure, even though the identical request
+            // normally succeeds moments later (see #691 and docs/gaps/sns/SetSubscriptionAttributes.yaml
+            // for the full evidence trail). Root cause is unconfirmed after extensive
+            // investigation, so this one call is wrapped in a bounded, documented retry.
+            var setFilter = await SnsServiceBusTestSupport.AssertStatusWithKnownRealAzureRetryAsync(
+                () => SendAsync(client, "SetSubscriptionAttributes",
+                [
+                    new("SubscriptionArn", subscriptionArn),
+                    new("AttributeName", "FilterPolicy"),
+                    new("AttributeValue", "{\"tenant\":[\"blue\"]}"),
+                ]),
+                HttpStatusCode.OK,
+                "SetSubscriptionAttributes[FilterPolicy]").ConfigureAwait(false);
             var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
             [
                 new("SubscriptionArn", subscriptionArn),

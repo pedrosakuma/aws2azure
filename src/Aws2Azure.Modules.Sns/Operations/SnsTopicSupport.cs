@@ -245,9 +245,6 @@ internal static class SnsTopicSupport
 
     public static Task WriteManagementErrorAsync(HttpContext context, ServiceBusTopicsManagementException ex)
     {
-        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found (round 2).
-        var debugSuffix = $" [DEBUG op={ex.DebugOperationName} uri={ex.DebugRequestUri} body='{ex.ResponseBody}' headers={ex.DebugResponseHeaders}]";
-
         return ex.StatusCode switch
         {
             System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden => SnsErrorResponse.WriteErrorAsync(
@@ -255,7 +252,7 @@ internal static class SnsTopicSupport
                 StatusCodes.Status403Forbidden,
                 errorType: "Sender",
                 errorCode: "AuthorizationError",
-                message: "Access denied when calling the Azure Service Bus Topics management API." + debugSuffix),
+                message: "Access denied when calling the Azure Service Bus Topics management API."),
             System.Net.HttpStatusCode.NotFound => WriteNotFoundAsync(
                 context,
                 "The requested SNS resource was not found in Azure Service Bus."),
