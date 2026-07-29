@@ -126,6 +126,16 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
             var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
 
+            // A confirming read of the freshly created subscription before the first
+            // rule write. Real Azure has been observed to reject the very first
+            // subscription-rule PUT immediately after Subscribe with an empty-body 403
+            // (see #691); an intervening read here matches the only known-passing
+            // real-Azure sequence in this suite, where several other calls precede the
+            // first rule write.
+            var warmup = await SendAsync(client, "GetSubscriptionAttributes",
+                [new("SubscriptionArn", subscriptionArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(warmup, HttpStatusCode.OK, "GetSubscriptionAttributes[warmup]");
+
             var setFilter = await SendAsync(client, "SetSubscriptionAttributes",
             [
                 new("SubscriptionArn", subscriptionArn),
@@ -141,13 +151,10 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             ]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(setRaw, HttpStatusCode.OK, "SetSubscriptionAttributes[RawMessageDelivery]");
 
-            // Applies unrelated Azure subscription properties via raw SAS-authenticated
-            // tooling *after* aws2azure's AAD-authenticated FilterPolicy/RawMessageDelivery
-            // rule writes, mirroring the realistic order (subscribe via aws2azure, then
-            // tweak ancillary knobs with external tooling). Real Azure has been observed to
-            // reject AAD-authenticated subscription-rule writes once the entity has already
-            // been mutated by a different (SAS) authentication mechanism in the same test run
-            // (see #691), so raw SAS mutation is kept last to avoid exercising that gap here.
+            // Applies unrelated Azure subscription properties via the raw SDK *after*
+            // aws2azure's own FilterPolicy/RawMessageDelivery rule writes, mirroring the
+            // realistic order (subscribe via aws2azure, then tweak ancillary knobs with
+            // external tooling later).
             var azure = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
                 .ConfigureAwait(false)).Value;
             azure.LockDuration = TimeSpan.FromMinutes(1);
