@@ -91,7 +91,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.NotNull(ruleBody);
         Assert.Contains("SqlFilter", ruleBody);
-        Assert.Contains("aws2azure_sns_body_64657461696c2e74656e616e74", ruleBody);
+        Assert.Contains("aws2azure_sns_body_363a64657461696c7c363a74656e616e74", ruleBody);
         Assert.Contains("'blue'", ruleBody);
     }
 

@@ -153,6 +153,36 @@ public sealed class PublishHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_projects_string_array_and_leading_zero_number_attributes_for_filtering()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("Message", "hello"),
+                ("MessageAttributes.entry.1.Name", "sports"),
+                ("MessageAttributes.entry.1.Value.DataType", "String.Array"),
+                ("MessageAttributes.entry.1.Value.StringValue", "[\"rugby\",\"tennis\"]"),
+                ("MessageAttributes.entry.2.Name", "priority"),
+                ("MessageAttributes.entry.2.Value.DataType", "Number"),
+                ("MessageAttributes.entry.2.Value.StringValue", "001")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        var appProperties = sender.SingleCall!.Value.Message.ApplicationProperties!;
+        Assert.Equal("[\"rugby\",\"tennis\"]", appProperties["aws2azure_sns_attr_73706f727473"]);
+        Assert.Equal(true, appProperties["aws2azure_sns_attr_73706f727473_arr"]);
+        Assert.Equal(1, appProperties["aws2azure_sns_attr_7072696f72697479_num"]);
+    }
+
+    [Fact]
     public async Task HandleAsync_projects_message_body_fields_into_filter_properties()
     {
         var context = NewContext();
@@ -171,9 +201,9 @@ public sealed class PublishHandlerTests
             CancellationToken.None);
 
         var appProperties = sender.SingleCall!.Value.Message.ApplicationProperties!;
-        Assert.Equal("blue", appProperties["aws2azure_sns_body_64657461696c2e74656e616e74"]);
-        Assert.Equal(5L, appProperties["aws2azure_sns_body_64657461696c2e7072696f72697479"]);
-        Assert.Equal(true, appProperties["aws2azure_sns_body_64657461696c2e616374697665"]);
+        Assert.Equal("blue", appProperties["aws2azure_sns_body_363a64657461696c7c363a74656e616e74"]);
+        Assert.Equal(5L, appProperties["aws2azure_sns_body_363a64657461696c7c383a7072696f72697479"]);
+        Assert.Equal(true, appProperties["aws2azure_sns_body_363a64657461696c7c363a616374697665"]);
     }
 
     [Fact]

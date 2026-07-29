@@ -1,4 +1,6 @@
 using Aws2Azure.Amqp.Codec;
+using Aws2Azure.Core.Buffers;
+using System.Text;
 
 namespace Aws2Azure.Amqp.Framing;
 
@@ -26,26 +28,45 @@ internal static class AmqpApplicationProperties
         IReadOnlyCollection<KeyValuePair<string, object?>> pairs,
         out int written)
     {
-        Span<byte> body = stackalloc byte[Performatives.ScratchSize];
-        int o = 0;
+        using var body = new PooledByteBufferWriter(Math.Max(256, pairs.Count * 64));
         foreach (var kv in pairs)
         {
-            AmqpVariableWriter.WriteString(body[o..], kv.Key, out var l); o += l;
-            WriteValue(body[o..], kv.Value, out l); o += l;
+            var keySpan = body.GetSpan(Math.Max(8, kv.Key.Length * 4));
+            AmqpVariableWriter.WriteString(keySpan, kv.Key, out var keyLength);
+            body.Advance(keyLength);
+
+            var valueSpan = body.GetSpan(GetValueSizeHint(kv.Value));
+            WriteValue(valueSpan, kv.Value, out var valueLength);
+            body.Advance(valueLength);
         }
 
-        Span<byte> mapBytes = stackalloc byte[Performatives.ScratchSize];
-        AmqpCompoundWriter.WriteMap(mapBytes, body[..o], pairs.Count, out var mapLen);
+        using var mapBytes = new PooledByteBufferWriter(Math.Max(256, body.WrittenMemory.Length + 16));
+        var mapSpan = mapBytes.GetSpan(body.WrittenMemory.Length + 16);
+        AmqpCompoundWriter.WriteMap(mapSpan, body.WrittenMemory.Span, pairs.Count, out var mapLen);
+        mapBytes.Advance(mapLen);
 
         // Encode the described type manually: 0x00 + descriptor (ulong) + map.
         int w = 0;
         destination[w++] = AmqpFormatCode.Described;
         AmqpPrimitiveWriter.WriteULong(destination[w..], Descriptor, out var descLen);
         w += descLen;
-        mapBytes[..mapLen].CopyTo(destination[w..]);
+        mapBytes.WrittenMemory.Span.CopyTo(destination[w..]);
         w += mapLen;
         written = w;
     }
+
+    private static int GetValueSizeHint(object? value)
+        => value switch
+        {
+            null => 1,
+            string s => Math.Max(8, Encoding.UTF8.GetByteCount(s) + 5),
+            bool => 2,
+            int => 5,
+            uint => 5,
+            long => 9,
+            double => 9,
+            _ => 32,
+        };
 
     /// <summary>
     /// Reads a described map. Returns a dictionary with string and int

@@ -37,6 +37,8 @@ internal static class SubscribeHandler
             return;
         }
 
+        var createdSubscription = false;
+
         try
         {
             await managementClient.CreateSubscriptionAsync(
@@ -47,6 +49,7 @@ internal static class SubscribeHandler
                     request.UserMetadata,
                     cancellationToken)
                 .ConfigureAwait(false);
+            createdSubscription = true;
             await managementClient.PutSubscriptionRuleAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
@@ -101,6 +104,23 @@ internal static class SubscribeHandler
         }
         catch (ServiceBusTopicsManagementException ex)
         {
+            if (createdSubscription)
+            {
+                try
+                {
+                    await managementClient.DeleteSubscriptionAsync(
+                            credentials,
+                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                            request.TopicName,
+                            subscriptionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+
             await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
             return;
         }

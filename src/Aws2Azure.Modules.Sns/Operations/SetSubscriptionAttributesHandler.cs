@@ -163,8 +163,25 @@ internal static class SetSubscriptionAttributesHandler
         }
         catch (ServiceBusTopicsManagementException ex)
         {
+        if (!string.Equals(existingSubscription.UserMetadata, serializedMetadata, StringComparison.Ordinal))
+        {
+            try
+            {
+                await managementClient.UpdateSubscriptionAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        topicName,
+                        existingSubscription,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+        }
+
         await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
-            return;
+        return;
         }
 
         await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "SetSubscriptionAttributes").ConfigureAwait(false);

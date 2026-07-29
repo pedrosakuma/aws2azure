@@ -60,6 +60,24 @@ internal static class SnsSubscriptionSupport
             }
         }
 
+        string? filterPolicyScope = null;
+        if (TryGetAttribute(attributes, "FilterPolicyScope", out var filterPolicyScopeRaw))
+        {
+            if (string.Equals(filterPolicyScopeRaw, SnsSubscriptionMetadata.MessageAttributesScope, StringComparison.OrdinalIgnoreCase))
+            {
+                filterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope;
+            }
+            else if (string.Equals(filterPolicyScopeRaw, SnsSubscriptionMetadata.MessageBodyScope, StringComparison.OrdinalIgnoreCase))
+            {
+                filterPolicyScope = SnsSubscriptionMetadata.MessageBodyScope;
+            }
+            else
+            {
+                error = "Attribute 'FilterPolicyScope' must be 'MessageAttributes' or 'MessageBody'.";
+                return false;
+            }
+        }
+
         var rawDeliveryEnabled = false;
         if (TryGetAttribute(attributes, "RawMessageDelivery", out var rawMessageDeliveryRaw)
             && !TryParseBoolean(rawMessageDeliveryRaw, out rawDeliveryEnabled))
@@ -73,7 +91,7 @@ internal static class SnsSubscriptionSupport
             Protocol = protocol,
             Endpoint = endpoint,
             FilterPolicyJson = filterPolicyJson,
-            FilterPolicyScope = filterPolicyJson is null ? null : SnsSubscriptionMetadata.MessageAttributesScope,
+            FilterPolicyScope = filterPolicyScope ?? (filterPolicyJson is null ? null : SnsSubscriptionMetadata.MessageAttributesScope),
             RawDeliveryEnabled = rawDeliveryEnabled,
         };
 

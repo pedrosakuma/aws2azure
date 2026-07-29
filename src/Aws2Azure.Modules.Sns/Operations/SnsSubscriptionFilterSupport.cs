@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns.Management;
@@ -10,6 +11,7 @@ internal static class SnsSubscriptionFilterSupport
     internal const string DefaultRuleName = "$Default";
     private const string AttributePropertyPrefix = "aws2azure_sns_attr_";
     private const string AttributeNumericPropertySuffix = "_num";
+    private const string AttributeArrayPresencePropertySuffix = "_arr";
     private const string BodyPropertyPrefix = "aws2azure_sns_body_";
     private const int MaxSqlExpressionLength = 1024;
 
@@ -73,7 +75,17 @@ internal static class SnsSubscriptionFilterSupport
                 continue;
             }
 
-            applicationProperties[BuildAttributePropertyName(attribute.Name)] = value;
+            var attributePropertyName = BuildAttributePropertyName(attribute.Name);
+            if (attribute.StringValue is not null
+                && attribute.DataType.StartsWith("String.Array", StringComparison.OrdinalIgnoreCase)
+                && TryNormalizeStringArray(attribute.StringValue, out var normalizedArray))
+            {
+                applicationProperties[attributePropertyName] = normalizedArray;
+                applicationProperties[attributePropertyName + AttributeArrayPresencePropertySuffix] = true;
+                continue;
+            }
+
+            applicationProperties[attributePropertyName] = value;
             if (attribute.StringValue is not null
                 && attribute.DataType.StartsWith("Number", StringComparison.OrdinalIgnoreCase)
                 && TryParseJsonNumber(attribute.StringValue, out var numericValue))
@@ -296,7 +308,7 @@ internal static class SnsSubscriptionFilterSupport
         switch (matcher.ValueKind)
         {
             case JsonValueKind.String:
-                compiledMatchers.Add($"{scalarPropertyName} = {FormatStringLiteral(matcher.GetString()!)}");
+                compiledMatchers.Add(BuildStringExactExpression(scalarPropertyName, matcher.GetString()!));
                 error = null;
                 return true;
             case JsonValueKind.Number:
@@ -342,6 +354,10 @@ internal static class SnsSubscriptionFilterSupport
             }
 
             compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral(EscapeLikePattern(prefix.GetString()!) + "%")}");
+            if (IsAttributePropertyName(scalarPropertyName))
+            {
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(prefix.GetString()!) + "%")})";
+            }
             error = null;
             return true;
         }
@@ -354,9 +370,7 @@ internal static class SnsSubscriptionFilterSupport
                 return false;
             }
 
-            compiledMatchers.Add(exists.ValueKind == JsonValueKind.True
-                ? $"{scalarPropertyName} IS NOT NULL"
-                : $"{scalarPropertyName} IS NULL");
+            compiledMatchers.Add(BuildExistsExpression(scalarPropertyName, exists.ValueKind == JsonValueKind.True));
             error = null;
             return true;
         }
@@ -439,7 +453,7 @@ internal static class SnsSubscriptionFilterSupport
         switch (value.ValueKind)
         {
             case JsonValueKind.String:
-                disallowed.Add($"{scalarPropertyName} <> {FormatStringLiteral(value.GetString()!)}");
+                disallowed.Add(BuildStringAnythingButExpression(scalarPropertyName, value.GetString()!));
                 error = null;
                 return true;
             case JsonValueKind.Number:
@@ -534,13 +548,78 @@ internal static class SnsSubscriptionFilterSupport
         => AttributePropertyPrefix + EncodeName(attributeName) + AttributeNumericPropertySuffix;
 
     private static string BuildBodyPropertyName(IReadOnlyList<string> path)
-        => BodyPropertyPrefix + EncodeName(string.Join('.', path));
+        => BodyPropertyPrefix + EncodeName(BuildBodyPathKey(path));
+
+    private static string BuildBodyPathKey(IReadOnlyList<string> path)
+    {
+        var builder = new StringBuilder();
+        for (var i = 0; i < path.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append('|');
+            }
+
+            builder.Append(path[i].Length.ToString(CultureInfo.InvariantCulture));
+            builder.Append(':');
+            builder.Append(path[i]);
+        }
+
+        return builder.ToString();
+    }
 
     private static string EncodeName(string value)
     {
         var bytes = Encoding.UTF8.GetBytes(value);
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
+
+    private static string BuildStringExactExpression(string scalarPropertyName, string value)
+    {
+        var equality = $"{scalarPropertyName} = {FormatStringLiteral(value)}";
+        if (!IsAttributePropertyName(scalarPropertyName))
+        {
+            return equality;
+        }
+
+        return $"({equality} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(value) + "\"%")})";
+    }
+
+    private static string BuildExistsExpression(string scalarPropertyName, bool exists)
+    {
+        if (!IsAttributePropertyName(scalarPropertyName))
+        {
+            return exists
+                ? $"{scalarPropertyName} IS NOT NULL"
+                : $"{scalarPropertyName} IS NULL";
+        }
+
+        var arrayPresenceProperty = scalarPropertyName + AttributeArrayPresencePropertySuffix;
+        return exists
+            ? $"({scalarPropertyName} IS NOT NULL OR {arrayPresenceProperty} = true)"
+            : $"({scalarPropertyName} IS NULL AND {arrayPresenceProperty} IS NULL)";
+    }
+
+    private static string BuildStringAnythingButExpression(string scalarPropertyName, string value)
+    {
+        var inequality = $"{scalarPropertyName} <> {FormatStringLiteral(value)}";
+        if (!IsAttributePropertyName(scalarPropertyName))
+        {
+            return inequality;
+        }
+
+        return $"({inequality} AND NOT {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(value) + "\"%")})";
+    }
+
+    private static string BuildArrayGuardedLikeExpression(string scalarPropertyName, string likePattern)
+    {
+        var arrayPresenceProperty = scalarPropertyName + AttributeArrayPresencePropertySuffix;
+        return $"({arrayPresenceProperty} = true AND {scalarPropertyName} LIKE {FormatStringLiteral(likePattern)})";
+    }
+
+    private static bool IsAttributePropertyName(string propertyName)
+        => propertyName.StartsWith(AttributePropertyPrefix, StringComparison.Ordinal)
+            && !propertyName.EndsWith(AttributeNumericPropertySuffix, StringComparison.Ordinal);
 
     private static string FormatStringLiteral(string value)
         => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
@@ -589,14 +668,52 @@ internal static class SnsSubscriptionFilterSupport
 
     private static bool TryParseJsonNumber(string value, out object numericValue)
     {
+        if (int.TryParse(value, NumberStyles.Integer | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var intValue))
+        {
+            numericValue = intValue;
+            return true;
+        }
+
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var doubleValue)
+            && !double.IsNaN(doubleValue)
+            && !double.IsInfinity(doubleValue))
+        {
+            numericValue = doubleValue;
+            return true;
+        }
+
+        numericValue = 0L;
+        return false;
+    }
+
+    private static bool TryNormalizeStringArray(string value, out string normalized)
+    {
+        normalized = string.Empty;
         try
         {
             using var document = JsonDocument.Parse(value);
-            return TryGetNumericValue(document.RootElement, out numericValue);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    return false;
+                }
+            }
+
+            using var stream = new MemoryStream();
+            using var writer = new Utf8JsonWriter(stream);
+            document.RootElement.WriteTo(writer);
+            writer.Flush();
+            normalized = Encoding.UTF8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
+            return true;
         }
         catch (JsonException)
         {
-            numericValue = 0L;
             return false;
         }
     }

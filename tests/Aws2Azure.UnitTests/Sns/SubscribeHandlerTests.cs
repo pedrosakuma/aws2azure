@@ -218,6 +218,48 @@ public sealed class SubscribeHandlerTests
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
     }
 
+    [Fact]
+    public async Task HandleAsync_honors_filter_policy_scope_when_supplied_on_subscribe()
+    {
+        var capturedMetadata = string.Empty;
+        string? ruleBody = null;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
+            {
+                ruleBody = body;
+                return new HttpResponseMessage(HttpStatusCode.Created);
+            }
+
+            capturedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SubscribeHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("Protocol", "https"),
+                ("Endpoint", "https://example.com"),
+                ("Attributes.entry.1.key", "FilterPolicy"),
+                ("Attributes.entry.1.value", "{\"detail\":{\"tenant\":[\"blue\"]}}"),
+                ("Attributes.entry.2.key", "FilterPolicyScope"),
+                ("Attributes.entry.2.value", "MessageBody")),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var metadata = JsonSerializer.Deserialize(capturedMetadata, SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
+        Assert.NotNull(metadata);
+        Assert.Equal("MessageBody", metadata!.FilterPolicyScope);
+        Assert.NotNull(ruleBody);
+        Assert.Contains("aws2azure_sns_body_363a64657461696c7c363a74656e616e74", ruleBody);
+    }
+
     private static SnsParseResult NewParseResult(params (string Key, string Value)[] pairs)
     {
         var parameters = new Dictionary<string, string>(StringComparer.Ordinal);
