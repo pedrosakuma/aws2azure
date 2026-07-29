@@ -246,7 +246,8 @@ internal static class SnsTopicSupport
     public static Task WriteManagementErrorAsync(HttpContext context, ServiceBusTopicsManagementException ex)
     {
         // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        var debugResponseBodySuffix = BuildDebugResponseBodySuffix(ex.ResponseBody)
+        var debugResponseBodySuffix = $" [DEBUG op={ex.DebugOperationName} entity={ex.DebugEntityName}]"
+            + BuildDebugResponseBodySuffix(ex.ResponseBody)
             + BuildDebugRequestBodySuffix(ex.OutgoingRequestBody);
 
         return ex.StatusCode switch
