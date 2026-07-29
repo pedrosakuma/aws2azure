@@ -10,12 +10,14 @@ internal static class SnsTopicAttributeSupport
 
     public static bool TryParseCreateTopicAttributes(
         IReadOnlyDictionary<string, string> parameters,
+        string topicName,
         out CreateTopicAttributes attributes,
         out string? error)
     {
         ArgumentNullException.ThrowIfNull(parameters);
+        ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
 
-        attributes = new CreateTopicAttributes(false, null);
+        attributes = new CreateTopicAttributes(false, false, null);
         error = null;
 
         var parsedAttributes = ReadCreateTopicAttributes(parameters, out error);
@@ -24,13 +26,11 @@ internal static class SnsTopicAttributeSupport
             return false;
         }
 
-        if (parsedAttributes.Count == 0)
-        {
-            return true;
-        }
-
         var metadata = new SnsTopicMetadata();
-        var requiresDuplicateDetection = false;
+        bool? fifoTopic = null;
+        var contentBasedDeduplication = false;
+        var hasContentBasedDeduplication = false;
+        var isFifoTopic = topicName.EndsWith(".fifo", StringComparison.Ordinal);
         foreach (var (name, value) in parsedAttributes)
         {
             switch (name)
@@ -54,24 +54,60 @@ internal static class SnsTopicAttributeSupport
                     }
 
                     break;
+                case "FifoTopic":
+                    if (!SnsSubscriptionSupport.TryParseBooleanAttribute(value, out var parsedFifoTopic))
+                    {
+                        error = "Attribute 'FifoTopic' must be a boolean value ('true' or 'false').";
+                        return false;
+                    }
+
+                    fifoTopic = parsedFifoTopic;
+                    break;
                 case "ContentBasedDeduplication":
-                    if (!SnsSubscriptionSupport.TryParseBooleanAttribute(value, out requiresDuplicateDetection))
+                    if (!SnsSubscriptionSupport.TryParseBooleanAttribute(value, out contentBasedDeduplication))
                     {
                         error = "Attribute 'ContentBasedDeduplication' must be a boolean value ('true' or 'false').";
                         return false;
                     }
 
+                    hasContentBasedDeduplication = true;
                     break;
             }
         }
 
+        if (fifoTopic == true && !isFifoTopic)
+        {
+            error = "Attribute 'FifoTopic' requires parameter 'Name' to end with '.fifo'.";
+            return false;
+        }
+
+        if (fifoTopic is null && isFifoTopic)
+        {
+            error = "Attribute 'FifoTopic' must be set to 'true' when parameter 'Name' ends with '.fifo'.";
+            return false;
+        }
+
+        if (fifoTopic == false && isFifoTopic)
+        {
+            error = "Attribute 'FifoTopic' cannot be false when parameter 'Name' ends with '.fifo'.";
+            return false;
+        }
+
+        if (hasContentBasedDeduplication && !isFifoTopic)
+        {
+            error = "Attribute 'ContentBasedDeduplication' is supported only for FIFO topics whose names end with '.fifo'.";
+            return false;
+        }
+
+        metadata.FifoTopic = isFifoTopic ? true : null;
+        metadata.ContentBasedDeduplication = isFifoTopic ? contentBasedDeduplication : null;
         if (!TryBuildUserMetadata(metadata, out var userMetadata))
         {
             error = $"Topic metadata exceeds the Azure Service Bus UserMetadata limit of {UserMetadataMaxLength} characters.";
             return false;
         }
 
-        attributes = new CreateTopicAttributes(requiresDuplicateDetection, userMetadata);
+        attributes = new CreateTopicAttributes(isFifoTopic, isFifoTopic || contentBasedDeduplication, userMetadata);
         return true;
     }
 
@@ -84,7 +120,9 @@ internal static class SnsTopicAttributeSupport
 
         if (string.IsNullOrWhiteSpace(metadata.DisplayName)
             && string.IsNullOrWhiteSpace(metadata.PolicyJson)
-            && string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson))
+            && string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson)
+            && metadata.FifoTopic is null
+            && metadata.ContentBasedDeduplication is null)
         {
             userMetadata = null;
             return true;
@@ -173,13 +211,18 @@ internal static class SnsTopicAttributeSupport
     }
 }
 
-internal readonly record struct CreateTopicAttributes(bool RequiresDuplicateDetection, string? UserMetadata);
+internal readonly record struct CreateTopicAttributes(
+    bool IsFifoTopic,
+    bool RequiresDuplicateDetection,
+    string? UserMetadata);
 
 internal sealed class SnsTopicMetadata
 {
     public string? DisplayName { get; set; }
     public string? PolicyJson { get; set; }
     public string? DeliveryPolicyJson { get; set; }
+    public bool? FifoTopic { get; set; }
+    public bool? ContentBasedDeduplication { get; set; }
 }
 
 [JsonSourceGenerationOptions(

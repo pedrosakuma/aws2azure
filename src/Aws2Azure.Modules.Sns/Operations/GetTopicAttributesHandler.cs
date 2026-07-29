@@ -53,8 +53,16 @@ internal static class GetTopicAttributesHandler
 
         var arnParts = topicArn.Split(':', 6, StringSplitOptions.None);
         var accountId = arnParts[4];
-        var isFifo = topicName.EndsWith(".fifo", StringComparison.Ordinal) || topic.RequiresDuplicateDetection;
         var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
+        var isFifo = metadata.FifoTopic ?? topicName.EndsWith(".fifo", StringComparison.Ordinal);
+        var contentBasedDeduplication = metadata.ContentBasedDeduplication;
+        if (contentBasedDeduplication is null
+            && SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out var cachedState))
+        {
+            contentBasedDeduplication = cachedState.ContentBasedDeduplication;
+        }
+
+        contentBasedDeduplication ??= isFifo && topic.RequiresDuplicateDetection;
 
         var attributes = new List<KeyValuePair<string, string>>(12)
         {
@@ -67,7 +75,7 @@ internal static class GetTopicAttributesHandler
             new("SubscriptionsDeleted", "0"),
             new("KmsMasterKeyId", string.Empty),
             new("FifoTopic", isFifo ? "true" : "false"),
-            new("ContentBasedDeduplication", topic.RequiresDuplicateDetection ? "true" : "false"),
+            new("ContentBasedDeduplication", contentBasedDeduplication.Value ? "true" : "false"),
         };
 
         if (!string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson))

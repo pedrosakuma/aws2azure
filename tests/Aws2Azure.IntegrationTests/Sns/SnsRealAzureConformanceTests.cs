@@ -588,6 +588,89 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
     }
 
+    [SkippableFact]
+    public async Task Fifo_publish_subset_roundtrips_against_real_service_bus()
+    {
+        Skip.IfNot(fixture.SnsConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
+
+        using var client = fixture.CreateSnsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var topicName = SnsQueryApiClient.CreateTopicName("sns-real-fifo") + ".fifo";
+        string? topicArn = null;
+
+        try
+        {
+            var create = await SendAsync(client, "CreateTopic",
+            [
+                new("Name", topicName),
+                new("Attributes.entry.1.key", "FifoTopic"),
+                new("Attributes.entry.1.value", "true"),
+                new("Attributes.entry.2.key", "ContentBasedDeduplication"),
+                new("Attributes.entry.2.value", "true"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(create, HttpStatusCode.OK, "CreateTopic[fifo]");
+            topicArn = SnsQueryApiClient.ReadTopicArn(create);
+
+            var subscribe = await SendAsync(client, "Subscribe",
+            [
+                new("TopicArn", topicArn),
+                new("Protocol", "sqs"),
+                new("Endpoint", SnsQueryApiClient.CreateSubscriptionEndpoint()),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(subscribe, HttpStatusCode.OK, "Subscribe[fifo]");
+            var subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
+            var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+            await using var serviceBusClient = new ServiceBusClient(fixture.CreateServiceBusConnectionString());
+            await using var receiver = serviceBusClient.CreateReceiver(topicName, subscriptionName);
+
+            var body = "fifo-real-body-" + Guid.NewGuid().ToString("N");
+            var publish1 = await SendAsync(client, "Publish",
+            [
+                new("TopicArn", topicArn),
+                new("Message", body),
+                new("MessageGroupId", "group-1"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish1, HttpStatusCode.OK, "Publish[fifo first]");
+
+            var publish2 = await SendAsync(client, "Publish",
+            [
+                new("TopicArn", topicArn),
+                new("Message", body),
+                new("MessageGroupId", "group-1"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish2, HttpStatusCode.OK, "Publish[fifo duplicate]");
+
+            var messages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(
+                receiver,
+                expectedCount: 1,
+                TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            var message = Assert.Single(messages);
+            Assert.Equal("group-1", message.SessionId);
+            Assert.Equal(body, message.Body.ToString());
+            await receiver.CompleteMessageAsync(message, timeout.Token).ConfigureAwait(false);
+
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(
+                receiver,
+                TimeSpan.FromSeconds(5),
+                cancellationToken: timeout.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (topicArn is not null)
+            {
+                try
+                {
+                    await SendAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     private static Task<SnsXmlResponse> SendAsync(
         HttpClient client,
         string action,

@@ -20,6 +20,7 @@ public sealed class GetTopicAttributesHandlerTests
                 DisplayName = "Orders",
                 PolicyJson = "{\"Statement\":[]}",
                 DeliveryPolicyJson = "{\"healthyRetryPolicy\":{\"numRetries\":3}}",
+                ContentBasedDeduplication = true,
             },
             SnsTopicJsonContext.Default.SnsTopicMetadata);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
@@ -50,7 +51,7 @@ public sealed class GetTopicAttributesHandlerTests
         Assert.Equal("0", attributes["SubscriptionsPending"]);
         Assert.Equal("0", attributes["SubscriptionsDeleted"]);
         Assert.Equal(string.Empty, attributes["KmsMasterKeyId"]);
-        Assert.Equal("true", attributes["FifoTopic"]);
+        Assert.Equal("false", attributes["FifoTopic"]);
         Assert.Equal("true", attributes["ContentBasedDeduplication"]);
         Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["DeliveryPolicy"]);
         Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["EffectiveDeliveryPolicy"]);
@@ -59,10 +60,16 @@ public sealed class GetTopicAttributesHandlerTests
     [Fact]
     public async Task HandleAsync_detects_fifo_topics_from_name_suffix()
     {
+        var metadata = JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 2, requiresDuplicateDetection: false), Encoding.UTF8, "application/atom+xml"),
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 2, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
             }));
 
         var context = SnsManagementClientTestSupport.NewContext();
@@ -75,6 +82,52 @@ public sealed class GetTopicAttributesHandlerTests
 
         var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
         Assert.Equal("true", attributes["FifoTopic"]);
+        Assert.Equal("false", attributes["ContentBasedDeduplication"]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_preserves_legacy_fifo_content_based_deduplication_when_metadata_is_missing()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 2, requiresDuplicateDetection: true), Encoding.UTF8, "application/atom+xml"),
+            }));
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await GetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
+        Assert.Equal("true", attributes["FifoTopic"]);
+        Assert.Equal("true", attributes["ContentBasedDeduplication"]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_infer_content_based_deduplication_for_non_fifo_topics()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders");
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders", subscriptionCount: 2, requiresDuplicateDetection: true), Encoding.UTF8, "application/atom+xml"),
+            }));
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await GetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("arn:aws:sns:us-west-2:000000000000:orders"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
+        Assert.Equal("false", attributes["FifoTopic"]);
         Assert.Equal("false", attributes["ContentBasedDeduplication"]);
     }
 

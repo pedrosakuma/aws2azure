@@ -9,7 +9,6 @@ internal static class SnsPublishSupport
 {
     internal const int MaxBatchEntries = 10;
     internal const string SubjectPropertyName = "aws.sns.Subject";
-    internal const string DeduplicationPropertyName = "x-opt-deduplication-id";
 
     internal static bool TryParsePublishRequest(
         IReadOnlyDictionary<string, string> parameters,
@@ -131,23 +130,21 @@ internal static class SnsPublishSupport
         return true;
     }
 
-    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishRequest request, Guid messageId)
+    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishRequest request, string brokerMessageId)
         => CreateAmqpMessage(
             request.Message,
             request.Subject,
             request.MessageGroupId,
-            request.MessageDeduplicationId,
             request.MessageAttributes,
-            messageId);
+            brokerMessageId);
 
-    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishBatchRequestEntry request, Guid messageId)
+    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishBatchRequestEntry request, string brokerMessageId)
         => CreateAmqpMessage(
             request.Message,
             request.Subject,
             request.MessageGroupId,
-            request.MessageDeduplicationId,
             request.MessageAttributes,
-            messageId);
+            brokerMessageId);
 
     internal static EventGridPublishMessage CreateEventGridMessage(PublishRequest request, Guid messageId)
         => new(
@@ -175,14 +172,12 @@ internal static class SnsPublishSupport
         string message,
         string? subject,
         string? messageGroupId,
-        string? messageDeduplicationId,
         IReadOnlyList<SnsMessageAttribute> messageAttributes,
-        Guid messageId)
+        string brokerMessageId)
     {
         Dictionary<string, object?>? applicationProperties = null;
         if (messageAttributes.Count > 0
-            || !string.IsNullOrWhiteSpace(subject)
-            || !string.IsNullOrWhiteSpace(messageDeduplicationId))
+            || !string.IsNullOrWhiteSpace(subject))
         {
             applicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal);
             for (var i = 0; i < messageAttributes.Count; i++)
@@ -195,11 +190,6 @@ internal static class SnsPublishSupport
             if (!string.IsNullOrWhiteSpace(subject))
             {
                 applicationProperties[SubjectPropertyName] = subject;
-            }
-
-            if (!string.IsNullOrWhiteSpace(messageDeduplicationId))
-            {
-                applicationProperties[DeduplicationPropertyName] = messageDeduplicationId;
             }
         }
 
@@ -219,7 +209,7 @@ internal static class SnsPublishSupport
             Encoding.UTF8.GetBytes(message),
             new AmqpProperties
             {
-                MessageId = messageId.ToString(),
+                MessageId = brokerMessageId,
                 Subject = string.IsNullOrWhiteSpace(subject) ? null : subject,
                 GroupId = string.IsNullOrWhiteSpace(messageGroupId) ? null : messageGroupId,
             },
