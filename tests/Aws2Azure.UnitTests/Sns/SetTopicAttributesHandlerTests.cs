@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns;
@@ -41,7 +42,7 @@ public sealed class SetTopicAttributesHandlerTests
         {
             if (request.Method == HttpMethod.Get)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
                         SnsManagementClientTestSupport.BuildTopicEntry(
@@ -64,11 +65,13 @@ public sealed class SetTopicAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-topic\"");
+                return response;
             }
 
             updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("\"etag-topic\"", Assert.Single(request.Headers.GetValues("If-Match")));
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
 

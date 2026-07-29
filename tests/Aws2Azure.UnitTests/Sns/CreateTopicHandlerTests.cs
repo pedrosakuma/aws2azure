@@ -90,6 +90,28 @@ public sealed class CreateTopicHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_rejects_incomplete_attribute_entries()
+    {
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = "orders",
+                    ["Attributes.entry.1.key"] = "Policy",
+                },
+                null),
+            NewCredentials(),
+            NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("Incomplete attribute entry", ReadBody(context));
+    }
+
+    [Fact]
     public async Task HandleAsync_treats_existing_topic_as_idempotent()
     {
         var managementClient = NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));

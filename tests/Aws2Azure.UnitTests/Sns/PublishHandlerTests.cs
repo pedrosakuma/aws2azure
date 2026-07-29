@@ -179,7 +179,32 @@ public sealed class PublishHandlerTests
         var appProperties = sender.SingleCall!.Value.Message.ApplicationProperties!;
         Assert.Equal("[\"rugby\",\"tennis\"]", appProperties["aws2azure_sns_attr_73706f727473"]);
         Assert.Equal(true, appProperties["aws2azure_sns_attr_73706f727473_arr"]);
-        Assert.Equal(1, appProperties["aws2azure_sns_attr_7072696f72697479_num"]);
+        Assert.Equal(1L, appProperties["aws2azure_sns_attr_7072696f72697479_num"]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_projects_large_integer_number_attributes_without_double_rounding()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("Message", "hello"),
+                ("MessageAttributes.entry.1.Name", "id"),
+                ("MessageAttributes.entry.1.Value.DataType", "Number"),
+                ("MessageAttributes.entry.1.Value.StringValue", "9007199254740993")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        var appProperties = sender.SingleCall!.Value.Message.ApplicationProperties!;
+        Assert.Equal(9007199254740993L, appProperties["aws2azure_sns_attr_6964_num"]);
     }
 
     [Fact]

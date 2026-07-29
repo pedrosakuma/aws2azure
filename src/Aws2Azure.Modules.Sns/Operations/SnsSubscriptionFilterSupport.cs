@@ -583,7 +583,7 @@ internal static class SnsSubscriptionFilterSupport
             return equality;
         }
 
-        return $"({equality} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(value) + "\"%")})";
+        return $"({equality} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
     }
 
     private static string BuildExistsExpression(string scalarPropertyName, bool exists)
@@ -609,7 +609,7 @@ internal static class SnsSubscriptionFilterSupport
             return inequality;
         }
 
-        return $"({inequality} AND NOT {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(value) + "\"%")})";
+        return $"({inequality} AND NOT {BuildArrayGuardedLikeExpression(scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
     }
 
     private static string BuildArrayGuardedLikeExpression(string scalarPropertyName, string likePattern)
@@ -630,6 +630,12 @@ internal static class SnsSubscriptionFilterSupport
             .Replace("[", "[[]", StringComparison.Ordinal)
             .Replace("%", "[%]", StringComparison.Ordinal)
             .Replace("_", "[_]", StringComparison.Ordinal);
+
+    private static string BuildJsonStringArrayLikePattern(string value)
+    {
+        var jsonEscapedValue = JsonEncodedText.Encode(value).ToString();
+        return "%\"" + EscapeLikePattern(jsonEscapedValue) + "\"%";
+    }
 
     private static bool TryGetNumericLiteral(JsonElement element, out string numericLiteral)
     {
@@ -669,9 +675,9 @@ internal static class SnsSubscriptionFilterSupport
 
     private static bool TryParseJsonNumber(string value, out object numericValue)
     {
-        if (int.TryParse(value, NumberStyles.Integer | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var intValue))
+        if (long.TryParse(value, NumberStyles.Integer | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var int64Value))
         {
-            numericValue = intValue;
+            numericValue = int64Value;
             return true;
         }
 

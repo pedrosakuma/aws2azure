@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns;
@@ -39,6 +40,31 @@ public sealed class SetSubscriptionAttributesHandlerTests
         var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(getContext));
         Assert.Equal("{\"tenant\":[\"blue\"]}", attributes["FilterPolicy"]);
         Assert.Equal("MessageAttributes", attributes["FilterPolicyScope"]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_clearing_filter_policy_also_clears_scope()
+    {
+        var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata(
+            "https",
+            "https://example.com/hooks/orders",
+            "{\"detail\":{\"tenant\":[\"blue\"]}}",
+            filterPolicyScope: SnsSubscriptionMetadata.MessageBodyScope);
+        var managementClient = NewStatefulManagementClient(() => storedMetadata, value => storedMetadata = value);
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetSubscriptionAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("FilterPolicy", string.Empty),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var metadata = JsonSerializer.Deserialize(storedMetadata, SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
+        Assert.NotNull(metadata);
+        Assert.Null(metadata!.FilterPolicyJson);
+        Assert.Null(metadata.FilterPolicyScope);
     }
 
     [Fact]
@@ -190,8 +216,11 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         SnsManagementClientTestSupport.BuildSubscriptionEntry(
                             "sub123",
                             storedMetadata,
+                            lockDuration: "PT1M",
+                            maxDeliveryCount: 17,
                             additionalPropertiesXml:
                                 "<RequiresSession>true</RequiresSession>"
+                                + "<EnableBatchedOperations>false</EnableBatchedOperations>"
                                 + "<DeadLetteringOnMessageExpiration>true</DeadLetteringOnMessageExpiration>"
                                 + "<ForwardTo>archive</ForwardTo>"
                                 + "<CreatedAt>2026-07-22T00:00:00Z</CreatedAt>"
@@ -206,6 +235,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-unrelated\"");
                 return response;
             }
 
@@ -215,7 +245,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("\"etag-unrelated\"", Assert.Single(request.Headers.GetValues("If-Match")));
             updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
@@ -230,8 +260,12 @@ public sealed class SetSubscriptionAttributesHandlerTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.NotNull(updateBody);
+        Assert.Contains("PT1M</LockDuration>", updateBody);
+        Assert.Contains(">17</MaxDeliveryCount>", updateBody);
         Assert.Contains("<RequiresSession", updateBody);
         Assert.Contains(">true</RequiresSession>", updateBody);
+        Assert.Contains("<EnableBatchedOperations", updateBody);
+        Assert.Contains(">false</EnableBatchedOperations>", updateBody);
         Assert.Contains("<DeadLetteringOnMessageExpiration", updateBody);
         Assert.Contains("<ForwardTo", updateBody);
         Assert.Contains(">archive</ForwardTo>", updateBody);
@@ -283,6 +317,60 @@ public sealed class SetSubscriptionAttributesHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_updates_existing_custom_rule_when_filter_is_readded_without_default_rule()
+    {
+        var storedMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
+        var rulePutIfMatch = string.Empty;
+        var defaultRuleDeletes = 0;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildSubscriptionEntry(
+                            "sub123",
+                            storedMetadata,
+                            additionalPropertiesXml: "<DefaultRuleDescription><Name>$Default</Name></DefaultRuleDescription>"),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-readd\"");
+                return response;
+            }
+
+            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
+            {
+                if (request.Method == HttpMethod.Delete)
+                {
+                    defaultRuleDeletes++;
+                    return new HttpResponseMessage(HttpStatusCode.OK);
+                }
+
+                rulePutIfMatch = Assert.Single(request.Headers.IfMatch).ToString();
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            storedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetSubscriptionAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("FilterPolicy", "{ \"tenant\" : [ \"blue\" ] }"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("*", rulePutIfMatch);
+        Assert.Equal(1, defaultRuleDeletes);
+    }
+
+    [Fact]
     public async Task HandleAsync_does_not_add_pass_through_rule_when_default_rule_delete_fails()
     {
         var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
@@ -290,17 +378,23 @@ public sealed class SetSubscriptionAttributesHandlerTests
         var rulePutRequests = 0;
         var defaultRuleDeleteRequests = 0;
         var customRuleDeleteRequests = 0;
+        var ifMatchValues = new List<string>();
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             if (request.Method == HttpMethod.Get)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", storedMetadata),
+                        SnsManagementClientTestSupport.BuildSubscriptionEntry(
+                            "sub123",
+                            storedMetadata,
+                            additionalPropertiesXml: "<DefaultRuleDescription><Name>$Default</Name></DefaultRuleDescription>"),
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-rollback\"");
+                return response;
             }
 
             if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
@@ -318,9 +412,15 @@ public sealed class SetSubscriptionAttributesHandlerTests
                 }
 
                 rulePutRequests++;
+                if (request.Headers.IfMatch.Count > 0)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
+            ifMatchValues.Add(Assert.Single(request.Headers.GetValues("If-Match")));
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             storedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
             return new HttpResponseMessage(HttpStatusCode.OK);
@@ -337,8 +437,9 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
         Assert.Equal(3, defaultRuleDeleteRequests);
         Assert.Equal(1, customRuleDeleteRequests);
-        Assert.Equal(1, rulePutRequests);
+        Assert.Equal(2, rulePutRequests);
         Assert.Equal(originalMetadata, storedMetadata);
+        Assert.Equal(new[] { "\"etag-rollback\"", "\"etag-rollback\"" }, ifMatchValues);
     }
 
     private static ServiceBusTopicsManagementClient NewStatefulManagementClient(Func<string> getMetadata, Action<string> setMetadata)
@@ -358,6 +459,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-stateful\"");
                 return response;
             }
 
@@ -367,7 +469,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("\"etag-stateful\"", Assert.Single(request.Headers.GetValues("If-Match")));
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             setMetadata(SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata"));
             return new HttpResponseMessage(HttpStatusCode.OK);

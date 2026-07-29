@@ -40,6 +40,22 @@ public sealed class SnsSubscriptionFilterSupportTests
     }
 
     [Fact]
+    public void TryBuildRuleDescription_escapes_string_array_fallback_values()
+    {
+        var metadata = new SnsSubscriptionMetadata
+        {
+            FilterPolicyJson = "{\"sports\":[\"a\\\"b\"]}",
+            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
+        };
+
+        var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var rule, out var error);
+
+        Assert.True(success, error);
+        Assert.Contains("aws2azure_sns_attr_73706f727473 LIKE", rule.SqlExpression);
+        Assert.DoesNotContain("LIKE '%\"a\"b\"%'", rule.SqlExpression);
+    }
+
+    [Fact]
     public void TryBuildRuleDescription_guards_prefix_and_anything_but_array_fallbacks()
     {
         var metadata = new SnsSubscriptionMetadata

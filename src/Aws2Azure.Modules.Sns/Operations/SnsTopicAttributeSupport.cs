@@ -18,7 +18,12 @@ internal static class SnsTopicAttributeSupport
         attributes = new CreateTopicAttributes(false, null);
         error = null;
 
-        var parsedAttributes = ReadCreateTopicAttributes(parameters);
+        var parsedAttributes = ReadCreateTopicAttributes(parameters, out error);
+        if (error is not null)
+        {
+            return false;
+        }
+
         if (parsedAttributes.Count == 0)
         {
             return true;
@@ -89,8 +94,9 @@ internal static class SnsTopicAttributeSupport
         return userMetadata.Length <= UserMetadataMaxLength;
     }
 
-    private static Dictionary<string, string> ReadCreateTopicAttributes(IReadOnlyDictionary<string, string> parameters)
+    private static Dictionary<string, string> ReadCreateTopicAttributes(IReadOnlyDictionary<string, string> parameters, out string? error)
     {
+        error = null;
         var indexes = new SortedSet<int>();
         foreach (var key in parameters.Keys)
         {
@@ -108,7 +114,8 @@ internal static class SnsTopicAttributeSupport
                 || string.IsNullOrWhiteSpace(name)
                 || !TryGetParameterIgnoreCase(parameters, prefix + "value", out var value))
             {
-                continue;
+                error = $"Incomplete attribute entry at index {index}.";
+                return attributes;
             }
 
             attributes[name] = value;

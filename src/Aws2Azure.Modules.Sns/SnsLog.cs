@@ -64,6 +64,14 @@ internal static partial class SnsLog
         Message = "Updating Service Bus subscription for namespace '{NamespaceFqdn}', topic '{TopicName}', and subscription '{SubscriptionName}'")]
     public static partial void UpdatingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
 
+    [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+        Message = "Service Bus Topics request '{Operation}' to '{RequestUri}' failed with HTTP {StatusCode}. Raw body: {Body}")]
+    public static partial void TopicRequestFailedWithBody(ILogger logger, string operation, string requestUri, int statusCode, string body);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
+        Message = "Service Bus Topics request '{Operation}' to '{RequestUri}' returned HTTP {StatusCode}; retry attempt {Attempt} of {MaxAttempts} after {DelaySeconds}s due to possible RBAC propagation delay.")]
+    public static partial void TopicRequestAuthorizationRetry(ILogger logger, string operation, string requestUri, int statusCode, int attempt, int maxAttempts, double delaySeconds);
+
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
         Message = "Existing Service Bus subscription '{SubscriptionId}' for topic '{TopicName}' did not match requested SNS subscriber protocol '{Protocol}' and endpoint '{Endpoint}'. Returning the existing ARN without replacing metadata.")]
     public static partial void MismatchedExistingSubscription(ILogger logger, string topicName, string subscriptionId, string protocol, string endpoint);
