@@ -22,7 +22,7 @@ required_sub_feature_seals:
   - operation: dynamodb:Scan
     sub_feature: IndexName (GSI / LSI)
   - operation: dynamodb:DescribeTable
-    sub_feature: GSI/LSI description
+    sub_feature: GSI/LSI schema / status / projection description
 evidence:
   qualification_artifact: ""
   required_scenarios:

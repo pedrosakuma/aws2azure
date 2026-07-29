@@ -88,8 +88,8 @@
 | HASH + RANGE composite key | ✅ implemented | — | — | — |  |  |  |
 | PAY_PER_REQUEST + PROVISIONED billing mode (informational) | ✅ implemented | — | — | — |  |  |  |
 | AttributeDefinitions round-trip via sidecar metadata | ✅ implemented | — | — | — |  |  |  |
-| GlobalSecondaryIndexes (schema accepted + persisted) | 🟡 partial | 🔵 by design | — | — |  |  |  |
-| LocalSecondaryIndexes (schema accepted + persisted) | 🟡 partial | 🔵 by design | — | — |  |  |  |
+| GlobalSecondaryIndexes (schema accepted + persisted) | ✅ implemented | — | — | — |  |  |  |
+| LocalSecondaryIndexes (schema accepted + persisted) | ✅ implemented | — | — | — |  |  |  |
 | StreamSpecification | ⛔ unsupported | ⚫ non-goal | — | — |  |  |  |
 | SSESpecification | ⛔ unsupported | 🔵 by design | — | — |  |  |  |
 | Tags | ⛔ unsupported | ⚫ non-goal | — | — |  |  |  |
@@ -100,9 +100,9 @@
 - ProvisionedThroughput / BillingMode values are accepted but not enforced; throughput is governed by the Cosmos account/database, not per-table.
 - TableStatus is always returned as ACTIVE since Cosmos container creation is synchronous.
 - On metadata-sidecar persist failure the container is best-effort deleted to avoid orphan containers.
-- GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata. LSI Query/Scan execution is available; GSI Query/Scan execution requires the opt-in `DynamoDb.EnableGlobalSecondaryIndexQueries=true` profile setting.
+- GSI/LSI schemas are validated (key arity, HASH/RANGE roles, LSI HASH must match the table HASH, required Projection with projection type + INCLUDE NonKeyAttributes rules and limits (<=20 per index, <=100 total, names <=255 chars), attribute-definition references, name uniqueness, service limits) and persisted into the sidecar metadata so DescribeTable, Query, and Scan can resolve the declared index shape.
 - GSI/LSI ProvisionedThroughput on an index is accepted but not enforced, mirroring base-table throughput handling.
-- Core table creation is validated against real Azure Cosmos DB; index execution and other partial sub-features retain their narrower coverage noted above.
+- Core table creation is validated against real Azure Cosmos DB; index execution and other partial sub-features retain their narrower coverage noted in the Query / Scan / design-gap docs.
 
 ### References
 
@@ -174,20 +174,24 @@
 | AttributeDefinitions / KeySchema round-trip | ✅ implemented | — | — | — |  |  |  |
 | BillingModeSummary echo | ✅ implemented | — | — | — |  |  |  |
 | TableArn synthesis (azure-region pseudo-arn) | ✅ implemented | — | — | — |  |  |  |
-| ItemCount / TableSizeBytes (live metrics) | ⛔ unsupported | 🛠️ feasible backlog | [#688](https://github.com/pedrosakuma/aws2azure/issues/688) | — |  |  |  |
-| GSI/LSI description | 🟡 partial | 🛠️ feasible backlog | [#688](https://github.com/pedrosakuma/aws2azure/issues/688) | ✅ |  |  |  |
+| ItemCount live metric | ✅ implemented | — | — | — |  |  |  |
+| TableSizeBytes live metric | ✅ implemented | — | — | — |  |  |  |
+| GSI/LSI schema / status / projection description | ✅ implemented | — | — | — |  |  |  |
+| GSI/LSI ItemCount / IndexSizeBytes / Backfilling / ProvisionedThroughput description | ⛔ unsupported | 🔵 by design | — | — |  |  |  |
 
 ### Behaviour differences
 
-- ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice.
+- ItemCount and TableSizeBytes are best-effort approximations sourced from Cosmos' `x-ms-resource-usage` header when Cosmos returns it. ItemCount subtracts the proxy metadata sidecar document when present; TableSizeBytes uses Cosmos' approximate document-storage accounting (KiB → bytes). When Cosmos omits that header (observed on freshly created containers), both fields are omitted rather than fabricated. This mirrors native DynamoDB's own documented behavior that these metrics are approximate and only refreshed periodically (about every six hours), not guaranteed real-time after table or item changes.
 - TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment.
 - Tables created out-of-band (no sidecar metadata) still describe but with empty attribute/key arrays.
-- GSI/LSI descriptions echo the persisted index schema (IndexName, KeySchema, Projection) plus a synthetic IndexArn; GSIs report IndexStatus=ACTIVE. IndexSizeBytes / ItemCount / Backfilling / ProvisionedThroughput are not populated.
+- GSI/LSI descriptions are reconstructed from sidecar metadata over one base container. GSI IndexStatus is a synthetic ACTIVE (CreateTable-created indexes have no separate backfill lifecycle here). CreateTable reports zero index ItemCount/IndexSizeBytes for its brand-new empty table response. DescribeTable exposes index ItemCount/IndexSizeBytes only when the backing table metrics are available and identify an empty table; otherwise those fields, plus Backfilling / ProvisionedThroughput, remain omitted because the single-container model has no cheap truthful separate index-byte/accounting surface and AWS itself treats these counters as approximate.
 
 ### References
 
 - <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html>
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TableDescription.html>
 - <https://learn.microsoft.com/rest/api/cosmos-db/get-a-collection>
+- <https://learn.microsoft.com/rest/api/cosmos-db/common-cosmosdb-rest-response-headers>
 
 ## DescribeTimeToLive
 

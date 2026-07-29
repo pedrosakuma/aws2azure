@@ -83,6 +83,58 @@ public class TimeToLiveHandlersTests
     }
 
     [Fact]
+    public async Task UpdateTimeToLive_disable_rolls_back_container_when_metadata_write_fails()
+    {
+        var handler = new TtlCosmosHandler(MetadataJson(ttl: ("expiresAt", true)))
+        {
+            FailMetadataWrite = true,
+            ContainerDefinitionJson =
+                "{\"id\":\"orders\",\"_rid\":\"abc==\",\"_self\":\"dbs/x/colls/y/\",\"_etag\":\"\\\"42\\\"\",\"_ts\":1700000000,"
+                + "\"_docs\":\"docs/\",\"_sprocs\":\"sprocs/\","
+                + "\"partitionKey\":{\"paths\":[\"/_a2a_pk\"],\"kind\":\"Hash\"},"
+                + "\"indexingPolicy\":{\"indexingMode\":\"consistent\",\"automatic\":true},"
+                + "\"defaultTtl\":-1}",
+        };
+        var cosmos = BuildClient(handler);
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":false,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("metadata", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, handler.ContainerReplaceCount);
+        using var coll = JsonDocument.Parse(handler.ContainerJson!);
+        Assert.Equal(-1, coll.RootElement.GetProperty("defaultTtl").GetInt32());
+        using var meta = JsonDocument.Parse(handler.MetadataJson!);
+        Assert.True(meta.RootElement.GetProperty("timeToLive").GetProperty("enabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task UpdateTimeToLive_enable_rolls_back_container_when_metadata_write_fails()
+    {
+        var handler = new TtlCosmosHandler(MetadataJson(ttl: null))
+        {
+            FailMetadataWrite = true,
+        };
+        var cosmos = BuildClient(handler);
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":true,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("metadata", ReadResponse(body), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, handler.ContainerReplaceCount);
+        using var coll = JsonDocument.Parse(handler.ContainerJson!);
+        Assert.False(coll.RootElement.TryGetProperty("defaultTtl", out _));
+        using var meta = JsonDocument.Parse(handler.MetadataJson!);
+        Assert.False(meta.RootElement.TryGetProperty("timeToLive", out _));
+    }
+
+    [Fact]
     public async Task UpdateTimeToLive_preserves_unknown_ttl_extension_fields()
     {
         var metadata = MetadataJson(ttl: ("expiresAt", true))
@@ -141,6 +193,41 @@ public class TimeToLiveHandlersTests
     }
 
     [Fact]
+    public async Task DescribeTimeToLive_reports_disabled_when_metadata_is_missing_but_table_exists()
+    {
+        var handler = new TtlCosmosHandler(metadataJson: null) { ContainerExists = true };
+        var cosmos = BuildClient(handler);
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(ctx, Bytes("{\"TableName\":\"orders\"}"), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var desc = doc.RootElement.GetProperty("TimeToLiveDescription");
+        Assert.Equal("DISABLED", desc.GetProperty("TimeToLiveStatus").GetString());
+        Assert.False(desc.TryGetProperty("AttributeName", out _));
+    }
+
+    [Fact]
+    public async Task DescribeTimeToLive_bypasses_warm_cache_when_metadata_becomes_malformed()
+    {
+        var handler = new TtlCosmosHandler(MetadataJson(ttl: ("expiresAt", true)));
+        var cosmos = BuildClient(handler);
+
+        var (warmCtx, _) = NewCtx();
+        await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(warmCtx, Bytes("{\"TableName\":\"orders\"}"), cosmos, default);
+        Assert.Equal(200, warmCtx.Response.StatusCode);
+
+        handler.MetadataJson = "{}";
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(ctx, Bytes("{\"TableName\":\"orders\"}"), cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+    }
+
+    [Fact]
     public async Task UpdateTimeToLive_missing_attribute_name_is_rejected()
     {
         var handler = new TtlCosmosHandler(MetadataJson(ttl: null));
@@ -168,6 +255,83 @@ public class TimeToLiveHandlersTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task UpdateTimeToLive_missing_metadata_returns_internal_server_error_without_mutating_container()
+    {
+        var handler = new TtlCosmosHandler(metadataJson: null) { ContainerExists = true };
+        var cosmos = BuildClient(handler);
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":true,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Missing table metadata", ReadResponse(body));
+        Assert.Null(handler.ContainerJson);
+    }
+
+    [Fact]
+    public async Task UpdateTimeToLive_empty_metadata_document_returns_internal_server_error()
+    {
+        var handler = new TtlCosmosHandler("{}");
+        var cosmos = BuildClient(handler);
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":true,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+        Assert.Null(handler.ContainerJson);
+    }
+
+    [Fact]
+    public async Task UpdateTimeToLive_bypasses_warm_cache_when_metadata_becomes_malformed()
+    {
+        var handler = new TtlCosmosHandler(MetadataJson(ttl: null));
+        var cosmos = BuildClient(handler);
+
+        var (warmCtx, _) = NewCtx();
+        await TimeToLiveHandlers.HandleDescribeTimeToLiveAsync(warmCtx, Bytes("{\"TableName\":\"orders\"}"), cosmos, default);
+        Assert.Equal(200, warmCtx.Response.StatusCode);
+
+        handler.MetadataJson = "{}";
+
+        var (ctx, body) = NewCtx();
+        await TimeToLiveHandlers.HandleUpdateTimeToLiveAsync(ctx,
+            Bytes("{\"TableName\":\"orders\",\"TimeToLiveSpecification\":{\"Enabled\":true,\"AttributeName\":\"expiresAt\"}}"),
+            cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+        Assert.Null(handler.ContainerJson);
+    }
+
+    [Fact]
+    public async Task Fresh_malformed_metadata_read_invalidates_stale_cache_for_subsequent_callers()
+    {
+        var handler = new TtlCosmosHandler(MetadataJson(ttl: null));
+        var cosmos = BuildClient(handler);
+
+        using (var warm = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, "orders", default))
+        {
+            Assert.Equal(CosmosOpsShared.TableMetadataReadStatus.Found, warm.Status);
+        }
+
+        handler.MetadataJson = "{}";
+
+        using (var fresh = await CosmosOpsShared.TryReadTableMetadataAsync(
+            cosmos, "orders", default, bypassCache: true))
+        {
+            Assert.Equal(CosmosOpsShared.TableMetadataReadStatus.Malformed, fresh.Status);
+        }
+
+        using var afterInvalidation = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, "orders", default);
+        Assert.Equal(CosmosOpsShared.TableMetadataReadStatus.Malformed, afterInvalidation.Status);
     }
 
     private static string MetadataJson((string Attr, bool Enabled)? ttl)
@@ -210,19 +374,29 @@ public class TimeToLiveHandlersTests
         return new StreamReader(body, Encoding.UTF8).ReadToEnd();
     }
 
-    private sealed class TtlCosmosHandler(string metadataJson) : HttpMessageHandler
+    private sealed class TtlCosmosHandler(string? metadataJson) : HttpMessageHandler
     {
         public bool ContainerExists { get; set; } = true;
-        public string? MetadataJson { get; private set; } = metadataJson;
+        public string? MetadataJson { get; set; } = metadataJson;
+        public bool FailMetadataWrite { get; set; }
+        public string ContainerDefinitionJson { get; set; } = ContainerGetJson;
 
         /// <summary>The body the proxy PUT back to replace the container (null = never replaced).</summary>
         public string? ContainerJson { get; private set; }
+        public int ContainerReplaceCount { get; private set; }
 
         private const string ContainerGetJson =
             "{\"id\":\"orders\",\"_rid\":\"abc==\",\"_self\":\"dbs/x/colls/y/\",\"_etag\":\"\\\"42\\\"\",\"_ts\":1700000000,"
             + "\"_docs\":\"docs/\",\"_sprocs\":\"sprocs/\","
             + "\"partitionKey\":{\"paths\":[\"/_a2a_pk\"],\"kind\":\"Hash\"},"
             + "\"indexingPolicy\":{\"indexingMode\":\"consistent\",\"automatic\":true}}";
+
+        private const string ContainerGetJsonWithDefaultTtl =
+            "{\"id\":\"orders\",\"_rid\":\"abc==\",\"_self\":\"dbs/x/colls/y/\",\"_etag\":\"\\\"42\\\"\",\"_ts\":1700000000,"
+            + "\"_docs\":\"docs/\",\"_sprocs\":\"sprocs/\","
+            + "\"partitionKey\":{\"paths\":[\"/_a2a_pk\"],\"kind\":\"Hash\"},"
+            + "\"indexingPolicy\":{\"indexingMode\":\"consistent\",\"automatic\":true},"
+            + "\"defaultTtl\":-1}";
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -231,11 +405,12 @@ public class TimeToLiveHandlersTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/colls/orders", StringComparison.Ordinal))
             {
-                return ContainerExists ? JsonOk(ContainerGetJson) : NotFound();
+                return ContainerExists ? JsonOk(ContainerDefinitionJson) : NotFound();
             }
             if (request.Method == HttpMethod.Put && path.EndsWith("/colls/orders", StringComparison.Ordinal))
             {
                 ContainerJson = body;
+                ContainerReplaceCount++;
                 return JsonOk(body ?? "{}");
             }
             if (request.Method == HttpMethod.Get && path.EndsWith("/docs/__aws2azure_table_meta__", StringComparison.Ordinal))
@@ -249,6 +424,13 @@ public class TimeToLiveHandlersTests
             }
             if (request.Method == HttpMethod.Put && path.EndsWith("/docs/__aws2azure_table_meta__", StringComparison.Ordinal))
             {
+                if (FailMetadataWrite)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    {
+                        Content = new StringContent("{\"message\":\"metadata write failed\"}", Encoding.UTF8, "application/json"),
+                    };
+                }
                 MetadataJson = body;
                 return JsonOk("{\"id\":\"__aws2azure_table_meta__\"}");
             }

@@ -373,6 +373,12 @@ internal static class TaggingHandlers
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, result.ErrorResponse!, ct).ConfigureAwait(false);
             return null;
         }
+        if (result.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Malformed table metadata.").ConfigureAwait(false);
+            return null;
+        }
 
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
         using var collResp = await cosmos.SendAsync(
@@ -407,8 +413,25 @@ internal static class TaggingHandlers
             content: null, headers, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
-            var seeded = await LoadMetadataForTaggingAsync(ctx, cosmos, tableName, ct).ConfigureAwait(false);
-            return seeded is null ? null : new LoadedMetadata(seeded, ETag: null);
+            var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
+            using var collResp = await cosmos.SendAsync(
+                HttpMethod.Get, "colls", collLink, "/" + collLink,
+                content: null, extraHeaders: null, ct).ConfigureAwait(false);
+            if (collResp.StatusCode == HttpStatusCode.NotFound)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                    $"Cannot do operations on a non-existent table: {tableName}").ConfigureAwait(false);
+                return null;
+            }
+            if (!collResp.IsSuccessStatusCode)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, collResp, ct).ConfigureAwait(false);
+                return null;
+            }
+
+            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Missing table metadata.").ConfigureAwait(false);
+            return null;
         }
         if (!resp.IsSuccessStatusCode)
         {
@@ -422,10 +445,10 @@ internal static class TaggingHandlers
             var meta = JsonSerializer.Deserialize(
                 body.WrittenMemory.Span,
                 TableMetadataJsonContext.Default.TableMetadata);
-            if (meta is null)
+            if (meta is null || !meta.IsStructurallyValid())
             {
-                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                    $"Cannot do operations on a non-existent table: {tableName}").ConfigureAwait(false);
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Malformed table metadata.").ConfigureAwait(false);
                 return null;
             }
             meta.RemoveCosmosSystemExtensionData();
@@ -442,7 +465,7 @@ internal static class TaggingHandlers
         }
         catch (JsonException ex)
         {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
                 "Malformed table metadata: " + ex.Message).ConfigureAwait(false);
             return null;
         }

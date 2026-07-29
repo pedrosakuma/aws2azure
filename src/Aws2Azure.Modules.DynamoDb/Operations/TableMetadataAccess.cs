@@ -47,7 +47,7 @@ internal static partial class CosmosOpsShared
         public void Dispose() => ErrorResponse?.Dispose();
     }
 
-    internal enum TableMetadataReadStatus { Found, NotFound, CosmosError }
+    internal enum TableMetadataReadStatus { Found, NotFound, Malformed, CosmosError }
 
     /// <summary>
     /// Global cache for table metadata. Shared across all requests.
@@ -62,23 +62,26 @@ internal static partial class CosmosOpsShared
     /// must NOT be reported as ResourceNotFoundException — e.g. 429
     /// must surface as ProvisionedThroughputExceededException, 401/403
     /// as AccessDeniedException). A malformed sidecar (valid 200 body
-    /// that fails to deserialize) is also reported as NotFound since the
-    /// table is effectively unusable.
+    /// that fails to deserialize or is missing required schema fields)
+    /// is reported distinctly as <see cref="TableMetadataReadStatus.Malformed"/>.
     /// 
     /// Results are cached in-memory with a 5-minute TTL to avoid
     /// per-request Cosmos roundtrips. Cache is invalidated on
     /// CreateTable/DeleteTable/UpdateTable.
     /// </summary>
     public static async Task<TableMetadataReadResult> TryReadTableMetadataAsync(
-        CosmosClient cosmos, string tableName, CancellationToken ct)
+        CosmosClient cosmos, string tableName, CancellationToken ct, bool bypassCache = false)
     {
-        var cached = MetadataCache.TryGet(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
-        if (cached is not null)
+        if (!bypassCache)
         {
-            return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = cached };
+            var cached = MetadataCache.TryGet(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+            if (cached is not null)
+            {
+                return new TableMetadataReadResult { Status = TableMetadataReadStatus.Found, Metadata = cached };
+            }
         }
 
-        var generation = MetadataCache.GetGeneration();
+        var generation = MetadataCache.GetGeneration(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
 
         var docLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName + "/docs/" + TableMetadata.DocId;
         var pkHeader = BuildPartitionKeyHeader(TableMetadata.DocId);
@@ -92,6 +95,7 @@ internal static partial class CosmosOpsShared
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             resp.Dispose();
+            MetadataCache.Remove(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
             return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
         }
         if (!resp.IsSuccessStatusCode)
@@ -105,7 +109,11 @@ internal static partial class CosmosOpsShared
                 body.WrittenMemory.Span,
                 TableMetadataJsonContext.Default.TableMetadata);
             resp.Dispose();
-            if (meta is null) return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+            if (meta is null || !meta.IsStructurallyValid())
+            {
+                MetadataCache.Remove(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+                return new TableMetadataReadResult { Status = TableMetadataReadStatus.Malformed };
+            }
             meta.RemoveCosmosSystemExtensionData();
 
             MetadataCache.Set(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName, meta, generation);
@@ -115,7 +123,8 @@ internal static partial class CosmosOpsShared
         catch (JsonException)
         {
             resp.Dispose();
-            return new TableMetadataReadResult { Status = TableMetadataReadStatus.NotFound };
+            MetadataCache.Remove(cosmos.AccountEndpoint, cosmos.DatabaseName, tableName);
+            return new TableMetadataReadResult { Status = TableMetadataReadStatus.Malformed };
         }
     }
 
@@ -123,11 +132,11 @@ internal static partial class CosmosOpsShared
     /// Read-merge-write of the table metadata sidecar under optimistic
     /// concurrency. Loads the sidecar doc, applies <paramref name="mutate"/>,
     /// then persists it with <c>If-Match</c> and a bounded retry on concurrent
-    /// modification, invalidating the metadata cache on success. If the sidecar
-    /// is absent (e.g. a container created out-of-band) a minimal doc is created.
-    /// Writes an AWS error response to <paramref name="ctx"/> and returns false
-    /// on any failure (Cosmos error or exhausted conflict retries). The caller is
-    /// responsible for validating that the table/container exists first.
+    /// modification, invalidating the metadata cache on success. Writes an AWS
+    /// error response to <paramref name="ctx"/> and returns false on any failure
+    /// (including missing/malformed metadata, Cosmos errors, or exhausted
+    /// conflict retries). The caller is responsible for validating that the
+    /// table/container exists first.
     /// </summary>
     internal static async Task<bool> MutateTableMetadataAsync(
         HttpContext ctx, CosmosClient cosmos, string tableName,
@@ -152,8 +161,9 @@ internal static partial class CosmosOpsShared
             {
                 if (getResp.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
-                    meta = new TableMetadata { TableName = tableName };
-                    etag = null;
+                    await WriteErrorAsync(ctx, 500, "InternalServerError",
+                        "Missing table metadata.").ConfigureAwait(false);
+                    return false;
                 }
                 else if (!getResp.IsSuccessStatusCode)
                 {
@@ -175,10 +185,10 @@ internal static partial class CosmosOpsShared
                             "Malformed table metadata: " + ex.Message).ConfigureAwait(false);
                         return false;
                     }
-                    if (parsed is null)
+                    if (parsed is null || !parsed.IsStructurallyValid())
                     {
-                        await WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                            $"Cannot do operations on a non-existent table: {tableName}").ConfigureAwait(false);
+                        await WriteErrorAsync(ctx, 500, "InternalServerError",
+                            "Malformed table metadata.").ConfigureAwait(false);
                         return false;
                     }
                     meta = parsed;

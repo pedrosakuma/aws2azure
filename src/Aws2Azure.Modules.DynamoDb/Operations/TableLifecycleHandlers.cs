@@ -183,7 +183,11 @@ internal static partial class TableLifecycleHandlers
 
         var resp = new CreateTableResponse
         {
-            TableDescription = BuildTableDescription(meta, status: "ACTIVE"),
+            TableDescription = BuildTableDescription(
+                meta,
+                status: "ACTIVE",
+                tableMetrics: new TableUsageMetrics(0, 0),
+                indexMetrics: BuildCreateTableIndexMetrics(meta)),
         };
         await WriteJsonAsync(ctx, 200, resp, TableLifecycleJsonContext.Default.CreateTableResponse).ConfigureAwait(false);
     }
@@ -277,9 +281,13 @@ internal static partial class TableLifecycleHandlers
         }
 
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + req.TableName;
+        var collHeaders = new[]
+        {
+            new KeyValuePair<string, string>("x-ms-populatequotainfo", "true"),
+        };
         using var collResp = await cosmos.SendAsync(
             HttpMethod.Get, "colls", collLink, "/" + collLink,
-            content: null, extraHeaders: null, ct).ConfigureAwait(false);
+            content: null, collHeaders, ct).ConfigureAwait(false);
 
         if (collResp.StatusCode == HttpStatusCode.NotFound)
         {
@@ -293,14 +301,40 @@ internal static partial class TableLifecycleHandlers
             return;
         }
 
-        // Fetch metadata sidecar; tolerate its absence (e.g. container created
+        // Fetch metadata sidecar; tolerate true absence (e.g. container created
         // out-of-band by an operator) by synthesising a minimal description.
-        var meta = await TryReadMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
+        // A transient metadata Cosmos error must not make us miscount the
+        // sidecar document as a user item, so suppress live metrics in that case.
+        TableMetadata? meta;
+        TableUsageMetrics? tableMetrics;
+        using (var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(
+            cosmos, req.TableName!, ct).ConfigureAwait(false))
+        {
+            if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
+            {
+                await WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
+                return;
+            }
+            if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+            {
+                await WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Malformed table metadata.").ConfigureAwait(false);
+                return;
+            }
+
+            meta = metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Found
+                ? metaResult.Metadata
+                : null;
+            tableMetrics = TryReadTableUsageMetrics(
+                collResp,
+                metadataDocumentPresent: metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Found);
+        }
         meta ??= new TableMetadata { TableName = req.TableName! };
+        var indexMetrics = await TryReadSecondaryIndexMetricsAsync(cosmos, meta, tableMetrics, ct).ConfigureAwait(false);
 
         var resp = new DescribeTableResponse
         {
-            Table = BuildTableDescription(meta, status: "ACTIVE"),
+            Table = BuildTableDescription(meta, status: "ACTIVE", tableMetrics, indexMetrics),
         };
         await WriteJsonAsync(ctx, 200, resp, TableLifecycleJsonContext.Default.DescribeTableResponse).ConfigureAwait(false);
     }

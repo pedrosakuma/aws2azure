@@ -9,7 +9,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 4 | 0 | 46 |
+| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
@@ -27,8 +27,6 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Feasible backlog
 
-- Sub-feature [DescribeTable](dynamodb.md#describetable) / ItemCount / TableSizeBytes (live metrics) — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
-- Sub-feature [DescribeTable](dynamodb.md#describetable) / GSI/LSI description — [#688](https://github.com/pedrosakuma/aws2azure/issues/688)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / Update — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 - Sub-feature [TransactWriteItems](dynamodb.md#transactwriteitems) / ReturnValuesOnConditionCheckFailure — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
 
@@ -60,12 +58,11 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 - Sub-feature [BatchGetItem](dynamodb.md#batchgetitem) / Legacy AttributesToGet — ⚫ non-goal
 - Sub-feature [BatchGetItem](dynamodb.md#batchgetitem) / ReturnConsumedCapacity — 🔵 by design
 - Sub-feature [BatchWriteItem](dynamodb.md#batchwriteitem) / ReturnConsumedCapacity / ReturnItemCollectionMetrics — 🔵 by design
-- Sub-feature [CreateTable](dynamodb.md#createtable) / GlobalSecondaryIndexes (schema accepted + persisted) — 🔵 by design
-- Sub-feature [CreateTable](dynamodb.md#createtable) / LocalSecondaryIndexes (schema accepted + persisted) — 🔵 by design
 - Sub-feature [CreateTable](dynamodb.md#createtable) / SSESpecification — 🔵 by design
 - Sub-feature [CreateTable](dynamodb.md#createtable) / StreamSpecification — ⚫ non-goal
 - Sub-feature [CreateTable](dynamodb.md#createtable) / Tags — ⚫ non-goal
 - Sub-feature [DeleteItem](dynamodb.md#deleteitem) / ReturnConsumedCapacity / ReturnItemCollectionMetrics — 🔵 by design
+- Sub-feature [DescribeTable](dynamodb.md#describetable) / GSI/LSI ItemCount / IndexSizeBytes / Backfilling / ProvisionedThroughput description — 🔵 by design
 - Sub-feature [GetItem](dynamodb.md#getitem) / AttributesToGet — ⚫ non-goal
 - Sub-feature [GetItem](dynamodb.md#getitem) / ConsistentRead — 🔵 by design
 - Sub-feature [GetItem](dynamodb.md#getitem) / ReturnConsumedCapacity — 🔵 by design

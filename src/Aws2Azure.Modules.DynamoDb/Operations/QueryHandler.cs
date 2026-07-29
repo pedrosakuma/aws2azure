@@ -124,6 +124,12 @@ internal static partial class QueryHandler
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
             return;
         }
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Malformed table metadata.").ConfigureAwait(false);
+            return;
+        }
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",

@@ -586,6 +586,12 @@ public sealed class DynamoDbRealAzureSecondaryIndexTests
                     Assert.Equal("score", key.AttributeName);
                     Assert.Equal(KeyType.RANGE, key.KeyType);
                 });
+            Assert.True(response.Table.ItemCount is null or 0);
+            Assert.True(response.Table.TableSizeBytes is null or 0);
+            Assert.True(byCustomer.ItemCount is null or 0);
+            Assert.True(byCustomer.IndexSizeBytes is null or 0);
+            Assert.True(lsi.ItemCount is null or 0);
+            Assert.True(lsi.IndexSizeBytes is null or 0);
         });
     }
 

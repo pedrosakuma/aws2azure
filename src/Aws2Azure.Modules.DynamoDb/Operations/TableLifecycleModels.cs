@@ -94,8 +94,8 @@ internal sealed class TableDescription
     [JsonPropertyName("CreationDateTime")] public double? CreationDateTime { get; set; }
     [JsonPropertyName("AttributeDefinitions")] public List<AttributeDefinitionDto>? AttributeDefinitions { get; set; }
     [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
-    [JsonPropertyName("ItemCount")] public long ItemCount { get; set; }
-    [JsonPropertyName("TableSizeBytes")] public long TableSizeBytes { get; set; }
+    [JsonPropertyName("ItemCount")] public long? ItemCount { get; set; }
+    [JsonPropertyName("TableSizeBytes")] public long? TableSizeBytes { get; set; }
     [JsonPropertyName("TableArn")] public string? TableArn { get; set; }
     [JsonPropertyName("BillingModeSummary")] public BillingModeSummary? BillingModeSummary { get; set; }
     [JsonPropertyName("GlobalSecondaryIndexes")] public List<SecondaryIndexDescriptionDto>? GlobalSecondaryIndexes { get; set; }
@@ -113,6 +113,8 @@ internal sealed class SecondaryIndexDescriptionDto
     [JsonPropertyName("KeySchema")] public List<KeySchemaElementDto>? KeySchema { get; set; }
     [JsonPropertyName("Projection")] public ProjectionDto? Projection { get; set; }
     [JsonPropertyName("IndexStatus")] public string? IndexStatus { get; set; }
+    [JsonPropertyName("ItemCount")] public long? ItemCount { get; set; }
+    [JsonPropertyName("IndexSizeBytes")] public long? IndexSizeBytes { get; set; }
     [JsonPropertyName("IndexArn")] public string? IndexArn { get; set; }
 }
 
