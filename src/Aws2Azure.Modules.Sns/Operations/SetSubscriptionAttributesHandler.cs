@@ -176,12 +176,12 @@ internal static class SetSubscriptionAttributesHandler
                             topicName,
                             subscriptionId,
                             ruleDescription,
-                            updateExisting: true,
+                            updateExisting: false,
                             cancellationToken)
                         .ConfigureAwait(false);
-                    updatedExistingCustomRule = true;
+                    createdCustomRule = true;
                 }
-                catch (ServiceBusTopicsManagementException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.PreconditionFailed)
+                catch (ServiceBusTopicsManagementException ex) when (ex.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed)
                 {
                     await managementClient.PutSubscriptionRuleAsync(
                             credentials,
@@ -189,10 +189,10 @@ internal static class SetSubscriptionAttributesHandler
                             topicName,
                             subscriptionId,
                             ruleDescription,
-                            updateExisting: false,
+                            updateExisting: true,
                             cancellationToken)
                         .ConfigureAwait(false);
-                    createdCustomRule = true;
+                    updatedExistingCustomRule = true;
                 }
 
                 await managementClient.DeleteSubscriptionRuleAsync(
@@ -257,14 +257,29 @@ internal static class SetSubscriptionAttributesHandler
                 {
                     if (createdCustomRule)
                     {
-                        await managementClient.DeleteSubscriptionRuleAsync(
-                                credentials,
-                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                                topicName,
-                                subscriptionId,
-                                SnsSubscriptionFilterSupport.CustomRuleName,
-                                cancellationToken)
-                            .ConfigureAwait(false);
+                        if (existingSubscription.HasDefaultRuleDescription)
+                        {
+                            await managementClient.DeleteSubscriptionRuleAsync(
+                                    credentials,
+                                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                    topicName,
+                                    subscriptionId,
+                                    SnsSubscriptionFilterSupport.CustomRuleName,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await managementClient.PutSubscriptionRuleAsync(
+                                    credentials,
+                                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                    topicName,
+                                    subscriptionId,
+                                    new ServiceBusSubscriptionRuleDescription(SnsSubscriptionFilterSupport.CustomRuleName, null),
+                                    updateExisting: true,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
                     }
                     else if (updatedExistingCustomRule)
                     {
