@@ -246,7 +246,8 @@ internal static class SnsTopicSupport
     public static Task WriteManagementErrorAsync(HttpContext context, ServiceBusTopicsManagementException ex)
     {
         // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
-        var debugResponseBodySuffix = BuildDebugResponseBodySuffix(ex.ResponseBody);
+        var debugResponseBodySuffix = BuildDebugResponseBodySuffix(ex.ResponseBody)
+            + BuildDebugRequestBodySuffix(ex.OutgoingRequestBody);
 
         return ex.StatusCode switch
         {
@@ -298,5 +299,23 @@ internal static class SnsTopicSupport
         }
 
         return " [DEBUG raw-azure-body: " + normalized + "]";
+    }
+
+    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+    private static string BuildDebugRequestBodySuffix(string? outgoingRequestBody)
+    {
+        if (string.IsNullOrWhiteSpace(outgoingRequestBody))
+        {
+            return string.Empty;
+        }
+
+        const int maxLength = 2000;
+        var normalized = outgoingRequestBody.ReplaceLineEndings(" ").Trim();
+        if (normalized.Length > maxLength)
+        {
+            normalized = normalized[..maxLength] + "...";
+        }
+
+        return " [DEBUG outgoing-request-body: " + normalized + "]";
     }
 }

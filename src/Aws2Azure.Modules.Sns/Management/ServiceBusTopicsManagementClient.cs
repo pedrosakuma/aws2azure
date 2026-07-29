@@ -587,6 +587,9 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, description.SubscriptionName);
         SnsLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
 
+        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+        var outgoingEntryXml = ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description);
+
         using var response = await SendWithAuthorizationRetryAsync(
                 nameof(UpdateSubscriptionAsync),
                 namespaceFqdn,
@@ -597,7 +600,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                     var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
                     request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
                     request.Headers.TryAddWithoutValidation("If-Match", "*");
-                    request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+                    request.Content = new StringContent(outgoingEntryXml, Encoding.UTF8, "application/atom+xml");
                     request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
                     await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
                     return request;
@@ -614,7 +617,9 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                 namespaceFqdn,
                 topicName + "/subscriptions/" + description.SubscriptionName,
                 requestUri,
-                cancellationToken)
+                cancellationToken,
+                // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+                outgoingRequestBody: outgoingEntryXml)
             .ConfigureAwait(false);
     }
 
@@ -752,12 +757,14 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         string namespaceFqdn,
         string entityName,
         Uri requestUri,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+        string? outgoingRequestBody = null)
     {
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         SnsLog.TopicRequestFailed(_logger, operationName, namespaceFqdn, entityName, (int)response.StatusCode);
         SnsLog.TopicRequestFailedWithBody(_logger, operationName, FormatRequestUriForLog(requestUri) ?? entityName, (int)response.StatusCode, errorBody);
-        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody, outgoingRequestBody);
     }
 
     private static bool ShouldRetryAuthorizationFailure(HttpStatusCode statusCode, int attempt)
@@ -889,13 +896,18 @@ public sealed record ServiceBusSubscriptionRuleDescription(string RuleName, stri
 
 public sealed class ServiceBusTopicsManagementException : Exception
 {
-    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody)
+    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody, string? outgoingRequestBody = null)
         : base($"Service Bus Topics management API returned {(int)statusCode}.")
     {
         StatusCode = statusCode;
         ResponseBody = responseBody;
+        // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+        OutgoingRequestBody = outgoingRequestBody;
     }
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
+
+    // TEMPORARY DIAGNOSTIC - revert once #691 real-azure root cause is found.
+    public string? OutgoingRequestBody { get; }
 }
