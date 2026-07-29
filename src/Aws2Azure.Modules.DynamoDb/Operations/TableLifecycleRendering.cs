@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 
 namespace Aws2Azure.Modules.DynamoDb.Operations;
@@ -98,24 +97,7 @@ internal static partial class TableLifecycleHandlers
         return result.Status == CosmosOpsShared.TableMetadataReadStatus.Found ? result.Metadata : null;
     }
 
-    private static async Task<TableUsageMetrics?> TryReadTableUsageMetricsAsync(
-        HttpResponseMessage collResp,
-        CosmosClient cosmos,
-        string tableName,
-        bool metadataDocumentPresent,
-        CancellationToken ct)
-    {
-        var headerMetrics = TryReadTableUsageMetricsFromHeader(collResp, metadataDocumentPresent);
-        if (headerMetrics is not null)
-        {
-            return headerMetrics;
-        }
-
-        var isEmpty = await TryDetectEmptyUserTableAsync(cosmos, tableName, ct).ConfigureAwait(false);
-        return isEmpty == true ? new TableUsageMetrics(0, 0) : null;
-    }
-
-    private static TableUsageMetrics? TryReadTableUsageMetricsFromHeader(
+    private static TableUsageMetrics? TryReadTableUsageMetrics(
         HttpResponseMessage collResp,
         bool metadataDocumentPresent)
     {
@@ -185,54 +167,6 @@ internal static partial class TableLifecycleHandlers
         return itemCount.HasValue || tableSizeBytes.HasValue
             ? new TableUsageMetrics(itemCount, tableSizeBytes)
             : null;
-    }
-
-    private static async Task<bool?> TryDetectEmptyUserTableAsync(
-        CosmosClient cosmos,
-        string tableName,
-        CancellationToken ct)
-    {
-        var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
-        var collUri = "/" + collLink + "/docs";
-        const string sql = "SELECT TOP 1 VALUE 1 FROM c WHERE NOT IS_DEFINED(c._meta) OR c._meta != @metaType";
-        var parameters = new[] { new CosmosSqlParameter("@metaType", TableMetadata.MetaTypeTable) };
-        using var body = CosmosQueryBody.Build(sql, parameters);
-        var headers = new[]
-        {
-            new KeyValuePair<string, string>("x-ms-documentdb-isquery", "true"),
-            new KeyValuePair<string, string>("x-ms-documentdb-query-enablecrosspartition", "true"),
-            new KeyValuePair<string, string>("x-ms-max-item-count", "1"),
-        };
-
-        try
-        {
-            using var resp = await cosmos.SendAsync(
-                HttpMethod.Post, "docs", collLink, collUri,
-                body.WrittenMemory, "application/query+json", headers, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            using var cosmosBody = await CosmosOpsShared.ReadCosmosJsonBodyAsync(resp.Content, ct).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(cosmosBody.WrittenMemory);
-            if (!doc.RootElement.TryGetProperty("Documents", out var arr)
-                || arr.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-
-            using var enumerator = arr.EnumerateArray();
-            return !enumerator.MoveNext();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private static Task<Dictionary<string, SecondaryIndexLiveMetrics>?> TryReadSecondaryIndexMetricsAsync(

@@ -21,7 +21,6 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 internal sealed class TableMetadata
 {
     public const string DocId = "__aws2azure_table_meta__";
-    public const string MetaTypeTable = "table";
 
     [JsonPropertyName("formatVersion")]
     public int FormatVersion { get; set; } =
@@ -35,7 +34,7 @@ internal sealed class TableMetadata
 
     /// <summary>Discriminator so item-scan code can skip sidecar docs.</summary>
     [JsonPropertyName("_meta")]
-    public string Meta { get; set; } = MetaTypeTable;
+    public string Meta { get; set; } = "table";
 
     [JsonPropertyName("tableName")]
     public string TableName { get; set; } = string.Empty;
