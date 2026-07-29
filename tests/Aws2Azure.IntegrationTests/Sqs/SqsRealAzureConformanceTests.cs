@@ -233,12 +233,6 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
     }
 
-    [SkippableFact]
-    public void Fifo_session_receive_is_not_yet_conformant_on_real_azure()
-        => Skip.If(
-            true,
-            "Real Azure run 29472731381 timed out AcceptNextSession even for one ready FIFO group; the earlier multi-group runs 29471929057 and 29471188679 failed on the same acquisition path.");
-
     private static async Task<Dictionary<string, string>> ReceiveBodiesAsync(
         IAmazonSQS client,
         string queueUrl,

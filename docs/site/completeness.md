@@ -14,7 +14,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
-| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 2 | 0 | 28 |
+| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
 
 ## dynamodb
 
@@ -345,7 +345,6 @@ _No remaining feasible backlog is documented for this service._
 - Operation [TagQueue](sqs.md#tagqueue) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
 - Operation [UntagQueue](sqs.md#untagqueue) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
 - Sub-feature [PurgeQueue](sqs.md#purgequeue) / 60s cool-down (PurgeQueueInProgress) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [ReceiveMessage](sqs.md#receivemessage) / FIFO MessageGroupId session receive — [#694](https://github.com/pedrosakuma/aws2azure/issues/694)
 
 ### Workload maturity
 
