@@ -322,7 +322,7 @@ public sealed class SubscribeHandlerTests
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
         Assert.NotNull(ruleBody);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
-        Assert.Equal(5, requests);
+        Assert.Equal(8, requests);
     }
 
     private static SnsParseResult NewParseResult(params (string Key, string Value)[] pairs)

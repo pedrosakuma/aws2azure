@@ -103,7 +103,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
     public const string LongIdleIso8601 = "P10675199DT2H48M5.4775807S";
     public const string DefaultLockDurationIso8601 = "PT30S";
     public const int DefaultMaxDeliveryCount = 10;
-    private const int AuthorizationRetryAttempts = 3;
+    private const int AuthorizationRetryAttempts = 6;
 
     private readonly AzureHttpClient _httpClient;
     private readonly IServiceBusTopicsAuthenticator _authenticator;
@@ -734,8 +734,11 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
             response.Dispose();
 
-            // Real Azure can briefly return 401/403 on freshly assigned Service Bus RBAC roles
-            // before authorization caches converge, so retry a small bounded number of times.
+            // Real Azure can briefly return 401/403 on freshly created/assigned entities
+            // (RBAC role or newly created subscription/rule replication) before
+            // authorization converges, so retry with exponential back-off over a wider
+            // window; a 3-attempt/3s-total window was observed to be too short for
+            // rule writes immediately following subscription creation (see #691).
             var delay = GetAuthorizationRetryDelay(attempt);
             SnsLog.TopicRequestAuthorizationRetry(
                 _logger,
@@ -768,7 +771,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
             && (statusCode == HttpStatusCode.Unauthorized || statusCode == HttpStatusCode.Forbidden);
 
     private static TimeSpan GetAuthorizationRetryDelay(int attempt)
-        => TimeSpan.FromSeconds(attempt);
+        => TimeSpan.FromSeconds(Math.Min(30, 1 << attempt));
 
     private static ValueTask DelayAsyncDefault(TimeSpan delay, CancellationToken cancellationToken)
         => new(Task.Delay(delay, cancellationToken));

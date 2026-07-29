@@ -37,7 +37,7 @@ public sealed class ServiceBusTopicsManagementClientTests
             CancellationToken.None);
 
         Assert.Equal(2, attempts);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, delays);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(2) }, delays);
     }
 
     [Fact]
@@ -72,8 +72,10 @@ public sealed class ServiceBusTopicsManagementClientTests
 
         Assert.Equal(HttpStatusCode.Forbidden, exception.StatusCode);
         Assert.Equal("nope", exception.ResponseBody);
-        Assert.Equal(3, attempts);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) }, delays);
+        Assert.Equal(6, attempts);
+        Assert.Equal(
+            new[] { TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(16), TimeSpan.FromSeconds(30) },
+            delays);
     }
 
     [Fact]
@@ -118,7 +120,7 @@ public sealed class ServiceBusTopicsManagementClientTests
             CancellationToken.None);
 
         Assert.Equal(3, attempts);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, delays);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(2) }, delays);
     }
 
     [Fact]
@@ -158,7 +160,7 @@ public sealed class ServiceBusTopicsManagementClientTests
 
         Assert.Single(page.TopicNames, "orders");
         Assert.Equal(2, attempts);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, delays);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(2) }, delays);
     }
 
     [Fact]
@@ -200,6 +202,6 @@ public sealed class ServiceBusTopicsManagementClientTests
         Assert.Single(page.Subscriptions);
         Assert.Equal("sub123", page.Subscriptions[0].SubscriptionName);
         Assert.Equal(2, attempts);
-        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, delays);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(2) }, delays);
     }
 }

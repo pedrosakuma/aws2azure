@@ -470,7 +470,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.Equal(3, rulePutRequests);
+        Assert.Equal(6, rulePutRequests);
         Assert.Equal(originalMetadata, storedMetadata);
     }
 
