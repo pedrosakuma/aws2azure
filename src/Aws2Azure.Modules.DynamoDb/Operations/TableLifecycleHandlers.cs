@@ -325,9 +325,12 @@ internal static partial class TableLifecycleHandlers
             meta = metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Found
                 ? metaResult.Metadata
                 : null;
-            tableMetrics = TryReadTableUsageMetrics(
+            tableMetrics = await TryReadTableUsageMetricsAsync(
                 collResp,
-                metadataDocumentPresent: metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Found);
+                cosmos,
+                req.TableName!,
+                metadataDocumentPresent: metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Found,
+                ct).ConfigureAwait(false);
         }
         meta ??= new TableMetadata { TableName = req.TableName! };
         var indexMetrics = await TryReadSecondaryIndexMetricsAsync(cosmos, meta, tableMetrics, ct).ConfigureAwait(false);

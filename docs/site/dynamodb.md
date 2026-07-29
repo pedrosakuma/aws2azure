@@ -181,7 +181,7 @@
 
 ### Behaviour differences
 
-- ItemCount and TableSizeBytes come from Cosmos' `x-ms-resource-usage` header. ItemCount subtracts the proxy metadata sidecar document when present; TableSizeBytes uses Cosmos' approximate document-storage accounting (KiB → bytes) and returns 0 for empty user tables, so the reported bytes are Azure storage usage rather than a byte-for-byte match for native DynamoDB internals.
+- ItemCount and TableSizeBytes come from Cosmos' `x-ms-resource-usage` header when Cosmos returns it. ItemCount subtracts the proxy metadata sidecar document when present; TableSizeBytes uses Cosmos' approximate document-storage accounting (KiB → bytes). When the usage header is unavailable, DescribeTable does one cheap `TOP 1` existence probe and still returns `0` / `0` for an empty user table; non-empty tables without the header leave both fields omitted rather than fabricating counts.
 - TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment.
 - Tables created out-of-band (no sidecar metadata) still describe but with empty attribute/key arrays.
 - GSI/LSI descriptions are reconstructed from sidecar metadata over one base container. GSI IndexStatus is a synthetic ACTIVE (CreateTable-created indexes have no separate backfill lifecycle here). CreateTable and DescribeTable on an empty user table report zero index ItemCount/IndexSizeBytes; once user items exist those fields, plus Backfilling / ProvisionedThroughput, remain omitted because the single-container model has no cheap truthful separate index-byte/accounting surface.

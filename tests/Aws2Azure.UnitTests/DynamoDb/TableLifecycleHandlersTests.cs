@@ -509,6 +509,54 @@ public class TableLifecycleHandlersTests
     }
 
     [Fact]
+    public async Task DescribeTable_falls_back_to_empty_probe_when_cosmos_usage_header_is_absent()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\","
+            + "\"tableName\":\"orders\",\"creationDateTime\":1700000000,"
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"customer\",\"type\":\"S\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"byCustomer\",\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"}],\"projectionType\":\"ALL\"}]}";
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"orders\"}"),
+                },
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(metaJson, Encoding.UTF8, "application/json"),
+                },
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"Documents\":[],\"_count\":0}", Encoding.UTF8, "application/json"),
+                },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Post, handler.Requests[2].Method);
+        Assert.Equal("true", handler.Requests[2].Headers["x-ms-documentdb-isquery"]);
+        Assert.Equal("true", handler.Requests[2].Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var table = doc.RootElement.GetProperty("Table");
+        Assert.Equal(0, table.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, table.GetProperty("TableSizeBytes").GetInt64());
+        var gsi = Assert.Single(table.GetProperty("GlobalSecondaryIndexes").EnumerateArray());
+        Assert.Equal(0, gsi.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, gsi.GetProperty("IndexSizeBytes").GetInt64());
+    }
+
+    [Fact]
     public async Task DescribeTable_surfaces_metadata_read_errors()
     {
         var (ctx, body) = NewCtx();
