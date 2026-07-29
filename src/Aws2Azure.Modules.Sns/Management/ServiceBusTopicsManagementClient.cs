@@ -14,7 +14,7 @@ public interface IServiceBusTopicsManagementClient
     ValueTask CreateTopicAsync(
         ServiceBusTopicsCredentials credentials,
         string namespaceFqdn,
-        string topicName,
+        ServiceBusTopicDescription description,
         CancellationToken cancellationToken);
 
     ValueTask DeleteTopicAsync(
@@ -34,6 +34,12 @@ public interface IServiceBusTopicsManagementClient
         ServiceBusTopicsCredentials credentials,
         string namespaceFqdn,
         string topicName,
+        CancellationToken cancellationToken);
+
+    ValueTask UpdateTopicAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        ServiceBusTopicDescription description,
         CancellationToken cancellationToken);
 
     ValueTask CreateSubscriptionAsync(
@@ -72,6 +78,14 @@ public interface IServiceBusTopicsManagementClient
         string topicName,
         ServiceBusSubscriptionDescription description,
         CancellationToken cancellationToken);
+
+    ValueTask PutSubscriptionRuleAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        string topicName,
+        string subscriptionName,
+        ServiceBusSubscriptionRuleDescription description,
+        CancellationToken cancellationToken);
 }
 
 public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManagementClient
@@ -101,19 +115,20 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
     public async ValueTask CreateTopicAsync(
         ServiceBusTopicsCredentials credentials,
         string namespaceFqdn,
-        string topicName,
+        ServiceBusTopicDescription description,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
-        ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+        ArgumentNullException.ThrowIfNull(description);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description.TopicName);
 
-        var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
-        SnsLog.CreatingTopic(_logger, namespaceFqdn, topicName);
+        var requestUri = BuildTopicUri(credentials, namespaceFqdn, description.TopicName);
+        SnsLog.CreatingTopic(_logger, namespaceFqdn, description.TopicName);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(), Encoding.UTF8, "application/atom+xml");
+        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
 
@@ -125,7 +140,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        SnsLog.TopicRequestFailed(_logger, nameof(CreateTopicAsync), namespaceFqdn, topicName, (int)response.StatusCode);
+        SnsLog.TopicRequestFailed(_logger, nameof(CreateTopicAsync), namespaceFqdn, description.TopicName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -240,7 +255,42 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         return new ServiceBusTopicDescription(
             entry.Title ?? topicName,
             entry.SubscriptionCount ?? 0,
-            entry.RequiresDuplicateDetection ?? false);
+            entry.RequiresDuplicateDetection ?? false,
+            entry.UserMetadata,
+            entry.TopicProperties);
+    }
+
+    public async ValueTask UpdateTopicAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        ServiceBusTopicDescription description,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentNullException.ThrowIfNull(description);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description.TopicName);
+
+        var requestUri = BuildTopicUri(credentials, namespaceFqdn, description.TopicName);
+        SnsLog.UpdatingSubscription(_logger, namespaceFqdn, description.TopicName, "$topic");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+        request.Headers.TryAddWithoutValidation("If-Match", "*");
+        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
+
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+            .ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
+        {
+            return;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        SnsLog.TopicRequestFailed(_logger, nameof(UpdateTopicAsync), namespaceFqdn, description.TopicName, (int)response.StatusCode);
+        throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
     public async ValueTask CreateSubscriptionAsync(
@@ -437,6 +487,41 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
+    public async ValueTask PutSubscriptionRuleAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        string topicName,
+        string subscriptionName,
+        ServiceBusSubscriptionRuleDescription description,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
+        ArgumentNullException.ThrowIfNull(description);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description.RuleName);
+
+        var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, description.RuleName);
+        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+        request.Headers.TryAddWithoutValidation("If-Match", "*");
+        request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionRuleDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
+
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+            .ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
+        {
+            return;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        SnsLog.TopicRequestFailed(_logger, nameof(PutSubscriptionRuleAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName + "/rules/" + description.RuleName, (int)response.StatusCode);
+        throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+    }
+
     private static string? TryGetEtag(HttpResponseMessage response)
     {
         if (response.Headers.ETag is not null)
@@ -476,6 +561,14 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         return new Uri($"{root}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}?api-version={ApiVersion}", UriKind.Absolute);
     }
 
+    private static Uri BuildSubscriptionRuleUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string ruleName)
+    {
+        var root = ResolveManagementRoot(credentials, namespaceFqdn);
+        return new Uri(
+            $"{root}/{Uri.EscapeDataString(topicName)}/subscriptions/{Uri.EscapeDataString(subscriptionName)}/rules/{Uri.EscapeDataString(ruleName)}?api-version={ApiVersion}",
+            UriKind.Absolute);
+    }
+
     private static Uri BuildListSubscriptionsUri(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, int skip, int top)
     {
         var root = ResolveManagementRoot(credentials, namespaceFqdn);
@@ -503,7 +596,12 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 }
 
 public sealed record ServiceBusTopicPage(IReadOnlyList<string> TopicNames);
-public sealed record ServiceBusTopicDescription(string TopicName, int SubscriptionCount, bool RequiresDuplicateDetection);
+public sealed record ServiceBusTopicDescription(
+    string TopicName,
+    int SubscriptionCount,
+    bool RequiresDuplicateDetection,
+    string? UserMetadata = null,
+    IReadOnlyList<ServiceBusTopicProperty>? Properties = null);
 public sealed record ServiceBusSubscriptionPage(IReadOnlyList<ServiceBusSubscriptionDescription> Subscriptions);
 public sealed record ServiceBusSubscriptionDescription(
     string SubscriptionName,
@@ -514,7 +612,9 @@ public sealed record ServiceBusSubscriptionDescription(
     string? ETag = null,
     IReadOnlyList<ServiceBusSubscriptionProperty>? Properties = null);
 
+public sealed record ServiceBusTopicProperty(string LocalName, string Xml);
 public sealed record ServiceBusSubscriptionProperty(string LocalName, string Xml);
+public sealed record ServiceBusSubscriptionRuleDescription(string RuleName, string? SqlExpression);
 
 public sealed class ServiceBusTopicsManagementException : Exception
 {

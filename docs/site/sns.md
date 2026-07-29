@@ -37,13 +37,15 @@
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
 | Basic topic create over Service Bus Topics REST | ✅ implemented | — | — | — | Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. |  |  |
-| Attribute translation | 🟡 partial | 🛠️ feasible backlog | [#691](https://github.com/pedrosakuma/aws2azure/issues/691) | — | CreateTopic attributes are parsed by AWS clients but ignored in this slice. Topic property translation lands with SetTopicAttributes / GetTopicAttributes. |  |  |
+| Attribute translation | ✅ implemented | — | — | — | CreateTopic persists DisplayName, Policy, and DeliveryPolicy inside TopicDescription.UserMetadata for later GetTopicAttributes projection, and maps ContentBasedDeduplication to RequiresDuplicateDetection at create time. |  |  |
 
 ### Behaviour differences
 
 - TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace.
-- Only the basic topic name is honoured on create. Topic attributes supplied in the CreateTopic request are ignored for now; Azure Service Bus topic properties stay at service defaults until a later slice implements attribute mapping.
+- DisplayName, Policy, and DeliveryPolicy are stored in Service Bus TopicDescription.UserMetadata for round-tripping. Azure does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes are metadata-only compatibility state rather than native enforcement.
+- CreateTopic honors ContentBasedDeduplication only at create time by setting Service Bus RequiresDuplicateDetection. Later SetTopicAttributes calls still cannot change that Service Bus property in place.
 - When an SNS topic is configured with backend=EventGrid, aws2azure still creates the backing Azure Service Bus topic in this slice because subscription metadata continues to live on Service Bus. Event Grid only handles Publish / PublishBatch.
+- Topic metadata is constrained by the Azure Service Bus UserMetadata 1024-character limit. Requests whose serialized DisplayName/Policy/DeliveryPolicy payload would exceed that ceiling are rejected with InvalidParameter.
 - FIFO topic semantics are deferred. This slice only accepts the non-FIFO name subset [A-Za-z0-9_-]{1,256}; .fifo names are rejected instead of creating a FIFO-equivalent Azure entity.
 - Service Bus topic names are further constrained by Azure. The proxy currently validates the AWS-side subset above and does not yet surface Azure's narrower length/character restrictions separately.
 
@@ -94,7 +96,8 @@
 
 - Protocol and Endpoint come from aws2azure's UserMetadata blob rather than native Service Bus subscription fields. Missing or invalid UserMetadata falls back to empty strings and RawMessageDelivery=false.
 - ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions.
-- FilterPolicy is returned from stored UserMetadata only. FilterPolicyScope defaults to MessageAttributes when a stored filter policy has no explicit scope.
+- FilterPolicy and FilterPolicyScope are returned from aws2azure's stored UserMetadata and correspond to the Service Bus rule currently programmed for the subscription. FilterPolicyScope defaults to MessageAttributes when legacy stored metadata has no explicit scope.
+- MessageBody-scope filters are enforced by projecting scalar JSON body fields into reserved Service Bus application properties during Publish / PublishBatch. Non-JSON bodies, array-valued fields, and unsupported SNS operators do not match those rules.
 - DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API.
 - Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile.
 
@@ -113,12 +116,12 @@
 
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
-| Topic property projection | ✅ implemented | — | — | — | Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface. |  |  |
+| Topic property projection | ✅ implemented | — | — | — | Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface, and projects DisplayName / Policy / DeliveryPolicy from TopicDescription.UserMetadata. |  |  |
 
 ### Behaviour differences
 
-- DisplayName is always returned as an empty string because Service Bus topics do not expose an SNS-style display name.
-- Policy is returned as '{}' and DeliveryPolicy / EffectiveDeliveryPolicy are omitted because this slice does not translate SNS policies onto Azure authorization or delivery settings.
+- DisplayName, Policy, DeliveryPolicy, and EffectiveDeliveryPolicy come from aws2azure metadata stored in Service Bus TopicDescription.UserMetadata rather than native Service Bus topic fields.
+- Policy and DeliveryPolicy remain metadata-only compatibility state. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry policies, so GetTopicAttributes surfaces what aws2azure stored rather than a Service Bus-native enforcement model.
 - SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.
 - KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
 - FifoTopic is inferred from a '.fifo' suffix or RequiresDuplicateDetection=true, and ContentBasedDeduplication is mapped directly from RequiresDuplicateDetection. This is only an approximation of SNS FIFO semantics.
@@ -283,16 +286,18 @@
 
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
-| UserMetadata attribute updates | ✅ implemented | — | — | — | Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description and persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON. |  |  |
+| UserMetadata attribute updates | ✅ implemented | — | — | — | Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description, persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON, and upserts the default Service Bus subscription rule so the supported filter subset is enforced natively. |  |  |
+| Service Bus rule translation for supported filter policies | 🟡 partial | 🛠️ feasible backlog | [#691](https://github.com/pedrosakuma/aws2azure/issues/691) | — | MessageAttributes scope translates supported SNS operators onto Service Bus SQL filters over mirrored application properties. MessageBody scope translates supported nested JSON object paths onto reserved application properties stamped during Publish / PublishBatch. | Body-array matching and unsupported SNS operators such as suffix, equals-ignore-case, CIDR, and more complex anything-but forms are rejected with InvalidParameter because this slice only translates the Service Bus SQL-filter subset it can enforce correctly. |  |
 | Compatibility no-ops | ✅ implemented | — | — | — | Treats DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn as successful no-ops because this slice does not translate those SNS attributes onto Azure primitives. |  |  |
 
 ### Behaviour differences
 
-- FilterPolicy is stored only in UserMetadata in this slice. Service Bus rule-based filtering is not programmed yet, so enforcement is deferred to a later forwarding slice.
-- FilterPolicyScope accepts MessageAttributes and MessageBody, but MessageBody scope is only persisted; it is not enforced yet.
+- FilterPolicy is stored in UserMetadata and also translated onto the subscription's default Service Bus rule. MessageAttributes scope matches mirrored application properties; MessageBody scope matches scalar JSON body fields projected into reserved application properties during Publish / PublishBatch.
+- Requests using unsupported SNS filter operators or shapes fail fast with InvalidParameter instead of being stored as unenforced metadata.
 - DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus does not expose a matching SNS attribute contract here.
 - Updates preserve mutable SubscriptionDescription property XML, replace only UserMetadata, and send If-Match: * because Service Bus subscriptions do not expose usable per-entity ETags. Concurrent Azure-side writers are therefore last-write-wins; read-only runtime properties are never replayed.
 - Updates that would push the serialized UserMetadata payload beyond Service Bus's 1024-character limit are rejected with InvalidParameter.
+- Updates whose translated Service Bus SQL expression would exceed the 1024-character Service Bus rule limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
 - Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile.
 
@@ -311,13 +316,16 @@
 
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
-| Attribute no-op compatibility | ✅ implemented | — | — | — | Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue. |  |  |
+| Topic metadata-backed attribute updates | ✅ implemented | — | — | — | Performs a GET → conditional PUT cycle against the Service Bus topic description and persists DisplayName, Policy, and DeliveryPolicy inside TopicDescription.UserMetadata for later GetTopicAttributes projection. |  |  |
+| Compatibility no-ops | ✅ implemented | — | — | — | Treats EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops because this slice has no faithful Service Bus topic equivalent for those AWS attributes. |  |  |
 | Content-based deduplication validation | ✅ implemented | — | — | — | Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success. |  |  |
 
 ### Behaviour differences
 
-- DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig do not have a direct Service Bus topic equivalent in this slice and are treated as no-ops.
+- DisplayName, Policy, and DeliveryPolicy are stored in TopicDescription.UserMetadata for round-tripping. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes remain metadata-only compatibility state rather than native enforcement.
 - ContentBasedDeduplication is backed by RequiresDuplicateDetection, but Service Bus does not allow changing that property after topic creation. aws2azure returns InvalidParameter instead of attempting an in-place update.
+- EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig remain no-ops because the Service Bus-backed profile has no faithful equivalent AWS topic-level behavior to apply.
+- Updates whose serialized topic metadata would exceed the Azure Service Bus UserMetadata 1024-character limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
 
 ### References

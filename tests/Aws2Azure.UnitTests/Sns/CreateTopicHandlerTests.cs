@@ -51,6 +51,45 @@ public sealed class CreateTopicHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_maps_supported_attributes_into_topic_description()
+    {
+        var managementClient = NewManagementClient(async (request, _) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.Contains("<UserMetadata>", body);
+            Assert.Contains("\"displayName\":\"Orders\"", body);
+            Assert.Contains("\"policyJson\":\"{", body);
+            Assert.Contains("\"deliveryPolicyJson\":\"{", body);
+            Assert.Contains("<RequiresDuplicateDetection>true</RequiresDuplicateDetection>", body);
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        });
+
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = "orders",
+                    ["Attributes.entry.1.key"] = "DisplayName",
+                    ["Attributes.entry.1.value"] = "Orders",
+                    ["Attributes.entry.2.key"] = "Policy",
+                    ["Attributes.entry.2.value"] = "{ \"Statement\": [] }",
+                    ["Attributes.entry.3.key"] = "DeliveryPolicy",
+                    ["Attributes.entry.3.value"] = "{ \"healthyRetryPolicy\": { \"numRetries\": 3 } }",
+                    ["Attributes.entry.4.key"] = "ContentBasedDeduplication",
+                    ["Attributes.entry.4.value"] = "true",
+                },
+                null),
+            NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task HandleAsync_treats_existing_topic_as_idempotent()
     {
         var managementClient = NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));

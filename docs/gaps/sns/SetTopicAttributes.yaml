@@ -2,18 +2,23 @@ service: sns
 operation: SetTopicAttributes
 azure_equivalent: Azure Service Bus topic description
 status: partial
+disposition: by_design
 sub_features:
-- name: Attribute no-op compatibility
+- name: Topic metadata-backed attribute updates
   status: implemented
-  notes: Accepts DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops so common SDK flows continue.
+  notes: Performs a GET → conditional PUT cycle against the Service Bus topic description and persists DisplayName, Policy, and DeliveryPolicy inside TopicDescription.UserMetadata for later GetTopicAttributes projection.
+- name: Compatibility no-ops
+  status: implemented
+  notes: Treats EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig as successful no-ops because this slice has no faithful Service Bus topic equivalent for those AWS attributes.
 - name: Content-based deduplication validation
   status: implemented
   notes: Reads the current Service Bus topic description and rejects attempts to change RequiresDuplicateDetection after topic creation. Re-applying the existing value returns success.
 behavior_differences:
-- DisplayName, Policy, DeliveryPolicy, EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig do not have a direct Service Bus topic equivalent in this slice and are treated as no-ops.
+- DisplayName, Policy, and DeliveryPolicy are stored in TopicDescription.UserMetadata for round-tripping. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes remain metadata-only compatibility state rather than native enforcement.
 - ContentBasedDeduplication is backed by RequiresDuplicateDetection, but Service Bus does not allow changing that property after topic creation. aws2azure returns InvalidParameter instead of attempting an in-place update.
+- EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig remain no-ops because the Service Bus-backed profile has no faithful equivalent AWS topic-level behavior to apply.
+- Updates whose serialized topic metadata would exceed the Azure Service Bus UserMetadata 1024-character limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
-disposition: by_design

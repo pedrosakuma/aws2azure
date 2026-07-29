@@ -6,8 +6,8 @@ namespace Aws2Azure.Amqp.Framing;
 /// AMQP 1.0 <c>application-properties</c> message section (§3.2.5,
 /// descriptor 0x74). A described map whose keys are strings and whose
 /// values are AMQP primitive types. Slice 5c models the subset CBS
-/// uses: <see cref="string"/>, 32-bit <see cref="int"/>, and 32-bit
-/// <see cref="uint"/> values.
+/// uses: <see cref="string"/>, <see cref="bool"/>, 32/64-bit integers,
+/// <see cref="uint"/>, and <see cref="double"/> values.
 /// Other value types are surfaced as <c>null</c> on read so a peer
 /// extension won't crash the decoder.
 /// </summary>
@@ -17,8 +17,8 @@ internal static class AmqpApplicationProperties
 
     /// <summary>
     /// Writes a described map. <paramref name="pairs"/> values must be
-    /// <see cref="string"/>, boxed <see cref="int"/>, or boxed
-    /// <see cref="uint"/>. Unsupported types throw
+    /// <see cref="string"/>, boxed <see cref="bool"/>, boxed integers,
+    /// boxed <see cref="uint"/>, or boxed <see cref="double"/>. Unsupported types throw
     /// <see cref="ArgumentException"/>.
     /// </summary>
     public static void Write(
@@ -87,11 +87,20 @@ internal static class AmqpApplicationProperties
             case string s:
                 AmqpVariableWriter.WriteString(destination, s, out written);
                 return;
+            case bool b:
+                AmqpPrimitiveWriter.WriteBoolean(destination, b, out written);
+                return;
             case int i:
                 AmqpPrimitiveWriter.WriteInt(destination, i, out written);
                 return;
+            case long l:
+                AmqpPrimitiveWriter.WriteLong(destination, l, out written);
+                return;
             case uint u:
                 AmqpPrimitiveWriter.WriteUInt(destination, u, out written);
+                return;
+            case double d:
+                AmqpPrimitiveWriter.WriteDouble(destination, d, out written);
                 return;
             default:
                 throw new ArgumentException(
@@ -119,6 +128,14 @@ internal static class AmqpApplicationProperties
                 o += len;
                 return n;
             }
+            case AmqpFormatCode.Boolean:
+            case AmqpFormatCode.BooleanTrue:
+            case AmqpFormatCode.BooleanFalse:
+            {
+                var b = AmqpPrimitiveReader.ReadBoolean(els[o..], out var len);
+                o += len;
+                return b;
+            }
             case AmqpFormatCode.Short:
             {
                 var n = AmqpPrimitiveReader.ReadShort(els[o..], out var len);
@@ -138,6 +155,19 @@ internal static class AmqpApplicationProperties
                 var n = AmqpPrimitiveReader.ReadUInt(els[o..], out var len);
                 o += len;
                 return n;
+            }
+            case AmqpFormatCode.Long:
+            case 0x55: // smalllong
+            {
+                var n = AmqpPrimitiveReader.ReadLong(els[o..], out var len);
+                o += len;
+                return n;
+            }
+            case AmqpFormatCode.Double:
+            {
+                var d = AmqpPrimitiveReader.ReadDouble(els[o..], out var len);
+                o += len;
+                return d;
             }
             default:
             {

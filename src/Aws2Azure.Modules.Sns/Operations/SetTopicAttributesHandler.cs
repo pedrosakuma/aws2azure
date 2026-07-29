@@ -34,23 +34,17 @@ internal static class SetTopicAttributesHandler
             case "DisplayName":
             case "Policy":
             case "DeliveryPolicy":
+            case "ContentBasedDeduplication":
+                break;
             case "EffectiveDeliveryPolicy":
             case "KmsMasterKeyId":
             case "SignatureVersion":
             case "TracingConfig":
                 await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "SetTopicAttributes").ConfigureAwait(false);
                 return;
-            case "ContentBasedDeduplication":
-                break;
             default:
                 await SnsTopicSupport.WriteInvalidParameterAsync(context, $"Invalid attribute name: {attributeName}").ConfigureAwait(false);
                 return;
-        }
-
-        if (!SnsSubscriptionSupport.TryParseBooleanAttribute(attributeValue, out var requestedValue))
-        {
-            await SnsTopicSupport.WriteInvalidParameterAsync(context, "Attribute 'ContentBasedDeduplication' must be a boolean value ('true' or 'false').").ConfigureAwait(false);
-            return;
         }
 
         ServiceBusTopicDescription? topic;
@@ -72,6 +66,77 @@ internal static class SetTopicAttributesHandler
         if (topic is null)
         {
             await SnsTopicSupport.WriteNotFoundAsync(context, $"Topic does not exist: {topicArn}").ConfigureAwait(false);
+            return;
+        }
+
+        if (!string.Equals(attributeName, "ContentBasedDeduplication", StringComparison.Ordinal))
+        {
+            var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
+            switch (attributeName)
+            {
+                case "DisplayName":
+                    metadata.DisplayName = string.IsNullOrWhiteSpace(attributeValue) ? null : attributeValue;
+                    break;
+                case "Policy":
+                    metadata.PolicyJson = string.IsNullOrWhiteSpace(attributeValue)
+                        ? null
+                        : SnsSubscriptionSupport.NormalizeJsonAttribute(attributeValue, "Policy", out error);
+                    if (error is not null)
+                    {
+                        await SnsTopicSupport.WriteInvalidParameterAsync(context, error).ConfigureAwait(false);
+                        return;
+                    }
+
+                    break;
+                case "DeliveryPolicy":
+                    metadata.DeliveryPolicyJson = string.IsNullOrWhiteSpace(attributeValue)
+                        ? null
+                        : SnsSubscriptionSupport.NormalizeJsonAttribute(attributeValue, "DeliveryPolicy", out error);
+                    if (error is not null)
+                    {
+                        await SnsTopicSupport.WriteInvalidParameterAsync(context, error).ConfigureAwait(false);
+                        return;
+                    }
+
+                    break;
+            }
+
+            if (!SnsTopicAttributeSupport.TryBuildUserMetadata(metadata, out var serializedMetadata))
+            {
+                await SnsTopicSupport.WriteInvalidParameterAsync(
+                        context,
+                        $"Topic metadata exceeds the Azure Service Bus UserMetadata limit of {SnsTopicAttributeSupport.UserMetadataMaxLength} characters.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            var updatedTopic = topic with
+            {
+                UserMetadata = serializedMetadata,
+            };
+
+            try
+            {
+                await managementClient.UpdateTopicAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        updatedTopic,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceBusTopicsManagementException ex)
+            {
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                return;
+            }
+
+            await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "SetTopicAttributes").ConfigureAwait(false);
+            return;
+        }
+
+        if (!SnsSubscriptionSupport.TryParseBooleanAttribute(attributeValue, out var requestedValue))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, "Attribute 'ContentBasedDeduplication' must be a boolean value ('true' or 'false').").ConfigureAwait(false);
             return;
         }
 

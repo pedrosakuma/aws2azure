@@ -54,13 +54,14 @@ internal static class GetTopicAttributesHandler
         var arnParts = topicArn.Split(':', 6, StringSplitOptions.None);
         var accountId = arnParts[4];
         var isFifo = topicName.EndsWith(".fifo", StringComparison.Ordinal) || topic.RequiresDuplicateDetection;
+        var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
 
-        var attributes = new List<KeyValuePair<string, string>>(10)
+        var attributes = new List<KeyValuePair<string, string>>(12)
         {
             new("TopicArn", topicArn),
             new("Owner", accountId),
-            new("DisplayName", string.Empty),
-            new("Policy", "{}"),
+            new("DisplayName", metadata.DisplayName ?? string.Empty),
+            new("Policy", metadata.PolicyJson ?? "{}"),
             new("SubscriptionsConfirmed", topic.SubscriptionCount.ToString(CultureInfo.InvariantCulture)),
             new("SubscriptionsPending", "0"),
             new("SubscriptionsDeleted", "0"),
@@ -68,6 +69,12 @@ internal static class GetTopicAttributesHandler
             new("FifoTopic", isFifo ? "true" : "false"),
             new("ContentBasedDeduplication", topic.RequiresDuplicateDetection ? "true" : "false"),
         };
+
+        if (!string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson))
+        {
+            attributes.Add(new("DeliveryPolicy", metadata.DeliveryPolicyJson));
+            attributes.Add(new("EffectiveDeliveryPolicy", metadata.DeliveryPolicyJson));
+        }
 
         await SnsResponseWriter.WriteAttributesResponseAsync(context, "GetTopicAttributes", attributes).ConfigureAwait(false);
     }

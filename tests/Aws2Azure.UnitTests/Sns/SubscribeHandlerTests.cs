@@ -19,19 +19,27 @@ public sealed class SubscribeHandlerTests
     [InlineData("http", "http://example.com/hooks/orders")]
     public async Task HandleAsync_creates_subscription_for_supported_protocols(string protocol, string endpoint)
     {
+        var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId("arn:aws:sns:us-west-2:000000000000:orders", protocol, endpoint);
+        var requests = 0;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
+            requests++;
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("https://myns.servicebus.windows.net/orders/subscriptions/" +
-                         SnsSubscriptionSupport.CreateSubscriptionId("arn:aws:sns:us-west-2:000000000000:orders", protocol, endpoint) +
-                         "?api-version=2021-05", request.RequestUri!.ToString());
             Assert.True(request.Headers.TryGetValues("Authorization", out var authorization));
             Assert.Equal("TestAuth", Assert.Single(authorization));
-
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-            Assert.Contains("<LockDuration>PT30S</LockDuration>", body);
-            Assert.Contains("<MaxDeliveryCount>10</MaxDeliveryCount>", body);
-            Assert.Contains(ServiceBusTopicsManagementClient.LongIdleIso8601, body);
+            if (requests == 1)
+            {
+                Assert.Equal($"https://myns.servicebus.windows.net/orders/subscriptions/{subscriptionId}?api-version=2021-05", request.RequestUri!.ToString());
+                Assert.Contains("<LockDuration>PT30S</LockDuration>", body);
+                Assert.Contains("<MaxDeliveryCount>10</MaxDeliveryCount>", body);
+                Assert.Contains(ServiceBusTopicsManagementClient.LongIdleIso8601, body);
+            }
+            else
+            {
+                Assert.Equal($"https://myns.servicebus.windows.net/orders/subscriptions/{subscriptionId}/rules/%24Default?api-version=2021-05", request.RequestUri!.ToString());
+                Assert.Contains("TrueFilter", body);
+            }
 
             return new HttpResponseMessage(HttpStatusCode.Created)
             {
@@ -52,7 +60,7 @@ public sealed class SubscribeHandlerTests
         var body = SnsManagementClientTestSupport.ReadBody(context);
         var subscriptionArn = SnsManagementClientTestSupport.ReadElementValue(body, "SubscriptionArn");
         Assert.Equal(
-            "arn:aws:sns:us-west-2:000000000000:orders:" + SnsSubscriptionSupport.CreateSubscriptionId("arn:aws:sns:us-west-2:000000000000:orders", protocol, endpoint),
+            "arn:aws:sns:us-west-2:000000000000:orders:" + subscriptionId,
             subscriptionArn);
     }
 
@@ -122,14 +130,26 @@ public sealed class SubscribeHandlerTests
 
             if (requests == 2)
             {
+                Assert.Contains("/rules/%24Default", request.RequestUri!.ToString());
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created));
+            }
+
+            if (requests == 3)
+            {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
             }
 
-            Assert.Equal(HttpMethod.Get, request.Method);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            if (requests == 4)
             {
-                Content = new StringContent(SnsManagementClientTestSupport.BuildSubscriptionsFeed((subscriptionId, metadata)), Encoding.UTF8, "application/atom+xml"),
-            });
+                Assert.Equal(HttpMethod.Get, request.Method);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildSubscriptionsFeed((subscriptionId, metadata)), Encoding.UTF8, "application/atom+xml"),
+                });
+            }
+
+            Assert.Contains("/rules/%24Default", request.RequestUri!.ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         });
 
         var firstContext = SnsManagementClientTestSupport.NewContext();
@@ -158,9 +178,17 @@ public sealed class SubscribeHandlerTests
     public async Task HandleAsync_stores_filter_policy_in_user_metadata()
     {
         var capturedMetadata = string.Empty;
+        string? ruleBody = null;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
-            capturedMetadata = SnsManagementClientTestSupport.ReadElementValue(await request.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
+            {
+                ruleBody = body;
+                return new HttpResponseMessage(HttpStatusCode.Created);
+            }
+
+            capturedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
             return new HttpResponseMessage(HttpStatusCode.Created);
         });
 
@@ -186,6 +214,8 @@ public sealed class SubscribeHandlerTests
         Assert.Equal("https://example.com", metadata.Endpoint);
         Assert.Equal("{\"tenant\":[\"blue\"]}", metadata.FilterPolicyJson);
         Assert.True(metadata.RawDeliveryEnabled);
+        Assert.NotNull(ruleBody);
+        Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", ruleBody);
     }
 
     private static SnsParseResult NewParseResult(params (string Key, string Value)[] pairs)

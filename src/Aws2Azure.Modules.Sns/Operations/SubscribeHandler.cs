@@ -31,6 +31,11 @@ internal static class SubscribeHandler
 
         var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(request.TopicArn, request.Protocol, request.Endpoint);
         var subscriptionArn = SnsSubscriptionSupport.BuildSubscriptionArn(context, request.TopicName, subscriptionId);
+        if (!SnsSubscriptionFilterSupport.TryBuildRuleDescription(request.Metadata, out var ruleDescription, out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
 
         try
         {
@@ -40,6 +45,14 @@ internal static class SubscribeHandler
                     request.TopicName,
                     subscriptionId,
                     request.UserMetadata,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            await managementClient.PutSubscriptionRuleAsync(
+                    credentials,
+                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                    request.TopicName,
+                    subscriptionId,
+                    ruleDescription,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -65,6 +78,25 @@ internal static class SubscribeHandler
             if (!SnsSubscriptionSupport.MetadataMatches(existing?.UserMetadata, request.Metadata))
             {
                 SnsLog.MismatchedExistingSubscription(logger, request.TopicName, subscriptionId, request.Protocol, request.Endpoint);
+            }
+            else
+            {
+                try
+                {
+                    await managementClient.PutSubscriptionRuleAsync(
+                            credentials,
+                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                            request.TopicName,
+                            subscriptionId,
+                            ruleDescription,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (ServiceBusTopicsManagementException ruleException)
+                {
+                    await SnsTopicSupport.WriteManagementErrorAsync(context, ruleException).ConfigureAwait(false);
+                    return;
+                }
             }
         }
         catch (ServiceBusTopicsManagementException ex)

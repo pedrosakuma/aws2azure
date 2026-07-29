@@ -35,12 +35,22 @@ internal static class CreateTopicHandler
             return;
         }
 
+        if (!SnsTopicAttributeSupport.TryParseCreateTopicAttributes(parseResult.Parameters, out var attributes, out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
+
         try
         {
             await managementClient.CreateTopicAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    new ServiceBusTopicDescription(
+                        topicName,
+                        SubscriptionCount: 0,
+                        RequiresDuplicateDetection: attributes.RequiresDuplicateDetection,
+                        UserMetadata: attributes.UserMetadata),
                     cancellationToken)
                 .ConfigureAwait(false);
         }

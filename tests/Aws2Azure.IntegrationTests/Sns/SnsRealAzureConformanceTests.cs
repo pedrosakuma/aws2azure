@@ -406,6 +406,169 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
     }
 
+    [SkippableFact]
+    public async Task Topic_metadata_attributes_round_trip_against_real_service_bus()
+    {
+        Skip.IfNot(fixture.SnsConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
+
+        using var client = fixture.CreateSnsClient();
+        var topicName = SnsQueryApiClient.CreateTopicName("sns-real-topicattrs");
+        string? topicArn = null;
+
+        try
+        {
+            var create = await SendAsync(client, "CreateTopic",
+            [
+                new("Name", topicName),
+                new("Attributes.entry.1.key", "DisplayName"),
+                new("Attributes.entry.1.value", "Orders"),
+                new("Attributes.entry.2.key", "Policy"),
+                new("Attributes.entry.2.value", "{\"Statement\":[]}"),
+                new("Attributes.entry.3.key", "DeliveryPolicy"),
+                new("Attributes.entry.3.value", "{\"healthyRetryPolicy\":{\"numRetries\":3}}"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(create, HttpStatusCode.OK, "CreateTopic[attributes]");
+            topicArn = SnsQueryApiClient.ReadTopicArn(create);
+
+            var getAfterCreate = await SendAsync(client, "GetTopicAttributes",
+                [new("TopicArn", topicArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(getAfterCreate, HttpStatusCode.OK, "GetTopicAttributes[after create]");
+            var createdAttributes = SnsQueryApiClient.ReadAttributes(getAfterCreate);
+            Assert.Equal("Orders", createdAttributes["DisplayName"]);
+            Assert.Equal("{\"Statement\":[]}", createdAttributes["Policy"]);
+            Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", createdAttributes["DeliveryPolicy"]);
+
+            var set = await SendAsync(client, "SetTopicAttributes",
+            [
+                new("TopicArn", topicArn),
+                new("AttributeName", "DisplayName"),
+                new("AttributeValue", "Orders v2"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(set, HttpStatusCode.OK, "SetTopicAttributes[DisplayName]");
+
+            var getAfterSet = await SendAsync(client, "GetTopicAttributes",
+                [new("TopicArn", topicArn)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(getAfterSet, HttpStatusCode.OK, "GetTopicAttributes[after set]");
+            var updatedAttributes = SnsQueryApiClient.ReadAttributes(getAfterSet);
+            Assert.Equal("Orders v2", updatedAttributes["DisplayName"]);
+            Assert.Equal("{\"Statement\":[]}", updatedAttributes["Policy"]);
+        }
+        finally
+        {
+            if (topicArn is not null)
+            {
+                try
+                {
+                    await SendAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task Message_body_filter_policies_route_only_matching_messages_against_real_service_bus()
+    {
+        Skip.IfNot(fixture.SnsConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
+
+        using var client = fixture.CreateSnsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var topicName = SnsQueryApiClient.CreateTopicName("sns-real-bodyfilter");
+        string? topicArn = null;
+
+        try
+        {
+            var create = await SendAsync(client, "CreateTopic", [new("Name", topicName)]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(create, HttpStatusCode.OK, "CreateTopic");
+            topicArn = SnsQueryApiClient.ReadTopicArn(create);
+
+            var greenSubscribe = await SendAsync(client, "Subscribe",
+            [
+                new("TopicArn", topicArn),
+                new("Protocol", "sqs"),
+                new("Endpoint", SnsQueryApiClient.CreateSubscriptionEndpoint()),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(greenSubscribe, HttpStatusCode.OK, "Subscribe[green]");
+            var greenSubscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(greenSubscribe);
+            var greenSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(greenSubscriptionArn);
+
+            var redSubscribe = await SendAsync(client, "Subscribe",
+            [
+                new("TopicArn", topicArn),
+                new("Protocol", "sqs"),
+                new("Endpoint", SnsQueryApiClient.CreateSubscriptionEndpoint()),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(redSubscribe, HttpStatusCode.OK, "Subscribe[red]");
+            var redSubscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(redSubscribe);
+            var redSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(redSubscriptionArn);
+
+            foreach (var subscriptionArn in new[] { greenSubscriptionArn, redSubscriptionArn })
+            {
+                var setScope = await SendAsync(client, "SetSubscriptionAttributes",
+                [
+                    new("SubscriptionArn", subscriptionArn),
+                    new("AttributeName", "FilterPolicyScope"),
+                    new("AttributeValue", "MessageBody"),
+                ]).ConfigureAwait(false);
+                SnsServiceBusTestSupport.AssertStatus(setScope, HttpStatusCode.OK, "SetSubscriptionAttributes[scope]");
+            }
+
+            var setGreenPolicy = await SendAsync(client, "SetSubscriptionAttributes",
+            [
+                new("SubscriptionArn", greenSubscriptionArn),
+                new("AttributeName", "FilterPolicy"),
+                new("AttributeValue", "{\"detail\":{\"tenant\":[\"green\"]}}"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setGreenPolicy, HttpStatusCode.OK, "SetSubscriptionAttributes[green policy]");
+
+            var setRedPolicy = await SendAsync(client, "SetSubscriptionAttributes",
+            [
+                new("SubscriptionArn", redSubscriptionArn),
+                new("AttributeName", "FilterPolicy"),
+                new("AttributeValue", "{\"detail\":{\"tenant\":[\"red\"]}}"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setRedPolicy, HttpStatusCode.OK, "SetSubscriptionAttributes[red policy]");
+
+            await using var serviceBusClient = new ServiceBusClient(fixture.CreateServiceBusConnectionString());
+            await using var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName);
+            await using var redReceiver = serviceBusClient.CreateReceiver(topicName, redSubscriptionName);
+
+            const string body = "{\"detail\":{\"tenant\":\"green\"}}";
+            var publish = await SendAsync(client, "Publish",
+            [
+                new("TopicArn", topicArn),
+                new("Message", body),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "Publish[body filter]");
+
+            var greenMessages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(
+                greenReceiver, 1, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            var greenMessage = Assert.Single(greenMessages);
+            Assert.Equal(body, greenMessage.Body.ToString());
+            await greenReceiver.CompleteMessageAsync(greenMessage, timeout.Token).ConfigureAwait(false);
+
+            var redMessages = await redReceiver.ReceiveMessagesAsync(1, TimeSpan.FromSeconds(5), timeout.Token).ConfigureAwait(false);
+            Assert.Empty(redMessages);
+        }
+        finally
+        {
+            if (topicArn is not null)
+            {
+                try
+                {
+                    await SendAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     private static Task<SnsXmlResponse> SendAsync(
         HttpClient client,
         string action,

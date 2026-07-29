@@ -148,6 +148,32 @@ public sealed class PublishHandlerTests
         Assert.Equal("String", appProperties["color.DataType"]);
         Assert.Equal("AQID", appProperties["payload"]);
         Assert.Equal("Binary", appProperties["payload.DataType"]);
+        Assert.Equal("blue", appProperties["aws2azure_sns_attr_636f6c6f72"]);
+        Assert.Equal("AQID", appProperties["aws2azure_sns_attr_7061796c6f6164"]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_projects_message_body_fields_into_filter_properties()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("Message", "{\"detail\":{\"tenant\":\"blue\",\"priority\":5,\"active\":true}}")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        var appProperties = sender.SingleCall!.Value.Message.ApplicationProperties!;
+        Assert.Equal("blue", appProperties["aws2azure_sns_body_64657461696c2e74656e616e74"]);
+        Assert.Equal(5L, appProperties["aws2azure_sns_body_64657461696c2e7072696f72697479"]);
+        Assert.Equal(true, appProperties["aws2azure_sns_body_64657461696c2e616374697665"]);
     }
 
     [Fact]

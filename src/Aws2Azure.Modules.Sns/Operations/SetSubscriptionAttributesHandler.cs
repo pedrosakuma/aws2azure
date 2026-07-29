@@ -58,7 +58,7 @@ internal static class SetSubscriptionAttributesHandler
         }
         catch (ServiceBusTopicsManagementException ex)
         {
-            await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
             return;
         }
 
@@ -132,6 +132,12 @@ internal static class SetSubscriptionAttributesHandler
             return;
         }
 
+        if (!SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var ruleDescription, out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
+
         var updatedSubscription = existingSubscription with
         {
             UserMetadata = serializedMetadata,
@@ -146,10 +152,18 @@ internal static class SetSubscriptionAttributesHandler
                     updatedSubscription,
                     cancellationToken)
                 .ConfigureAwait(false);
+            await managementClient.PutSubscriptionRuleAsync(
+                    credentials,
+                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                    topicName,
+                    subscriptionId,
+                    ruleDescription,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (ServiceBusTopicsManagementException ex)
         {
-            await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+        await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
             return;
         }
 

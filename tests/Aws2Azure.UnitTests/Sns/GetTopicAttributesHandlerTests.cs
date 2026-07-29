@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
@@ -13,13 +14,21 @@ public sealed class GetTopicAttributesHandlerTests
     [Fact]
     public async Task HandleAsync_maps_service_bus_topic_properties_to_sns_attributes()
     {
+        var metadata = JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                DisplayName = "Orders",
+                PolicyJson = "{\"Statement\":[]}",
+                DeliveryPolicyJson = "{\"healthyRetryPolicy\":{\"numRetries\":3}}",
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
         {
             Assert.Equal(HttpMethod.Get, request.Method);
             Assert.Equal("https://myns.servicebus.windows.net/orders?api-version=2021-05", request.RequestUri!.ToString());
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders", subscriptionCount: 7, requiresDuplicateDetection: true), Encoding.UTF8, "application/atom+xml"),
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders", subscriptionCount: 7, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
             });
         });
 
@@ -35,14 +44,16 @@ public sealed class GetTopicAttributesHandlerTests
         var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
         Assert.Equal("arn:aws:sns:us-west-2:123456789012:orders", attributes["TopicArn"]);
         Assert.Equal("123456789012", attributes["Owner"]);
-        Assert.Equal(string.Empty, attributes["DisplayName"]);
-        Assert.Equal("{}", attributes["Policy"]);
+        Assert.Equal("Orders", attributes["DisplayName"]);
+        Assert.Equal("{\"Statement\":[]}", attributes["Policy"]);
         Assert.Equal("7", attributes["SubscriptionsConfirmed"]);
         Assert.Equal("0", attributes["SubscriptionsPending"]);
         Assert.Equal("0", attributes["SubscriptionsDeleted"]);
         Assert.Equal(string.Empty, attributes["KmsMasterKeyId"]);
         Assert.Equal("true", attributes["FifoTopic"]);
         Assert.Equal("true", attributes["ContentBasedDeduplication"]);
+        Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["DeliveryPolicy"]);
+        Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["EffectiveDeliveryPolicy"]);
     }
 
     [Fact]
