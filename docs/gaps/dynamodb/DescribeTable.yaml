@@ -13,23 +13,22 @@ sub_features:
   status: implemented
 - name: TableArn synthesis (azure-region pseudo-arn)
   status: implemented
-- name: ItemCount / TableSizeBytes (live metrics)
+- name: ItemCount live metric
+  status: implemented
+- name: TableSizeBytes live metric
+  status: implemented
+- name: GSI/LSI schema / status / projection description
+  status: implemented
+- name: GSI/LSI ItemCount / IndexSizeBytes / Backfilling / ProvisionedThroughput description
   status: unsupported
-  disposition: feasible_backlog
-  tracking_issue: '#688'
-- name: GSI/LSI description
-  status: partial
-  verified_real_azure:
-    date: '2026-07-24'
-    evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
-    workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30059183242
-  disposition: feasible_backlog
-  tracking_issue: '#688'
+  disposition: by_design
 behavior_differences:
-- ItemCount and TableSizeBytes default to 0; populating them requires either Cosmos partition-key statistics or a stored aggregate, deferred to a later slice.
+- ItemCount and TableSizeBytes come from Cosmos' `x-ms-resource-usage` header. ItemCount subtracts the proxy metadata sidecar document when present; TableSizeBytes uses Cosmos' approximate document-storage accounting (KiB → bytes) and returns 0 for empty user tables, so the reported bytes are Azure storage usage rather than a byte-for-byte match for native DynamoDB internals.
 - TableArn is synthetic (region 'azure', account '000000000000'); real AWS arns carry the region + account id which are not meaningful in this deployment.
 - Tables created out-of-band (no sidecar metadata) still describe but with empty attribute/key arrays.
-- GSI/LSI descriptions echo the persisted index schema (IndexName, KeySchema, Projection) plus a synthetic IndexArn; GSIs report IndexStatus=ACTIVE. IndexSizeBytes / ItemCount / Backfilling / ProvisionedThroughput are not populated.
+- GSI/LSI descriptions are reconstructed from sidecar metadata over one base container. GSI IndexStatus is a synthetic ACTIVE (CreateTable-created indexes have no separate backfill lifecycle here). CreateTable and DescribeTable on an empty user table report zero index ItemCount/IndexSizeBytes; once user items exist those fields, plus Backfilling / ProvisionedThroughput, remain omitted because the single-container model has no cheap truthful separate index-byte/accounting surface.
 references:
 - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TableDescription.html
 - https://learn.microsoft.com/rest/api/cosmos-db/get-a-collection
+- https://learn.microsoft.com/rest/api/cosmos-db/common-cosmosdb-rest-response-headers

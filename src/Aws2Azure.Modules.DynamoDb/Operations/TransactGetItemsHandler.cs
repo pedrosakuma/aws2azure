@@ -248,6 +248,15 @@ internal static class TransactGetItemsHandler
                 ct).ConfigureAwait(false);
             return;
         }
+        if (metadataRead.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+        {
+            await CosmosOpsShared.WriteErrorAsync(
+                ctx,
+                StatusCodes.Status500InternalServerError,
+                "InternalServerError",
+                "Malformed table metadata.").ConfigureAwait(false);
+            return;
+        }
         if (metadataRead.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
             await CosmosOpsShared.WriteErrorAsync(

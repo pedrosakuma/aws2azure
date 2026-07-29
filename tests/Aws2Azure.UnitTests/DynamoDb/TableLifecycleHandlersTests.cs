@@ -157,6 +157,8 @@ public class TableLifecycleHandlersTests
         Assert.Equal("ACTIVE", desc.GetProperty("TableStatus").GetString());
         Assert.Equal(2, desc.GetProperty("AttributeDefinitions").GetArrayLength());
         Assert.Equal(2, desc.GetProperty("KeySchema").GetArrayLength());
+        Assert.Equal(0, desc.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, desc.GetProperty("TableSizeBytes").GetInt64());
     }
 
     [Fact]
@@ -382,7 +384,11 @@ public class TableLifecycleHandlersTests
         {
             Responses =
             {
-                new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"id\":\"orders\"}") }, // GET colls
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"orders\"}"),
+                    Headers = { { "x-ms-resource-usage", "documentsCount=4;documentsSize=12;collectionSize=16;" } },
+                }, // GET colls
                 new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(metaJson, Encoding.UTF8, "application/json") },
             },
         };
@@ -391,6 +397,7 @@ public class TableLifecycleHandlersTests
         await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
 
         Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("true", handler.Requests[0].Headers["x-ms-populatequotainfo"]);
         using var doc = JsonDocument.Parse(ReadResponse(body));
         var table = doc.RootElement.GetProperty("Table");
         Assert.Equal("orders", table.GetProperty("TableName").GetString());
@@ -398,7 +405,151 @@ public class TableLifecycleHandlersTests
         Assert.Equal("PAY_PER_REQUEST", table.GetProperty("BillingModeSummary").GetProperty("BillingMode").GetString());
         Assert.Equal(2, table.GetProperty("AttributeDefinitions").GetArrayLength());
         Assert.Equal(2, table.GetProperty("KeySchema").GetArrayLength());
+        Assert.Equal(3, table.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(12 * 1024, table.GetProperty("TableSizeBytes").GetInt64());
         Assert.StartsWith("arn:aws:dynamodb:azure:", table.GetProperty("TableArn").GetString()!);
+    }
+
+    [Fact]
+    public async Task DescribeTable_omits_nonzero_secondary_index_metrics_without_extra_queries()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\","
+            + "\"tableName\":\"orders\",\"creationDateTime\":1700000000,"
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"N\"},"
+            + "{\"name\":\"gpk\",\"type\":\"S\"},{\"name\":\"lsi\",\"type\":\"S\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"byGpk\",\"keySchema\":[{\"name\":\"gpk\",\"keyType\":\"HASH\"}],\"projectionType\":\"ALL\"}],"
+            + "\"localSecondaryIndexes\":[{\"indexName\":\"byLsi\",\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"lsi\",\"keyType\":\"RANGE\"}],\"projectionType\":\"ALL\"}]}";
+
+        var coll = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"orders\"}"),
+        };
+        coll.Headers.TryAddWithoutValidation("x-ms-resource-usage", "documentsCount=5;documentsSize=20;collectionSize=24;");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                coll,
+                new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(metaJson, Encoding.UTF8, "application/json") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var table = doc.RootElement.GetProperty("Table");
+        Assert.Equal(4, table.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(20 * 1024, table.GetProperty("TableSizeBytes").GetInt64());
+
+        var gsi = Assert.Single(table.GetProperty("GlobalSecondaryIndexes").EnumerateArray());
+        Assert.Equal("byGpk", gsi.GetProperty("IndexName").GetString());
+        Assert.False(gsi.TryGetProperty("ItemCount", out _));
+        Assert.False(gsi.TryGetProperty("IndexSizeBytes", out _));
+
+        var lsi = Assert.Single(table.GetProperty("LocalSecondaryIndexes").EnumerateArray());
+        Assert.Equal("byLsi", lsi.GetProperty("IndexName").GetString());
+        Assert.False(lsi.TryGetProperty("ItemCount", out _));
+        Assert.False(lsi.TryGetProperty("IndexStatus", out _));
+        Assert.False(lsi.TryGetProperty("IndexSizeBytes", out _));
+    }
+
+    [Fact]
+    public async Task DescribeTable_surfaces_metadata_read_errors()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var coll = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"orders\"}"),
+        };
+        coll.Headers.TryAddWithoutValidation("x-ms-resource-usage", "documentsCount=1;documentsSize=1;collectionSize=2;");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                coll,
+                new HttpResponseMessage((HttpStatusCode)429) { Content = new StringContent("throttled") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("ProvisionedThroughputExceededException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task DescribeTable_omits_live_metrics_when_metadata_is_malformed()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var coll = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"orders\"}"),
+        };
+        coll.Headers.TryAddWithoutValidation("x-ms-resource-usage", "documentsCount=1;documentsSize=1;collectionSize=2;");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                coll,
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"__aws2azure_table_meta__\"", Encoding.UTF8, "application/json"),
+                },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task DescribeTable_empty_metadata_document_returns_internal_server_error()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var coll = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"orders\"}"),
+        };
+        coll.Headers.TryAddWithoutValidation("x-ms-resource-usage", "documentsCount=1;documentsSize=1;collectionSize=2;");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                coll,
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
     }
 
     [Fact]
@@ -598,6 +749,8 @@ public class TableLifecycleHandlersTests
         Assert.Equal(1, descGsi.GetArrayLength());
         Assert.Equal("gsi1", descGsi[0].GetProperty("IndexName").GetString());
         Assert.Equal("ACTIVE", descGsi[0].GetProperty("IndexStatus").GetString());
+        Assert.Equal(0, descGsi[0].GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, descGsi[0].GetProperty("IndexSizeBytes").GetInt64());
         Assert.EndsWith("table/orders/index/gsi1", descGsi[0].GetProperty("IndexArn").GetString());
     }
 
@@ -638,6 +791,8 @@ public class TableLifecycleHandlersTests
         using var doc = JsonDocument.Parse(ReadResponse(body));
         var descLsi = doc.RootElement.GetProperty("TableDescription").GetProperty("LocalSecondaryIndexes");
         Assert.Equal("lsi1", descLsi[0].GetProperty("IndexName").GetString());
+        Assert.Equal(0, descLsi[0].GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, descLsi[0].GetProperty("IndexSizeBytes").GetInt64());
         Assert.False(descLsi[0].TryGetProperty("IndexStatus", out _));
     }
 

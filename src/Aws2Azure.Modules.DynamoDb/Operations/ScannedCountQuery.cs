@@ -44,6 +44,33 @@ internal static class ScannedCountQuery
         bool strong,
         CancellationToken ct)
     {
+        var count = await CountLongAsync(
+            cosmos,
+            collLink,
+            collUri,
+            countSql,
+            parameters,
+            partitionKeyHeader,
+            strong,
+            ct).ConfigureAwait(false);
+        if (!count.HasValue)
+        {
+            return null;
+        }
+
+        return count.Value > int.MaxValue ? int.MaxValue : (int)count.Value;
+    }
+
+    public static async Task<long?> CountLongAsync(
+        CosmosClient cosmos,
+        string collLink,
+        string collUri,
+        string countSql,
+        IReadOnlyList<CosmosSqlParameter> parameters,
+        string? partitionKeyHeader,
+        bool strong,
+        CancellationToken ct)
+    {
         long total = 0;
         bool sawNumber = false;
         string? continuation = null;
@@ -118,11 +145,7 @@ internal static class ScannedCountQuery
             return null;
         }
 
-        if (!sawNumber)
-        {
-            return null;
-        }
-        return total > int.MaxValue ? int.MaxValue : (int)total;
+        return sawNumber ? total : null;
     }
 
     /// <summary>

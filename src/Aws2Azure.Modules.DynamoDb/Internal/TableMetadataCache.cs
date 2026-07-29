@@ -12,6 +12,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 internal sealed class TableMetadataCache
 {
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, long> _keyGenerations = new(StringComparer.Ordinal);
     private readonly TimeSpan _ttl;
 
     /// <summary>
@@ -44,40 +45,80 @@ internal sealed class TableMetadataCache
     }
 
     /// <summary>
-    /// Caches metadata for a table. Only sets if generation matches current
-    /// (prevents stale reads from overwriting after invalidation).
+    /// Caches metadata for a table. Only sets if the caller's per-table
+    /// generation still matches current state (prevents stale reads from
+    /// overwriting after invalidation/removal).
     /// </summary>
     public void Set(string cosmosEndpoint, string databaseName, string tableName, TableMetadata metadata, long generation)
     {
         var key = BuildKey(cosmosEndpoint, databaseName, tableName);
         var entry = new CacheEntry(metadata, DateTime.UtcNow, generation);
-        
-        // Only set if generation matches current (CAS to prevent race with invalidation)
-        _cache.AddOrUpdate(key, entry, (_, existing) =>
-            existing.Generation <= generation ? entry : existing);
+
+        lock (_mutationGate)
+        {
+            var currentGeneration = _keyGenerations.TryGetValue(key, out var version) ? version : 0;
+            if (currentGeneration != generation)
+            {
+                return;
+            }
+
+            // Only set if the per-table generation still matches current state.
+            _cache.AddOrUpdate(key, entry, (_, existing) =>
+                existing.Generation <= generation ? entry : existing);
+        }
     }
 
     /// <summary>
-    /// Invalidates cached metadata for a specific table by bumping generation.
-    /// Called on DeleteTable, UpdateTable.
+    /// Invalidates cached metadata for a specific table by bumping its
+    /// generation. Called on DeleteTable, UpdateTable.
     /// </summary>
     public void Invalidate(string cosmosEndpoint, string databaseName, string tableName)
     {
         var key = BuildKey(cosmosEndpoint, databaseName, tableName);
-        // Bump global generation to invalidate any in-flight reads
-        Interlocked.Increment(ref _generation);
-        _cache.TryRemove(key, out _);
+        lock (_mutationGate)
+        {
+            _keyGenerations.AddOrUpdate(key, 1, static (_, current) => current + 1);
+            _cache.TryRemove(key, out _);
+        }
     }
 
     /// <summary>
-    /// Gets current generation for use in Set() call.
+    /// Removes one cached entry without bumping the global generation. Use for
+    /// fresh negative reads so only the affected table is evicted.
     /// </summary>
-    public long GetGeneration() => Interlocked.Read(ref _generation);
+    public void Remove(string cosmosEndpoint, string databaseName, string tableName)
+    {
+        var key = BuildKey(cosmosEndpoint, databaseName, tableName);
+        lock (_mutationGate)
+        {
+            var removedCached = _cache.TryRemove(key, out _);
+            if (removedCached || _keyGenerations.ContainsKey(key))
+            {
+                _keyGenerations.AddOrUpdate(key, 1, static (_, current) => current + 1);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the current per-table generation for use in Set() calls.
+    /// </summary>
+    public long GetGeneration(string cosmosEndpoint, string databaseName, string tableName)
+    {
+        var key = BuildKey(cosmosEndpoint, databaseName, tableName);
+        return _keyGenerations.TryGetValue(key, out var generation) ? generation : 0;
+    }
 
     /// <summary>
     /// Clears all cached entries. Useful for testing.
     /// </summary>
-    public void Clear() => _cache.Clear();
+    public void Clear()
+    {
+        lock (_mutationGate)
+        {
+            _cache.Clear();
+            _keyGenerations.Clear();
+        }
+    }
 
     /// <summary>
     /// Returns cache statistics for monitoring.
@@ -90,7 +131,7 @@ internal sealed class TableMetadataCache
 
     private long _hits;
     private long _misses;
-    private long _generation;
+    private readonly object _mutationGate = new();
 
     private readonly record struct CacheEntry(TableMetadata Metadata, DateTime CachedAt, long Generation);
 }

@@ -73,18 +73,21 @@ public class TaggingHandlersTests
     }
 
     [Fact]
-    public async Task TagResource_seeds_missing_metadata_when_container_exists()
+    public async Task TagResource_missing_metadata_returns_internal_server_error()
     {
         var handler = new MetadataHandler(tableExists: true, metadataJson: null);
         var cosmos = BuildClient(handler);
+        var (ctx, body) = NewCtx();
 
-        await InvokeTagAsync(cosmos,
-            "{\"ResourceArn\":\"arn:aws:dynamodb:::table/orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}");
+        await TaggingHandlers.HandleTagResourceAsync(
+            ctx,
+            Encoding.UTF8.GetBytes("{\"ResourceArn\":\"arn:aws:dynamodb:::table/orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}"),
+            cosmos,
+            default);
 
-        Assert.NotNull(handler.MetadataJson);
-        using var doc = JsonDocument.Parse(handler.MetadataJson);
-        Assert.Equal("orders", doc.RootElement.GetProperty("tableName").GetString());
-        Assert.Equal("env", doc.RootElement.GetProperty("tags")[0].GetProperty("key").GetString());
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Missing table metadata", ReadResponse(body));
+        Assert.Null(handler.MetadataJson);
     }
 
     [Fact]
@@ -166,6 +169,54 @@ public class TaggingHandlersTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("ResourceNotFoundException", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task ListTagsOfResource_malformed_metadata_returns_internal_server_error()
+    {
+        var handler = new MetadataHandler(tableExists: true, metadataJson: "{\"id\":\"__aws2azure_table_meta__\"");
+        var cosmos = BuildClient(handler);
+        var (ctx, body) = NewCtx();
+
+        await TaggingHandlers.HandleListTagsOfResourceAsync(
+            ctx, Encoding.UTF8.GetBytes("{\"ResourceArn\":\"orders\"}"), cosmos, default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task TagResource_malformed_metadata_returns_internal_server_error()
+    {
+        var handler = new MetadataHandler(tableExists: true, metadataJson: "{\"id\":\"__aws2azure_table_meta__\"");
+        var cosmos = BuildClient(handler);
+        var (ctx, body) = NewCtx();
+
+        await TaggingHandlers.HandleTagResourceAsync(
+            ctx,
+            Encoding.UTF8.GetBytes("{\"ResourceArn\":\"orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}"),
+            cosmos,
+            default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task TagResource_empty_metadata_document_returns_internal_server_error()
+    {
+        var handler = new MetadataHandler(tableExists: true, metadataJson: "{}");
+        var cosmos = BuildClient(handler);
+        var (ctx, body) = NewCtx();
+
+        await TaggingHandlers.HandleTagResourceAsync(
+            ctx,
+            Encoding.UTF8.GetBytes("{\"ResourceArn\":\"orders\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"prod\"}]}"),
+            cosmos,
+            default);
+
+        Assert.Equal(500, ctx.Response.StatusCode);
+        Assert.Contains("Malformed table metadata", ReadResponse(body));
     }
 
     [Theory]

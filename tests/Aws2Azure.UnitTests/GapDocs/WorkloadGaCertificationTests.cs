@@ -17,7 +17,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 22)]
     [InlineData("sqs-standard-messaging.yaml", "ga", 22)]
     [InlineData("dynamodb-basic-crud.yaml", "conditional", 22)]
-    [InlineData("dynamodb-query-scan-indexes.yaml", "candidate", 22)]
+    [InlineData("dynamodb-query-scan-indexes.yaml", "conditional", 22)]
     [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 27)]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 22)]
     [InlineData("sns-standard-publish-event-grid.yaml", "candidate", 22)]

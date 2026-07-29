@@ -189,6 +189,11 @@ internal sealed class TableMetadata
         ExtensionData.Remove("_lsn");
         ExtensionData.Remove("_metadata");
     }
+
+    public bool IsStructurallyValid()
+        => !string.IsNullOrWhiteSpace(TableName)
+            && AttributeDefinitions.Count > 0
+            && KeySchema.Count > 0;
 }
 
 /// <summary>

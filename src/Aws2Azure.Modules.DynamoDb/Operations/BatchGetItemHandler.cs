@@ -126,6 +126,12 @@ internal static class BatchGetItemHandler
                 await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaRead.ErrorResponse!, ct).ConfigureAwait(false);
                 return;
             }
+            if (metaRead.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Malformed table metadata.").ConfigureAwait(false);
+                return;
+            }
             if (metaRead.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
             {
                 await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",

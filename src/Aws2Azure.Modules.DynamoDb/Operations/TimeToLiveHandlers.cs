@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -63,16 +64,32 @@ internal static class TimeToLiveHandlers
             return;
         }
 
-        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, req.TableName!, ct).ConfigureAwait(false);
+        using var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(
+            cosmos, req.TableName!, ct, bypassCache: true).ConfigureAwait(false);
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
         {
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
             return;
         }
+        if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                "Malformed table metadata.").ConfigureAwait(false);
+            return;
+        }
         if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
         {
-            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
-                $"Requested resource not found: Table: {req.TableName} not found").ConfigureAwait(false);
+            if (!await DoesTableExistAsync(ctx, cosmos, req.TableName!, ct).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await CosmosOpsShared.WriteJsonAsync(ctx, 200,
+                new DescribeTimeToLiveResponse
+                {
+                    TimeToLiveDescription = new TimeToLiveDescription { TimeToLiveStatus = "DISABLED" },
+                },
+                TimeToLiveJsonContext.Default.DescribeTimeToLiveResponse).ConfigureAwait(false);
             return;
         }
 
@@ -122,6 +139,33 @@ internal static class TimeToLiveHandlers
 
         bool enabling = spec.Enabled;
         string attributeName = spec.AttributeName!;
+        using (var metaResult = await CosmosOpsShared.TryReadTableMetadataAsync(
+            cosmos, req.TableName!, ct, bypassCache: true).ConfigureAwait(false))
+        {
+            if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
+            {
+                await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaResult.ErrorResponse!, ct).ConfigureAwait(false);
+                return;
+            }
+            if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.Malformed)
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Malformed table metadata.").ConfigureAwait(false);
+                return;
+            }
+            if (metaResult.Status == CosmosOpsShared.TableMetadataReadStatus.NotFound)
+            {
+                if (!await DoesTableExistAsync(ctx, cosmos, req.TableName!, ct).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError",
+                    "Missing table metadata.").ConfigureAwait(false);
+                return;
+            }
+
+        }
 
         // 1. Arm (defaultTtl = -1) or disarm (remove defaultTtl) the container
         //    FIRST. Doing this before the metadata write keeps the failure modes
@@ -138,7 +182,9 @@ internal static class TimeToLiveHandlers
         //    table (real DynamoDB serialises via transient ENABLING/DISABLING
         //    states); cross-sidecar coordination is out of scope. Documented in
         //    docs/gaps/dynamodb/UpdateTimeToLive.yaml.
-        if (!await TryReplaceContainerDefaultTtlAsync(ctx, cosmos, req.TableName!, enabling ? -1 : (int?)null, ct).ConfigureAwait(false))
+        var (containerUpdated, previousDefaultTtl) = await TryReplaceContainerDefaultTtlAsync(
+            ctx, cosmos, req.TableName!, enabling ? -1 : (int?)null, ct).ConfigureAwait(false);
+        if (!containerUpdated)
         {
             return;
         }
@@ -156,6 +202,11 @@ internal static class TimeToLiveHandlers
             ct).ConfigureAwait(false);
         if (!persisted)
         {
+            if (!await TryRollbackContainerTtlAsync(cosmos, req.TableName!, previousDefaultTtl, ct).ConfigureAwait(false))
+            {
+                await OverwriteErrorResponseAsync(ctx,
+                    "Metadata update failed and the container TTL rollback also failed.").ConfigureAwait(false);
+            }
             return;
         }
 
@@ -171,16 +222,41 @@ internal static class TimeToLiveHandlers
             TimeToLiveJsonContext.Default.UpdateTimeToLiveResponse).ConfigureAwait(false);
     }
 
+    private static async Task<bool> DoesTableExistAsync(
+        HttpContext ctx,
+        CosmosClient cosmos,
+        string tableName,
+        CancellationToken ct)
+    {
+        var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
+        using var collResp = await cosmos.SendAsync(
+            HttpMethod.Get, "colls", collLink, "/" + collLink,
+            content: null, extraHeaders: null, ct).ConfigureAwait(false);
+        if (collResp.StatusCode == HttpStatusCode.NotFound)
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
+                $"Requested resource not found: Table: {tableName} not found").ConfigureAwait(false);
+            return false;
+        }
+        if (!collResp.IsSuccessStatusCode)
+        {
+            await CosmosOpsShared.WriteCosmosErrorAsync(ctx, collResp, ct).ConfigureAwait(false);
+            return false;
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Replaces the Cosmos container's <c>defaultTtl</c> by reading the current
     /// collection definition, rewriting only the <c>defaultTtl</c> field (set to
     /// <paramref name="defaultTtl"/>, or removed when null), and PUTting it back.
     /// Every non-system top-level property (id, partitionKey, indexingPolicy,
     /// uniqueKeyPolicy, …) is preserved verbatim so the replace does not clobber
-    /// the container's other settings. Returns false and writes an AWS error
-    /// response on any failure.
+    /// the container's other settings. Returns the prior <c>defaultTtl</c> so
+    /// callers can compensate on later failures.
     /// </summary>
-    private static async Task<bool> TryReplaceContainerDefaultTtlAsync(
+    private static async Task<(bool Success, int? PreviousDefaultTtl)> TryReplaceContainerDefaultTtlAsync(
         HttpContext ctx, CosmosClient cosmos, string tableName, int? defaultTtl, CancellationToken ct)
     {
         var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + tableName;
@@ -192,16 +268,22 @@ internal static class TimeToLiveHandlers
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ResourceNotFoundException",
                 $"Requested resource not found: Table: {tableName} not found").ConfigureAwait(false);
-            return false;
+            return (false, null);
         }
         if (!getResp.IsSuccessStatusCode)
         {
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, getResp, ct).ConfigureAwait(false);
-            return false;
+            return (false, null);
         }
 
         using var bodyBuf = await CosmosOpsShared.ReadCosmosJsonBodyAsync(getResp.Content, ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(bodyBuf.WrittenMemory);
+        int? previousDefaultTtl = null;
+        if (doc.RootElement.TryGetProperty("defaultTtl", out var currentDefaultTtl)
+            && currentDefaultTtl.ValueKind == JsonValueKind.Number)
+        {
+            previousDefaultTtl = currentDefaultTtl.GetInt32();
+        }
 
         var replaceBody = new ArrayBufferWriter<byte>(bodyBuf.WrittenMemory.Length + 32);
         using (var writer = new Utf8JsonWriter(replaceBody))
@@ -235,10 +317,32 @@ internal static class TimeToLiveHandlers
         if (!putResp.IsSuccessStatusCode)
         {
             await CosmosOpsShared.WriteCosmosErrorAsync(ctx, putResp, ct).ConfigureAwait(false);
-            return false;
+            return (false, previousDefaultTtl);
         }
 
-        return true;
+        return (true, previousDefaultTtl);
+    }
+
+    private static async Task<bool> TryRollbackContainerTtlAsync(
+        CosmosClient cosmos, string tableName, int? previousDefaultTtl, CancellationToken ct)
+    {
+        var rollbackContext = new DefaultHttpContext();
+        rollbackContext.Response.Body = Stream.Null;
+        var (success, _) = await TryReplaceContainerDefaultTtlAsync(
+            rollbackContext, cosmos, tableName, previousDefaultTtl, ct).ConfigureAwait(false);
+        return success;
+    }
+
+    private static async Task OverwriteErrorResponseAsync(HttpContext ctx, string message)
+    {
+        if (ctx.Response.Body.CanSeek)
+        {
+            ctx.Response.Body.SetLength(0);
+            ctx.Response.Body.Position = 0;
+        }
+
+        ctx.Response.StatusCode = 500;
+        await CosmosOpsShared.WriteErrorAsync(ctx, 500, "InternalServerError", message).ConfigureAwait(false);
     }
 }
 
