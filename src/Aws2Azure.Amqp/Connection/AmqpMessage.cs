@@ -195,16 +195,27 @@ internal sealed class AmqpMessage
         // properties/application-properties/header encodings.
         var bodyLen = Body.Length + (BodyValueBytes?.Length ?? 0);
         var rentedSize = Performatives.ScratchSize + bodyLen + 256;
-        var rented = ArrayPool<byte>.Shared.Rent(rentedSize);
-        try
+        while (true)
         {
-            Write(rented, out var written);
-            return new PooledPayload(rented, written);
-        }
-        catch
-        {
-            ArrayPool<byte>.Shared.Return(rented);
-            throw;
+            var rented = ArrayPool<byte>.Shared.Rent(rentedSize);
+            try
+            {
+                Write(rented, out var written);
+                return new PooledPayload(rented, written);
+            }
+            catch (Exception ex) when (
+                ex is ArgumentOutOfRangeException
+                or IndexOutOfRangeException
+                or ArgumentException { ParamName: "destination" })
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+                rentedSize = checked(rentedSize * 2);
+            }
+            catch
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+                throw;
+            }
         }
     }
 }

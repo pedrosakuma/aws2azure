@@ -49,6 +49,25 @@ public sealed class AmqpReviewFixTests
         }
     }
 
+    [Fact]
+    public void EncodePooled_retries_when_application_properties_exceed_initial_buffer()
+    {
+        var expected = new string('x', 16 * 1024);
+        var message = new AmqpMessage
+        {
+            ApplicationProperties = new Dictionary<string, object?>
+            {
+                ["aws2azure_sns_attr_large"] = expected,
+            },
+            Body = ReadOnlyMemory<byte>.Empty,
+        };
+
+        using var pooled = message.EncodePooled();
+        var roundTrip = AmqpMessage.Parse(pooled.Memory);
+
+        Assert.Equal(expected, roundTrip.ApplicationProperties!["aws2azure_sns_attr_large"]);
+    }
+
     // ---------- Fix #1: peer-initiated end/detach must reach Final ----------
 
     [Fact]

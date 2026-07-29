@@ -58,7 +58,7 @@ internal static class SetSubscriptionAttributesHandler
         }
         catch (ServiceBusTopicsManagementException ex)
         {
-            await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
             return;
         }
 
@@ -69,12 +69,21 @@ internal static class SetSubscriptionAttributesHandler
         }
 
         var metadata = SnsSubscriptionSupport.ParseMetadata(existingSubscription.UserMetadata);
+        var previousMetadata = new SnsSubscriptionMetadata
+        {
+            Protocol = metadata.Protocol,
+            Endpoint = metadata.Endpoint,
+            FilterPolicyJson = metadata.FilterPolicyJson,
+            FilterPolicyScope = metadata.FilterPolicyScope,
+            RawDeliveryEnabled = metadata.RawDeliveryEnabled,
+        };
         switch (attributeName)
         {
             case "FilterPolicy":
                 if (string.IsNullOrWhiteSpace(attributeValue))
                 {
                     metadata.FilterPolicyJson = null;
+                    metadata.FilterPolicyScope = null;
                 }
                 else
                 {
@@ -132,6 +141,12 @@ internal static class SetSubscriptionAttributesHandler
             return;
         }
 
+        if (!SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var ruleDescription, out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
+
         var updatedSubscription = existingSubscription with
         {
             UserMetadata = serializedMetadata,
@@ -146,9 +161,58 @@ internal static class SetSubscriptionAttributesHandler
                     updatedSubscription,
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            // The reserved $Default rule always exists (Azure auto-creates it at
+            // subscription-creation time), so filter changes update it in place rather
+            // than creating a separate rule and deleting $Default. Deleting the reserved
+            // rule has been observed to be rejected by real Azure once the subscription
+            // entity has been touched by external tooling (see #691).
+            if (SnsSubscriptionRuleSupport.RequiresCustomRule(previousMetadata)
+                || SnsSubscriptionRuleSupport.RequiresCustomRule(metadata))
+            {
+                await managementClient.PutSubscriptionRuleAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        topicName,
+                        subscriptionId,
+                        SnsSubscriptionRuleSupport.RequiresCustomRule(metadata)
+                            ? ruleDescription
+                            : new ServiceBusSubscriptionRuleDescription(SnsSubscriptionFilterSupport.DefaultRuleName, null),
+                        updateExisting: true,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         catch (ServiceBusTopicsManagementException ex)
         {
+            if (!string.Equals(existingSubscription.UserMetadata, serializedMetadata, StringComparison.Ordinal))
+            {
+                try
+                {
+                    var currentSubscription = await managementClient.GetSubscriptionAsync(
+                            credentials,
+                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                            topicName,
+                            subscriptionId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (currentSubscription is not null
+                        && string.Equals(currentSubscription.UserMetadata, serializedMetadata, StringComparison.Ordinal))
+                    {
+                        await managementClient.UpdateSubscriptionAsync(
+                                credentials,
+                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                topicName,
+                                currentSubscription with { UserMetadata = existingSubscription.UserMetadata },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
             await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
             return;
         }

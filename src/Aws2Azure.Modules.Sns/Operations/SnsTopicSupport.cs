@@ -279,4 +279,5 @@ internal static class SnsTopicSupport
                 message: $"Azure Service Bus Topics management API returned HTTP {(int)ex.StatusCode}.")
         };
     }
+
 }

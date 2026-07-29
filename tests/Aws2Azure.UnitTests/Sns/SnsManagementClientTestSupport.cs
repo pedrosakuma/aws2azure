@@ -126,8 +126,13 @@ internal static class SnsManagementClientTestSupport
         return builder.ToString();
     }
 
-    public static string BuildTopicEntry(string topicName, int subscriptionCount = 0, bool requiresDuplicateDetection = false)
-        => BuildTopicEntryCore(topicName, subscriptionCount, requiresDuplicateDetection, includeDeclaration: true);
+    public static string BuildTopicEntry(
+        string topicName,
+        int subscriptionCount = 0,
+        bool requiresDuplicateDetection = false,
+        string? userMetadata = null,
+        string? additionalPropertiesXml = null)
+        => BuildTopicEntryCore(topicName, subscriptionCount, requiresDuplicateDetection, includeDeclaration: true, userMetadata, additionalPropertiesXml);
 
     public static string BuildSubscriptionsFeed(params (string SubscriptionName, string UserMetadata)[] subscriptions)
     {
@@ -159,7 +164,13 @@ internal static class SnsManagementClientTestSupport
         string? additionalPropertiesXml = null)
         => BuildSubscriptionEntryCore(subscriptionName, userMetadata, lockDuration, maxDeliveryCount, autoDeleteOnIdle, includeDeclaration: true, additionalPropertiesXml);
 
-    private static string BuildTopicEntryCore(string topicName, int subscriptionCount, bool requiresDuplicateDetection, bool includeDeclaration)
+    private static string BuildTopicEntryCore(
+        string topicName,
+        int subscriptionCount,
+        bool requiresDuplicateDetection,
+        bool includeDeclaration,
+        string? userMetadata = null,
+        string? additionalPropertiesXml = null)
     {
         var builder = new StringBuilder();
         if (includeDeclaration)
@@ -171,6 +182,11 @@ internal static class SnsManagementClientTestSupport
         builder.Append("<title type=\"text\">").Append(topicName).Append("</title>");
         builder.Append("<content type=\"application/xml\"><TopicDescription xmlns=\"http://schemas.microsoft.com/netservices/2010/10/servicebus/connect\">");
         builder.Append("<SubscriptionCount>").Append(subscriptionCount).Append("</SubscriptionCount>");
+        builder.Append(additionalPropertiesXml);
+        if (userMetadata is not null)
+        {
+            builder.Append("<UserMetadata>").Append(WebUtility.HtmlEncode(userMetadata)).Append("</UserMetadata>");
+        }
         builder.Append("<RequiresDuplicateDetection>").Append(requiresDuplicateDetection ? "true" : "false").Append("</RequiresDuplicateDetection>");
         builder.Append("</TopicDescription></content></entry>");
         return builder.ToString();
@@ -223,14 +239,17 @@ internal static class SnsManagementClientTestSupport
             },
             SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
 
-    public static ServiceBusTopicsManagementClient NewManagementClient(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder)
+    public static ServiceBusTopicsManagementClient NewManagementClient(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync = null)
     {
         var handler = new ScriptedHandler(responder);
         var httpClient = new AzureHttpClient(handler, ownsHandler: false);
         return new ServiceBusTopicsManagementClient(
             httpClient,
             new TestAuthenticator(),
-            NullLogger<ServiceBusTopicsManagementClient>.Instance);
+            NullLogger<ServiceBusTopicsManagementClient>.Instance,
+            delayAsync);
     }
 
     private sealed class TestAuthenticator : IServiceBusTopicsAuthenticator

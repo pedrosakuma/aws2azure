@@ -2,13 +2,14 @@ service: sns
 operation: GetTopicAttributes
 azure_equivalent: Azure Service Bus topic description
 status: partial
+disposition: by_design
 sub_features:
 - name: Topic property projection
   status: implemented
-  notes: Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, and maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface.
+  notes: Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface, and projects DisplayName / Policy / DeliveryPolicy from TopicDescription.UserMetadata.
 behavior_differences:
-- DisplayName is always returned as an empty string because Service Bus topics do not expose an SNS-style display name.
-- Policy is returned as '{}' and DeliveryPolicy / EffectiveDeliveryPolicy are omitted because this slice does not translate SNS policies onto Azure authorization or delivery settings.
+- DisplayName, Policy, DeliveryPolicy, and EffectiveDeliveryPolicy come from aws2azure metadata stored in Service Bus TopicDescription.UserMetadata rather than native Service Bus topic fields.
+- Policy and DeliveryPolicy remain metadata-only compatibility state. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry policies, so GetTopicAttributes surfaces what aws2azure stored rather than a Service Bus-native enforcement model.
 - SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.
 - KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
 - FifoTopic is inferred from a '.fifo' suffix or RequiresDuplicateDetection=true, and ContentBasedDeduplication is mapped directly from RequiresDuplicateDetection. This is only an approximation of SNS FIFO semantics.
@@ -16,4 +17,3 @@ behavior_differences:
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
-disposition: by_design

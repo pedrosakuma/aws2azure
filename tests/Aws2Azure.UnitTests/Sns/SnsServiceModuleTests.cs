@@ -56,7 +56,7 @@ public class SnsServiceModuleTests
     public async Task SetTopicAttributes_is_no_longer_stubbed()
     {
         var module = NewModule();
-        var ctx = NewContext("Action=SetTopicAttributes&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&AttributeName=DisplayName&AttributeValue=test");
+        var ctx = NewContext("Action=SetTopicAttributes&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&AttributeName=KmsMasterKeyId&AttributeValue=test");
         ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
 
         await module.HandleAsync(ctx);
@@ -249,7 +249,7 @@ public class SnsServiceModuleTests
 
     private sealed class NoopManagementClient : IServiceBusTopicsManagementClient
     {
-        public ValueTask CreateTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
+        public ValueTask CreateTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, ServiceBusTopicDescription description, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
         public ValueTask DeleteTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
@@ -260,6 +260,9 @@ public class SnsServiceModuleTests
 
         public ValueTask<ServiceBusTopicDescription?> GetTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, CancellationToken cancellationToken)
             => ValueTask.FromResult<ServiceBusTopicDescription?>(null);
+
+        public ValueTask UpdateTopicAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, ServiceBusTopicDescription description, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
 
         public ValueTask CreateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string userMetadata, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
@@ -274,6 +277,12 @@ public class SnsServiceModuleTests
             => ValueTask.FromResult<ServiceBusSubscriptionDescription?>(null);
 
         public ValueTask UpdateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, ServiceBusSubscriptionDescription description, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask PutSubscriptionRuleAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, ServiceBusSubscriptionRuleDescription description, bool updateExisting, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DeleteSubscriptionRuleAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string ruleName, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
     }
 

@@ -116,6 +116,62 @@ public sealed class SnsPublishServiceBusTests
         }
     }
 
+    [SkippableFact]
+    public async Task Publish_honors_message_attribute_filter_policies()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateTopicAsync(client, "sns-filter-attr").ConfigureAwait(false);
+        var blueSubscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var greenSubscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var topicName = topicArn.Split(':', 6)[5];
+        var blueSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(blueSubscriptionArn);
+        var greenSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(greenSubscriptionArn);
+        try
+        {
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var blueReceiver = serviceBusClient.CreateReceiver(topicName, blueSubscriptionName);
+            await using var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName);
+
+            var setBlue = await SnsQueryApiClient.SetSubscriptionAttributeAsync(
+                client,
+                blueSubscriptionArn,
+                "FilterPolicy",
+                "{\"tenant\":[\"blue\"]}").ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setBlue, HttpStatusCode.OK, "SetSubscriptionAttributes[blue]");
+
+            var setGreen = await SnsQueryApiClient.SetSubscriptionAttributeAsync(
+                client,
+                greenSubscriptionArn,
+                "FilterPolicy",
+                "{\"tenant\":[\"green\"]}").ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(setGreen, HttpStatusCode.OK, "SetSubscriptionAttributes[green]");
+
+            var body = "filter-attr-" + Guid.NewGuid().ToString("N");
+            var publish = await SnsQueryApiClient.SendActionAsync(client, "Publish",
+            [
+                new("TopicArn", topicArn),
+                new("Message", body),
+                new("MessageAttributes.entry.1.Name", "tenant"),
+                new("MessageAttributes.entry.1.Value.DataType", "String"),
+                new("MessageAttributes.entry.1.Value.StringValue", "blue"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "Publish[filter attr]");
+
+            var blueMessages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(blueReceiver, 1, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+            Assert.Single(blueMessages);
+            Assert.Equal(body, blueMessages[0].Body.ToString());
+            await SnsServiceBusTestSupport.CompleteMessagesAsync(blueReceiver, blueMessages).ConfigureAwait(false);
+
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(greenReceiver, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
+    }
+
     private ServiceBusClient CreateServiceBusClient()
         => new(
             _fixture.CreateServiceBusConnectionString(),

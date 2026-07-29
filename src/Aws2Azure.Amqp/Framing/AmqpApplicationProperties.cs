@@ -1,4 +1,6 @@
 using Aws2Azure.Amqp.Codec;
+using Aws2Azure.Core.Buffers;
+using System.Text;
 
 namespace Aws2Azure.Amqp.Framing;
 
@@ -6,8 +8,8 @@ namespace Aws2Azure.Amqp.Framing;
 /// AMQP 1.0 <c>application-properties</c> message section (§3.2.5,
 /// descriptor 0x74). A described map whose keys are strings and whose
 /// values are AMQP primitive types. Slice 5c models the subset CBS
-/// uses: <see cref="string"/>, 32-bit <see cref="int"/>, and 32-bit
-/// <see cref="uint"/> values.
+/// uses: <see cref="string"/>, <see cref="bool"/>, 32/64-bit integers,
+/// <see cref="uint"/>, and <see cref="double"/> values.
 /// Other value types are surfaced as <c>null</c> on read so a peer
 /// extension won't crash the decoder.
 /// </summary>
@@ -17,8 +19,8 @@ internal static class AmqpApplicationProperties
 
     /// <summary>
     /// Writes a described map. <paramref name="pairs"/> values must be
-    /// <see cref="string"/>, boxed <see cref="int"/>, or boxed
-    /// <see cref="uint"/>. Unsupported types throw
+    /// <see cref="string"/>, boxed <see cref="bool"/>, boxed integers,
+    /// boxed <see cref="uint"/>, or boxed <see cref="double"/>. Unsupported types throw
     /// <see cref="ArgumentException"/>.
     /// </summary>
     public static void Write(
@@ -26,26 +28,45 @@ internal static class AmqpApplicationProperties
         IReadOnlyCollection<KeyValuePair<string, object?>> pairs,
         out int written)
     {
-        Span<byte> body = stackalloc byte[Performatives.ScratchSize];
-        int o = 0;
+        using var body = new PooledByteBufferWriter(Math.Max(256, pairs.Count * 64));
         foreach (var kv in pairs)
         {
-            AmqpVariableWriter.WriteString(body[o..], kv.Key, out var l); o += l;
-            WriteValue(body[o..], kv.Value, out l); o += l;
+            var keySpan = body.GetSpan(Math.Max(8, kv.Key.Length * 4));
+            AmqpVariableWriter.WriteString(keySpan, kv.Key, out var keyLength);
+            body.Advance(keyLength);
+
+            var valueSpan = body.GetSpan(GetValueSizeHint(kv.Value));
+            WriteValue(valueSpan, kv.Value, out var valueLength);
+            body.Advance(valueLength);
         }
 
-        Span<byte> mapBytes = stackalloc byte[Performatives.ScratchSize];
-        AmqpCompoundWriter.WriteMap(mapBytes, body[..o], pairs.Count, out var mapLen);
+        using var mapBytes = new PooledByteBufferWriter(Math.Max(256, body.WrittenMemory.Length + 16));
+        var mapSpan = mapBytes.GetSpan(body.WrittenMemory.Length + 16);
+        AmqpCompoundWriter.WriteMap(mapSpan, body.WrittenMemory.Span, pairs.Count, out var mapLen);
+        mapBytes.Advance(mapLen);
 
         // Encode the described type manually: 0x00 + descriptor (ulong) + map.
         int w = 0;
         destination[w++] = AmqpFormatCode.Described;
         AmqpPrimitiveWriter.WriteULong(destination[w..], Descriptor, out var descLen);
         w += descLen;
-        mapBytes[..mapLen].CopyTo(destination[w..]);
+        mapBytes.WrittenMemory.Span.CopyTo(destination[w..]);
         w += mapLen;
         written = w;
     }
+
+    private static int GetValueSizeHint(object? value)
+        => value switch
+        {
+            null => 1,
+            string s => Math.Max(8, Encoding.UTF8.GetByteCount(s) + 5),
+            bool => 2,
+            int => 5,
+            uint => 5,
+            long => 9,
+            double => 9,
+            _ => 32,
+        };
 
     /// <summary>
     /// Reads a described map. Returns a dictionary with string and int
@@ -87,11 +108,20 @@ internal static class AmqpApplicationProperties
             case string s:
                 AmqpVariableWriter.WriteString(destination, s, out written);
                 return;
+            case bool b:
+                AmqpPrimitiveWriter.WriteBoolean(destination, b, out written);
+                return;
             case int i:
                 AmqpPrimitiveWriter.WriteInt(destination, i, out written);
                 return;
+            case long l:
+                AmqpPrimitiveWriter.WriteLong(destination, l, out written);
+                return;
             case uint u:
                 AmqpPrimitiveWriter.WriteUInt(destination, u, out written);
+                return;
+            case double d:
+                AmqpPrimitiveWriter.WriteDouble(destination, d, out written);
                 return;
             default:
                 throw new ArgumentException(
@@ -119,6 +149,14 @@ internal static class AmqpApplicationProperties
                 o += len;
                 return n;
             }
+            case AmqpFormatCode.Boolean:
+            case AmqpFormatCode.BooleanTrue:
+            case AmqpFormatCode.BooleanFalse:
+            {
+                var b = AmqpPrimitiveReader.ReadBoolean(els[o..], out var len);
+                o += len;
+                return b;
+            }
             case AmqpFormatCode.Short:
             {
                 var n = AmqpPrimitiveReader.ReadShort(els[o..], out var len);
@@ -138,6 +176,19 @@ internal static class AmqpApplicationProperties
                 var n = AmqpPrimitiveReader.ReadUInt(els[o..], out var len);
                 o += len;
                 return n;
+            }
+            case AmqpFormatCode.Long:
+            case 0x55: // smalllong
+            {
+                var n = AmqpPrimitiveReader.ReadLong(els[o..], out var len);
+                o += len;
+                return n;
+            }
+            case AmqpFormatCode.Double:
+            {
+                var d = AmqpPrimitiveReader.ReadDouble(els[o..], out var len);
+                o += len;
+                return d;
             }
             default:
             {

@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
@@ -11,14 +13,11 @@ namespace Aws2Azure.UnitTests.Sns;
 public sealed class SetTopicAttributesHandlerTests
 {
     [Theory]
-    [InlineData("DisplayName")]
-    [InlineData("Policy")]
-    [InlineData("DeliveryPolicy")]
     [InlineData("EffectiveDeliveryPolicy")]
     [InlineData("KmsMasterKeyId")]
     [InlineData("SignatureVersion")]
     [InlineData("TracingConfig")]
-    public async Task HandleAsync_returns_success_for_no_op_attributes(string attributeName)
+    public async Task HandleAsync_returns_success_for_remaining_no_op_attributes(string attributeName)
     {
         var context = SnsManagementClientTestSupport.NewContext();
         await SetTopicAttributesHandler.HandleAsync(
@@ -30,7 +29,69 @@ public sealed class SetTopicAttributesHandlerTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.Contains("<SetTopicAttributesResponse", SnsManagementClientTestSupport.ReadBody(context));
-        Assert.DoesNotContain("SetTopicAttributesResult", SnsManagementClientTestSupport.ReadBody(context));
+    }
+
+    [Theory]
+    [InlineData("DisplayName", "Orders")]
+    [InlineData("Policy", "{ \"Statement\": [] }")]
+    [InlineData("DeliveryPolicy", "{ \"healthyRetryPolicy\": { \"numRetries\": 3 } }")]
+    public async Task HandleAsync_updates_metadata_backed_topic_attributes(string attributeName, string attributeValue)
+    {
+        string? updateBody = null;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildTopicEntry(
+                            "orders",
+                            subscriptionCount: 2,
+                            requiresDuplicateDetection: false,
+                            userMetadata: JsonSerializer.Serialize(
+                                new SnsTopicMetadata
+                                {
+                                    DisplayName = "Old",
+                                    PolicyJson = "{\"Statement\":[{\"Sid\":\"old\"}]}",
+                                },
+                                SnsTopicJsonContext.Default.SnsTopicMetadata),
+                            additionalPropertiesXml:
+                                "<DefaultMessageTimeToLive>P14D</DefaultMessageTimeToLive>"
+                                + "<EnableBatchedOperations>true</EnableBatchedOperations>"
+                                + "<CreatedAt>2026-07-22T00:00:00Z</CreatedAt>"
+                                + "<UpdatedAt>2026-07-22T00:00:01Z</UpdatedAt>"
+                                + "<CountDetails><ActiveMessageCount>0</ActiveMessageCount></CountDetails>"),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+                response.Headers.ETag = new EntityTagHeaderValue("\"etag-topic\"");
+                return response;
+            }
+
+            updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.Equal(HttpMethod.Put, request.Method);
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult(attributeName, attributeValue),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(updateBody);
+        var metadata = JsonSerializer.Deserialize(
+            SnsManagementClientTestSupport.ReadElementValue(updateBody, "UserMetadata"),
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+        Assert.NotNull(metadata);
+        Assert.Equal(attributeName == "DisplayName" ? "Orders" : "Old", metadata!.DisplayName);
+        Assert.Equal(attributeName == "Policy" ? "{\"Statement\":[]}" : "{\"Statement\":[{\"Sid\":\"old\"}]}", metadata.PolicyJson);
+        Assert.Equal(attributeName == "DeliveryPolicy" ? "{\"healthyRetryPolicy\":{\"numRetries\":3}}" : null, metadata.DeliveryPolicyJson);
     }
 
     [Fact]

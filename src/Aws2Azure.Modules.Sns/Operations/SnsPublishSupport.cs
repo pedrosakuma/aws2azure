@@ -203,6 +203,18 @@ internal static class SnsPublishSupport
             }
         }
 
+        if (applicationProperties is null)
+        {
+            applicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal);
+        }
+
+        SnsSubscriptionFilterSupport.AddFilterProperties(applicationProperties, messageAttributes, message);
+
+        if (applicationProperties.Count == 0)
+        {
+            applicationProperties = null;
+        }
+
         return new SnsAmqpSendMessage(
             Encoding.UTF8.GetBytes(message),
             new AmqpProperties

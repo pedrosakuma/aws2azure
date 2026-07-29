@@ -302,7 +302,7 @@ _No remaining feasible backlog is documented for this service._
 - Operation [DeleteTopic](sns.md#deletetopic) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 - Operation [ListTopics](sns.md#listtopics) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 - Operation [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) — [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
-- Sub-feature [CreateTopic](sns.md#createtopic) / Attribute translation — [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
+- Sub-feature [SetSubscriptionAttributes](sns.md#setsubscriptionattributes) / Service Bus rule translation for supported filter policies — [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
 - Design gap [FIFO topics are deferred](design-gaps.md#sns-fifo-topics-are-deferred) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 
 ### Workload maturity
