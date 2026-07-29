@@ -153,6 +153,7 @@ internal static class SetSubscriptionAttributesHandler
         };
         var applyingFirstFilter = !SnsSubscriptionRuleSupport.RequiresCustomRule(previousMetadata)
                                   && SnsSubscriptionRuleSupport.RequiresCustomRule(metadata);
+        var updatedExistingCustomRule = false;
         var createdCustomRule = false;
         var deletedDefaultRule = false;
 
@@ -178,6 +179,7 @@ internal static class SetSubscriptionAttributesHandler
                             updateExisting: true,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    updatedExistingCustomRule = true;
                 }
                 catch (ServiceBusTopicsManagementException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.PreconditionFailed)
                 {
@@ -193,18 +195,15 @@ internal static class SetSubscriptionAttributesHandler
                     createdCustomRule = true;
                 }
 
-                if (existingSubscription.HasDefaultRuleDescription)
-                {
-                    await managementClient.DeleteSubscriptionRuleAsync(
-                            credentials,
-                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            topicName,
-                            subscriptionId,
-                            SnsSubscriptionFilterSupport.DefaultRuleName,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    deletedDefaultRule = true;
-                }
+                await managementClient.DeleteSubscriptionRuleAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        topicName,
+                        subscriptionId,
+                        SnsSubscriptionFilterSupport.DefaultRuleName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                deletedDefaultRule = true;
             }
             else if (SnsSubscriptionRuleSupport.RequiresCustomRule(previousMetadata)
                      || SnsSubscriptionRuleSupport.RequiresCustomRule(metadata))
@@ -254,16 +253,31 @@ internal static class SetSubscriptionAttributesHandler
 
             try
             {
-                if (createdCustomRule && !deletedDefaultRule)
+                if (!deletedDefaultRule)
                 {
-                    await managementClient.DeleteSubscriptionRuleAsync(
-                            credentials,
-                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            topicName,
-                            subscriptionId,
-                            SnsSubscriptionFilterSupport.CustomRuleName,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    if (createdCustomRule)
+                    {
+                        await managementClient.DeleteSubscriptionRuleAsync(
+                                credentials,
+                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                topicName,
+                                subscriptionId,
+                                SnsSubscriptionFilterSupport.CustomRuleName,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else if (updatedExistingCustomRule)
+                    {
+                        await managementClient.PutSubscriptionRuleAsync(
+                                credentials,
+                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                topicName,
+                                subscriptionId,
+                                new ServiceBusSubscriptionRuleDescription(SnsSubscriptionFilterSupport.CustomRuleName, null),
+                                updateExisting: true,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
             }
             catch
