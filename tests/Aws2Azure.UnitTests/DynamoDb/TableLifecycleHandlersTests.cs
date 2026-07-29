@@ -463,6 +463,52 @@ public class TableLifecycleHandlersTests
     }
 
     [Fact]
+    public async Task DescribeTable_reports_zero_secondary_index_metrics_for_empty_user_table()
+    {
+        var (ctx, body) = NewCtx();
+        var req = Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}");
+
+        var metaJson = "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\","
+            + "\"tableName\":\"orders\",\"creationDateTime\":1700000000,"
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"customer\",\"type\":\"S\"},{\"name\":\"lsi\",\"type\":\"S\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+            + "\"globalSecondaryIndexes\":[{\"indexName\":\"byCustomer\",\"keySchema\":[{\"name\":\"customer\",\"keyType\":\"HASH\"}],\"projectionType\":\"ALL\"}],"
+            + "\"localSecondaryIndexes\":[{\"indexName\":\"byLsi\",\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"lsi\",\"keyType\":\"RANGE\"}],\"projectionType\":\"ALL\"}]}";
+
+        var coll = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"id\":\"orders\"}"),
+        };
+        coll.Headers.TryAddWithoutValidation("x-ms-resource-usage", "documentsCount=1;documentsSize=1;collectionSize=2;");
+
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                coll,
+                new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(metaJson, Encoding.UTF8, "application/json") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await TableLifecycleHandlers.HandleDescribeTableAsync(ctx, req, cosmos, CancellationToken.None);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var doc = JsonDocument.Parse(ReadResponse(body));
+        var table = doc.RootElement.GetProperty("Table");
+        Assert.Equal(0, table.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, table.GetProperty("TableSizeBytes").GetInt64());
+
+        var gsi = Assert.Single(table.GetProperty("GlobalSecondaryIndexes").EnumerateArray());
+        Assert.Equal(0, gsi.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, gsi.GetProperty("IndexSizeBytes").GetInt64());
+
+        var lsi = Assert.Single(table.GetProperty("LocalSecondaryIndexes").EnumerateArray());
+        Assert.Equal(0, lsi.GetProperty("ItemCount").GetInt64());
+        Assert.Equal(0, lsi.GetProperty("IndexSizeBytes").GetInt64());
+    }
+
+    [Fact]
     public async Task DescribeTable_surfaces_metadata_read_errors()
     {
         var (ctx, body) = NewCtx();

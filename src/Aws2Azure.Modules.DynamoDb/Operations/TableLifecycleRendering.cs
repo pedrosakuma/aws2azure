@@ -39,9 +39,11 @@ internal static partial class TableLifecycleHandlers
                 ? null
                 : new BillingModeSummary { BillingMode = meta.BillingMode },
             GlobalSecondaryIndexes = BuildIndexDescriptions(
-                meta.TableName, meta.GlobalSecondaryIndexes, isGlobal: true, indexMetrics),
+                meta.TableName, meta.GlobalSecondaryIndexes, isGlobal: true, indexMetrics,
+                zeroMetricsForEmptyUserTable: tableMetrics?.ItemCount == 0),
             LocalSecondaryIndexes = BuildIndexDescriptions(
-                meta.TableName, meta.LocalSecondaryIndexes, isGlobal: false, indexMetrics),
+                meta.TableName, meta.LocalSecondaryIndexes, isGlobal: false, indexMetrics,
+                zeroMetricsForEmptyUserTable: tableMetrics?.ItemCount == 0),
         };
     }
 
@@ -49,7 +51,8 @@ internal static partial class TableLifecycleHandlers
         string tableName,
         List<TableIndexDefinition>? indexes,
         bool isGlobal,
-        IReadOnlyDictionary<string, SecondaryIndexLiveMetrics>? indexMetrics)
+        IReadOnlyDictionary<string, SecondaryIndexLiveMetrics>? indexMetrics,
+        bool zeroMetricsForEmptyUserTable)
     {
         if (indexes is null || indexes.Count == 0) return null;
         var dst = new List<SecondaryIndexDescriptionDto>(indexes.Count);
@@ -60,7 +63,11 @@ internal static partial class TableLifecycleHandlers
                 keys.Add(new KeySchemaElementDto { AttributeName = k.Name, KeyType = k.KeyType });
 
             var liveMetrics = default(SecondaryIndexLiveMetrics);
-            indexMetrics?.TryGetValue(idx.IndexName, out liveMetrics);
+            if (!(indexMetrics?.TryGetValue(idx.IndexName, out liveMetrics) ?? false)
+                && zeroMetricsForEmptyUserTable)
+            {
+                liveMetrics = new SecondaryIndexLiveMetrics(0, 0);
+            }
             dst.Add(new SecondaryIndexDescriptionDto
             {
                 IndexName = idx.IndexName,
