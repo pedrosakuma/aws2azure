@@ -239,14 +239,17 @@ internal static class SnsManagementClientTestSupport
             },
             SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
 
-    public static ServiceBusTopicsManagementClient NewManagementClient(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder)
+    public static ServiceBusTopicsManagementClient NewManagementClient(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync = null)
     {
         var handler = new ScriptedHandler(responder);
         var httpClient = new AzureHttpClient(handler, ownsHandler: false);
         return new ServiceBusTopicsManagementClient(
             httpClient,
             new TestAuthenticator(),
-            NullLogger<ServiceBusTopicsManagementClient>.Instance);
+            NullLogger<ServiceBusTopicsManagementClient>.Instance,
+            delayAsync);
     }
 
     private sealed class TestAuthenticator : IServiceBusTopicsAuthenticator

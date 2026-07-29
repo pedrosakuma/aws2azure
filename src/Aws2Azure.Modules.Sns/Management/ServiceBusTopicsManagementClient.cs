@@ -103,15 +103,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
     public const string LongIdleIso8601 = "P10675199DT2H48M5.4775807S";
     public const string DefaultLockDurationIso8601 = "PT30S";
     public const int DefaultMaxDeliveryCount = 10;
+    private const int AuthorizationRetryAttempts = 3;
 
     private readonly AzureHttpClient _httpClient;
     private readonly IServiceBusTopicsAuthenticator _authenticator;
     private readonly ILogger<ServiceBusTopicsManagementClient> _logger;
+    private readonly Func<TimeSpan, CancellationToken, ValueTask> _delayAsync;
 
     public ServiceBusTopicsManagementClient(
         AzureHttpClient httpClient,
         IServiceBusTopicsAuthenticator authenticator,
-        ILogger<ServiceBusTopicsManagementClient> logger)
+        ILogger<ServiceBusTopicsManagementClient> logger,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(authenticator);
@@ -119,6 +122,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         _httpClient = httpClient;
         _authenticator = authenticator;
         _logger = logger;
+        _delayAsync = delayAsync ?? DelayAsyncDefault;
     }
 
     public async ValueTask CreateTopicAsync(
@@ -135,13 +139,20 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, description.TopicName);
         SnsLog.CreatingTopic(_logger, namespaceFqdn, description.TopicName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(CreateTopicAsync),
+                namespaceFqdn,
+                description.TopicName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+                    request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
         {
@@ -175,10 +186,17 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
-        using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(DeleteTopicAsync),
+                namespaceFqdn,
+                topicName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
         {
@@ -205,11 +223,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildListTopicsUri(credentials, namespaceFqdn, skip, top);
         SnsLog.ListingTopics(_logger, namespaceFqdn, skip, top);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(ListTopicsAsync),
+                namespaceFqdn,
+                "$Resources/topics",
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
@@ -236,11 +261,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, topicName);
         SnsLog.GettingTopic(_logger, namespaceFqdn, topicName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(GetTopicAsync),
+                namespaceFqdn,
+                topicName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -283,14 +315,21 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildTopicUri(credentials, namespaceFqdn, description.TopicName);
         SnsLog.UpdatingSubscription(_logger, namespaceFqdn, description.TopicName, "$topic");
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Headers.TryAddWithoutValidation("If-Match", "*");
-        request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(UpdateTopicAsync),
+                namespaceFqdn,
+                description.TopicName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    request.Headers.TryAddWithoutValidation("If-Match", "*");
+                    request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+                    request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {
@@ -319,14 +358,21 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         SnsLog.CreatingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        var requestBody = ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(userMetadata);
-        request.Content = new StringContent(requestBody, Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(CreateSubscriptionAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + subscriptionName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    var requestBody = ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(userMetadata);
+                    request.Content = new StringContent(requestBody, Encoding.UTF8, "application/atom+xml");
+                    request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         var respBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
@@ -360,10 +406,17 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         }
 
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
-        using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(DeleteSubscriptionAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + subscriptionName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
         {
@@ -392,11 +445,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildListSubscriptionsUri(credentials, namespaceFqdn, topicName, skip, top);
         SnsLog.ListingSubscriptions(_logger, namespaceFqdn, topicName, skip, top);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(ListSubscriptionsAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions",
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
@@ -425,11 +485,18 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, subscriptionName);
         SnsLog.GettingSubscription(_logger, namespaceFqdn, topicName, subscriptionName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(GetSubscriptionAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + subscriptionName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -478,14 +545,21 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionUri(credentials, namespaceFqdn, topicName, description.SubscriptionName);
         SnsLog.UpdatingSubscription(_logger, namespaceFqdn, topicName, description.SubscriptionName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Headers.TryAddWithoutValidation("If-Match", "*");
-        request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(UpdateSubscriptionAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + description.SubscriptionName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    request.Headers.TryAddWithoutValidation("If-Match", "*");
+                    request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+                    request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {
@@ -514,17 +588,25 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(description.RuleName);
 
         var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, description.RuleName);
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        if (updateExisting)
-        {
-            request.Headers.TryAddWithoutValidation("If-Match", "*");
-        }
-        request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionRuleDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(PutSubscriptionRuleAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + subscriptionName + "/rules/" + description.RuleName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
+                    if (updateExisting)
+                    {
+                        request.Headers.TryAddWithoutValidation("If-Match", "*");
+                    }
 
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+                    request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionRuleDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
+                    request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created)
         {
@@ -551,10 +633,17 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         ArgumentException.ThrowIfNullOrWhiteSpace(ruleName);
 
         var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, ruleName);
-        using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
-        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
-
-        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+        using var response = await SendWithAuthorizationRetryAsync(
+                nameof(DeleteSubscriptionRuleAsync),
+                namespaceFqdn,
+                topicName + "/subscriptions/" + subscriptionName + "/rules/" + ruleName,
+                cancellationToken,
+                async ct =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
+                    await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
+                    return request;
+                })
             .ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
         {
@@ -565,6 +654,41 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         SnsLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionRuleAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName + "/rules/" + ruleName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
+
+    private async Task<HttpResponseMessage> SendWithAuthorizationRetryAsync(
+        string operationName,
+        string namespaceFqdn,
+        string entityPath,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task<HttpRequestMessage>> createRequestAsync)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            using var request = await createRequestAsync(cancellationToken).ConfigureAwait(false);
+            var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+                .ConfigureAwait(false);
+            if (!ShouldRetryAuthorizationFailure(response.StatusCode, attempt))
+            {
+                return response;
+            }
+
+            response.Dispose();
+
+            // Real Azure can briefly return 401/403 on freshly assigned Service Bus RBAC roles
+            // before authorization caches converge, so retry a small bounded number of times.
+            await _delayAsync(GetAuthorizationRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static bool ShouldRetryAuthorizationFailure(HttpStatusCode statusCode, int attempt)
+        => attempt < AuthorizationRetryAttempts
+            && (statusCode == HttpStatusCode.Unauthorized || statusCode == HttpStatusCode.Forbidden);
+
+    private static TimeSpan GetAuthorizationRetryDelay(int attempt)
+        => TimeSpan.FromSeconds(attempt);
+
+    private static ValueTask DelayAsyncDefault(TimeSpan delay, CancellationToken cancellationToken)
+        => new(Task.Delay(delay, cancellationToken));
 
     private static string? TryGetEtag(HttpResponseMessage response)
     {

@@ -288,7 +288,8 @@ public sealed class SetSubscriptionAttributesHandlerTests
         var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
         var storedMetadata = originalMetadata;
         var rulePutRequests = 0;
-        var ruleDeleteRequests = 0;
+        var defaultRuleDeleteRequests = 0;
+        var customRuleDeleteRequests = 0;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             if (request.Method == HttpMethod.Get)
@@ -306,8 +307,14 @@ public sealed class SetSubscriptionAttributesHandlerTests
             {
                 if (request.Method == HttpMethod.Delete)
                 {
-                    ruleDeleteRequests++;
-                    return new HttpResponseMessage(HttpStatusCode.Forbidden);
+                    if (request.RequestUri.AbsoluteUri.Contains("/rules/%24Default", StringComparison.Ordinal))
+                    {
+                        defaultRuleDeleteRequests++;
+                        return new HttpResponseMessage(HttpStatusCode.Forbidden);
+                    }
+
+                    customRuleDeleteRequests++;
+                    return new HttpResponseMessage(HttpStatusCode.OK);
                 }
 
                 rulePutRequests++;
@@ -328,7 +335,8 @@ public sealed class SetSubscriptionAttributesHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
-        Assert.Equal(2, ruleDeleteRequests);
+        Assert.Equal(3, defaultRuleDeleteRequests);
+        Assert.Equal(1, customRuleDeleteRequests);
         Assert.Equal(1, rulePutRequests);
         Assert.Equal(originalMetadata, storedMetadata);
     }

@@ -279,6 +279,7 @@ public sealed class SubscribeHandlerTests
             filterPolicyScope: SnsSubscriptionMetadata.MessageAttributesScope);
         string? fallbackRuleBody = null;
         var requests = 0;
+        var defaultRuleDeleteRequests = 0;
         var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
         {
             requests++;
@@ -309,10 +310,10 @@ public sealed class SubscribeHandlerTests
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
-            if (requests == 4)
+            if (request.Method == HttpMethod.Delete
+                && request.RequestUri!.ToString().Contains("/rules/%24Default", StringComparison.Ordinal))
             {
-                Assert.Equal(HttpMethod.Delete, request.Method);
-                Assert.Contains("/rules/%24Default", request.RequestUri!.ToString());
+                defaultRuleDeleteRequests++;
                 return new HttpResponseMessage(HttpStatusCode.Forbidden);
             }
 
@@ -338,7 +339,8 @@ public sealed class SubscribeHandlerTests
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
         Assert.NotNull(fallbackRuleBody);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", fallbackRuleBody);
-        Assert.Equal(5, requests);
+        Assert.Equal(3, defaultRuleDeleteRequests);
+        Assert.Equal(7, requests);
     }
 
     private static SnsParseResult NewParseResult(params (string Key, string Value)[] pairs)
