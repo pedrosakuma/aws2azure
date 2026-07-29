@@ -20,6 +20,11 @@ sub_features:
   status: implemented
 - name: Per-entry MessageDeduplicationId / MessageGroupId (FIFO)
   status: implemented
+  verified_real_azure:
+    date: '2026-07-28'
+    evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/30333267557
+    workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/30333267557
+  notes: Reviewed real-Azure evidence covers ordered FIFO batch send plus replay of the identical entry set, confirming per-entry MessageGroupId routing and deduplication before the session-bound receive path drains the group.
 - name: Successful / Failed result partitioning
   status: implemented
   notes: See behavior_differences — SB batch is atomic.
@@ -31,7 +36,7 @@ behavior_differences:
 - Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage. The 1 MiB aggregate cap is computed over body + attribute name/type/value bytes per the SQS quota docs (raised from 256 KiB in August 2025).
 - Payloads larger than 1 MiB require the AWS Extended Client Library (S3-backed pointer); the same caveat as SendMessage applies — the pointer flows through unchanged and resolves against the proxy's S3 → Blob translation.
 - Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO).
-- Standard-queue batch send is validated against real Azure Service Bus with per-entry result evidence; FIFO session receive remains a separate unresolved gap.
+- Standard-queue batch send is validated against real Azure Service Bus with per-entry result evidence; FIFO batch send and downstream session receive are sealed by the sqs-fifo-amqp fifo-amqp-boundaries scenario.
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html
 - https://learn.microsoft.com/rest/api/servicebus/send-message-batch
