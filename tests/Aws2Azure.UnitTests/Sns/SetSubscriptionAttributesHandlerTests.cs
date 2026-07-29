@@ -245,7 +245,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("\"etag-unrelated\"", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
@@ -439,7 +439,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Equal(1, customRuleDeleteRequests);
         Assert.Equal(2, rulePutRequests);
         Assert.Equal(originalMetadata, storedMetadata);
-        Assert.Equal(new[] { "\"etag-rollback\"", "\"etag-rollback\"" }, ifMatchValues);
+        Assert.Equal(new[] { "*", "*" }, ifMatchValues);
     }
 
     private static ServiceBusTopicsManagementClient NewStatefulManagementClient(Func<string> getMetadata, Action<string> setMetadata)
@@ -469,7 +469,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
             }
 
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("\"etag-stateful\"", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             setMetadata(SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata"));
             return new HttpResponseMessage(HttpStatusCode.OK);

@@ -345,7 +345,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                 {
                     var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
                     request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-                    request.Headers.TryAddWithoutValidation("If-Match", string.IsNullOrWhiteSpace(description.ETag) ? "*" : description.ETag);
+                    request.Headers.TryAddWithoutValidation("If-Match", "*");
                     request.Content = new StringContent(ServiceBusAtomXml.BuildTopicDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
                     request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
                     await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);
@@ -596,7 +596,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                 {
                     var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
                     request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-                    request.Headers.TryAddWithoutValidation("If-Match", string.IsNullOrWhiteSpace(description.ETag) ? "*" : description.ETag);
+                    request.Headers.TryAddWithoutValidation("If-Match", "*");
                     request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
                     request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
                     await _authenticator.AuthenticateAsync(request, credentials, ct).ConfigureAwait(false);

@@ -71,7 +71,7 @@ public sealed class SetTopicAttributesHandlerTests
 
             updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             Assert.Equal(HttpMethod.Put, request.Method);
-            Assert.Equal("\"etag-topic\"", Assert.Single(request.Headers.GetValues("If-Match")));
+            Assert.Equal("*", Assert.Single(request.Headers.GetValues("If-Match")));
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
 
