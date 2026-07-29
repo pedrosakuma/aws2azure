@@ -108,38 +108,4 @@ internal static class SnsServiceBusTestSupport
             response.StatusCode == expected,
             $"{operation} returned {(int)response.StatusCode}. Body={response.Body}");
     }
-
-    /// <summary>
-    /// Bounded retry for a documented, unconfirmed real-Azure quirk (#691): the very first
-    /// write to a subscription's reserved <c>$Default</c> Service Bus rule immediately after
-    /// <c>Subscribe</c> has been observed to intermittently return an authorization-denied,
-    /// empty-body response on real Azure, even though the identical request normally succeeds.
-    /// Extensive investigation (sequencing, auth path, propagation delay, an interleaved
-    /// warm-up read) ruled out every reproducible code-level cause, so this re-issues the same
-    /// AWS-shaped call a bounded number of times before failing the test. Do not widen this for
-    /// unrelated failures — it exists solely to absorb this one documented quirk.
-    /// </summary>
-    public static async Task<SnsXmlResponse> AssertStatusWithKnownRealAzureRetryAsync(
-        Func<Task<SnsXmlResponse>> send,
-        HttpStatusCode expected,
-        string operation,
-        int maxAttempts = 3,
-        TimeSpan? delayBetweenAttempts = null)
-    {
-        var delay = delayBetweenAttempts ?? TimeSpan.FromSeconds(5);
-        SnsXmlResponse response;
-        for (var attempt = 1; ; attempt++)
-        {
-            response = await send().ConfigureAwait(false);
-            if (response.StatusCode == expected || attempt >= maxAttempts)
-            {
-                break;
-            }
-
-            await Task.Delay(delay).ConfigureAwait(false);
-        }
-
-        AssertStatus(response, expected, operation);
-        return response;
-    }
 }
