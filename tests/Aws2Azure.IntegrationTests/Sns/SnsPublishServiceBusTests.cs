@@ -128,12 +128,12 @@ public sealed class SnsPublishServiceBusTests
         var topicName = topicArn.Split(':', 6)[5];
         var blueSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(blueSubscriptionArn);
         var greenSubscriptionName = SnsQueryApiClient.ExtractSubscriptionName(greenSubscriptionArn);
-        await using var serviceBusClient = CreateServiceBusClient();
-        await using var blueReceiver = serviceBusClient.CreateReceiver(topicName, blueSubscriptionName);
-        await using var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName);
-
         try
         {
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var blueReceiver = serviceBusClient.CreateReceiver(topicName, blueSubscriptionName);
+            await using var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName);
+
             var setBlue = await SnsQueryApiClient.SetSubscriptionAttributeAsync(
                 client,
                 blueSubscriptionArn,
@@ -164,8 +164,7 @@ public sealed class SnsPublishServiceBusTests
             Assert.Equal(body, blueMessages[0].Body.ToString());
             await SnsServiceBusTestSupport.CompleteMessagesAsync(blueReceiver, blueMessages).ConfigureAwait(false);
 
-            var greenMessages = await greenReceiver.ReceiveMessagesAsync(1, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            Assert.Empty(greenMessages);
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(greenReceiver, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         }
         finally
         {

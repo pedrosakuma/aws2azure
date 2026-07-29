@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure.Messaging.ServiceBus;
 using Xunit;
@@ -66,6 +67,32 @@ internal static class SnsServiceBusTestSupport
         foreach (var message in messages)
         {
             await receiver.CompleteMessageAsync(message).ConfigureAwait(false);
+        }
+    }
+
+    public static async Task AssertNoMessagesAsync(
+        ServiceBusReceiver receiver,
+        TimeSpan quietWindow,
+        TimeSpan? pollInterval = null,
+        CancellationToken cancellationToken = default)
+    {
+        var interval = pollInterval is { } value && value > TimeSpan.Zero
+            ? value
+            : TimeSpan.FromMilliseconds(250);
+        var deadline = DateTime.UtcNow + quietWindow;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var batch = await receiver.PeekMessagesAsync(maxMessages: 1, cancellationToken: cancellationToken).ConfigureAwait(false);
+            Assert.Empty(batch);
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                break;
+            }
+
+            await Task.Delay(remaining < interval ? remaining : interval, cancellationToken).ConfigureAwait(false);
         }
     }
 

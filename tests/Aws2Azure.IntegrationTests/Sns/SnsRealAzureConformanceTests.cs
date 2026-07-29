@@ -533,26 +533,29 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             ]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(setRedPolicy, HttpStatusCode.OK, "SetSubscriptionAttributes[red policy]");
 
-            await using var serviceBusClient = new ServiceBusClient(fixture.CreateServiceBusConnectionString());
-            await using var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName);
-            await using var redReceiver = serviceBusClient.CreateReceiver(topicName, redSubscriptionName);
-
             const string body = "{\"detail\":{\"tenant\":\"green\"}}";
-            var publish = await SendAsync(client, "Publish",
-            [
-                new("TopicArn", topicArn),
-                new("Message", body),
-            ]).ConfigureAwait(false);
-            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "Publish[body filter]");
+            await using (var serviceBusClient = new ServiceBusClient(fixture.CreateServiceBusConnectionString()))
+            await using (var greenReceiver = serviceBusClient.CreateReceiver(topicName, greenSubscriptionName))
+            await using (var redReceiver = serviceBusClient.CreateReceiver(topicName, redSubscriptionName))
+            {
+                var publish = await SendAsync(client, "Publish",
+                [
+                    new("TopicArn", topicArn),
+                    new("Message", body),
+                ]).ConfigureAwait(false);
+                SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "Publish[body filter]");
 
-            var greenMessages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(
-                greenReceiver, 1, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-            var greenMessage = Assert.Single(greenMessages);
-            Assert.Equal(body, greenMessage.Body.ToString());
-            await greenReceiver.CompleteMessageAsync(greenMessage, timeout.Token).ConfigureAwait(false);
+                var greenMessages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(
+                    greenReceiver, 1, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                var greenMessage = Assert.Single(greenMessages);
+                Assert.Equal(body, greenMessage.Body.ToString());
+                await greenReceiver.CompleteMessageAsync(greenMessage, timeout.Token).ConfigureAwait(false);
 
-            var redMessages = await redReceiver.ReceiveMessagesAsync(1, TimeSpan.FromSeconds(5), timeout.Token).ConfigureAwait(false);
-            Assert.Empty(redMessages);
+                await SnsServiceBusTestSupport.AssertNoMessagesAsync(
+                    redReceiver,
+                    TimeSpan.FromSeconds(5),
+                    cancellationToken: timeout.Token).ConfigureAwait(false);
+            }
         }
         finally
         {
