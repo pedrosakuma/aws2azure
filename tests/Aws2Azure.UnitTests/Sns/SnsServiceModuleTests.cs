@@ -279,7 +279,10 @@ public class SnsServiceModuleTests
         public ValueTask UpdateSubscriptionAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, ServiceBusSubscriptionDescription description, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask PutSubscriptionRuleAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, ServiceBusSubscriptionRuleDescription description, CancellationToken cancellationToken)
+        public ValueTask PutSubscriptionRuleAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, ServiceBusSubscriptionRuleDescription description, bool updateExisting, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DeleteSubscriptionRuleAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, string subscriptionName, string ruleName, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
     }
 

@@ -16,7 +16,7 @@ public sealed class SnsSubscriptionFilterSupportTests
         var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var rule, out var error);
 
         Assert.True(success, error);
-        Assert.Equal(SnsSubscriptionFilterSupport.DefaultRuleName, rule.RuleName);
+        Assert.Equal(SnsSubscriptionFilterSupport.CustomRuleName, rule.RuleName);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 = 'blue'", rule.SqlExpression);
         Assert.Contains("aws2azure_sns_attr_74656e616e74_arr = true", rule.SqlExpression);
         Assert.Contains("aws2azure_sns_attr_74656e616e74 LIKE '%\"blue\"%'", rule.SqlExpression);
@@ -94,7 +94,7 @@ public sealed class SnsSubscriptionFilterSupportTests
         var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(new SnsSubscriptionMetadata(), out var rule, out var error);
 
         Assert.True(success, error);
-        Assert.Equal(SnsSubscriptionFilterSupport.DefaultRuleName, rule.RuleName);
+        Assert.Equal(SnsSubscriptionFilterSupport.CustomRuleName, rule.RuleName);
         Assert.Null(rule.SqlExpression);
     }
 }

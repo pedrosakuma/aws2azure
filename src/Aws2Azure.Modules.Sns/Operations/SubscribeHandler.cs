@@ -50,14 +50,26 @@ internal static class SubscribeHandler
                     cancellationToken)
                 .ConfigureAwait(false);
             createdSubscription = true;
-            await managementClient.PutSubscriptionRuleAsync(
-                    credentials,
-                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    request.TopicName,
-                    subscriptionId,
-                    ruleDescription,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            if (SnsSubscriptionRuleSupport.RequiresCustomRule(request.Metadata))
+            {
+                await managementClient.PutSubscriptionRuleAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        request.TopicName,
+                        subscriptionId,
+                        ruleDescription,
+                        updateExisting: false,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await managementClient.DeleteSubscriptionRuleAsync(
+                        credentials,
+                        SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                        request.TopicName,
+                        subscriptionId,
+                        SnsSubscriptionFilterSupport.DefaultRuleName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         catch (ServiceBusTopicsManagementException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
@@ -84,19 +96,52 @@ internal static class SubscribeHandler
             }
             else
             {
+                var existingHadDefaultRule = HasDefaultRuleDescription(existing);
+                var createdCustomRule = false;
                 try
                 {
-                    await managementClient.PutSubscriptionRuleAsync(
-                            credentials,
-                            SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            request.TopicName,
-                            subscriptionId,
-                            ruleDescription,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    if (SnsSubscriptionRuleSupport.RequiresCustomRule(request.Metadata))
+                    {
+                        await managementClient.PutSubscriptionRuleAsync(
+                                credentials,
+                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                request.TopicName,
+                                subscriptionId,
+                                ruleDescription,
+                                updateExisting: !existingHadDefaultRule,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        createdCustomRule = true;
+                        await managementClient.DeleteSubscriptionRuleAsync(
+                                credentials,
+                                SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                request.TopicName,
+                                subscriptionId,
+                                SnsSubscriptionFilterSupport.DefaultRuleName,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
                 catch (ServiceBusTopicsManagementException ruleException)
                 {
+                    if (createdCustomRule && existingHadDefaultRule)
+                    {
+                        try
+                        {
+                            await managementClient.DeleteSubscriptionRuleAsync(
+                                    credentials,
+                                    SnsTopicSupport.ResolveNamespaceFqdn(credentials),
+                                    request.TopicName,
+                                    subscriptionId,
+                                    SnsSubscriptionFilterSupport.CustomRuleName,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                        }
+                    }
+
                     await SnsTopicSupport.WriteManagementErrorAsync(context, ruleException).ConfigureAwait(false);
                     return;
                 }
@@ -127,4 +172,7 @@ internal static class SubscribeHandler
 
         await SnsResponseWriter.WriteSubscribeResponseAsync(context, subscriptionArn).ConfigureAwait(false);
     }
+
+    private static bool HasDefaultRuleDescription(ServiceBusSubscriptionDescription? existing)
+        => existing?.HasDefaultRuleDescription == true;
 }

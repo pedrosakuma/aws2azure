@@ -61,6 +61,11 @@ public sealed class SetSubscriptionAttributesHandlerTests
 
             if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
             {
+                if (request.Method == HttpMethod.Delete)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK);
+                }
+
                 ruleBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
@@ -93,6 +98,7 @@ public sealed class SetSubscriptionAttributesHandlerTests
         Assert.Contains("SqlFilter", ruleBody);
         Assert.Contains("aws2azure_sns_body_363a64657461696c7c363a74656e616e74", ruleBody);
         Assert.Contains("'blue'", ruleBody);
+        Assert.Contains("<Name>aws2azure</Name>", ruleBody);
     }
 
     [Theory]
@@ -274,6 +280,57 @@ public sealed class SetSubscriptionAttributesHandlerTests
 
         Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
         Assert.Contains("<Code>ConcurrentAccess</Code>", SnsManagementClientTestSupport.ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_add_pass_through_rule_when_default_rule_delete_fails()
+    {
+        var originalMetadata = SnsManagementClientTestSupport.SerializeMetadata("https", "https://example.com/hooks/orders");
+        var storedMetadata = originalMetadata;
+        var rulePutRequests = 0;
+        var ruleDeleteRequests = 0;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildSubscriptionEntry("sub123", storedMetadata),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+            }
+
+            if (request.RequestUri!.AbsoluteUri.Contains("/rules/", StringComparison.Ordinal))
+            {
+                if (request.Method == HttpMethod.Delete)
+                {
+                    ruleDeleteRequests++;
+                    return new HttpResponseMessage(HttpStatusCode.Forbidden);
+                }
+
+                rulePutRequests++;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            storedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetSubscriptionAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("FilterPolicy", "{ \"tenant\" : [ \"blue\" ] }"),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.Equal(2, ruleDeleteRequests);
+        Assert.Equal(1, rulePutRequests);
+        Assert.Equal(originalMetadata, storedMetadata);
     }
 
     private static ServiceBusTopicsManagementClient NewStatefulManagementClient(Func<string> getMetadata, Action<string> setMetadata)

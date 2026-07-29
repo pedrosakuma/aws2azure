@@ -190,7 +190,8 @@ internal static class ServiceBusAtomXml
                     entries[i].MaxDeliveryCount ?? ServiceBusTopicsManagementClient.DefaultMaxDeliveryCount,
                     entries[i].AutoDeleteOnIdle ?? ServiceBusTopicsManagementClient.LongIdleIso8601,
                     entries[i].ETag,
-                    entries[i].SubscriptionProperties));
+                    entries[i].SubscriptionProperties,
+                    entries[i].HasDefaultRuleDescription));
             }
         }
 
@@ -256,6 +257,7 @@ internal static class ServiceBusAtomXml
         string? lockDuration = null;
         int? maxDeliveryCount = null;
         string? autoDeleteOnIdle = null;
+        var hasDefaultRuleDescription = false;
         string? etag = null;
         var topicDescriptionDepth = -1;
         var subscriptionDescriptionDepth = -1;
@@ -368,6 +370,9 @@ internal static class ServiceBusAtomXml
                         case "AutoDeleteOnIdle":
                             autoDeleteOnIdle = ReadElementValue(rawXml);
                             break;
+                        case "DefaultRuleDescription":
+                            hasDefaultRuleDescription = true;
+                            break;
                     }
 
                     reRead = true;
@@ -404,6 +409,7 @@ internal static class ServiceBusAtomXml
             lockDuration,
             maxDeliveryCount,
             autoDeleteOnIdle,
+            hasDefaultRuleDescription,
             etag,
             topicProperties,
             subscriptionProperties);
@@ -540,6 +546,7 @@ internal static class ServiceBusAtomXml
         string? LockDuration,
         int? MaxDeliveryCount,
         string? AutoDeleteOnIdle,
+        bool HasDefaultRuleDescription,
         string? ETag,
         IReadOnlyList<ServiceBusTopicProperty> TopicProperties,
         IReadOnlyList<ServiceBusSubscriptionProperty> SubscriptionProperties);

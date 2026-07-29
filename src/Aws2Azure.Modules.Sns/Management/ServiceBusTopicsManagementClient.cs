@@ -85,6 +85,15 @@ public interface IServiceBusTopicsManagementClient
         string topicName,
         string subscriptionName,
         ServiceBusSubscriptionRuleDescription description,
+        bool updateExisting,
+        CancellationToken cancellationToken);
+
+    ValueTask DeleteSubscriptionRuleAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        string topicName,
+        string subscriptionName,
+        string ruleName,
         CancellationToken cancellationToken);
 }
 
@@ -449,7 +458,8 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
             entry.MaxDeliveryCount ?? DefaultMaxDeliveryCount,
             entry.AutoDeleteOnIdle ?? LongIdleIso8601,
             etag,
-            entry.SubscriptionProperties);
+            entry.SubscriptionProperties,
+            entry.HasDefaultRuleDescription);
     }
 
     public async ValueTask UpdateSubscriptionAsync(
@@ -493,6 +503,7 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         string topicName,
         string subscriptionName,
         ServiceBusSubscriptionRuleDescription description,
+        bool updateExisting,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
@@ -505,7 +516,10 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, description.RuleName);
         using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Headers.TryAddWithoutValidation("If-Match", "*");
+        if (updateExisting)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", "*");
+        }
         request.Content = new StringContent(ServiceBusAtomXml.BuildSubscriptionRuleDescriptionEntry(description), Encoding.UTF8, "application/atom+xml");
         request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
         await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
@@ -519,6 +533,36 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         SnsLog.TopicRequestFailed(_logger, nameof(PutSubscriptionRuleAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName + "/rules/" + description.RuleName, (int)response.StatusCode);
+        throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+    }
+
+    public async ValueTask DeleteSubscriptionRuleAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        string topicName,
+        string subscriptionName,
+        string ruleName,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(subscriptionName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ruleName);
+
+        var requestUri = BuildSubscriptionRuleUri(credentials, namespaceFqdn, topicName, subscriptionName, ruleName);
+        using var request = new HttpRequestMessage(HttpMethod.Delete, requestUri);
+        await _authenticator.AuthenticateAsync(request, credentials, cancellationToken).ConfigureAwait(false);
+
+        using var response = await BackendTimingContext.TimeAsync(() => _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken))
+            .ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound)
+        {
+            return;
+        }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        SnsLog.TopicRequestFailed(_logger, nameof(DeleteSubscriptionRuleAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName + "/rules/" + ruleName, (int)response.StatusCode);
         throw new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
     }
 
@@ -610,7 +654,8 @@ public sealed record ServiceBusSubscriptionDescription(
     int MaxDeliveryCount,
     string AutoDeleteOnIdle,
     string? ETag = null,
-    IReadOnlyList<ServiceBusSubscriptionProperty>? Properties = null);
+    IReadOnlyList<ServiceBusSubscriptionProperty>? Properties = null,
+    bool HasDefaultRuleDescription = false);
 
 public sealed record ServiceBusTopicProperty(string LocalName, string Xml);
 public sealed record ServiceBusSubscriptionProperty(string LocalName, string Xml);
