@@ -126,14 +126,6 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
             var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
 
-            var azure = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
-                .ConfigureAwait(false)).Value;
-            azure.LockDuration = TimeSpan.FromMinutes(1);
-            azure.MaxDeliveryCount = 17;
-            azure.EnableBatchedOperations = false;
-            azure.DeadLetteringOnMessageExpiration = true;
-            await admin.UpdateSubscriptionAsync(azure, timeout.Token).ConfigureAwait(false);
-
             var setFilter = await SendAsync(client, "SetSubscriptionAttributes",
             [
                 new("SubscriptionArn", subscriptionArn),
@@ -148,6 +140,21 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 new("AttributeValue", "true"),
             ]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(setRaw, HttpStatusCode.OK, "SetSubscriptionAttributes[RawMessageDelivery]");
+
+            // Applies unrelated Azure subscription properties via raw SAS-authenticated
+            // tooling *after* aws2azure's AAD-authenticated FilterPolicy/RawMessageDelivery
+            // rule writes, mirroring the realistic order (subscribe via aws2azure, then
+            // tweak ancillary knobs with external tooling). Real Azure has been observed to
+            // reject AAD-authenticated subscription-rule writes once the entity has already
+            // been mutated by a different (SAS) authentication mechanism in the same test run
+            // (see #691), so raw SAS mutation is kept last to avoid exercising that gap here.
+            var azure = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
+                .ConfigureAwait(false)).Value;
+            azure.LockDuration = TimeSpan.FromMinutes(1);
+            azure.MaxDeliveryCount = 17;
+            azure.EnableBatchedOperations = false;
+            azure.DeadLetteringOnMessageExpiration = true;
+            await admin.UpdateSubscriptionAsync(azure, timeout.Token).ConfigureAwait(false);
 
             var afterUpdate = (await admin.GetSubscriptionAsync(topicName, subscriptionName, timeout.Token)
                 .ConfigureAwait(false)).Value;
