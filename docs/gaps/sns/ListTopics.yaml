@@ -14,7 +14,7 @@ behavior_differences:
 - TopicArn values are proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder, not an AWS account namespace.
 - NextToken is an opaque base64-encoded Service Bus skip counter, not an AWS-compatible cursor. Tokens only preserve the next $skip offset and do not encode any other AWS pagination semantics.
 - Pagination is fixed to Azure's $top=100 management page size for this slice. When Azure returns exactly 100 topics the proxy emits NextToken=base64(skip+100); otherwise NextToken is omitted.
-- FIFO topic distinction is deferred. Topics created out of band with .fifo suffixes are not specially modelled and the slice does not surface FIFO-only metadata.
+- FIFO topics are distinguished only by their .fifo names in list output. ListTopics does not surface any additional FIFO-only attributes beyond the ARN/name itself.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html
 - https://learn.microsoft.com/en-us/rest/api/servicebus/list-topics

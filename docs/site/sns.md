@@ -37,22 +37,26 @@
 | Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |
 |---|---|---|---|---|---|---|---|
 | Basic topic create over Service Bus Topics REST | ✅ implemented | — | — | — | Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. |  |  |
-| Attribute translation | ✅ implemented | — | — | — | CreateTopic persists DisplayName, Policy, and DeliveryPolicy inside TopicDescription.UserMetadata for later GetTopicAttributes projection, and maps ContentBasedDeduplication to RequiresDuplicateDetection at create time. |  |  |
+| Attribute translation | ✅ implemented | — | — | — | CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only ContentBasedDeduplication flag inside TopicDescription.UserMetadata for later GetTopicAttributes / Publish projection. |  |  |
+| Service Bus-backed FIFO topic provisioning | ✅ implemented | — | — | — | Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, and uses the stored ContentBasedDeduplication flag later during Publish / PublishBatch when MessageDeduplicationId is omitted. |  |  |
 
 ### Behaviour differences
 
 - TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace.
 - DisplayName, Policy, and DeliveryPolicy are stored in Service Bus TopicDescription.UserMetadata for round-tripping. Azure does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes are metadata-only compatibility state rather than native enforcement.
-- CreateTopic honors ContentBasedDeduplication only at create time by setting Service Bus RequiresDuplicateDetection. Later SetTopicAttributes calls still cannot change that Service Bus property in place.
-- When an SNS topic is configured with backend=EventGrid, aws2azure still creates the backing Azure Service Bus topic in this slice because subscription metadata continues to live on Service Bus. Event Grid only handles Publish / PublishBatch.
+- FIFO topics are recognised only when the SNS name ends in .fifo and the request explicitly sets FifoTopic=true. FifoTopic=true without a .fifo suffix, omitting FifoTopic on a .fifo name, FifoTopic=false on a .fifo name, and ContentBasedDeduplication on a non-FIFO name are rejected with InvalidParameter.
+- For FIFO topics aws2azure always enables Service Bus duplicate detection because the supported subset maps SNS MessageDeduplicationId or content-based deduplication onto the broker MessageId within Service Bus's duplicate-detection window.
+- ContentBasedDeduplication controls publish-time fallback when MessageDeduplicationId is omitted; it does not imply full SNS FIFO parity beyond the Service Bus-backed subset documented in Publish / PublishBatch / _design.
+- FIFO CreateTopic requests are rejected when the resolved SNS backend is Event Grid because that backend cannot honor SNS FIFO ordering or deduplication semantics. Non-FIFO topics still create the backing Service Bus topic because subscription metadata continues to live there while Event Grid handles Publish / PublishBatch.
 - Topic metadata is constrained by the Azure Service Bus UserMetadata 1024-character limit. Requests whose serialized DisplayName/Policy/DeliveryPolicy payload would exceed that ceiling are rejected with InvalidParameter.
-- FIFO topic semantics are deferred. This slice only accepts the non-FIFO name subset [A-Za-z0-9_-]{1,256}; .fifo names are rejected instead of creating a FIFO-equivalent Azure entity.
+- Service Bus duplicate detection remains time-windowed. aws2azure creates FIFO topics with the SNS-sized 5-minute window, but sends retried after that window expire are accepted as new messages.
 - Service Bus topic names are further constrained by Azure. The proxy currently validates the AWS-side subset above and does not yet surface Azure's narrower length/character restrictions separately.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html>
 - <https://learn.microsoft.com/en-us/rest/api/servicebus/create-topic>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>
 
 ## DeleteTopic
 
@@ -71,7 +75,7 @@
 ### Behaviour differences
 
 - DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure.
-- The same FIFO gap as CreateTopic applies: .fifo ARNs are rejected because FIFO semantics are deferred to a later slice.
+- FIFO topics can be deleted by their .fifo ARN names once they have been provisioned on the Service Bus-backed subset described in CreateTopic / Publish / PublishBatch.
 - Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone.
 
 ### References
@@ -124,7 +128,7 @@
 - Policy and DeliveryPolicy remain metadata-only compatibility state. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry policies, so GetTopicAttributes surfaces what aws2azure stored rather than a Service Bus-native enforcement model.
 - SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.
 - KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
-- FifoTopic is inferred from a '.fifo' suffix or RequiresDuplicateDetection=true, and ContentBasedDeduplication is mapped directly from RequiresDuplicateDetection. This is only an approximation of SNS FIFO semantics.
+- FifoTopic is surfaced only for SNS topic names ending in .fifo. ContentBasedDeduplication is read from aws2azure metadata stored at create time; legacy FIFO topics without that metadata fall back to the raw Service Bus RequiresDuplicateDetection flag for backward compatibility.
 - AWS-only attributes such as SignatureVersion and TracingConfig are omitted.
 
 ### References
@@ -198,7 +202,7 @@
 - TopicArn values are proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder, not an AWS account namespace.
 - NextToken is an opaque base64-encoded Service Bus skip counter, not an AWS-compatible cursor. Tokens only preserve the next $skip offset and do not encode any other AWS pagination semantics.
 - Pagination is fixed to Azure's $top=100 management page size for this slice. When Azure returns exactly 100 topics the proxy emits NextToken=base64(skip+100); otherwise NextToken is omitted.
-- FIFO topic distinction is deferred. Topics created out of band with .fifo suffixes are not specially modelled and the slice does not surface FIFO-only metadata.
+- FIFO topics are distinguished only by their .fifo names in list output. ListTopics does not surface any additional FIFO-only attributes beyond the ARN/name itself.
 
 ### References
 
@@ -218,6 +222,7 @@
 |---|---|---|---|---|---|---|---|
 | AMQP publish path | ✅ implemented | — | — | ✅ | Sends SNS Publish requests to Azure Service Bus Topics over AMQP 1.0 using SAS or Entra ID CBS authentication. |  |  |
 | Event Grid publish path | ✅ implemented | — | — | ✅ | Sends SNS Publish requests to Azure Event Grid custom topics over the classic Event Grid schema using a per-topic backend switch. |  |  |
+| Service Bus FIFO subset | ✅ implemented | — | — | — | For Service Bus-backed topics whose SNS names end in .fifo, Publish requires MessageGroupId, maps it to the AMQP group-id/Service Bus SessionId, maps MessageDeduplicationId to the broker MessageId, and falls back to a SHA-256-of-message-body broker MessageId when the topic was created with ContentBasedDeduplication=true. The underlying Service Bus topic must have duplicate detection enabled. |  |  |
 
 ### Behaviour differences
 
@@ -230,14 +235,19 @@
 - On the Event Grid backend, the Event Grid envelope subject is always the SNS TopicArn; the AWS Subject parameter is copied into data.Subject.
 - On the Event Grid backend, HTTP-level publish failures are mapped to SNS per-message failure semantics by the proxy; Publish returns an SNS error while PublishBatch marks each affected entry failed.
 - Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property on the Service Bus Topics backend.
-- MessageDeduplicationId is forwarded as the 'x-opt-deduplication-id' application property on the Service Bus Topics backend rather than a broker-native send-side field.
-- MessageGroupId / MessageDeduplicationId FIFO semantics are not honoured on the Event Grid backend; the proxy drops them, logs a warning, and continues.
+- For Service Bus-backed FIFO topics, broker-side duplicate detection is limited to Service Bus's duplicate-detection window. aws2azure provisions new FIFO topics with a 5-minute window, but out-of-band topic changes or publishes outside that window are treated as new messages.
+- For Service Bus-backed FIFO topics, the proxy does not synthesize or return an SNS FIFO SequenceNumber because Service Bus does not expose an SNS-compatible publish sequence identifier on send.
+- For standard (non-.fifo) SNS topic names, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameter instead of being silently approximated.
+- FIFO topics are unsupported on the Event Grid backend. Publish rejects .fifo topics and FIFO-only request parameters there with InvalidParameter instead of dropping them.
+- aws2azure sets Service Bus SessionId on published FIFO messages, but the current SNS subscription-management APIs still create regular Service Bus subscriptions. Guaranteed ordered processing therefore requires consumers to use Service Bus-native session-aware subscriptions provisioned outside the SNS compatibility APIs.
 - Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event and 1 MB per HTTP batch.
 
 ### References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_Publish.html>
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>
 - <https://learn.microsoft.com/azure/event-grid/post-to-custom-topic>
 
 ## PublishBatch
@@ -253,6 +263,7 @@
 |---|---|---|---|---|---|---|---|
 | AMQP batch publish path | ✅ implemented | — | — | ✅ | Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure. |  |  |
 | Event Grid batch publish path | ✅ implemented | — | — | ✅ | Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required. |  |  |
+| Service Bus FIFO batch subset | ✅ implemented | — | — | — | For Service Bus-backed .fifo topics, each entry requires MessageGroupId and uses that value as AMQP group-id/Service Bus SessionId. MessageDeduplicationId is mapped to the broker MessageId per entry, and ContentBasedDeduplication=true falls back to SHA-256(message body) when an entry omits MessageDeduplicationId. |  |  |
 
 ### Behaviour differences
 
@@ -264,7 +275,11 @@
 - On the Event Grid backend, MessageAttributes are emitted inside data.MessageAttributes as { Type, Value } objects.
 - On the Event Grid backend, returned MessageId values are the proxy-generated GUIDs used as the Event Grid envelope id fields.
 - On the Event Grid backend, HTTP-level failures are mapped to per-entry Failed results for every message in the affected HTTP batch, even though Event Grid itself accepts or rejects each POST atomically.
-- On the Event Grid backend, MessageGroupId / MessageDeduplicationId FIFO semantics are not honoured; the proxy drops them, logs a warning, and continues.
+- For Service Bus-backed FIFO topics, broker-side duplicate detection is still limited to the Service Bus duplicate-detection window; aws2azure provisions new FIFO topics with a 5-minute window but cannot enforce dedup forever or outside that broker window.
+- For Service Bus-backed FIFO topics, SequenceNumber remains empty even though SessionId ordering metadata is set, because Service Bus does not return an SNS-compatible batch publish sequence identifier.
+- For standard (non-.fifo) SNS topic names, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameter instead of being silently approximated.
+- FIFO topics are unsupported on the Event Grid backend. PublishBatch rejects .fifo topics and FIFO-only entry parameters there with InvalidParameter instead of dropping them.
+- aws2azure sets Service Bus SessionId on published FIFO messages, but the current SNS subscription-management APIs still create regular Service Bus subscriptions. Guaranteed ordered processing therefore requires consumers to use Service Bus-native session-aware subscriptions provisioned outside the SNS compatibility APIs.
 - PublishBatch uses best-effort per-entry outcomes over AMQP and proxied per-entry outcomes over Event Grid; partial-failure behavior can differ from AWS SNS semantics.
 - Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event, 1 MB per HTTP batch, and 5000 events per POST.
 
@@ -272,6 +287,8 @@
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html>
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>
 - <https://learn.microsoft.com/azure/event-grid/post-to-custom-topic>
 
 ## SetSubscriptionAttributes

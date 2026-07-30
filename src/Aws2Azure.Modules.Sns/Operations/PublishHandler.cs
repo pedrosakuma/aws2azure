@@ -2,6 +2,7 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.Errors;
 using Aws2Azure.Modules.Sns.EventGrid;
+using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Aws2Azure.Modules.Sns.Xml;
 using Microsoft.AspNetCore.Http;
@@ -16,6 +17,7 @@ internal static class PublishHandler
         ServiceBusTopicsCredentials credentials,
         EventGridCredentials? eventGridCredentials,
         SnsSettings snsSettings,
+        IServiceBusTopicsManagementClient managementClient,
         ISnsAmqpSender amqpSender,
         IEventGridPublisher eventGridPublisher,
         CancellationToken cancellationToken)
@@ -24,6 +26,7 @@ internal static class PublishHandler
         ArgumentNullException.ThrowIfNull(parseResult);
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(snsSettings);
+        ArgumentNullException.ThrowIfNull(managementClient);
         ArgumentNullException.ThrowIfNull(amqpSender);
         ArgumentNullException.ThrowIfNull(eventGridPublisher);
 
@@ -35,10 +38,62 @@ internal static class PublishHandler
 
         var messageId = Guid.NewGuid();
         var route = SnsTopicRouting.Resolve(credentials, snsSettings, request.TopicName);
+        if (route.Backend == SnsTopicBackend.EventGrid
+            && !SnsFifoPublishSupport.TryValidateEventGridRequest(request.TopicName, SnsFifoPublishSupport.HasFifoFields(request), out error))
+        {
+            await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+            return;
+        }
+
+        var brokerMessageId = messageId.ToString();
+        if (route.Backend == SnsTopicBackend.ServiceBusTopics
+            && (request.TopicName.EndsWith(".fifo", StringComparison.Ordinal) || SnsFifoPublishSupport.HasFifoFields(request)))
+        {
+            ServiceBusFifoTopicState topicState;
+            try
+            {
+                topicState = await SnsFifoPublishSupport.GetServiceBusTopicStateAsync(
+                        request.TopicArn,
+                        request.TopicName,
+                        route.ServiceBusTopicName,
+                        credentials,
+                        managementClient,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (SnsFifoPublishValidationException ex) when (ex.FailureType == ValidationFailureType.NotFound)
+            {
+                await SnsTopicSupport.WriteNotFoundAsync(context, ex.Message).ConfigureAwait(false);
+                return;
+            }
+            catch (ServiceBusTopicsManagementException ex)
+            {
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                return;
+            }
+
+            if (!SnsFifoPublishSupport.TryResolveBrokerMessageId(
+                    topicState,
+                    request.MessageGroupId,
+                    request.MessageDeduplicationId,
+                    request.Message,
+                    out brokerMessageId,
+                    out error))
+            {
+                await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(brokerMessageId))
+            {
+                brokerMessageId = messageId.ToString();
+            }
+        }
+
         var publisher = SnsBackendPublisherFactory.Create(
             route, credentials, eventGridCredentials, amqpSender, eventGridPublisher);
 
-        var outcome = await publisher.PublishAsync(request, messageId, cancellationToken).ConfigureAwait(false);
+        var outcome = await publisher.PublishAsync(request, messageId, brokerMessageId, cancellationToken).ConfigureAwait(false);
         if (!outcome.Succeeded)
         {
             await SnsPublishErrorMapper.WriteSendErrorAsync(context, outcome).ConfigureAwait(false);

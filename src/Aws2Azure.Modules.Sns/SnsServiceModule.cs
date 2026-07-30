@@ -139,6 +139,7 @@ public sealed class SnsServiceModule : IServiceModule
                         context,
                         parsed,
                         serviceBusTopicsCredentials,
+                        _settings,
                         _serviceBusTopicsManagementClient,
                         context.RequestAborted)
                     .ConfigureAwait(false);
@@ -168,6 +169,7 @@ public sealed class SnsServiceModule : IServiceModule
                         serviceBusTopicsCredentials,
                         eventGridCredentials,
                         _settings,
+                        _serviceBusTopicsManagementClient,
                         _amqpSender,
                         _eventGridPublisher,
                         context.RequestAborted)
@@ -180,6 +182,7 @@ public sealed class SnsServiceModule : IServiceModule
                         serviceBusTopicsCredentials,
                         eventGridCredentials,
                         _settings,
+                        _serviceBusTopicsManagementClient,
                         _amqpSender,
                         _eventGridPublisher,
                         context.RequestAborted)

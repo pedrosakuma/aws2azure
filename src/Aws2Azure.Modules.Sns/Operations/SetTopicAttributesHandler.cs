@@ -140,7 +140,17 @@ internal static class SetTopicAttributesHandler
             return;
         }
 
-        if (topic.RequiresDuplicateDetection != requestedValue)
+        var currentMetadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
+        var isFifoTopic = topicName.EndsWith(".fifo", StringComparison.Ordinal);
+        var currentValue = currentMetadata.ContentBasedDeduplication;
+        if (currentValue is null
+            && SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out var cachedState))
+        {
+            currentValue = cachedState.ContentBasedDeduplication;
+        }
+
+        currentValue ??= isFifoTopic && topic.RequiresDuplicateDetection;
+        if (currentValue != requestedValue)
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(
                     context,

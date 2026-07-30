@@ -19,11 +19,16 @@ public sealed class CreateTopicHandlerTests
     {
         var managementClient = NewManagementClient(async (request, _) =>
         {
-            Assert.Equal(HttpMethod.Put, request.Method);
             Assert.Equal("https://myns.servicebus.windows.net/orders?api-version=2021-05", request.RequestUri!.ToString());
             Assert.True(request.Headers.TryGetValues("Authorization", out var authorization));
             Assert.Equal("TestAuth", Assert.Single(authorization));
 
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            Assert.Equal(HttpMethod.Put, request.Method);
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             Assert.Contains("<entry xmlns=\"http://www.w3.org/2005/Atom\">", body);
             Assert.Contains("TopicDescription", body);
@@ -40,6 +45,7 @@ public sealed class CreateTopicHandlerTests
             context,
             NewParseResult("orders"),
             NewCredentials(),
+            new SnsSettings(),
             managementClient,
             CancellationToken.None);
 
@@ -55,6 +61,11 @@ public sealed class CreateTopicHandlerTests
     {
         var managementClient = NewManagementClient(async (request, _) =>
         {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
             var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
             Assert.Contains("<UserMetadata>", body);
             Assert.Contains("\"displayName\":\"Orders\"", body);
@@ -71,22 +82,63 @@ public sealed class CreateTopicHandlerTests
                 SnsOperation.CreateTopic,
                 new Dictionary<string, string>
                 {
-                    ["Name"] = "orders",
+                    ["Name"] = "orders.fifo",
                     ["Attributes.entry.1.key"] = "DisplayName",
                     ["Attributes.entry.1.value"] = "Orders",
                     ["Attributes.entry.2.key"] = "Policy",
                     ["Attributes.entry.2.value"] = "{ \"Statement\": [] }",
                     ["Attributes.entry.3.key"] = "DeliveryPolicy",
                     ["Attributes.entry.3.value"] = "{ \"healthyRetryPolicy\": { \"numRetries\": 3 } }",
-                    ["Attributes.entry.4.key"] = "ContentBasedDeduplication",
+                    ["Attributes.entry.4.key"] = "FifoTopic",
                     ["Attributes.entry.4.value"] = "true",
+                    ["Attributes.entry.5.key"] = "ContentBasedDeduplication",
+                    ["Attributes.entry.5.value"] = "true",
                 },
                 null),
             NewCredentials(),
+            new SnsSettings(),
             managementClient,
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_creates_fifo_topics_with_duplicate_detection_enabled()
+    {
+        var managementClient = NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.Contains("<RequiresDuplicateDetection>true</RequiresDuplicateDetection>", body);
+            Assert.Contains("<DuplicateDetectionHistoryTimeWindow>PT5M</DuplicateDetectionHistoryTimeWindow>", body);
+            Assert.Contains("\"contentBasedDeduplication\":false", body);
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        });
+
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = "orders.fifo",
+                    ["Attributes.entry.1.key"] = "FifoTopic",
+                    ["Attributes.entry.1.value"] = "true",
+                },
+                null),
+            NewCredentials(),
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains("orders.fifo", ReadBody(context));
     }
 
     [Fact]
@@ -104,6 +156,7 @@ public sealed class CreateTopicHandlerTests
                 },
                 null),
             NewCredentials(),
+            new SnsSettings(),
             NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
             CancellationToken.None);
 
@@ -114,18 +167,56 @@ public sealed class CreateTopicHandlerTests
     [Fact]
     public async Task HandleAsync_treats_existing_topic_as_idempotent()
     {
-        var managementClient = NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        var requests = 0;
+        var managementClient = NewManagementClient((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+        });
         var context = NewContext();
 
         await CreateTopicHandler.HandleAsync(
             context,
             NewParseResult("orders"),
             NewCredentials(),
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(1, requests);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_does_not_overwrite_cached_fifo_state_for_existing_topics()
+    {
+        var credentials = NewCredentials();
+        SnsFifoPublishSupport.RecordServiceBusTopicState(credentials, "orders.fifo", requiresDuplicateDetection: true, contentBasedDeduplication: false);
+        var managementClient = NewManagementClient((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)));
+        var context = NewContext();
+
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = "orders.fifo",
+                    ["Attributes.entry.1.key"] = "FifoTopic",
+                    ["Attributes.entry.1.value"] = "true",
+                    ["Attributes.entry.2.key"] = "ContentBasedDeduplication",
+                    ["Attributes.entry.2.value"] = "true",
+                },
+                null),
+            credentials,
+            new SnsSettings(),
             managementClient,
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders", ReadBody(context));
+        Assert.False(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, "orders.fifo", out _));
     }
 
     [Theory]
@@ -140,11 +231,84 @@ public sealed class CreateTopicHandlerTests
             context,
             NewParseResult(topicName),
             NewCredentials(),
+            new SnsSettings(),
             managementClient,
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
         Assert.Contains("InvalidParameter", ReadBody(context));
+    }
+
+    [Theory]
+    [InlineData("orders", "FifoTopic", "true", "requires parameter 'Name' to end with '.fifo'")]
+    [InlineData("orders.fifo", "FifoTopic", "false", "cannot be false")]
+    [InlineData("orders", "ContentBasedDeduplication", "true", "supported only for FIFO topics")]
+    [InlineData("orders", "ContentBasedDeduplication", "false", "supported only for FIFO topics")]
+    public async Task HandleAsync_rejects_invalid_fifo_attribute_combinations(
+        string topicName,
+        string attributeName,
+        string attributeValue,
+        string expectedMessage)
+    {
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = topicName,
+                    ["Attributes.entry.1.key"] = attributeName,
+                    ["Attributes.entry.1.value"] = attributeValue,
+                },
+                null),
+            NewCredentials(),
+            new SnsSettings(),
+            NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains(expectedMessage, ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_requires_explicit_fifo_topic_attribute_for_fifo_names()
+    {
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            NewParseResult("orders.fifo"),
+            NewCredentials(),
+            new SnsSettings(),
+            NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("FifoTopic", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_fifo_topics_when_resolved_backend_is_event_grid()
+    {
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = "orders.fifo",
+                    ["Attributes.entry.1.key"] = "FifoTopic",
+                    ["Attributes.entry.1.value"] = "true",
+                },
+                null),
+            NewCredentials(),
+            new SnsSettings { DefaultBackend = SnsTopicBackend.EventGrid },
+            NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called.")),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("Event Grid backend cannot honor SNS FIFO semantics", ReadBody(context));
     }
 
     private static ServiceBusTopicsCredentials NewCredentials() => new()

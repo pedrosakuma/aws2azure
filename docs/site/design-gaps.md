@@ -327,11 +327,11 @@ References:
 - **Disposition:** 🛠️ feasible backlog
 - **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
 
-SNS FIFO topic semantics are only approximated. FifoTopic is inferred from a .fifo suffix or RequiresDuplicateDetection; MessageGroupId / MessageDeduplicationId are not honoured on the Event Grid backend (dropped with a warning), and strict FIFO ordering/dedup is not modelled.
+aws2azure now supports a bounded Service Bus subset for SNS .fifo topics. On the Service Bus backend, MessageGroupId maps to SessionId (AMQP group-id), MessageDeduplicationId maps to broker MessageId, and ContentBasedDeduplication=true falls back to SHA-256(message body) when no dedup id is supplied. Event Grid still cannot honor FIFO semantics and rejects them.
 
-**Impact.** Applications relying on SNS FIFO ordering and content-based deduplication cannot depend on it through the proxy.
+**Impact.** The proxy can approximate SNS FIFO only within the Service Bus backend's native limits. Deduplication is broker-windowed rather than a portable SNS guarantee, no SNS-compatible SequenceNumber is returned, and the built-in SNS subscription-management APIs still create regular (non-session-aware) Service Bus subscriptions.
 
-**Workaround.** Use the Service Bus backend with duplicate detection where approximate dedup is acceptable; do not rely on strict FIFO ordering.
+**Workaround.** Use the Service Bus backend for FIFO topics, keep publish retries within the topic's duplicate-detection window, and provision session-aware Service Bus subscriptions with Azure-native tooling when guaranteed ordered processing matters.
 
 <a id="sns-no-aws-region---account-namespace"></a>
 

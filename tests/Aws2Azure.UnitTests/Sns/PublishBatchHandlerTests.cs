@@ -1,8 +1,10 @@
 using System.Text;
+using System.Net.Http;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.EventGrid;
+using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Microsoft.AspNetCore.Http;
@@ -28,6 +30,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             sender,
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -66,6 +69,7 @@ public sealed class PublishBatchHandlerTests
             credentials,
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             new FakeSnsAmqpSender(),
             eventGridPublisher,
             CancellationToken.None);
@@ -97,6 +101,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             sender,
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -126,6 +131,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             new FakeSnsAmqpSender(),
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -154,6 +160,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             new FakeSnsAmqpSender(),
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -183,6 +190,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             sender,
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -224,6 +232,7 @@ public sealed class PublishBatchHandlerTests
             NewCredentials(),
             eventGridCredentials: null,
             new SnsSettings(),
+             RejectingManagementClient(),
             sender,
             new FakeEventGridPublisher(),
             CancellationToken.None);
@@ -256,6 +265,112 @@ public sealed class PublishBatchHandlerTests
         Assert.Equal(expectedSenderFault, outcome.SenderFault);
     }
 
+    [Fact]
+    public async Task HandleAsync_maps_fifo_batch_fields_to_service_bus_group_and_message_ids()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+        var metadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.1.MessageGroupId", "group-1"),
+                ("PublishBatchRequestEntries.member.1.MessageDeduplicationId", "dedup-1"),
+                ("PublishBatchRequestEntries.member.2.Id", "b"),
+                ("PublishBatchRequestEntries.member.2.Message", "two"),
+                ("PublishBatchRequestEntries.member.2.MessageGroupId", "group-1"),
+                ("PublishBatchRequestEntries.member.2.MessageDeduplicationId", "dedup-2")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 0, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+            })),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("group-1", sender.BatchCall!.Value.Messages[0].Properties.GroupId);
+        Assert.Equal("dedup-1", sender.BatchCall.Value.Messages[0].Properties.MessageId);
+        Assert.Equal("dedup-2", sender.BatchCall.Value.Messages[1].Properties.MessageId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_fifo_batch_entries_without_deduplication_id_when_content_based_dedup_disabled()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        var context = NewContext();
+        var metadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.1.MessageGroupId", "group-1")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 0, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+            })),
+            new FakeSnsAmqpSender(),
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("Entry 1", ReadBody(context));
+        Assert.Contains("MessageDeduplicationId", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_fifo_batch_on_event_grid_backend()
+    {
+        var context = NewContext();
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.1.MessageGroupId", "group-1"),
+                ("PublishBatchRequestEntries.member.1.MessageDeduplicationId", "dedup-1")),
+            NewCredentials(),
+            eventGridCredentials: new EventGridCredentials
+            {
+                Endpoint = "https://default.eastus-1.eventgrid.azure.net/api/events",
+                AccessKey = "global-key",
+            },
+            new SnsSettings { DefaultBackend = SnsTopicBackend.EventGrid },
+            RejectingManagementClient(),
+            new FakeSnsAmqpSender(),
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("Event Grid backend cannot honor SNS FIFO semantics", ReadBody(context));
+    }
+
     private static ServiceBusTopicsCredentials NewCredentials() => new()
     {
         Namespace = "myns",
@@ -286,6 +401,9 @@ public sealed class PublishBatchHandlerTests
         context.Response.Body.Position = 0;
         return new StreamReader(context.Response.Body, Encoding.UTF8).ReadToEnd();
     }
+
+    private static ServiceBusTopicsManagementClient RejectingManagementClient()
+        => SnsManagementClientTestSupport.NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called."));
 
     private sealed class FakeSnsAmqpSender(
         Func<ServiceBusTopicsCredentials, string, string, IReadOnlyList<SnsAmqpSendMessage>, CancellationToken, Task<SnsBatchSendResult>>? batchHandler = null)

@@ -130,6 +130,13 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         string namespaceFqdn,
         ServiceBusTopicDescription description,
         CancellationToken cancellationToken)
+        => _ = await CreateTopicDetailedAsync(credentials, namespaceFqdn, description, cancellationToken).ConfigureAwait(false);
+
+    internal async ValueTask<CreateTopicResult> CreateTopicDetailedAsync(
+        ServiceBusTopicsCredentials credentials,
+        string namespaceFqdn,
+        ServiceBusTopicDescription description,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(credentials);
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceFqdn);
@@ -154,9 +161,19 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
                     return request;
                 })
             .ConfigureAwait(false);
-        if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
+        if (response.StatusCode == HttpStatusCode.Created)
         {
-            return;
+            return CreateTopicResult.Created;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            return CreateTopicResult.Conflict;
+        }
+
+        if (response.StatusCode == HttpStatusCode.OK)
+        {
+            return CreateTopicResult.Ok;
         }
 
         throw await CreateManagementExceptionAsync(
@@ -871,13 +888,49 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
 }
 
 public sealed record ServiceBusTopicPage(IReadOnlyList<string> TopicNames);
+internal enum CreateTopicResult
+{
+    Unknown = 0,
+    Ok,
+    Created,
+    Conflict,
+}
 public sealed record ServiceBusTopicDescription(
     string TopicName,
     int SubscriptionCount,
     bool RequiresDuplicateDetection,
     string? UserMetadata = null,
     string? ETag = null,
-    IReadOnlyList<ServiceBusTopicProperty>? Properties = null);
+    IReadOnlyList<ServiceBusTopicProperty>? Properties = null,
+    string? DuplicateDetectionHistoryTimeWindow = null)
+{
+    public ServiceBusTopicDescription(
+        string topicName,
+        int subscriptionCount,
+        bool requiresDuplicateDetection,
+        string? userMetadata,
+        string? eTag,
+        IReadOnlyList<ServiceBusTopicProperty>? properties)
+        : this(topicName, subscriptionCount, requiresDuplicateDetection, userMetadata, eTag, properties, null)
+    {
+    }
+
+    public void Deconstruct(
+        out string topicName,
+        out int subscriptionCount,
+        out bool requiresDuplicateDetection,
+        out string? userMetadata,
+        out string? eTag,
+        out IReadOnlyList<ServiceBusTopicProperty>? properties)
+    {
+        topicName = TopicName;
+        subscriptionCount = SubscriptionCount;
+        requiresDuplicateDetection = RequiresDuplicateDetection;
+        userMetadata = UserMetadata;
+        eTag = ETag;
+        properties = Properties;
+    }
+}
 public sealed record ServiceBusSubscriptionPage(IReadOnlyList<ServiceBusSubscriptionDescription> Subscriptions);
 public sealed record ServiceBusSubscriptionDescription(
     string SubscriptionName,

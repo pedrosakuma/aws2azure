@@ -67,6 +67,14 @@ internal static class ServiceBusAtomXml
                 "RequiresDuplicateDetection",
                 ServiceBusNamespace,
                 description.RequiresDuplicateDetection ? "true" : "false");
+
+            if (!string.IsNullOrWhiteSpace(description.DuplicateDetectionHistoryTimeWindow))
+            {
+                writer.WriteElementString(
+                    "DuplicateDetectionHistoryTimeWindow",
+                    ServiceBusNamespace,
+                    description.DuplicateDetectionHistoryTimeWindow);
+            }
         }
 
         writer.WriteEndElement();

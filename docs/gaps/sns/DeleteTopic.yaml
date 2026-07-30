@@ -12,7 +12,7 @@ sub_features:
   notes: Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05. The delete is preceded by a GET probe so that a missing-entity 404 short-circuits cleanly without depending on the DELETE status code (the SB emulator returns HTTP 400 with no distinguishing body for DELETE on a missing entity; real Azure returns 404 for both).
 behavior_differences:
 - DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure.
-- 'The same FIFO gap as CreateTopic applies: .fifo ARNs are rejected because FIFO semantics are deferred to a later slice.'
+- FIFO topics can be deleted by their .fifo ARN names once they have been provisioned on the Service Bus-backed subset described in CreateTopic / Publish / PublishBatch.
 - Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html

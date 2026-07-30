@@ -52,4 +52,25 @@ public sealed class SnsTopicLifecycleServiceBusTests
         SnsServiceBusTestSupport.AssertStatus(listAfterDelete, HttpStatusCode.OK, "ListTopics[after delete]");
         Assert.DoesNotContain(topicArn, SnsQueryApiClient.ReadTopicArns(listAfterDelete));
     }
+
+    [SkippableFact]
+    public async Task Create_get_list_and_delete_fifo_topic_roundtrip_on_service_bus_emulator()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(client, "sns-fifo-lifecycle", contentBasedDeduplication: false).ConfigureAwait(false);
+
+        var attrsResponse = await SnsQueryApiClient.GetTopicAttributesAsync(client, topicArn).ConfigureAwait(false);
+        SnsServiceBusTestSupport.AssertStatus(attrsResponse, HttpStatusCode.OK, "GetTopicAttributes[fifo]");
+        var attributes = SnsQueryApiClient.ReadAttributes(attrsResponse);
+        Assert.Equal("true", attributes["FifoTopic"]);
+        Assert.Equal("false", attributes["ContentBasedDeduplication"]);
+
+        var list = await SnsQueryApiClient.ListTopicsAsync(client).ConfigureAwait(false);
+        SnsServiceBusTestSupport.AssertStatus(list, HttpStatusCode.OK, "ListTopics[fifo]");
+        Assert.Contains(topicArn, SnsQueryApiClient.ReadTopicArns(list));
+
+        await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+    }
 }

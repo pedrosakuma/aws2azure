@@ -172,6 +172,100 @@ public sealed class SnsPublishServiceBusTests
         }
     }
 
+    [SkippableFact]
+    public async Task PublishBatch_on_fifo_topic_preserves_session_order_and_deduplicates_by_message_id()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(client, "sns-fifo-batch", contentBasedDeduplication: false).ConfigureAwait(false);
+        var topicName = topicArn.Split(':', 6)[5];
+        var subscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+        try
+        {
+            var entries = new[]
+            {
+                (Id: "first", Body: "fifo-body-1", GroupId: "group-1", DedupId: "dedup-1"),
+                (Id: "duplicate", Body: "fifo-body-2", GroupId: "group-1", DedupId: "dedup-1"),
+                (Id: "third", Body: "fifo-body-3", GroupId: "group-1", DedupId: "dedup-3"),
+            };
+            var parameters = new List<KeyValuePair<string, string>>
+            {
+                new("TopicArn", topicArn),
+            };
+
+            for (var i = 0; i < entries.Length; i++)
+            {
+                var ordinal = i + 1;
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.Id", entries[i].Id));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.Message", entries[i].Body));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.MessageGroupId", entries[i].GroupId));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.MessageDeduplicationId", entries[i].DedupId));
+            }
+
+            var publish = await SnsQueryApiClient.SendActionAsync(client, "PublishBatch", parameters).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "PublishBatch[fifo]");
+            Assert.Equal(entries.Length, SnsQueryApiClient.ReadPublishBatchSuccessIds(publish).Count);
+            Assert.Empty(SnsQueryApiClient.ReadPublishBatchFailures(publish));
+
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var receiver = serviceBusClient.CreateReceiver(topicName, subscriptionName);
+            var messages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(receiver, expectedCount: 2, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+            Assert.Equal(2, messages.Count);
+            Assert.Equal("group-1", messages[0].SessionId);
+            Assert.Equal("group-1", messages[1].SessionId);
+            Assert.Equal("fifo-body-1", messages[0].Body.ToString());
+            Assert.Equal("fifo-body-3", messages[1].Body.ToString());
+
+            await SnsServiceBusTestSupport.CompleteMessagesAsync(receiver, messages).ConfigureAwait(false);
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(receiver, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
+    }
+
+    [SkippableFact]
+    public async Task Publish_on_fifo_topic_roundtrips_explicit_group_and_deduplication_id()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(client, "sns-fifo-single", contentBasedDeduplication: false).ConfigureAwait(false);
+        var topicName = topicArn.Split(':', 6)[5];
+        var subscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+        try
+        {
+            var body = "fifo-single-" + Guid.NewGuid().ToString("N");
+            var publish = await SnsQueryApiClient.SendActionAsync(client, "Publish",
+            [
+                new("TopicArn", topicArn),
+                new("Message", body),
+                new("MessageGroupId", "group-1"),
+                new("MessageDeduplicationId", "dedup-1"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "Publish[fifo]");
+
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var receiver = serviceBusClient.CreateReceiver(topicName, subscriptionName);
+
+            var messages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(receiver, expectedCount: 1, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+            var message = Assert.Single(messages);
+            Assert.Equal("group-1", message.SessionId);
+            Assert.Equal(body, message.Body.ToString());
+            await SnsServiceBusTestSupport.CompleteMessagesAsync(receiver, messages).ConfigureAwait(false);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
+    }
+
     private ServiceBusClient CreateServiceBusClient()
         => new(
             _fixture.CreateServiceBusConnectionString(),
