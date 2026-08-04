@@ -21,7 +21,8 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// <c>PurgeQueue</c>.
 ///
 /// <para>The two batch operations parallel-fan-out the per-entry SB call
-/// from Slice 3 (<see cref="ServiceBusClient.DeleteLockedMessageAsync"/> /
+/// from Slice 3 (<see cref="ServiceBusClient.DeleteLockedMessageAsync"/>,
+/// <see cref="ServiceBusClient.UnlockLockedMessageAsync"/> /
 /// <see cref="ServiceBusClient.RenewLockAsync"/>) bounded by a small
 /// concurrency cap, then aggregate <c>Successful</c> / <c>Failed</c> in
 /// the SQS-shaped batch envelope.</para>
@@ -176,13 +177,17 @@ internal static class BatchAdminHandlers
                     "The input receipt handle is invalid.", SenderFault: true));
                 return;
             }
-            using var resp = await sb.RenewLockAsync(queueName, decoded.MessageId, decoded.LockToken, ct).ConfigureAwait(false);
+            using var resp = entry.VisibilityTimeout == 0
+                ? await sb.UnlockLockedMessageAsync(
+                    queueName, decoded.MessageId, decoded.LockToken, ct).ConfigureAwait(false)
+                : await sb.RenewLockAsync(
+                    queueName, decoded.MessageId, decoded.LockToken, ct).ConfigureAwait(false);
             if (resp.IsSuccessStatusCode)
             {
                 lock (ok) ok.Add(new BatchEntryOk(entry.Id));
                 return;
             }
-            var mapped = resp.StatusCode == HttpStatusCode.NotFound || resp.StatusCode == HttpStatusCode.Gone
+            var mapped = resp.StatusCode == HttpStatusCode.NotFound
                 ? SqsErrorMapping.ReceiptHandleInvalid()
                 : SqsErrorMapping.FromServiceBus(resp);
             lock (failed) failed.Add(new BatchEntryError(entry.Id, mapped.Code, mapped.Message,
@@ -198,7 +203,10 @@ internal static class BatchAdminHandlers
         // (SB renew always uses the queue's LockDuration; see Slice 3 gap
         // doc). The batch handler keeps the header for parity with the
         // single-message ChangeMessageVisibility surface.
-        context.Response.Headers["Aws2Azure-VisibilityClampedBatch"] = "true";
+        if (entries.Any(static entry => entry.VisibilityTimeout > 0))
+        {
+            context.Response.Headers["Aws2Azure-VisibilityClampedBatch"] = "true";
+        }
 
         await SqsResponseWriter.WriteChangeMessageVisibilityBatchAsync(context, parsed.Protocol, ok, failed).ConfigureAwait(false);
     }
