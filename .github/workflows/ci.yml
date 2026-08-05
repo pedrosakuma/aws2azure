@@ -32,6 +32,9 @@ jobs:
       - name: Validate Entra federation response classification
         shell: bash
         run: ./.github/scripts/test-entra-federation-response-classifier.sh
+      - name: Validate Cosmos provisioning failure classification
+        shell: bash
+        run: ./.github/scripts/test-cosmos-provisioning-failure-classifier.sh
       - name: Validate Key Vault RBAC stability gate
         shell: bash
         run: PYTHONDONTWRITEBYTECODE=1 python3 ./.github/scripts/test_keyvault_rbac_stability.py

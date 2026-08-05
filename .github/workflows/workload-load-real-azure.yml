@@ -106,6 +106,8 @@ jobs:
     env:
       PROFILE: ${{ matrix.profile }}
       AZURE_LOCATION: eastus2
+      PRIMARY_RG_NAME: aws2azure-load-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+      RETRY_RG_NAME: aws2azure-load-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}-retry
       RG_NAME: aws2azure-load-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
       QUALIFICATION_DIR: artifacts/workload-load/${{ matrix.profile }}/provenance
       LOAD_EVIDENCE_PATH: artifacts/workload-load/${{ matrix.profile }}/load-evidence.json
@@ -468,6 +470,7 @@ jobs:
             --arg realazure_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/RealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg dynamodb_fixture_sha256 "$(sha256sum tests/Aws2Azure.IntegrationTests/Fixtures/DynamoDbRealAzureProxyFixture.cs | cut -d' ' -f1)" \
             --arg federation_classifier_sha256 "$(sha256sum .github/scripts/classify-entra-federation-response.sh | cut -d' ' -f1)" \
+            --arg cosmos_provisioning_classifier_sha256 "$(sha256sum .github/scripts/classify-cosmos-provisioning-failure.sh | cut -d' ' -f1)" \
             --arg keyvault_rbac_stability_sha256 "$(sha256sum .github/scripts/keyvault_rbac_stability.py | cut -d' ' -f1)" \
             --arg manifest_sha256 "$(sha256sum "docs/workloads/$PROFILE.yaml" | cut -d' ' -f1)" \
             --arg policy_sha256 "$(sha256sum "docs/workloads/qualification/$PROFILE.yaml" | cut -d' ' -f1)" \
@@ -509,6 +512,7 @@ jobs:
                 realazure_fixture: ("sha256:" + $realazure_fixture_sha256),
                 dynamodb_fixture: ("sha256:" + $dynamodb_fixture_sha256),
                 federation_response_classifier: ("sha256:" + $federation_classifier_sha256),
+                cosmos_provisioning_failure_classifier: ("sha256:" + $cosmos_provisioning_classifier_sha256),
                 keyvault_rbac_stability: ("sha256:" + $keyvault_rbac_stability_sha256),
                 workload_manifest: ("sha256:" + $manifest_sha256),
                 qualification_policy: ("sha256:" + $policy_sha256)
@@ -541,22 +545,91 @@ jobs:
           AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
         run: |
           set -euo pipefail
-          az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
-            --tags purpose=aws2azure-workload-load \
-                   profile="$PROFILE" \
-                   run-id="${{ github.run_id }}" \
-                   created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o none
-          args=(
-            az deployment group create
-            -g "$RG_NAME"
-            -n "$DEPLOYMENT_NAME"
-            -f "$BICEP_PATH"
-          )
-          if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
-            args+=(-p bootstrapPrincipalId="$AZURE_CLIENT_OBJECT_ID")
+          provision() {
+            local attempt="$1"
+            local resource_group="$2"
+            local deployment="$3"
+            local output_file="$PRIVATE_DIR/provision-attempt-$attempt.log"
+            local operations_file="$PRIVATE_DIR/provision-attempt-$attempt-operations.json"
+
+            echo "Provisioning attempt $attempt: resource group $resource_group, deployment $deployment."
+            az group create -n "$resource_group" -l "$AZURE_LOCATION" \
+              --tags purpose=aws2azure-workload-load \
+                     profile="$PROFILE" \
+                     run-id="${{ github.run_id }}" \
+                     provisioning-attempt="$attempt" \
+                     created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -o none
+            args=(
+              az deployment group create
+              -g "$resource_group"
+              -n "$deployment"
+              -f "$BICEP_PATH"
+            )
+            if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
+              args+=(-p bootstrapPrincipalId="$AZURE_CLIENT_OBJECT_ID")
+            fi
+
+            if "${args[@]}" -o none >"$output_file" 2>&1; then
+              cat "$output_file"
+              echo "Provisioning attempt $attempt succeeded."
+              return 0
+            fi
+
+            echo "::error::Provisioning attempt $attempt failed. Original Azure CLI diagnostics follow."
+            cat "$output_file"
+            if ! az deployment operation group list \
+                -g "$resource_group" -n "$deployment" -o json > "$operations_file"; then
+              echo "::error::Could not retrieve ARM deployment operation details; refusing retry."
+              return 1
+            fi
+            echo "Sanitized ARM operation details for provisioning attempt $attempt:"
+            jq '[.[] | {
+              provisioningState: .properties.provisioningState,
+              targetResource: .properties.targetResource,
+              statusCode: .properties.statusCode,
+              statusMessage: .properties.statusMessage
+            }]' "$operations_file"
+
+            if [ "$PROFILE" != dynamodb-basic-crud ] &&
+               [ "$PROFILE" != dynamodb-single-partition-transactions ]; then
+              echo "Provisioning retry decision: fail (profile has no Cosmos provisioning retry policy)."
+              return 1
+            fi
+
+            classification="$(
+              ./.github/scripts/classify-cosmos-provisioning-failure.sh \
+                "$attempt" "$operations_file"
+            )"
+            IFS=$'\t' read -r disposition reason <<< "$classification"
+            echo "Provisioning retry classification: disposition=$disposition reason=$reason."
+            if [ "$disposition" = retry ]; then
+              return 10
+            fi
+            return 1
+          }
+
+          install -d -m 0700 "$PRIVATE_DIR"
+          if provision 1 "$PRIMARY_RG_NAME" "$DEPLOYMENT_NAME"; then
+            exit 0
+          else
+            provision_status=$?
           fi
-          "${args[@]}" -o none
+          if [ "$provision_status" -ne 10 ]; then
+            echo "::error::Provisioning failure was not narrowly retryable."
+            exit 1
+          fi
+
+          retry_deployment="${DEPLOYMENT_NAME}-retry"
+          echo "::warning::Retrying once with fresh resource and deployment identities."
+          if ! provision 2 "$RETRY_RG_NAME" "$retry_deployment"; then
+            echo "::error::The single controlled Cosmos provisioning retry failed."
+            exit 1
+          fi
+          {
+            echo "RG_NAME=$RETRY_RG_NAME"
+            echo "DEPLOYMENT_NAME=$retry_deployment"
+          } >> "$GITHUB_ENV"
 
       - name: Export selected backend
         run: |
@@ -1063,4 +1136,6 @@ jobs:
 
       - name: Deallocate ephemeral Azure resources
         if: always()
-        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+        run: >-
+          bash .github/scripts/cleanup-real-azure-resource-groups.sh
+          "$PRIMARY_RG_NAME" "$RETRY_RG_NAME"
