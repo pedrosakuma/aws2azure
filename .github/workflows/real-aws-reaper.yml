@@ -13,6 +13,18 @@ name: real-aws-reaper
 #   - DynamoDB, Kinesis, SNS, and SQS resources must all live in the same AWS
 #     region configured below so the regional list APIs and regional Tagging
 #     API view the same inventory. Keep S3 buckets in that same run contract.
+#   - The OIDC role used here needs the reaper's full least-privilege surface:
+#       `tag:GetResources`
+#       `s3:ListAllMyBuckets`, `s3:ListBucket`, `s3:ListBucketVersions`,
+#       `s3:ListBucketMultipartUploads`, `s3:AbortMultipartUpload`,
+#       `s3:DeleteObject`, `s3:DeleteObjectVersion`, `s3:DeleteBucket`
+#       `dynamodb:ListTables`, `dynamodb:DeleteTable`
+#       `kinesis:ListStreams`, `kinesis:DeleteStream`,
+#       `kinesis:DeregisterStreamConsumer`
+#       `sns:ListTopics`, `sns:DeleteTopic`
+#       `sqs:ListQueues`, `sqs:DeleteQueue`
+#     Scope the destructive actions to the ephemeral `aws2azure-it-*`
+#     resources, matching the capture workflow's naming contract.
 # Missing or unparseable `created` tags fall back to the unix-epoch embedded in
 # the resource name. If both the tag and the documented name timestamp are
 # absent or unparseable, the resource is treated as orphaned and deleted

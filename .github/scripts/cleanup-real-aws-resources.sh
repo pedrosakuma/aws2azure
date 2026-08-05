@@ -7,6 +7,8 @@ readonly max_age_hours="${MAX_AGE_HOURS:-6}"
 readonly aws_region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 readonly tag_lookup_attempts="${TAG_LOOKUP_ATTEMPTS:-4}"
 readonly tag_lookup_retry_seconds="${TAG_LOOKUP_RETRY_SECONDS:-5}"
+readonly max_s3_empty_attempts="${MAX_S3_EMPTY_ATTEMPTS:-18}"
+readonly s3_empty_retry_seconds="${S3_EMPTY_RETRY_SECONDS:-10}"
 
 if [ -z "$aws_region" ]; then
   echo "::error::AWS_REGION (or AWS_DEFAULT_REGION) must be set." >&2
@@ -152,10 +154,15 @@ delete_s3_bucket() {
   local upload_id
   local batch_payload
   local error_output
+  local response_json
+  local stage_succeeded
+  local batch_failed
+  local error_count
+  local remaining_summary
 
   echo "Deleting S3 bucket $bucket_name."
 
-  while :; do
+  for attempt in $(seq 1 "$max_s3_empty_attempts"); do
     if ! versions_json="$(aws s3api list-object-versions --bucket "$bucket_name" --output json 2>&1)"; then
       if grep -q 'NoSuchBucket' <<< "$versions_json"; then
         echo "S3 bucket $bucket_name is already absent."
@@ -170,29 +177,72 @@ delete_s3_bucket() {
     ' <<< "$versions_json")"
     object_count="$(jq 'length' <<< "$payload")"
     if [ "$object_count" -eq 0 ]; then
+      stage_succeeded=1
       break
     fi
 
+    batch_failed=0
     while IFS= read -r batch_payload; do
       [ -z "$batch_payload" ] && continue
-      if ! error_output="$(aws s3api delete-objects \
+      if ! response_json="$(aws s3api delete-objects \
         --bucket "$bucket_name" \
-        --delete "$batch_payload" 2>&1 > /dev/null)"; then
-        if grep -q 'NoSuchBucket' <<< "$error_output"; then
+        --delete "$batch_payload" \
+        --output json 2>&1)"; then
+        if grep -q 'NoSuchBucket' <<< "$response_json"; then
           echo "S3 bucket $bucket_name is already absent."
           return 0
         fi
-        echo "::error::Could not delete versioned objects from S3 bucket $bucket_name: $error_output"
-        return 1
+        echo "::warning::Could not delete versioned objects from S3 bucket $bucket_name on attempt $attempt/${max_s3_empty_attempts}: $response_json"
+        batch_failed=1
+        continue
+      fi
+
+      error_count="$(jq '(.Errors // []) | length' <<< "$response_json")"
+      if [ "$error_count" -gt 0 ]; then
+        while IFS= read -r remaining_summary; do
+          [ -z "$remaining_summary" ] && continue
+          echo "::warning::S3 bucket $bucket_name version/delete-marker delete reported: $remaining_summary"
+        done < <(jq -r '
+          (.Errors // [])[]
+          | "\(.Code): key=\(.Key) version=\(.VersionId // "-") message=\(.Message)"
+        ' <<< "$response_json")
+        batch_failed=1
       fi
     done < <(jq -c '
       . as $objects
       | range(0; ($objects | length); 1000)
       | {Objects: $objects[.: . + 1000], Quiet: true}
     ' <<< "$payload")
+
+    if [ "$attempt" -lt "$max_s3_empty_attempts" ]; then
+      sleep "$s3_empty_retry_seconds"
+    fi
   done
 
-  while :; do
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    if ! versions_json="$(aws s3api list-object-versions --bucket "$bucket_name" --output json 2>&1)"; then
+      if grep -q 'NoSuchBucket' <<< "$versions_json"; then
+        echo "S3 bucket $bucket_name is already absent."
+        return 0
+      fi
+      echo "::error::Could not re-check object versions for S3 bucket $bucket_name: $versions_json"
+      return 1
+    fi
+    remaining_summary="$(jq '
+      ((.Versions // []) | length) + ((.DeleteMarkers // []) | length)
+    ' <<< "$versions_json")"
+    if [ "$remaining_summary" -eq 0 ]; then
+      stage_succeeded=1
+    fi
+  fi
+
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    echo "::error::S3 bucket $bucket_name still has $remaining_summary versioned entries after ${max_s3_empty_attempts} cleanup attempts."
+    return 1
+  fi
+
+  stage_succeeded=0
+  for attempt in $(seq 1 "$max_s3_empty_attempts"); do
     if ! objects_json="$(aws s3api list-objects-v2 --bucket "$bucket_name" --output json 2>&1)"; then
       if grep -q 'NoSuchBucket' <<< "$objects_json"; then
         echo "S3 bucket $bucket_name is already absent."
@@ -204,29 +254,70 @@ delete_s3_bucket() {
     payload="$(jq -c '(.Contents // []) | map({Key: .Key})' <<< "$objects_json")"
     object_count="$(jq 'length' <<< "$payload")"
     if [ "$object_count" -eq 0 ]; then
+      stage_succeeded=1
       break
     fi
 
+    batch_failed=0
     while IFS= read -r batch_payload; do
       [ -z "$batch_payload" ] && continue
-      if ! error_output="$(aws s3api delete-objects \
+      if ! response_json="$(aws s3api delete-objects \
         --bucket "$bucket_name" \
-        --delete "$batch_payload" 2>&1 > /dev/null)"; then
-        if grep -q 'NoSuchBucket' <<< "$error_output"; then
+        --delete "$batch_payload" \
+        --output json 2>&1)"; then
+        if grep -q 'NoSuchBucket' <<< "$response_json"; then
           echo "S3 bucket $bucket_name is already absent."
           return 0
         fi
-        echo "::error::Could not delete objects from S3 bucket $bucket_name: $error_output"
-        return 1
+        echo "::warning::Could not delete objects from S3 bucket $bucket_name on attempt $attempt/${max_s3_empty_attempts}: $response_json"
+        batch_failed=1
+        continue
+      fi
+
+      error_count="$(jq '(.Errors // []) | length' <<< "$response_json")"
+      if [ "$error_count" -gt 0 ]; then
+        while IFS= read -r remaining_summary; do
+          [ -z "$remaining_summary" ] && continue
+          echo "::warning::S3 bucket $bucket_name object delete reported: $remaining_summary"
+        done < <(jq -r '
+          (.Errors // [])[]
+          | "\(.Code): key=\(.Key) message=\(.Message)"
+        ' <<< "$response_json")
+        batch_failed=1
       fi
     done < <(jq -c '
       . as $objects
       | range(0; ($objects | length); 1000)
       | {Objects: $objects[.: . + 1000], Quiet: true}
     ' <<< "$payload")
+
+    if [ "$attempt" -lt "$max_s3_empty_attempts" ]; then
+      sleep "$s3_empty_retry_seconds"
+    fi
   done
 
-  while :; do
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    if ! objects_json="$(aws s3api list-objects-v2 --bucket "$bucket_name" --output json 2>&1)"; then
+      if grep -q 'NoSuchBucket' <<< "$objects_json"; then
+        echo "S3 bucket $bucket_name is already absent."
+        return 0
+      fi
+      echo "::error::Could not re-check objects for S3 bucket $bucket_name: $objects_json"
+      return 1
+    fi
+    remaining_summary="$(jq '(.Contents // []) | length' <<< "$objects_json")"
+    if [ "$remaining_summary" -eq 0 ]; then
+      stage_succeeded=1
+    fi
+  fi
+
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    echo "::error::S3 bucket $bucket_name still has $remaining_summary non-versioned objects after ${max_s3_empty_attempts} cleanup attempts."
+    return 1
+  fi
+
+  stage_succeeded=0
+  for attempt in $(seq 1 "$max_s3_empty_attempts"); do
     if ! uploads_json="$(aws s3api list-multipart-uploads --bucket "$bucket_name" --output json 2>&1)"; then
       if grep -q 'NoSuchBucket' <<< "$uploads_json"; then
         echo "S3 bucket $bucket_name is already absent."
@@ -237,9 +328,11 @@ delete_s3_bucket() {
     fi
     object_count="$(jq '(.Uploads // []) | length' <<< "$uploads_json")"
     if [ "$object_count" -eq 0 ]; then
+      stage_succeeded=1
       break
     fi
 
+    batch_failed=0
     while IFS= read -r upload; do
       [ -z "$upload" ] && continue
       upload_key="$(jq -r '.Key' <<< "$upload")"
@@ -252,11 +345,35 @@ delete_s3_bucket() {
           echo "S3 bucket $bucket_name is already absent."
           return 0
         fi
-        echo "::error::Could not abort multipart upload $upload_id in S3 bucket $bucket_name: $error_output"
-        return 1
+        echo "::warning::Could not abort multipart upload $upload_id in S3 bucket $bucket_name on attempt $attempt/${max_s3_empty_attempts}: $error_output"
+        batch_failed=1
       fi
     done < <(jq -c '.Uploads[]?' <<< "$uploads_json")
+
+    if [ "$attempt" -lt "$max_s3_empty_attempts" ]; then
+      sleep "$s3_empty_retry_seconds"
+    fi
   done
+
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    if ! uploads_json="$(aws s3api list-multipart-uploads --bucket "$bucket_name" --output json 2>&1)"; then
+      if grep -q 'NoSuchBucket' <<< "$uploads_json"; then
+        echo "S3 bucket $bucket_name is already absent."
+        return 0
+      fi
+      echo "::error::Could not re-check multipart uploads for S3 bucket $bucket_name: $uploads_json"
+      return 1
+    fi
+    remaining_summary="$(jq '(.Uploads // []) | length' <<< "$uploads_json")"
+    if [ "$remaining_summary" -eq 0 ]; then
+      stage_succeeded=1
+    fi
+  fi
+
+  if [ "${stage_succeeded:-0}" -ne 1 ]; then
+    echo "::error::S3 bucket $bucket_name still has $remaining_summary multipart uploads after ${max_s3_empty_attempts} cleanup attempts."
+    return 1
+  fi
 
   if ! error_output="$(aws s3api delete-bucket --bucket "$bucket_name" 2>&1 > /dev/null)"; then
     if grep -q 'NoSuchBucket' <<< "$error_output"; then
