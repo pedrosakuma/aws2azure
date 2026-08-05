@@ -47,6 +47,8 @@
              Link="Conformance\Goldens\ConformanceProjectPaths.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Goldens\GoldenStore.cs"
              Link="Conformance\Goldens\GoldenStore.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Evidence\ConformanceEvidenceStore.cs"
+             Link="Conformance\Evidence\ConformanceEvidenceStore.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\ConformanceSigV4Signer.cs"
              Link="Conformance\S3\ConformanceSigV4Signer.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.cs"
