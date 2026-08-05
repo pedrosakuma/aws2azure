@@ -1,6 +1,7 @@
 using System.Text;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Goldens;
 
 namespace Aws2Azure.Conformance.DynamoDb;
@@ -34,9 +35,15 @@ public sealed class DynamoDbErrorConformanceTests : IClassFixture<DynamoDbConfor
     public async Task Proxy_error_matches_aws_contract_and_golden(string caseName)
     {
         var testCase = DynamoDbErrorMatrix.Cases.Single(c => c.Name == caseName);
+        var context = new ConformanceCaseContext(
+            DynamoDbConformanceFixture.AccessKeyId,
+            DynamoDbConformanceFixture.Secret,
+            _fixture.Client.BaseAddress);
+        var plan = await testCase.CreatePlanAsync(context);
+        var expectedOutcome = Assert.Single(testCase.Expected.Steps);
 
-        using var request = testCase.BuildRequest(
-            DynamoDbConformanceFixture.AccessKeyId, DynamoDbConformanceFixture.Secret);
+        using var request = await Assert.Single(plan.Steps)
+            .BuildRequestAsync(new ConformanceExecutionState(context));
         using var response = await _fixture.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         var canonical = AwsErrorCanonicalizer.Canonicalize(
@@ -46,11 +53,11 @@ public sealed class DynamoDbErrorConformanceTests : IClassFixture<DynamoDbConfor
         // JSON error envelope shape: status, json-error body kind, the required
         // Code (short __type) + Message fields, that the dispatch code matches,
         // and that the content type is the AWS-JSON media type SDKs expect.
-        Assert.Equal(testCase.ExpectedStatus, canonical.StatusCode);
+        Assert.Equal(expectedOutcome.ExpectedStatus, canonical.StatusCode);
         Assert.Equal(CanonicalResponse.BodyKindJsonError, canonical.BodyKind);
         Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
-        Assert.Equal(testCase.ExpectedCode, code.Value);
+        Assert.Equal(expectedOutcome.ExpectedErrorCode, code.Value);
         Assert.Contains("application/x-amz-json",
             response.Content.Headers.ContentType?.ToString() ?? string.Empty);
 

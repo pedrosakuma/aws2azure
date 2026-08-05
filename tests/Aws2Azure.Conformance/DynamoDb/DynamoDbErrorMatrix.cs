@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.S3;
 
 namespace Aws2Azure.Conformance.DynamoDb;
@@ -16,13 +17,21 @@ namespace Aws2Azure.Conformance.DynamoDb;
 /// </summary>
 public sealed record DynamoDbErrorCase(
     string Name,
+    string Operation,
     int ExpectedStatus,
     string ExpectedCode,
     string Target,
     string Body,
     string? AccessKeyOverride = null,
-    string? SecretOverride = null)
+    string? SecretOverride = null) : IConformanceCase
 {
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Proxy-side DynamoDB rejection asserted from the AWS JSON 1.0 contract.");
+
     public HttpRequestMessage BuildRequest(string accessKey, string secret)
     {
         var signKey = AccessKeyOverride ?? accessKey;
@@ -50,6 +59,15 @@ public sealed record DynamoDbErrorCase(
             extraSignedHeaders: new[] { "x-amz-target" });
         return request;
     }
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+        => new(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(
+                Name,
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
 }
 
 /// <summary>
@@ -69,6 +87,7 @@ public static class DynamoDbErrorMatrix
         // the same, byte-for-byte on the dispatch surface SDKs switch on.
         new DynamoDbErrorCase(
             "unknown-operation",
+            "dynamodb:UnknownOperationException",
             400,
             "UnknownOperationException",
             Target: "DynamoDB_20120810.NotARealOperation",
@@ -80,6 +99,7 @@ public static class DynamoDbErrorMatrix
         // operation handler runs.
         new DynamoDbErrorCase(
             "serialization-exception",
+            "dynamodb:SerializationException",
             400,
             "SerializationException",
             Target: "DynamoDB_20120810.GetItem",
@@ -98,6 +118,7 @@ public static class DynamoDbErrorMatrix
         // must answer InvalidSignatureException / 400.
         new DynamoDbErrorCase(
             "invalid-signature",
+            "dynamodb:InvalidSignatureException",
             400,
             "InvalidSignatureException",
             Target: "DynamoDB_20120810.GetItem",
@@ -109,6 +130,7 @@ public static class DynamoDbErrorMatrix
         // the faithful JSON answer is UnrecognizedClientException / 400.
         new DynamoDbErrorCase(
             "unrecognized-client",
+            "dynamodb:UnrecognizedClientException",
             400,
             "UnrecognizedClientException",
             Target: "DynamoDB_20120810.GetItem",

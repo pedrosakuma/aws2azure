@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.S3;
 
 namespace Aws2Azure.Conformance.Kinesis;
@@ -20,13 +21,21 @@ namespace Aws2Azure.Conformance.Kinesis;
 /// </summary>
 public sealed record KinesisErrorCase(
     string Name,
+    string Operation,
     int ExpectedStatus,
     string ExpectedCode,
     string Target,
     string Body,
     string? AccessKeyOverride = null,
-    string? SecretOverride = null)
+    string? SecretOverride = null) : IConformanceCase
 {
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Proxy-side Kinesis rejection asserted from the AWS JSON 1.1 contract.");
+
     public HttpRequestMessage BuildRequest(string accessKey, string secret)
     {
         var signKey = AccessKeyOverride ?? accessKey;
@@ -54,6 +63,15 @@ public sealed record KinesisErrorCase(
             extraSignedHeaders: new[] { "x-amz-target" });
         return request;
     }
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+        => new(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(
+                Name,
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
 }
 
 /// <summary>
@@ -75,6 +93,7 @@ public static class KinesisErrorMatrix
         // must do the same on the dispatch surface SDKs switch on.
         new KinesisErrorCase(
             "unknown-operation",
+            "kinesis:UnknownOperationException",
             400,
             "UnknownOperationException",
             Target: "Kinesis_20131202.NotARealOperation",
@@ -85,6 +104,7 @@ public static class KinesisErrorMatrix
         // 400 SerializationException before the operation handler runs.
         new KinesisErrorCase(
             "serialization-exception",
+            "kinesis:SerializationException",
             400,
             "SerializationException",
             Target: "Kinesis_20131202.DescribeStreamSummary",
@@ -103,6 +123,7 @@ public static class KinesisErrorMatrix
         // must answer InvalidSignatureException / 400.
         new KinesisErrorCase(
             "invalid-signature",
+            "kinesis:InvalidSignatureException",
             400,
             "InvalidSignatureException",
             Target: "Kinesis_20131202.DescribeStreamSummary",
@@ -114,6 +135,7 @@ public static class KinesisErrorMatrix
         // the faithful JSON answer is UnrecognizedClientException / 400.
         new KinesisErrorCase(
             "unrecognized-client",
+            "kinesis:UnrecognizedClientException",
             400,
             "UnrecognizedClientException",
             Target: "Kinesis_20131202.DescribeStreamSummary",
