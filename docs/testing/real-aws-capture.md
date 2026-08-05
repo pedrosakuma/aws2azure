@@ -67,8 +67,8 @@ of the code below — it is tracking the state of *sibling* PRs):
   `OfflineConformanceDiffRunner` under `tests/Aws2Azure.Conformance/Diff/` that
   compares committed `.aws.golden` files against `proxy-real-azure` evidence
   for the same case/step, skipping (not failing) any case missing either side
-  (#711). It is a no-op today because no real-AWS goldens have been captured
-  yet.
+  (#711). Once it lands, it will be a no-op until real-AWS goldens are
+  captured, since no `.aws.golden` files exist yet.
 - **Landing via a separate, not-yet-merged PR:** `.github/workflows/real-aws-reaper.yml`
   and `.github/scripts/cleanup-real-aws-resources.sh`, the AWS-side
   orphan-resource safety net mirroring `real-azure-reaper.yml` (#712).
