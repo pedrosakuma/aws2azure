@@ -4,11 +4,12 @@ using Aws2Azure.Conformance.Canonicalization;
 namespace Aws2Azure.Conformance.Goldens;
 
 /// <summary>
-/// Provenance stamped on every golden so a reader can tell <em>where</em> the
-/// reference response came from and how much to trust it. Goldens captured from
-/// LocalStack are flagged emulator-derived (necessary, not sufficient — see the
-/// emulator caveat in the repo conventions); goldens captured from real AWS are
-/// authoritative.
+/// Provenance stamped on every canonical conformance capture so a reader can
+/// tell <em>where</em> the response came from and how much to trust it. Replay
+/// goldens captured from LocalStack are flagged emulator-derived (necessary, not
+/// sufficient — see the emulator caveat in the repo conventions); captures from
+/// real AWS are authoritative. The same metadata record is also reused by the
+/// Tier-3 real-Azure evidence files.
 /// </summary>
 public sealed record GoldenProvenance(
     string Source,
@@ -19,6 +20,7 @@ public sealed record GoldenProvenance(
     public const string SourceLocalStack = "localstack";
     public const string SourceRealAws = "aws";
     public const string SourceProxySelf = "proxy-self";
+    public const string SourceProxyRealAzure = "proxy-real-azure";
 
     /// <summary>
     /// True when the golden comes from real AWS and can therefore serve as the
@@ -52,20 +54,7 @@ public sealed class GoldenStore
 
     /// <summary>Resolves <c>fixtures/&lt;service&gt;</c> in the source tree (not bin/).</summary>
     public static GoldenStore ForService(string service)
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null &&
-               !File.Exists(Path.Combine(dir.FullName, "Aws2Azure.Conformance.csproj")))
-        {
-            dir = dir.Parent;
-        }
-        if (dir is null)
-        {
-            throw new InvalidOperationException(
-                "Could not locate Aws2Azure.Conformance.csproj to resolve the fixtures directory.");
-        }
-        return new GoldenStore(Path.Combine(dir.FullName, "fixtures", service));
-    }
+        => new(Path.Combine(ConformanceProjectPaths.ProjectRoot(), "fixtures", service));
 
     /// <summary>
     /// Legacy LocalStack path kept for backward compatibility with existing
@@ -82,6 +71,15 @@ public sealed class GoldenStore
         source == GoldenProvenance.SourceLocalStack
             ? PathFor(caseName)
             : Path.Combine(_root, caseName + "." + source + ".golden");
+
+    /// <summary>
+    /// Step-scoped golden path for multi-request cases. Happy-path captures keep
+    /// one canonical response per step under a case directory so the offline
+    /// Tier-3 diff can compare full CRUD/pagination/batch plans, not only
+    /// single-response error cases.
+    /// </summary>
+    public string PathForStep(string caseName, string stepName, string source) =>
+        Path.Combine(_root, caseName, stepName + "." + source + ".golden");
 
     public bool Exists(string caseName) => EnumerateCandidatePaths(caseName).Any(File.Exists);
 
@@ -116,10 +114,53 @@ public sealed class GoldenStore
         return true;
     }
 
+    /// <summary>
+    /// Loads a golden only when an exact provenance-specific file exists. Tier-3
+    /// credential-free replay uses this to require the authoritative real-AWS
+    /// capture instead of silently falling back to LocalStack.
+    /// </summary>
+    public bool TryLoad(string caseName, string source, out GoldenFile golden)
+    {
+        var path = PathFor(caseName, source);
+        if (!File.Exists(path))
+        {
+            golden = null!;
+            return false;
+        }
+
+        golden = Parse(File.ReadAllText(path));
+        return true;
+    }
+
+    public bool TryLoadStep(string caseName, string stepName, string source, out GoldenFile golden)
+    {
+        var path = PathForStep(caseName, stepName, source);
+        if (!File.Exists(path))
+        {
+            golden = null!;
+            return false;
+        }
+
+        golden = Parse(File.ReadAllText(path));
+        return true;
+    }
+
     public void Save(string caseName, CanonicalResponse response, GoldenProvenance provenance)
     {
         Directory.CreateDirectory(_root);
         File.WriteAllText(PathFor(caseName, provenance.Source), Serialize(response, provenance));
+    }
+
+    public void SaveStep(
+        string caseName,
+        string stepName,
+        CanonicalResponse response,
+        GoldenProvenance provenance)
+    {
+        Directory.CreateDirectory(Path.Combine(_root, caseName));
+        File.WriteAllText(
+            PathForStep(caseName, stepName, provenance.Source),
+            Serialize(response, provenance));
     }
 
     private IEnumerable<string> EnumerateCandidatePaths(string caseName)
@@ -147,66 +188,13 @@ public sealed class GoldenStore
             {
                 GoldenProvenance.SourceLocalStack => 200,
                 GoldenProvenance.SourceProxySelf => 100,
+                GoldenProvenance.SourceProxyRealAzure => 50,
                 _ => 0,
             };
 
     internal static string Serialize(CanonicalResponse response, GoldenProvenance provenance)
-    {
-        var sb = new StringBuilder();
-        sb.Append("# aws2azure conformance golden\n");
-        sb.Append("# source: ").Append(provenance.Source).Append('\n');
-        sb.Append("# operation: ").Append(provenance.Operation).Append('\n');
-        sb.Append("# captured: ").Append(provenance.CapturedAtUtc.ToString("O")).Append('\n');
-        if (!string.IsNullOrEmpty(provenance.Note))
-        {
-            sb.Append("# note: ").Append(provenance.Note).Append('\n');
-        }
-        sb.Append("# ---\n");
-        sb.Append(response.Render());
-        return sb.ToString();
-    }
+        => CanonicalCaptureFileFormat.Serialize("golden", response, provenance);
 
     internal static GoldenFile Parse(string text)
-    {
-        string source = "unknown";
-        string operation = "unknown";
-        DateTimeOffset captured = default;
-        string? note = null;
-        var body = new StringBuilder();
-
-        using var reader = new StringReader(text);
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            if (line.StartsWith("# ---", StringComparison.Ordinal))
-            {
-                continue;
-            }
-            if (line.StartsWith("# ", StringComparison.Ordinal))
-            {
-                var kv = line[2..];
-                var idx = kv.IndexOf(':');
-                if (idx > 0)
-                {
-                    var key = kv[..idx].Trim();
-                    var value = kv[(idx + 1)..].Trim();
-                    switch (key)
-                    {
-                        case "source": source = value; break;
-                        case "operation": operation = value; break;
-                        case "captured":
-                            _ = DateTimeOffset.TryParse(value, out captured);
-                            break;
-                        case "note": note = value; break;
-                    }
-                }
-                continue;
-            }
-            body.Append(line).Append('\n');
-        }
-
-        return new GoldenFile(
-            new GoldenProvenance(source, operation, captured, note),
-            body.ToString());
-    }
+        => CanonicalCaptureFileFormat.Parse(text);
 }

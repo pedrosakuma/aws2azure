@@ -1,0 +1,12 @@
+# aws2azure conformance evidence
+# source: proxy-real-azure
+# operation: s3:SignatureDoesNotMatch
+# captured: 2026-08-05T22:10:30.0000000+00:00
+# note: TEST FIXTURE ONLY - synthetic proxy-over-real-Azure error capture for offline diff tests.
+# ---
+HTTP 403
+[header] Content-Type: application/xml
+[body:xml-error]
+  (root): Error
+  Code: InvalidAccessKeyId
+  Message: <MASKED>

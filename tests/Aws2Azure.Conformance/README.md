@@ -23,7 +23,7 @@ our own assumptions. Conformance instead compares the proxy against an
 |------|-----------------|---------|----------|--------------|
 | **1** | AWS contract + committed goldens | every PR (`ci.yml`) | yes | no |
 | **2** | live LocalStack differential (also (re)captures goldens) | nightly / `run-integration` label | no | yes |
-| 3 | real AWS | manual / scheduled | no | yes (deferred) |
+| 3 | real AWS capture + credential-free offline diff | manual / scheduled capture; offline diff can run every PR once files exist | no | yes for capture only |
 
 Tier 1 is fully offline: auth/validation errors are rejected in the SigV4 stage
 **before** any Azure call, so the proxy boots in-process via
@@ -81,6 +81,34 @@ raw HTTP response ──▶ AwsErrorCanonicalizer ──▶ CanonicalResponse �
   differences become tagged `Divergence`s. A divergence is *accepted* only if a
   gap doc documents it.
 
+  ## Tier 3 diff (credential-free)
+
+  The Tier-3 comparer is intentionally **purely file-based**. It never calls AWS,
+  Azure, or the proxy; it only loads already-canonicalized captures from disk and
+  reuses `CanonicalDiff` + `ConformanceAllowList`.
+
+  - **Authoritative real-AWS side**: committed goldens under `fixtures/<service>/`.
+    Single-request cases reuse the existing authoritative path
+    `<case>.aws.golden`. Multi-step happy-path cases store one file per step under
+    `<case>/<step>.aws.golden`.
+  - **Proxy-over-real-Azure side**: exported evidence files under
+    `$AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT/<service>/` (or the inert default
+    `evidence/<service>/` when the env var is unset). Single-request cases use
+    `<case>.evidence`; multi-step cases use `<case>/<step>.evidence`.
+
+  Both file types share the same plain-text shape: a small comment header
+  (`# source: ...`, `# operation: ...`, `# captured: ...`, optional `# note: ...`)
+  followed by the canonical `CanonicalResponse.Render()` text. The only semantic
+  difference is that the evidence header reads `# aws2azure conformance evidence`
+  instead of `... golden` so a downloaded artifact is obviously non-authoritative.
+
+  Today this tier is **structurally complete but inert**: until the separate
+  real-AWS capture workflow commits `.aws.golden` files and the separate
+  real-Azure integration workflow exports `.evidence` files, each case skips with
+  the exact missing paths rather than failing. The synthetic fixtures under
+  `Diff/TestFixtures/` exercise the parser, multi-step layout, diffing, allow-list
+  filtering, and skip behavior without needing any cloud credentials.
+
 ## Accepting a known divergence
 
 The gap-doc YAML is the single source of truth. To accept a faithful-divergence,
@@ -112,6 +140,7 @@ Any divergence **not** covered by a documented tag fails the Tier-1 run.
 dotnet test tests/Aws2Azure.Conformance            # Tier 1 offline; Tier 2 skips unless AWS2AZURE_CONFORMANCE_TIER2=1
 AWS2AZURE_CONFORMANCE_TIER2=1 dotnet test tests/Aws2Azure.Conformance              # Tier 1 + Tier 2 (needs Docker)
 AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.Conformance   # (re)capture goldens from LocalStack
+AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT=/path/to/downloaded/evidence dotnet test tests/Aws2Azure.Conformance   # offline Tier 3 diff once evidence files exist
 ```
 
 ## Scope so far (issues #228, #234)
@@ -192,7 +221,7 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
 > auth cases above are Tier-1-only: LocalStack can't be their oracle (it ignores
 > signatures), so the expected outcome is the AWS JSON-protocol contract.
 
-Real-AWS goldens (Tier 3) and further operations follow in later PRs. The
-future capture job will persist them through the same `GoldenStore.Save(...)`
-API already used by Tier 2, passing `GoldenProvenance.SourceRealAws` plus a
-note marking the capture as the authoritative oracle.
+Real-AWS capture/export automation still lands in later PRs. This PR only adds
+the offline diff scaffold so that once `.aws.golden` and `.evidence` files
+exist, the Tier-3 comparison starts running with no further changes to the diff
+logic itself.
