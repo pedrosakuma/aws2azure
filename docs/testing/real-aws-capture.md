@@ -44,32 +44,37 @@ primitives the eventual Tier-3 flow will build on:
 [`GoldenStore`](../../tests/Aws2Azure.Conformance/Goldens/GoldenStore.cs), and
 `GoldenProvenance.SourceRealAws` in the same store.
 
-What is present vs. still pending, as of this writing:
+What is present on `main` vs. what is still landing as separate #708 PRs, as of
+this writing (this document's own PR does not itself depend on or bundle any
+of the code below — it is tracking the state of *sibling* PRs):
 
-- **Exists today:** the live-Azure nightly and its operator guide
+- **On `main` today:** the live-Azure nightly and its operator guide
   ([`integration-real-azure.yml`](../../.github/workflows/integration-real-azure.yml),
   [this guide's Azure-side companion](./real-azure-nightly.md)). The workflow
   already uploads `real-azure-conformance` /
   `source-validation-real-azure-conformance` artifacts, so there is already a
   real-Azure evidence path in the tree.
-- **Exists today:** `GoldenStore` provenance precedence (`aws` > `localstack` >
-  `proxy-self`) so real-AWS goldens can be loaded and take priority (#709).
-- **Exists today:** the shared happy-path case model/catalog used by both the
-  eventual real-AWS capture run and the real-Azure evidence export (#710).
-- **Exists today:** `integration-real-azure.yml` also exports canonical
-  `proxy-real-azure` evidence for the shared case catalog, which is the
-  Azure-side input to the Tier-3 diff (#713).
-- **Exists today:** a credential-free `OfflineConformanceDiffRunner` under
-  `tests/Aws2Azure.Conformance/Diff/` that compares committed `.aws.golden`
-  files against `proxy-real-azure` evidence for the same case/step, skipping
-  (not failing) any case missing either side (#711). It is currently a no-op
-  because no real-AWS goldens have been captured yet.
-- **Exists today:** `.github/workflows/real-aws-reaper.yml` and
-  `.github/scripts/cleanup-real-aws-resources.sh`, the AWS-side orphan-resource
-  safety net mirroring `real-azure-reaper.yml` (#712).
-- **Not present yet:** `.github/workflows/capture-real-aws.yml` — the actual
-  workflow that provisions ephemeral AWS resources, runs the case catalog
-  against real AWS, and commits `.aws.golden` files. This is the last
+- **Landing via a separate, not-yet-merged PR:** `GoldenStore` provenance
+  precedence (`aws` > `localstack` > `proxy-self`) so real-AWS goldens can be
+  loaded and take priority (#709).
+- **Landing via a separate, not-yet-merged PR:** the shared happy-path case
+  model/catalog used by both the eventual real-AWS capture run and the
+  real-Azure evidence export (#710).
+- **Landing via a separate, not-yet-merged PR:** `integration-real-azure.yml`
+  exporting canonical `proxy-real-azure` evidence for the shared case catalog,
+  the Azure-side input to the Tier-3 diff (#713).
+- **Landing via a separate, not-yet-merged PR:** a credential-free
+  `OfflineConformanceDiffRunner` under `tests/Aws2Azure.Conformance/Diff/` that
+  compares committed `.aws.golden` files against `proxy-real-azure` evidence
+  for the same case/step, skipping (not failing) any case missing either side
+  (#711). It is a no-op today because no real-AWS goldens have been captured
+  yet.
+- **Landing via a separate, not-yet-merged PR:** `.github/workflows/real-aws-reaper.yml`
+  and `.github/scripts/cleanup-real-aws-resources.sh`, the AWS-side
+  orphan-resource safety net mirroring `real-azure-reaper.yml` (#712).
+- **Not built yet, no PR open:** `.github/workflows/capture-real-aws.yml` — the
+  actual workflow that provisions ephemeral AWS resources, runs the case
+  catalog against real AWS, and commits `.aws.golden` files. This is the last
   remaining piece; once it lands and the first goldens are committed, the
   Tier-3 diff above activates automatically with no further code changes.
 
@@ -311,12 +316,12 @@ The real risk is not the happy-path request volume; it is a leaked resource
 left running after a failed or cancelled capture. The first safety net is the
 operator-owned low-threshold Budget alarm, which is already in place for the
 dedicated account. The second safety net is an AWS orphan-resource reaper,
-[`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml), which
-mirrors the existing
-[`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) pattern
-and is already in the tree (#712): it deletes S3 buckets, DynamoDB tables,
-Kinesis streams, SNS topics, and SQS queues named `aws2azure-it-*` and/or
-tagged `purpose=aws2azure-it` that are older than its safety age threshold.
+`real-aws-reaper.yml`, mirroring the existing
+[`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) pattern.
+It is landing via a separate, not-yet-merged #708 PR (#712), not yet on `main`
+at the time of writing: it deletes S3 buckets, DynamoDB tables, Kinesis
+streams, SNS topics, and SQS queues named `aws2azure-it-*` and/or tagged
+`purpose=aws2azure-it` that are older than its safety age threshold.
 
 ## Tagging and naming contract for ephemeral AWS resources
 
@@ -332,9 +337,10 @@ resource-name prefix:
 That prefix is already baked into the current IAM policy boundary above and
 must remain true for any future real-AWS capture workflow.
 
-`real-aws-reaper.yml` (#712) primarily discovers orphans by the
-`aws2azure-it-<unix-epoch>-<suffix>` name prefix (the timestamp encodes
-resource age directly in the name) and cross-checks the `purpose=aws2azure-it`
+`real-aws-reaper.yml` (landing via #712, not yet on `main`) primarily
+discovers orphans by the `aws2azure-it-<unix-epoch>-<suffix>` name prefix (the
+timestamp encodes resource age directly in the name) and cross-checks the
+`purpose=aws2azure-it`
 / `created=<ISO8601>` tags where the resource type supports tagging, falling
 back to the name-embedded timestamp when tag visibility lags. Treat the exact
 age threshold and per-service tag keys as subject to change — read the
@@ -358,7 +364,7 @@ as the existing real-cloud operational reference.
 - [Nightly real-Azure integration tests](./real-azure-nightly.md)
 - [`integration-real-azure.yml`](../../.github/workflows/integration-real-azure.yml)
 - [`real-azure-reaper.yml`](../../.github/workflows/real-azure-reaper.yml)
-- [`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml)
-- [`tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs`](../../tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs)
+- `real-aws-reaper.yml` (landing via #712)
+- `tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs` (landing via #711)
 - [`tests/Aws2Azure.Conformance/README.md`](../../tests/Aws2Azure.Conformance/README.md)
 - Issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708)
