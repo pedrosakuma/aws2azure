@@ -282,6 +282,27 @@ internal sealed class ServiceBusClient
     }
 
     /// <summary>
+    /// Unlocks an in-flight peek-locked message via
+    /// <c>PUT /{queue}/messages/{messageId}/{lockToken}</c>. This is the
+    /// Service Bus REST equivalent of SQS
+    /// <c>ChangeMessageVisibility(VisibilityTimeout=0)</c>.
+    /// </summary>
+    public Task<HttpResponseMessage> UnlockLockedMessageAsync(
+        string queueName, string messageId, string lockToken, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(queueName);
+        ArgumentException.ThrowIfNullOrEmpty(messageId);
+        ArgumentException.ThrowIfNullOrEmpty(lockToken);
+        var req = new HttpRequestMessage(HttpMethod.Put,
+            BuildUri($"{queueName}/messages/{Uri.EscapeDataString(messageId)}/{Uri.EscapeDataString(lockToken)}",
+                $"api-version={ApiVersion}"))
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>()),
+        };
+        return SendAsync(req, ct);
+    }
+
+    /// <summary>
     /// Renews the lock on an in-flight peek-locked message via
     /// <c>POST /{queue}/messages/{messageId}/{lockToken}</c>. SB's behavior
     /// is to extend the lock by the queue's configured <c>LockDuration</c>;

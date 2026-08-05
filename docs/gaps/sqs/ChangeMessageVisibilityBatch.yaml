@@ -1,6 +1,6 @@
 service: sqs
 operation: ChangeMessageVisibilityBatch
-azure_equivalent: Azure Service Bus queue runtime REST API — N parallel POST /{queue}/messages/{messageId}/{lockToken}?action=renewlock&api-version=2021-05
+azure_equivalent: Azure Service Bus queue runtime REST API — bounded parallel PUT Unlock calls for VisibilityTimeout=0 and POST RenewLock calls for positive values.
 status: partial
 sub_features:
 - name: 1..10 entries per batch
@@ -13,16 +13,20 @@ sub_features:
 - name: Bounded parallelism
   status: implemented
   notes: 5-way concurrency cap; lock-renew calls are individually short.
+- name: VisibilityTimeout=0 (immediate release)
+  status: implemented
+  notes: Each zero-valued REST entry uses Service Bus Unlock Message (PUT); AMQP entries use Abandon. Sibling entries remain independent.
 - name: Renew semantics
   status: partial
   notes: SB renewlock extends the lock by the queue's configured LockDuration, ignoring the requested VisibilityTimeout — see behavior_differences.
   disposition: by_design
 behavior_differences:
 - SB has no per-call visibility override on REST. The proxy validates and accepts the VisibilityTimeout value but SB always extends by the queue's LockDuration. Callers needing an arbitrary new visibility must Delete+Send or rely on SetQueueAttributes to change the queue-wide LockDuration.
-- VisibilityTimeout of 0 (which AWS uses to make a message immediately re-visible) is currently treated as a renewlock too — the message is not made re-visible. This divergence is tracked for Phase-2 NFR follow-up.
+- 'VisibilityTimeout=0 makes the message immediately re-visible on both transports: REST uses Unlock Message (PUT), while AMQP uses Abandon.'
 - Verified against in-process fakes; emulator-backed end-to-end validation lands with the SbEmulatorFixture build-out (tracked in p2-sb-emulator-fixture).
 - 'AMQP transport (Phase 2.5): when a queue is configured with `transport: Amqp`, ChangeMessageVisibilityBatch routes to the AMQP path — each entry with VisibilityTimeout=0 abandons via the cached (session) receiver, restoring the SQS ''immediately re-visible'' semantics on this path (closing the divergence above for AMQP queues). Positive VisibilityTimeout values RenewLock via the SB `$management` link (session-aware for v3 receipt handles); SB clamping is silent in the batch shape (the singular CMV emits the `Aws2Azure-VisibilityClamped` header but the batch response has no per-entry place to carry it).'
 references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ChangeMessageVisibilityBatch.html
+- https://learn.microsoft.com/rest/api/servicebus/unlock-message
 - https://learn.microsoft.com/rest/api/servicebus/renew-lock
 disposition: by_design

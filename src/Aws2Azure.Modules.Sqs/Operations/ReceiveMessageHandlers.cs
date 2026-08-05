@@ -225,6 +225,24 @@ internal static class ReceiveMessageHandlers
             return;
         }
 
+        if (visibility == 0)
+        {
+            using var unlockResponse = await sb.UnlockLockedMessageAsync(
+                queueName, decoded.MessageId, decoded.LockToken, ct).ConfigureAwait(false);
+            if (unlockResponse.IsSuccessStatusCode)
+            {
+                await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
+                return;
+            }
+            if (unlockResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiptHandleInvalid()).ConfigureAwait(false);
+                return;
+            }
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(unlockResponse)).ConfigureAwait(false);
+            return;
+        }
+
         // SB's renew-lock API extends the lock by the queue's configured
         // LockDuration — it doesn't accept an arbitrary new timeout. We
         // still issue the renew so the client's intent ("keep this
@@ -237,7 +255,7 @@ internal static class ReceiveMessageHandlers
             await SqsResponseWriter.WriteChangeMessageVisibilityAsync(context, parsed.Protocol).ConfigureAwait(false);
             return;
         }
-        if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Gone)
+        if (response.StatusCode == HttpStatusCode.NotFound)
         {
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.ReceiptHandleInvalid()).ConfigureAwait(false);
             return;
