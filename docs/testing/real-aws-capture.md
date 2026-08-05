@@ -44,7 +44,7 @@ primitives the eventual Tier-3 flow will build on:
 [`GoldenStore`](../../tests/Aws2Azure.Conformance/Goldens/GoldenStore.cs), and
 `GoldenProvenance.SourceRealAws` in the same store.
 
-What is present vs. still pending in this checkout:
+What is present vs. still pending, as of this writing:
 
 - **Exists today:** the live-Azure nightly and its operator guide
   ([`integration-real-azure.yml`](../../.github/workflows/integration-real-azure.yml),
@@ -52,19 +52,30 @@ What is present vs. still pending in this checkout:
   already uploads `real-azure-conformance` /
   `source-validation-real-azure-conformance` artifacts, so there is already a
   real-Azure evidence path in the tree.
-- **Not present in this checkout:** `.github/workflows/capture-real-aws.yml`.
-- **Not present in this checkout:** `.github/workflows/real-aws-reaper.yml`.
-- **Not yet wired in this checkout:** a dedicated credential-free Tier-3 diff
-  runner under `tests/Aws2Azure.Conformance/` that consumes committed real-AWS
-  goldens plus proxy-over-real-Azure evidence.
-- **Still uncertain from this checkout alone:** whether any in-flight #708 PR
-  is reshaping the real-Azure evidence format specifically for the Tier-3 diff.
-  Check issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708) and
-  its linked PRs before assuming that the current artifact layout is final.
+- **Exists today:** `GoldenStore` provenance precedence (`aws` > `localstack` >
+  `proxy-self`) so real-AWS goldens can be loaded and take priority (#709).
+- **Exists today:** the shared happy-path case model/catalog used by both the
+  eventual real-AWS capture run and the real-Azure evidence export (#710).
+- **Exists today:** `integration-real-azure.yml` also exports canonical
+  `proxy-real-azure` evidence for the shared case catalog, which is the
+  Azure-side input to the Tier-3 diff (#713).
+- **Exists today:** a credential-free `OfflineConformanceDiffRunner` under
+  `tests/Aws2Azure.Conformance/Diff/` that compares committed `.aws.golden`
+  files against `proxy-real-azure` evidence for the same case/step, skipping
+  (not failing) any case missing either side (#711). It is currently a no-op
+  because no real-AWS goldens have been captured yet.
+- **Exists today:** `.github/workflows/real-aws-reaper.yml` and
+  `.github/scripts/cleanup-real-aws-resources.sh`, the AWS-side orphan-resource
+  safety net mirroring `real-azure-reaper.yml` (#712).
+- **Not present yet:** `.github/workflows/capture-real-aws.yml` — the actual
+  workflow that provisions ephemeral AWS resources, runs the case catalog
+  against real AWS, and commits `.aws.golden` files. This is the last
+  remaining piece; once it lands and the first goldens are committed, the
+  Tier-3 diff above activates automatically with no further code changes.
 
-Several #708 changes are landing independently; before relying on this as a
-status board, check issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708)
-and its linked PRs for the current rollout state.
+Check issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708) and its
+linked PRs for the authoritative, up-to-date rollout state — this section is a
+snapshot, not a live status board.
 
 ## One-time operator setup already completed
 
@@ -300,12 +311,12 @@ The real risk is not the happy-path request volume; it is a leaked resource
 left running after a failed or cancelled capture. The first safety net is the
 operator-owned low-threshold Budget alarm, which is already in place for the
 dedicated account. The second safety net is an AWS orphan-resource reaper,
-intended to mirror the existing
-[`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml). The
-checked-out tree does **not** yet contain `.github/workflows/real-aws-reaper.yml`,
-so treat that backstop as planned work tracked in
-[#708](https://github.com/pedrosakuma/aws2azure/issues/708), not as a finished
-control in this checkout.
+[`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml), which
+mirrors the existing
+[`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) pattern
+and is already in the tree (#712): it deletes S3 buckets, DynamoDB tables,
+Kinesis streams, SNS topics, and SQS queues named `aws2azure-it-*` and/or
+tagged `purpose=aws2azure-it` that are older than its safety age threshold.
 
 ## Tagging and naming contract for ephemeral AWS resources
 
@@ -321,12 +332,14 @@ resource-name prefix:
 That prefix is already baked into the current IAM policy boundary above and
 must remain true for any future real-AWS capture workflow.
 
-A dedicated AWS reaper workflow is **not** present in this checkout, so there is
-no confirmed repository-level tag schema to cite yet. When
-`real-aws-reaper.yml` lands, this section should be updated with the exact tag
-keys/values it discovers by (for example) age, workflow, run id, or purpose.
-Until then, treat any tag contract beyond the `aws2azure-it-*` name prefix as
-**to be finalized in #708**, not as established repository behavior.
+`real-aws-reaper.yml` (#712) primarily discovers orphans by the
+`aws2azure-it-<unix-epoch>-<suffix>` name prefix (the timestamp encodes
+resource age directly in the name) and cross-checks the `purpose=aws2azure-it`
+/ `created=<ISO8601>` tags where the resource type supports tagging, falling
+back to the name-embedded timestamp when tag visibility lags. Treat the exact
+age threshold and per-service tag keys as subject to change — read the
+workflow/script directly rather than relying on this paragraph as the source
+of truth.
 
 ## How to trigger an on-demand capture
 
@@ -345,5 +358,7 @@ as the existing real-cloud operational reference.
 - [Nightly real-Azure integration tests](./real-azure-nightly.md)
 - [`integration-real-azure.yml`](../../.github/workflows/integration-real-azure.yml)
 - [`real-azure-reaper.yml`](../../.github/workflows/real-azure-reaper.yml)
+- [`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml)
+- [`tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs`](../../tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs)
 - [`tests/Aws2Azure.Conformance/README.md`](../../tests/Aws2Azure.Conformance/README.md)
 - Issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708)
