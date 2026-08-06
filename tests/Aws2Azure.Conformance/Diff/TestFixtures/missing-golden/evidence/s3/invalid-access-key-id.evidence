@@ -1,0 +1,12 @@
+# aws2azure conformance evidence
+# source: proxy-real-azure
+# operation: s3:InvalidAccessKeyId
+# captured: 2026-08-05T22:20:00.0000000+00:00
+# note: TEST FIXTURE ONLY - synthetic real-Azure evidence with intentionally missing golden counterpart.
+# ---
+HTTP 403
+[header] Content-Type: application/xml
+[body:xml-error]
+  (root): Error
+  Code: InvalidAccessKeyId
+  Message: <MASKED>

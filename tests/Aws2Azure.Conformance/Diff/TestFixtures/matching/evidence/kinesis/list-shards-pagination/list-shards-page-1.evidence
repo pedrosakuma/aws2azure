@@ -1,0 +1,11 @@
+# aws2azure conformance evidence
+# source: proxy-real-azure
+# operation: kinesis:ListShards
+# captured: 2026-08-05T22:05:00.0000000+00:00
+# note: TEST FIXTURE ONLY - synthetic proxy-over-real-Azure step capture for offline diff tests.
+# ---
+HTTP 200
+[header] Content-Type: application/x-amz-json-1.1
+[body:opaque]
+  NextToken: token-page-2
+  Shards[0].ShardId: shard-000000000000
