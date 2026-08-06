@@ -21,7 +21,8 @@ public static class TestSigV4Signer
         string service = "s3",
         DateTimeOffset? now = null,
         IReadOnlyList<string>? extraSignedHeaders = null,
-        bool? s3PathStyle = null)
+        bool? s3PathStyle = null,
+        string? sessionToken = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.RequestUri is null)
@@ -40,6 +41,10 @@ public static class TestSigV4Signer
 
         request.Headers.TryAddWithoutValidation(SigV4Constants.AmzDateHeader, amzDate);
         request.Headers.TryAddWithoutValidation(SigV4Constants.AmzContentSha256Header, payloadHash);
+        if (!string.IsNullOrWhiteSpace(sessionToken))
+        {
+            request.Headers.TryAddWithoutValidation(SigV4Constants.AmzSecurityTokenHeader, sessionToken);
+        }
 
         var headers = new List<KeyValuePair<string, string>>
         {

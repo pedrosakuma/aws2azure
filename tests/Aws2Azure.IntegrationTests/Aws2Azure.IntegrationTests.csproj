@@ -13,6 +13,7 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.21" />
     <PackageReference Include="AWSSDK.Kinesis" Version="4.0.8.18" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.24.3" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.1.9" />
     <PackageReference Include="AWSSDK.SecretsManager" Version="4.0.5.1" />
     <PackageReference Include="AWSSDK.SQS" Version="4.0.3.3" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
@@ -36,6 +37,28 @@
              Link="FailureConformance\Canonicalization\CanonicalizationPolicy.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Canonicalization\CanonicalResponse.cs"
              Link="FailureConformance\Canonicalization\CanonicalResponse.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Cases\ConformanceCaseModel.cs"
+             Link="Conformance\Cases\ConformanceCaseModel.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Cases\ConformanceExecutionStateExtensions.cs"
+             Link="Conformance\Cases\ConformanceExecutionStateExtensions.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Goldens\CanonicalCaptureFileFormat.cs"
+             Link="Conformance\Goldens\CanonicalCaptureFileFormat.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Goldens\ConformanceProjectPaths.cs"
+             Link="Conformance\Goldens\ConformanceProjectPaths.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Goldens\GoldenStore.cs"
+             Link="Conformance\Goldens\GoldenStore.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\ConformanceSigV4Signer.cs"
+             Link="Conformance\S3\ConformanceSigV4Signer.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.cs"
+             Link="Conformance\S3\S3HappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs"
+             Link="Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Kinesis\KinesisHappyPathMatrix.cs"
+             Link="Conformance\Kinesis\KinesisHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Sns\SnsHappyPathMatrix.cs"
+             Link="Conformance\Sns\SnsHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Sqs\SqsHappyPathMatrix.cs"
+             Link="Conformance\Sqs\SqsHappyPathMatrix.cs" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Aws2Azure.IntegrationTests.Fixtures" />

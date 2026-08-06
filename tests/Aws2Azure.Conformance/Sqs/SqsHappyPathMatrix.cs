@@ -41,7 +41,7 @@ public static class SqsHappyPathMatrix
             "The message received in step 3 must match the body sent in step 2, and its receipt handle must delete successfully."),
             static (context, _) =>
             {
-                var queueName = "conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12];
+                var queueName = context.GetProperty("queueName") ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-queue", _ => BuildRequest(context, [
@@ -92,8 +92,8 @@ public static class SqsHappyPathMatrix
             "Across both pages the harness should observe every seeded queue URL exactly once."),
             static (context, _) =>
             {
-                var first = "conf-happy-queue-" + Guid.NewGuid().ToString("N")[..10];
-                var second = "conf-happy-queue-" + Guid.NewGuid().ToString("N")[..10];
+                var first = context.GetProperty("queueName1") ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..10]);
+                var second = context.GetProperty("queueName2") ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..10]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-queue-1", _ => BuildRequest(context, [
@@ -144,7 +144,7 @@ public static class SqsHappyPathMatrix
             "SendMessageBatch should report both entries as successful before the queue is deleted."),
             static (context, _) =>
             {
-                var queueName = "conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12];
+                var queueName = context.GetProperty("queueName") ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-queue", _ => BuildRequest(context, [
@@ -187,7 +187,8 @@ public static class SqsHappyPathMatrix
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
-            service: "sqs");
+            service: "sqs",
+            sessionToken: context.SessionToken);
         return request;
     }
 

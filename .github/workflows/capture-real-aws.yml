@@ -1,0 +1,132 @@
+name: capture-real-aws
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: capture-real-aws
+      cancel-in-progress: false
+    env:
+      AWS_REGION: us-east-1
+      GOLDEN_ARTIFACT_DIR: artifacts/real-aws-goldens
+      CAPTURE_BRANCH: automation/real-aws-goldens
+      PR_TITLE: "test(conformance): refresh real AWS goldens"
+      PR_BODY: |
+        Automated refresh of Tier-3 real-AWS conformance goldens.
+
+        - provisions ephemeral AWS resources with the documented `aws2azure-it-*` contract
+        - runs the shared happy-path conformance catalog directly against real AWS
+        - writes `.aws.golden` files consumed by the offline Tier-3 diff
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Check credentials
+        id: gate
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_ROLE_ARN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_ROLE_ARN not set — real-AWS capture skipped."
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: capture-real-aws
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build test harness
+        if: steps.gate.outputs.enabled == 'true'
+        run: dotnet build -c Release --nologo
+
+      - name: Capture real AWS happy-path goldens
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          dotnet test tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj \
+            -c Release \
+            --no-build \
+            --filter "Category=RealAws" \
+            --logger "trx;LogFileName=real-aws-capture.trx" \
+            --results-directory TestResults
+
+      - name: Upload capture test results
+        if: always() && steps.gate.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-aws-golden-capture-results
+          path: |
+            **/*.trx
+            tests/Aws2Azure.Conformance/fixtures/**/*.aws.golden
+          if-no-files-found: warn
+
+      - name: Cleanup orphaned AWS test resources
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          bash .github/scripts/cleanup-real-aws-resources.sh
+
+      - name: Detect golden changes
+        if: steps.gate.outputs.enabled == 'true'
+        id: diff
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- tests/Aws2Azure.Conformance/fixtures; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Copy goldens to artifact directory
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "$GOLDEN_ARTIFACT_DIR"
+          mkdir -p "$GOLDEN_ARTIFACT_DIR"
+          cp -R tests/Aws2Azure.Conformance/fixtures/. "$GOLDEN_ARTIFACT_DIR/"
+
+      - name: Upload refreshed goldens artifact
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-aws-goldens
+          path: ${{ env.GOLDEN_ARTIFACT_DIR }}
+          if-no-files-found: error
+
+      - name: Create refresh pull request
+        if: steps.gate.outputs.enabled == 'true' && steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$CAPTURE_BRANCH"
+          git add tests/Aws2Azure.Conformance/fixtures
+          git commit -m "test(conformance): refresh real AWS goldens"
+          git push --force-with-lease origin "$CAPTURE_BRANCH"
+          if gh pr list --head "$CAPTURE_BRANCH" --json number --jq 'length' | grep -qx '1'; then
+            gh pr edit "$CAPTURE_BRANCH" --title "$PR_TITLE" --body "$PR_BODY"
+          else
+            gh pr create --base main --head "$CAPTURE_BRANCH" --title "$PR_TITLE" --body "$PR_BODY"
+          fi

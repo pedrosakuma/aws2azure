@@ -50,7 +50,7 @@ public static class S3HappyPathMatrix
             "The body returned by GetObject must byte-match the earlier PutObject payload."),
             static (context, _) =>
             {
-                var bucket = "conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12];
+                var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var key = "roundtrip/object.txt";
                 var body = Encoding.UTF8.GetBytes("aws2azure conformance roundtrip payload");
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
@@ -93,7 +93,7 @@ public static class S3HappyPathMatrix
             "Across both pages the harness should observe each seeded key exactly once."),
             static (context, _) =>
             {
-                var bucket = "conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12];
+                var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var firstBody = Encoding.UTF8.GetBytes("page-one-object");
                 var secondBody = Encoding.UTF8.GetBytes("page-two-object");
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
@@ -134,7 +134,7 @@ public static class S3HappyPathMatrix
             "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body."),
             static (context, _) =>
             {
-                var bucket = "conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12];
+                var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var key = "conditional/object.txt";
                 var body = Encoding.UTF8.GetBytes("aws2azure conditional object");
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
@@ -163,7 +163,8 @@ public static class S3HappyPathMatrix
             Array.Empty<byte>(),
             context.AccessKeyId,
             context.SecretAccessKey,
-            region: context.Region);
+            region: context.Region,
+            sessionToken: context.SessionToken);
         return request;
     }
 
@@ -188,7 +189,8 @@ public static class S3HappyPathMatrix
             body,
             context.AccessKeyId,
             context.SecretAccessKey,
-            region: context.Region);
+            region: context.Region,
+            sessionToken: context.SessionToken);
         return request;
     }
 
@@ -207,7 +209,8 @@ public static class S3HappyPathMatrix
             Array.Empty<byte>(),
             context.AccessKeyId,
             context.SecretAccessKey,
-            region: context.Region);
+            region: context.Region,
+            sessionToken: context.SessionToken);
         return request;
     }
 
