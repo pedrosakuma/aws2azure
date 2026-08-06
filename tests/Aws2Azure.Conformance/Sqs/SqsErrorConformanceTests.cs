@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Goldens;
 
 namespace Aws2Azure.Conformance.Sqs;
@@ -38,9 +39,15 @@ public sealed class SqsErrorConformanceTests : IClassFixture<SqsConformanceFixtu
     public async Task Proxy_error_matches_aws_contract_and_golden(string caseName)
     {
         var testCase = SqsErrorMatrix.Cases.Single(c => c.Name == caseName);
+        var context = new ConformanceCaseContext(
+            SqsConformanceFixture.AccessKeyId,
+            SqsConformanceFixture.Secret,
+            _fixture.Client.BaseAddress);
+        var plan = await testCase.CreatePlanAsync(context);
+        var expectedOutcome = Assert.Single(testCase.Expected.Steps);
 
-        using var request = testCase.BuildRequest(
-            SqsConformanceFixture.AccessKeyId, SqsConformanceFixture.Secret);
+        using var request = await Assert.Single(plan.Steps)
+            .BuildRequestAsync(new ConformanceExecutionState(context));
         using var response = await _fixture.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         var canonical = AwsErrorCanonicalizer.Canonicalize(
@@ -48,10 +55,10 @@ public sealed class SqsErrorConformanceTests : IClassFixture<SqsConformanceFixtu
 
         // (1) AWS-contract oracle — always enforced, offline. Status + the short
         // dispatch code (which AWS SDKs switch on) are protocol-independent.
-        Assert.Equal(testCase.ExpectedStatus, canonical.StatusCode);
+        Assert.Equal(expectedOutcome.ExpectedStatus, canonical.StatusCode);
         Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
-        Assert.Equal(testCase.ExpectedCode, code.Value);
+        Assert.Equal(expectedOutcome.ExpectedErrorCode, code.Value);
 
         // (1b) Protocol-specific raw-wire assertions. The SQS module negotiates
         // the wire shape per request (issue #241), so pin the faithful envelope
@@ -67,7 +74,7 @@ public sealed class SqsErrorConformanceTests : IClassFixture<SqsConformanceFixtu
             // SQS JSON renders __type as <namespace>#<Code>; SDKs dispatch on the
             // segment after '#'. Tolerate the prefix but require the code.
             var rawType = typeProp.GetString() ?? string.Empty;
-            Assert.EndsWith(testCase.ExpectedCode, rawType, StringComparison.Ordinal);
+            Assert.EndsWith(expectedOutcome.ExpectedErrorCode, rawType, StringComparison.Ordinal);
         }
         else
         {

@@ -1,3 +1,5 @@
+using Aws2Azure.Conformance.Cases;
+
 namespace Aws2Azure.Conformance.S3;
 
 /// <summary>
@@ -16,10 +18,17 @@ public sealed record S3ErrorCase(
     string ExpectedCode,
     Action<HttpRequestMessage> Sign,
     HttpMethod? Method = null,
-    string? Path = null)
+    string? Path = null) : IConformanceCase
 {
     /// <summary>Default request line shared by the auth-error cases.</summary>
     public const string DefaultPath = "/conformance-bucket/key.txt";
+
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Proxy-side S3 rejection asserted from the AWS REST-XML contract.");
 
     public HttpRequestMessage BuildRequest()
     {
@@ -29,6 +38,13 @@ public sealed record S3ErrorCase(
         Sign(request);
         return request;
     }
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+        => new(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(Name, BuildRequest)]));
 }
 
 /// <summary>

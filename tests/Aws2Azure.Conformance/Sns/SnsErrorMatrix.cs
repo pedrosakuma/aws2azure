@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.S3;
 
 namespace Aws2Azure.Conformance.Sns;
@@ -21,12 +22,20 @@ namespace Aws2Azure.Conformance.Sns;
 /// </summary>
 public sealed record SnsErrorCase(
     string Name,
+    string Operation,
     int ExpectedStatus,
     string ExpectedCode,
     string Body,
     string? AccessKeyOverride = null,
-    string? SecretOverride = null)
+    string? SecretOverride = null) : IConformanceCase
 {
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Proxy-side SNS rejection asserted from the AWS Query XML contract.");
+
     public HttpRequestMessage BuildRequest(string accessKey, string secret)
     {
         var signKey = AccessKeyOverride ?? accessKey;
@@ -49,6 +58,15 @@ public sealed record SnsErrorCase(
             extraSignedHeaders: new[] { "content-type" });
         return request;
     }
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+        => new(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(
+                Name,
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
 }
 
 /// <summary>
@@ -70,6 +88,7 @@ public static class SnsErrorMatrix
         // envelope and <Code>InvalidAction</Code>, before any backend call.
         new SnsErrorCase(
             "sns-invalid-action",
+            "sns:InvalidAction",
             400,
             "InvalidAction",
             Body: "Action=NotARealAction&Version=2010-03-31"),
@@ -79,6 +98,7 @@ public static class SnsErrorMatrix
         // SignatureDoesNotMatch / 403.
         new SnsErrorCase(
             "sns-invalid-signature",
+            "sns:SignatureDoesNotMatch",
             403,
             "SignatureDoesNotMatch",
             Body: "Action=ListTopics&Version=2010-03-31",
@@ -90,6 +110,7 @@ public static class SnsErrorMatrix
         // a real-AWS spot-check (see #247).
         new SnsErrorCase(
             "sns-unrecognized-client",
+            "sns:InvalidClientTokenId",
             403,
             "InvalidClientTokenId",
             Body: "Action=ListTopics&Version=2010-03-31",

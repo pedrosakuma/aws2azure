@@ -1,6 +1,7 @@
 using System.Text;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Goldens;
 
 namespace Aws2Azure.Conformance.S3;
@@ -32,8 +33,15 @@ public sealed class S3ErrorConformanceTests : IClassFixture<ConformanceProxyFixt
     public async Task Proxy_error_matches_aws_contract_and_golden(string caseName)
     {
         var testCase = S3ErrorMatrix.Cases.Single(c => c.Name == caseName);
+        var context = new ConformanceCaseContext(
+            ConformanceProxyFixture.AccessKeyId,
+            ConformanceProxyFixture.Secret,
+            _fixture.Client.BaseAddress);
+        var plan = await testCase.CreatePlanAsync(context);
+        var expectedOutcome = Assert.Single(testCase.Expected.Steps);
 
-        using var request = testCase.BuildRequest();
+        using var request = await Assert.Single(plan.Steps)
+            .BuildRequestAsync(new ConformanceExecutionState(context));
         using var response = await _fixture.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         var canonical = AwsErrorCanonicalizer.Canonicalize(
@@ -42,13 +50,13 @@ public sealed class S3ErrorConformanceTests : IClassFixture<ConformanceProxyFixt
         // (1) AWS-contract oracle — always enforced, offline. Pin the S3 <Error>
         // envelope shape, not merely "some parseable XML": status, root element,
         // and the required Code + Message fields.
-        Assert.Equal(testCase.ExpectedStatus, canonical.StatusCode);
+        Assert.Equal(expectedOutcome.ExpectedStatus, canonical.StatusCode);
         Assert.Equal(CanonicalResponse.BodyKindXmlError, canonical.BodyKind);
         var root = canonical.BodyFields.FirstOrDefault(f => f.Name == "(root)");
         Assert.Equal("Error", root.Value);
         Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
-        Assert.Equal(testCase.ExpectedCode, code.Value);
+        Assert.Equal(expectedOutcome.ExpectedErrorCode, code.Value);
 
         // (2) Golden faithfulness diff — active once Tier-2 commits goldens.
         var store = GoldenStore.ForService("s3");

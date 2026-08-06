@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.S3;
 
 namespace Aws2Azure.Conformance.Sqs;
@@ -33,14 +34,22 @@ public enum SqsCaseProtocol
 /// </summary>
 public sealed record SqsErrorCase(
     string Name,
+    string Operation,
     SqsCaseProtocol Protocol,
     int ExpectedStatus,
     string ExpectedCode,
     string Body,
     string? Target = null,
     string? AccessKeyOverride = null,
-    string? SecretOverride = null)
+    string? SecretOverride = null) : IConformanceCase
 {
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Proxy-side SQS rejection asserted from the AWS Query/AWS JSON contract.");
+
     public HttpRequestMessage BuildRequest(string accessKey, string secret)
     {
         var signKey = AccessKeyOverride ?? accessKey;
@@ -81,6 +90,15 @@ public sealed record SqsErrorCase(
             extraSignedHeaders: extraSigned);
         return request;
     }
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+        => new(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(
+                Name,
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
 }
 
 /// <summary>
@@ -104,6 +122,7 @@ public static class SqsErrorMatrix
         // envelope and <Code>InvalidAction</Code>.
         new SqsErrorCase(
             "query-invalid-action",
+            "sqs:InvalidAction",
             SqsCaseProtocol.Query,
             400,
             "InvalidAction",
@@ -113,6 +132,7 @@ public static class SqsErrorMatrix
         // vocabulary answers SignatureDoesNotMatch / 403 (unlike the JSON path).
         new SqsErrorCase(
             "query-invalid-signature",
+            "sqs:SignatureDoesNotMatch",
             SqsCaseProtocol.Query,
             403,
             "SignatureDoesNotMatch",
@@ -124,6 +144,7 @@ public static class SqsErrorMatrix
         // only XML service that answers InvalidAccessKeyId here.
         new SqsErrorCase(
             "query-unrecognized-client",
+            "sqs:InvalidClientTokenId",
             SqsCaseProtocol.Query,
             403,
             "InvalidClientTokenId",
@@ -139,6 +160,7 @@ public static class SqsErrorMatrix
         // EmitSigV4FailureAsync override.
         new SqsErrorCase(
             "json-invalid-signature",
+            "sqs:InvalidSignatureException",
             SqsCaseProtocol.Json,
             400,
             "InvalidSignatureException",
@@ -150,6 +172,7 @@ public static class SqsErrorMatrix
         // / 400.
         new SqsErrorCase(
             "json-unrecognized-client",
+            "sqs:UnrecognizedClientException",
             SqsCaseProtocol.Json,
             400,
             "UnrecognizedClientException",

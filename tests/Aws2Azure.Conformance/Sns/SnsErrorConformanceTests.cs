@@ -1,6 +1,7 @@
 using System.Text;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Goldens;
 
 namespace Aws2Azure.Conformance.Sns;
@@ -36,19 +37,25 @@ public sealed class SnsErrorConformanceTests : IClassFixture<SnsConformanceFixtu
     public async Task Proxy_error_matches_aws_contract_and_golden(string caseName)
     {
         var testCase = SnsErrorMatrix.Cases.Single(c => c.Name == caseName);
+        var context = new ConformanceCaseContext(
+            SnsConformanceFixture.AccessKeyId,
+            SnsConformanceFixture.Secret,
+            _fixture.Client.BaseAddress);
+        var plan = await testCase.CreatePlanAsync(context);
+        var expectedOutcome = Assert.Single(testCase.Expected.Steps);
 
-        using var request = testCase.BuildRequest(
-            SnsConformanceFixture.AccessKeyId, SnsConformanceFixture.Secret);
+        using var request = await Assert.Single(plan.Steps)
+            .BuildRequestAsync(new ConformanceExecutionState(context));
         using var response = await _fixture.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         var canonical = AwsErrorCanonicalizer.Canonicalize(
             (int)response.StatusCode, FlattenHeaders(response), body);
 
         // (1) AWS-contract oracle — always enforced, offline.
-        Assert.Equal(testCase.ExpectedStatus, canonical.StatusCode);
+        Assert.Equal(expectedOutcome.ExpectedStatus, canonical.StatusCode);
         Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
-        Assert.Equal(testCase.ExpectedCode, code.Value);
+        Assert.Equal(expectedOutcome.ExpectedErrorCode, code.Value);
 
         // (1b) Faithful Query envelope: the AWS <ErrorResponse> wrapper (not S3's
         // bare <Error> root), unwrapped by the canonicalizer to the same top-level
