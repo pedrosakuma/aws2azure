@@ -68,7 +68,14 @@ raw HTTP response ──▶ AwsErrorCanonicalizer ──▶ CanonicalResponse �
 - **Goldens** (`Goldens/`, `fixtures/<service>/*.golden`) store a canonical
   response plus provenance. Plain text, reviewed in PRs. Captured from
   LocalStack/AWS — **never hand-authored** (hand-authoring re-encodes the
-  proxy's assumptions and catches nothing). Record mode:
+  proxy's assumptions and catches nothing). Replay loads the
+  **most-authoritative** committed golden for a case by provenance:
+  **real AWS** (`# source: aws`) > **LocalStack** (`# source: localstack`) >
+  **proxy-self** (`# source: proxy-self`). The legacy LocalStack path remains
+  `<case>.golden`; additional provenances use `<case>.<source>.golden` (for
+  example `<case>.aws.golden`) so a future real-AWS capture can coexist with
+  the existing LocalStack golden for the same case without clobbering it.
+  Record mode:
   `AWS2AZURE_CONFORMANCE_RECORD=1`.
 - **Diff + allow-list** (`Canonicalization/CanonicalDiff.cs`, `AllowList/`):
   differences become tagged `Divergence`s. A divergence is *accepted* only if a
@@ -185,4 +192,7 @@ AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/A
 > auth cases above are Tier-1-only: LocalStack can't be their oracle (it ignores
 > signatures), so the expected outcome is the AWS JSON-protocol contract.
 
-Real-AWS goldens (Tier 3) and further operations follow in later PRs.
+Real-AWS goldens (Tier 3) and further operations follow in later PRs. The
+future capture job will persist them through the same `GoldenStore.Save(...)`
+API already used by Tier 2, passing `GoldenProvenance.SourceRealAws` plus a
+note marking the capture as the authoritative oracle.

@@ -21,9 +21,8 @@ public sealed record GoldenProvenance(
     public const string SourceProxySelf = "proxy-self";
 
     /// <summary>
-    /// True when the golden is NOT a faithful AWS reference (proxy's own output
-    /// or an emulator with known divergences). Such goldens guard against
-    /// regression but do not, on their own, prove AWS-faithfulness.
+    /// True when the golden comes from real AWS and can therefore serve as the
+    /// highest-trust replay reference.
     /// </summary>
     public bool IsAuthoritative => Source == SourceRealAws;
 }
@@ -44,6 +43,7 @@ public sealed record GoldenFile(GoldenProvenance Provenance, string CanonicalTex
 public sealed class GoldenStore
 {
     private readonly string _root;
+    private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
 
     public GoldenStore(string root) => _root = root;
 
@@ -67,27 +67,88 @@ public sealed class GoldenStore
         return new GoldenStore(Path.Combine(dir.FullName, "fixtures", service));
     }
 
+    /// <summary>
+    /// Legacy LocalStack path kept for backward compatibility with existing
+    /// committed <c>&lt;case&gt;.golden</c> files.
+    /// </summary>
     public string PathFor(string caseName) => Path.Combine(_root, caseName + ".golden");
 
-    public bool Exists(string caseName) => File.Exists(PathFor(caseName));
+    /// <summary>
+    /// Provenance-specific path. Real-AWS and proxy-self captures get a source
+    /// suffix so they can coexist with the legacy LocalStack golden for the same
+    /// case without clobbering it.
+    /// </summary>
+    public string PathFor(string caseName, string source) =>
+        source == GoldenProvenance.SourceLocalStack
+            ? PathFor(caseName)
+            : Path.Combine(_root, caseName + "." + source + ".golden");
+
+    public bool Exists(string caseName) => EnumerateCandidatePaths(caseName).Any(File.Exists);
 
     public bool TryLoad(string caseName, out GoldenFile golden)
     {
-        var path = PathFor(caseName);
-        if (!File.Exists(path))
+        var best = default(GoldenFile);
+        var bestPriority = int.MinValue;
+
+        foreach (var path in EnumerateCandidatePaths(caseName))
+        {
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            var candidate = Parse(File.ReadAllText(path));
+            var priority = ReplayPriority(candidate.Provenance);
+            if (priority > bestPriority)
+            {
+                best = candidate;
+                bestPriority = priority;
+            }
+        }
+
+        if (best is null)
         {
             golden = null!;
             return false;
         }
-        golden = Parse(File.ReadAllText(path));
+
+        golden = best;
         return true;
     }
 
     public void Save(string caseName, CanonicalResponse response, GoldenProvenance provenance)
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(PathFor(caseName), Serialize(response, provenance));
+        File.WriteAllText(PathFor(caseName, provenance.Source), Serialize(response, provenance));
     }
+
+    private IEnumerable<string> EnumerateCandidatePaths(string caseName)
+    {
+        yield return PathFor(caseName);
+
+        if (!Directory.Exists(_root))
+        {
+            yield break;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(_root, caseName + ".*.golden"))
+        {
+            if (!PathComparer.Equals(path, PathFor(caseName)))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static int ReplayPriority(GoldenProvenance provenance) =>
+        provenance.IsAuthoritative
+            ? 300
+            : provenance.Source switch
+            {
+                GoldenProvenance.SourceLocalStack => 200,
+                GoldenProvenance.SourceProxySelf => 100,
+                _ => 0,
+            };
 
     internal static string Serialize(CanonicalResponse response, GoldenProvenance provenance)
     {
