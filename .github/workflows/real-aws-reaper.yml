@@ -1,0 +1,82 @@
+name: real-aws-reaper
+
+# Backstop cleanup for the future real-AWS capture flow from issue #708. The
+# capture workflow is not built yet, so this file also documents its cleanup
+# contract:
+#   - Every ephemeral AWS resource must use the
+#     `aws2azure-it-<unix-epoch-seconds>-<unique-suffix>` name shape.
+#   - Every ephemeral AWS resource must be tagged with:
+#       purpose=aws2azure-it
+#       created=<UTC ISO-8601 timestamp, for example 2026-08-05T22:48:42Z>
+#     Optional-but-recommended tags like `run-id` and `run-attempt` may be
+#     added for traceability, mirroring the Azure-side nightly workflow.
+#   - DynamoDB, Kinesis, SNS, and SQS resources must all live in the same AWS
+#     region configured below so the regional list APIs and regional Tagging
+#     API view the same inventory. Keep S3 buckets in that same run contract.
+#   - The OIDC role used here needs the reaper's full least-privilege surface:
+#       `tag:GetResources`
+#       `s3:ListAllMyBuckets`, `s3:ListBucket`, `s3:ListBucketVersions`,
+#       `s3:ListBucketMultipartUploads`, `s3:AbortMultipartUpload`,
+#       `s3:DeleteObject`, `s3:DeleteObjectVersion`, `s3:DeleteBucket`
+#       `dynamodb:ListTables`, `dynamodb:DeleteTable`
+#       `kinesis:ListStreams`, `kinesis:DeleteStream`,
+#       `kinesis:DeregisterStreamConsumer`
+#       `sns:ListTopics`, `sns:DeleteTopic`
+#       `sqs:ListQueues`, `sqs:DeleteQueue`
+#     Scope the destructive actions to the ephemeral `aws2azure-it-*`
+#     resources, matching the capture workflow's naming contract.
+# Missing or unparseable `created` tags fall back to the unix-epoch embedded in
+# the resource name. If both the tag and the documented name timestamp are
+# absent or unparseable, the resource is treated as orphaned and deleted
+# conservatively.
+#
+# It is safe to run alongside an active capture run: a fresh run's resources
+# are far younger than MAX_AGE_HOURS, and the future capture workflow should
+# follow the same single-run concurrency discipline as the real-Azure jobs.
+on:
+  schedule:
+    - cron: '30 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: real-aws-reaper
+      cancel-in-progress: false
+    env:
+      AWS_REGION: us-east-1
+      MAX_AGE_HOURS: '6'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check credentials
+        id: gate
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_ROLE_ARN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_ROLE_ARN not set — reaper has nothing to authenticate with; skipping."
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: real-aws-reaper
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete orphaned AWS test resources
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          bash .github/scripts/cleanup-real-aws-resources.sh
