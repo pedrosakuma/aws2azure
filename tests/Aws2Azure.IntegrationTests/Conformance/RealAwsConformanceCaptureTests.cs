@@ -29,7 +29,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         await ExecuteServiceCasesAsync(
             "s3",
             S3HappyPathMatrix.Cases,
-            CreateContext("s3")).ConfigureAwait(false);
+            CreateContext(
+                "s3",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["bucketName"] = fixture.CreateEphemeralName("s3bucket"),
+                })).ConfigureAwait(false);
     }
 
     [SkippableFact]
@@ -128,7 +133,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             await ExecuteServiceCasesAsync(
                 "sns",
                 SnsHappyPathMatrix.Cases,
-                CreateContext("sns")).ConfigureAwait(false);
+                CreateContext(
+                    "sns",
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["topicName"] = fixture.CreateEphemeralName("snstopic"),
+                    })).ConfigureAwait(false);
         }
         finally
         {
@@ -146,7 +156,14 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         await ExecuteServiceCasesAsync(
             "sqs",
             SqsHappyPathMatrix.Cases,
-            CreateContext("sqs")).ConfigureAwait(false);
+            CreateContext(
+                "sqs",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["queueName"] = fixture.CreateEphemeralName("sqsqueue"),
+                    ["queueName1"] = fixture.CreateEphemeralName("sqsqueue1"),
+                    ["queueName2"] = fixture.CreateEphemeralName("sqsqueue2"),
+                })).ConfigureAwait(false);
     }
 
     private ConformanceCaseContext CreateContext(

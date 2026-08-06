@@ -63,8 +63,12 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          echo "::error::Workflow scaffold added, but the real-AWS capture runner/test harness must be implemented before enabling this step."
-          exit 1
+          dotnet test tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj \
+            -c Release \
+            --no-build \
+            --filter "Category=RealAws" \
+            --logger "trx;LogFileName=real-aws-capture.trx" \
+            --results-directory TestResults
 
       - name: Upload capture test results
         if: always() && steps.gate.outputs.enabled == 'true'
