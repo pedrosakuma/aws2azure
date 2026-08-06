@@ -41,7 +41,7 @@ public static class SnsHappyPathMatrix
             "The topic created in step 1 must be discoverable by both GetTopicAttributes and ListTopics before deletion."),
             static (context, _) =>
             {
-                var topicName = "conf-happy-topic-" + Guid.NewGuid().ToString("N")[..12];
+                var topicName = context.GetProperty("topicName") ?? ("conf-happy-topic-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-topic", _ => BuildRequest(context, [
@@ -107,7 +107,7 @@ public static class SnsHappyPathMatrix
             "PublishBatch should report each entry as successful without partial failures."),
             static (context, _) =>
             {
-                var topicName = "conf-happy-topic-" + Guid.NewGuid().ToString("N")[..12];
+                var topicName = context.GetProperty("topicName") ?? ("conf-happy-topic-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-topic", _ => BuildRequest(context, [
@@ -153,7 +153,8 @@ public static class SnsHappyPathMatrix
             context.SecretAccessKey,
             region: context.Region,
             service: "sns",
-            extraSignedHeaders: ["content-type"]);
+            extraSignedHeaders: ["content-type"],
+            sessionToken: context.SessionToken);
         return request;
     }
 

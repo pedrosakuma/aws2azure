@@ -57,7 +57,8 @@ public sealed record ConformanceCaseContext(
     string SecretAccessKey,
     Uri? BaseAddress = null,
     string Region = "us-east-1",
-    IReadOnlyDictionary<string, string>? Properties = null)
+    IReadOnlyDictionary<string, string>? Properties = null,
+    string? SessionToken = null)
 {
     /// <summary>Best-effort lookup for a fixture-supplied property.</summary>
     public string? GetProperty(string name)

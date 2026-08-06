@@ -11,7 +11,8 @@ internal static class ConformanceSigV4Signer
         string service = "s3",
         DateTimeOffset? now = null,
         IReadOnlyList<string>? extraSignedHeaders = null,
-        bool? s3PathStyle = null)
+        bool? s3PathStyle = null,
+        string? sessionToken = null)
         => Aws2Azure.TestSupport.SigV4.TestSigV4Signer.SignHeader(
             request,
             body,
@@ -21,5 +22,6 @@ internal static class ConformanceSigV4Signer
             service,
             now,
             extraSignedHeaders,
-            s3PathStyle);
+            s3PathStyle,
+            sessionToken);
 }
