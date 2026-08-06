@@ -89,7 +89,8 @@ need:
   [sidecar deployment](./docs/deployment/sidecar.md) ·
   [build-time module selection](./docs/deployment/module-selection.md)
 - **Performance & testing:** [perf baseline](./docs/perf/README.md) ·
-  [nightly real-Azure tests](./docs/testing/real-azure-nightly.md)
+  [nightly real-Azure tests](./docs/testing/real-azure-nightly.md) ·
+  [real-AWS capture plan](./docs/testing/real-aws-capture.md)
 
 The gap docs render into a browsable site via `mkdocs serve` (config in
 [`mkdocs.yml`](./mkdocs.yml)); they are the single source of truth, validated and
