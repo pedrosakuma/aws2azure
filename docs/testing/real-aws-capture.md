@@ -165,10 +165,12 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "s3:DeleteBucket",
         "s3:DeleteObject",
         "s3:DeleteObjects",
+        "s3:DeleteObjectVersion",
         "s3:GetObject",
         "s3:HeadBucket",
         "s3:ListBucket",
         "s3:ListBucketVersions",
+        "s3:PutBucketVersioning",
         "s3:PutObject"
       ],
       "Resource": [
