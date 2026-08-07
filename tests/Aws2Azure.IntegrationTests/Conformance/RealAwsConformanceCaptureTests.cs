@@ -432,12 +432,26 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
     public async Task DeleteTableBestEffortAsync(string tableName)
     {
-        try
+        // PAY_PER_REQUEST tables can briefly report ACTIVE via DescribeTable
+        // just before backend provisioning fully settles, so an immediate
+        // DeleteTable can still race and fail with ResourceInUseException
+        // even though CreateTable + WaitForTableActive already succeeded.
+        // Retry briefly instead of letting best-effort teardown fail the case.
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            await DynamoDb.DeleteTableAsync(tableName).ConfigureAwait(false);
-        }
-        catch (Amazon.DynamoDBv2.Model.ResourceNotFoundException)
-        {
+            try
+            {
+                await DynamoDb.DeleteTableAsync(tableName).ConfigureAwait(false);
+                return;
+            }
+            catch (Amazon.DynamoDBv2.Model.ResourceNotFoundException)
+            {
+                return;
+            }
+            catch (Amazon.DynamoDBv2.Model.ResourceInUseException) when (attempt < 4)
+            {
+                await Task.Delay(1000).ConfigureAwait(false);
+            }
         }
     }
 
