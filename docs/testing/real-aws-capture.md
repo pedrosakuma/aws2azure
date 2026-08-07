@@ -198,6 +198,7 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "dynamodb:PutItem",
         "dynamodb:Query",
         "dynamodb:Scan",
+        "dynamodb:TagResource",
         "dynamodb:UpdateItem"
       ],
       "Resource": "arn:aws:dynamodb:*:*:table/aws2azure-it-*"
@@ -215,6 +216,7 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
       "Sid": "KinesisPrefixScopedData",
       "Effect": "Allow",
       "Action": [
+        "kinesis:AddTagsToStream",
         "kinesis:DeleteStream",
         "kinesis:DescribeStream",
         "kinesis:DescribeStreamSummary",
@@ -245,7 +247,8 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "sns:GetTopicAttributes",
         "sns:ListSubscriptionsByTopic",
         "sns:Publish",
-        "sns:PublishBatch"
+        "sns:PublishBatch",
+        "sns:TagResource"
       ],
       "Resource": "arn:aws:sns:*:*:aws2azure-it-*"
     },
