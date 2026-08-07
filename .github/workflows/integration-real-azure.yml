@@ -133,6 +133,7 @@ jobs:
       AZURE_EVENTHUBS_PARTITION_COUNT: '2'
       TEST_RESULTS_DIR: TestResults/real-azure
       EVIDENCE_DIR: TestResults/real-azure-conformance
+      AWS2AZURE_CONFORMANCE_EVIDENCE_DIR: TestResults/real-azure-conformance/canonical-cases
       CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json
       QUALIFICATION_DIR: artifacts/real-azure-qualification
       PRIVATE_DIR: artifacts/real-azure-qualification-private
@@ -627,6 +628,34 @@ jobs:
           fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
+      - name: Export shared happy-path case evidence
+        id: case_evidence
+        if: always()
+        env:
+          SELECTED_SERVICE: ${{ inputs.service || 'all' }}
+        run: |
+          status=0
+          filter=
+          case "$SELECTED_SERVICE" in
+            all) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests" ;;
+            s3) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence" ;;
+            dynamodb) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence" ;;
+            kinesis) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Kinesis_happy_path_cases_emit_real_azure_evidence" ;;
+            sns) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Sns_happy_path_cases_emit_real_azure_evidence" ;;
+            sqs) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Sqs_happy_path_cases_emit_real_azure_evidence" ;;
+            *)
+              echo "::notice::Selected service has no shared happy-path conformance evidence cases."
+              echo "exit_code=0" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          dotnet test tests/Aws2Azure.IntegrationTests \
+            -c Release --no-build --nologo \
+            --filter "$filter" \
+            --results-directory "$TEST_RESULTS_DIR" \
+            --logger "trx;LogFileName=conformance-case-evidence.trx" || status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
       # Generate immutable matrix evidence from every available TRX and refresh
       # the Theme C divergence dossier even when tests failed. The test steps
       # preserve their exit codes; a final gate after teardown restores failure.
@@ -798,6 +827,7 @@ jobs:
           }
           check "Planned unit tests" "${{ steps.unit_tests.outputs.exit_code }}"
           check "Planned integration tests" "${{ steps.integration_tests.outputs.exit_code }}"
+          check "Shared happy-path case evidence export" "${{ steps.case_evidence.outputs.exit_code }}"
           check "Evidence/report generation" "${{ steps.reports.outputs.exit_code }}"
           check "Workload correctness candidate generation" "${{ steps.qualification.outputs.exit_code }}"
           exit "$failed"

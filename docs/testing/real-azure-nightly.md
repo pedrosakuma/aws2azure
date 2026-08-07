@@ -38,15 +38,25 @@ and no long-lived account-key secrets:
 6. **Run** the real-Azure matrix tests and write a separate TRX. If OIDC is
    unavailable, the tests execute their normal skip gates, so evidence records
    `skipped`/`not_run` rather than pretending Azure was observed.
-7. **Generate evidence** and the divergence report from every available TRX.
+7. **Export** canonical happy-path conformance evidence from the shared
+   `Aws2Azure.Conformance` case matrix into
+   `AWS2AZURE_CONFORMANCE_EVIDENCE_DIR` (default
+   `TestResults/real-azure-conformance/canonical-cases`). Each file uses the
+   same `# key: value` header + canonical-body format as committed conformance
+   goldens, but captures the proxy-over-real-Azure response for one case step.
+   The nightly uploads this directory inside the existing
+   `source-validation-real-azure-conformance` / `real-azure-conformance`
+   artifact so issue #708's future real-AWS differential job can diff it
+   without provisioning Azure again.
+8. **Generate evidence** and the divergence report from every available TRX.
    Scheduled and PR executions are explicit source validation: they do not emit
    a workload correctness candidate.
-8. **Upload** source-validation TRX/evidence as
+9. **Upload** source-validation TRX/evidence as
    `source-validation-real-azure-conformance`. A manual profile run that selects
    an exact sealed producer instead uploads `real-azure-conformance` with the
    sealed candidate identity, runtime hashes, config manifest, and one matching
    correctness candidate.
-9. **Deallocate** — the shared cleanup first permanently deletes every Blob
+10. **Deallocate** — the shared cleanup first permanently deletes every Blob
    version (required because immutable storage with versioning protects
    non-empty accounts from deletion), deletes/purges Key Vault, requests
    resource-group deletion, and waits for Azure to confirm it. This runs in an
