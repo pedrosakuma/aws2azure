@@ -91,7 +91,11 @@ jobs:
         id: diff
         run: |
           set -euo pipefail
-          if git diff --quiet -- tests/Aws2Azure.Conformance/fixtures; then
+          # git diff alone misses brand-new (untracked) golden files, which is
+          # exactly the case on the very first successful real-AWS capture, so
+          # this also checks for untracked files under the fixtures tree.
+          if git diff --quiet -- tests/Aws2Azure.Conformance/fixtures \
+            && [ -z "$(git status --porcelain -- tests/Aws2Azure.Conformance/fixtures)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
