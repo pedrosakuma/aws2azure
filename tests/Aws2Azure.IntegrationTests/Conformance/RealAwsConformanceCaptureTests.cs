@@ -409,7 +409,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         };
 
     public string CreateEphemeralName(string suffix)
-        => $"aws2azure-it-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}-{suffix}";
+        => $"aws2azure-it-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}-{Random.Shared.Next(0, 1_000_000):D6}-{suffix}";
 
     public List<Amazon.DynamoDBv2.Model.Tag> CreateDynamoDbTags() =>
     [
