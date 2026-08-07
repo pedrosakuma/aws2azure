@@ -13,11 +13,14 @@ namespace Aws2Azure.Conformance.S3;
 ///
 /// <para>
 /// The real-Azure nightly storage account keeps blob versioning enabled so S3
-/// bucket teardown must behave like a versioned bucket: a plain
-/// <c>DeleteObject</c> would create a delete-marker version, while
-/// <c>DeleteBucket</c> still requires every retained version to be removed.
-/// These plans therefore tear down test objects with version-aware hard
-/// deletes so the bucket can be emptied deterministically.
+/// bucket teardown must behave like a versioned bucket. Azure Blob Storage
+/// rejects a hard delete of a version that is still the blob's *current*
+/// version (403 AuthorizationPermissionMismatch), so a plain
+/// <c>DeleteObject</c> must run first to unset the current-version pointer,
+/// and only then can that same version be purged with a versioned
+/// <c>?versionId=</c> hard delete. <c>DeleteBucket</c> still requires every
+/// retained version to be removed, so these plans always pair a plain delete
+/// with the matching versioned hard delete before tearing down the bucket.
 /// </para>
 /// </summary>
 public static class S3HappyPathMatrix
@@ -50,6 +53,7 @@ public static class S3HappyPathMatrix
                     200,
                     RequiredHeaders: [new("ETag", "Present on the GetObject response.")],
                     RequiredBodyAssertions: [new("Body", "Equals the exact bytes uploaded by PutObject.")]),
+                new(204, Notes: "Unsets the current version pointer; Azure requires this before a versioned hard-delete of that same version."),
                 new(204, Notes: "Hard-deletes the original object version created by PutObject."),
                 new(204, Notes: "DeleteBucket returns an empty success response once every version has been purged."),
             ],
@@ -65,6 +69,7 @@ public static class S3HappyPathMatrix
                     new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
                     new ConformanceRequestStep("put-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("get-object", _ => BuildObjectRequest(context, HttpMethod.Get, bucket, key, Array.Empty<byte>())),
+                    new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object-version", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
@@ -99,6 +104,8 @@ public static class S3HappyPathMatrix
                 new(204),
                 new(204),
                 new(204),
+                new(204),
+                new(204),
             ],
             semanticAssertion:
             "Across both pages the harness should observe each seeded key exactly once, then purge both retained object versions before deleting the bucket."),
@@ -118,11 +125,13 @@ public static class S3HappyPathMatrix
                         var token = state.RequireXmlValue("list-page-1", "NextContinuationToken");
                         return BuildListObjectsRequest(context, bucket, token);
                     }),
+                    new ConformanceRequestStep("delete-object-1", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, "page/object-1.txt", Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object-version-1", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
                         "page/object-1.txt",
                         state.RequireHeaderValue("seed-object-1", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-object-2", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, "page/object-2.txt", Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object-version-2", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
@@ -148,6 +157,7 @@ public static class S3HappyPathMatrix
                     RequiredBodyAssertions: [new("Body", "Returned because the If-Match precondition succeeded.")]),
                 new(204),
                 new(204),
+                new(204),
             ],
             semanticAssertion:
             "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body, and teardown must purge the retained object version before DeleteBucket."),
@@ -166,6 +176,7 @@ public static class S3HappyPathMatrix
                         request.Headers.TryAddWithoutValidation("If-Match", state.RequireHeaderValue("seed-put", "ETag"));
                         return request;
                     }),
+                    new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object-version", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
