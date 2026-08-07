@@ -41,10 +41,6 @@ public static class TestSigV4Signer
 
         request.Headers.TryAddWithoutValidation(SigV4Constants.AmzDateHeader, amzDate);
         request.Headers.TryAddWithoutValidation(SigV4Constants.AmzContentSha256Header, payloadHash);
-        if (!string.IsNullOrWhiteSpace(sessionToken))
-        {
-            request.Headers.TryAddWithoutValidation(SigV4Constants.AmzSecurityTokenHeader, sessionToken);
-        }
 
         var headers = new List<KeyValuePair<string, string>>
         {
@@ -59,6 +55,13 @@ public static class TestSigV4Signer
             SigV4Constants.AmzContentSha256Header,
             SigV4Constants.AmzDateHeader,
         };
+
+        if (!string.IsNullOrWhiteSpace(sessionToken))
+        {
+            request.Headers.TryAddWithoutValidation(SigV4Constants.AmzSecurityTokenHeader, sessionToken);
+            headers.Add(new KeyValuePair<string, string>(SigV4Constants.AmzSecurityTokenHeader, sessionToken));
+            signedSet.Add(SigV4Constants.AmzSecurityTokenHeader);
+        }
 
         if (extraSignedHeaders is not null)
         {
