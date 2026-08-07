@@ -44,32 +44,6 @@ internal static class ConformanceExecutionStateExtensions
                 $"Response body from step '{stepName}' did not contain XML element '{localName}'.");
     }
 
-    /// <summary>
-    /// Parses a <c>ListVersionsResult</c> body from an earlier <c>?versions</c>
-    /// step and returns the <c>VersionId</c> of the single &lt;Version&gt;
-    /// entry that does not match <paramref name="excludedVersionId"/> — used
-    /// to discover the delete-marker version created by a plain DELETE on a
-    /// versioned Azure container.
-    /// </summary>
-    public static string RequireXmlVersionIdExcluding(
-        this ConformanceExecutionState state,
-        string stepName,
-        string excludedVersionId)
-    {
-        var body = state.GetRequiredExchange(stepName).Body;
-        var document = XDocument.Parse(body);
-        var match = document
-            .Descendants()
-            .Where(element => element.Name.LocalName == "Version")
-            .Select(version => version.Elements().FirstOrDefault(e => e.Name.LocalName == "VersionId")?.Value)
-            .FirstOrDefault(versionId => !string.IsNullOrEmpty(versionId)
-                && !string.Equals(versionId, excludedVersionId, StringComparison.Ordinal));
-
-        return match
-            ?? throw new InvalidOperationException(
-                $"Response body from step '{stepName}' did not contain a Version entry other than '{excludedVersionId}'.");
-    }
-
     public static string RequireJsonString(
         this ConformanceExecutionState state,
         string stepName,
