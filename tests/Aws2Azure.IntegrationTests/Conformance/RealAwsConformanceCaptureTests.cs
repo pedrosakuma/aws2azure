@@ -436,8 +436,11 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         // just before backend provisioning fully settles, so an immediate
         // DeleteTable can still race and fail with ResourceInUseException
         // even though CreateTable + WaitForTableActive already succeeded.
-        // Retry briefly instead of letting best-effort teardown fail the case.
-        for (var attempt = 0; attempt < 5; attempt++)
+        // Retry for up to ~40s; if it's still in use after that, give up
+        // silently — this is best-effort teardown, so a straggler is left
+        // for the nightly real-aws-reaper.yml rather than failing a capture
+        // case whose actual assertions already passed.
+        for (var attempt = 0; attempt < 20; attempt++)
         {
             try
             {
@@ -448,9 +451,14 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
             {
                 return;
             }
-            catch (Amazon.DynamoDBv2.Model.ResourceInUseException) when (attempt < 4)
+            catch (Amazon.DynamoDBv2.Model.ResourceInUseException)
             {
-                await Task.Delay(1000).ConfigureAwait(false);
+                if (attempt == 19)
+                {
+                    return;
+                }
+
+                await Task.Delay(2000).ConfigureAwait(false);
             }
         }
     }
