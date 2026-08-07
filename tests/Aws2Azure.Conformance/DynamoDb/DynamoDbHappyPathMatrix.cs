@@ -164,7 +164,8 @@ public static class DynamoDbHappyPathMatrix
             context.SecretAccessKey,
             region: context.Region,
             service: "dynamodb",
-            extraSignedHeaders: ["x-amz-target"]);
+            extraSignedHeaders: ["x-amz-target"],
+            sessionToken: context.SessionToken);
         return request;
     }
 

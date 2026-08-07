@@ -149,7 +149,8 @@ public static class KinesisHappyPathMatrix
             context.SecretAccessKey,
             region: context.Region,
             service: "kinesis",
-            extraSignedHeaders: ["x-amz-target"]);
+            extraSignedHeaders: ["x-amz-target"],
+            sessionToken: context.SessionToken);
         return request;
     }
 
