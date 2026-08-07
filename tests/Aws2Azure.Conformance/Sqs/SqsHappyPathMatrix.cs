@@ -60,6 +60,7 @@ public static class SqsHappyPathMatrix
                         new("Version", "2012-11-05"),
                         new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
                         new("MaxNumberOfMessages", "1"),
+                        new("WaitTimeSeconds", "5"),
                     ])),
                     new ConformanceRequestStep("delete-message", state => BuildRequest(context, [
                         new("Action", "DeleteMessage"),
