@@ -163,6 +163,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     ["queueName"] = fixture.CreateEphemeralName("sqsqueue"),
                     ["queueName1"] = fixture.CreateEphemeralName("sqsqueue1"),
                     ["queueName2"] = fixture.CreateEphemeralName("sqsqueue2"),
+                    ["queueName3"] = fixture.CreateEphemeralName("sqsqueue3"),
                 })).ConfigureAwait(false);
     }
 

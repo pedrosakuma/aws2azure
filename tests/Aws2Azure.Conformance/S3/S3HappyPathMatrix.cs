@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text;
 using Aws2Azure.Conformance.Cases;
 
@@ -51,7 +52,8 @@ public static class S3HappyPathMatrix
             "s3:PutObject/GetObject/DeleteObject",
             ConformanceCaseExpectation.Success(
             [
-                new(200),
+                new(200, Notes: "CreateBucket."),
+                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
                 new(
                     200,
                     RequiredHeaders: [new("ETag", "Present on the PutObject success response.")],
@@ -73,6 +75,7 @@ public static class S3HappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
                     new ConformanceRequestStep("put-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("get-object", _ => BuildObjectRequest(context, HttpMethod.Get, bucket, key, Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
@@ -90,7 +93,8 @@ public static class S3HappyPathMatrix
             "s3:ListObjectsV2",
             ConformanceCaseExpectation.Success(
             [
-                new(200),
+                new(200, Notes: "CreateBucket."),
+                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
                 new(200),
                 new(200),
                 new(
@@ -121,6 +125,7 @@ public static class S3HappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
                     new ConformanceRequestStep("seed-object-1", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, "page/object-1.txt", firstBody)),
                     new ConformanceRequestStep("seed-object-2", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, "page/object-2.txt", secondBody)),
                     new ConformanceRequestStep("list-page-1", _ => BuildListObjectsRequest(context, bucket, continuationToken: null)),
@@ -150,7 +155,8 @@ public static class S3HappyPathMatrix
             "s3:PutObject/GetObject[If-Match]/DeleteObject",
             ConformanceCaseExpectation.Success(
             [
-                new(200),
+                new(200, Notes: "CreateBucket."),
+                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
                 new(
                     200,
                     RequiredHeaders: [new("ETag", "Present on the PutObject response and reused by If-Match.")]),
@@ -171,6 +177,7 @@ public static class S3HappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
                     new ConformanceRequestStep("seed-put", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("conditional-get", state =>
                     {
@@ -196,6 +203,29 @@ public static class S3HappyPathMatrix
         ConformanceSigV4Signer.SignHeader(
             request,
             Array.Empty<byte>(),
+            context.AccessKeyId,
+            context.SecretAccessKey,
+            region: context.Region,
+            sessionToken: context.SessionToken);
+        return request;
+    }
+
+    private static HttpRequestMessage BuildEnableVersioningRequest(
+        ConformanceCaseContext context,
+        string bucket)
+    {
+        var body = Encoding.UTF8.GetBytes(
+            "<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>");
+        var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            new Uri(ResolveBaseAddress(context), $"/{bucket}?versioning"))
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+        ConformanceSigV4Signer.SignHeader(
+            request,
+            body,
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,

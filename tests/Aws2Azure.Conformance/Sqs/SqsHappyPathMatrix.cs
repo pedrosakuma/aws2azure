@@ -145,7 +145,9 @@ public static class SqsHappyPathMatrix
             "SendMessageBatch should report both entries as successful before the queue is deleted."),
             static (context, _) =>
             {
-                var queueName = context.GetProperty("queueName") ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12]);
+                var queueName = context.GetProperty("queueName3")
+                    ?? context.GetProperty("queueName")
+                    ?? ("conf-happy-queue-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-queue", _ => BuildRequest(context, [
