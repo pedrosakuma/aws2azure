@@ -1,0 +1,11 @@
+# aws2azure conformance golden
+# source: aws
+# operation: kinesis:PutRecord/GetShardIterator/GetRecords
+# captured: 2026-08-07T23:53:31.3611366+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/x-amz-json-1.1
+[header] x-amz-id-2: <MASKED>
+[body:json-error]
+  ShardIterator: AAAAAAAAAAFciFDB5d3CMGwTor64FvPpnDtR+8JlcTzZ0C90knnsdOC0NvELzWkDIHq6xSlcsyZQJbYIK6RSpA+agZM/qtfY1BPGPIKEMtsT0gKt5VoGrQSC2kzc3vwsGx2w5IroODnnD8TtIg2R0PJof3yI4X0ZChhSvRl7wK6i1hHW0Ke+h1bUvY6eZ93JhecnvhIn01iSleIsy6+vVXBl+JHtHi0cckd00Q+JYUouH2QRzeNlAVsFn3i3WlP+kyYEGZ0tDIjWhs3MXPm8bLf2HH0Vrq7Z

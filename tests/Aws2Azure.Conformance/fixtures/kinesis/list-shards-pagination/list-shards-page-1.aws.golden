@@ -1,0 +1,12 @@
+# aws2azure conformance golden
+# source: aws
+# operation: kinesis:ListShards
+# captured: 2026-08-07T23:53:31.4885731+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/x-amz-json-1.1
+[header] x-amz-id-2: <MASKED>
+[body:json-error]
+  NextToken: AAAAAAAAAAGLfyEan7693vh3MDCqdXvN+UbOJKnzscPGXt2hW9vlxiNjKbdlV1KuEX/D6umhgn3d1acfpZ4qx8kGrNBTIFZdpl/lKSpr1d3ly7t3anwI8jdN1nkMGppfMcTzI8vITM6xhaf7OEKcGuGB0rpDzBoyJ4L77oqe3Yfi1PXiqYKb5m7Sm/IJC/X6+LDuPdi/KtJ+PcU+zxTzydljNyadVhHwhS4DIrbD22WRYPcC8Jwc6aMa2/r+Qf61w2sjI7SZGJA=
+  Shards: <nested>

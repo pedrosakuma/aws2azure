@@ -1,0 +1,20 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:ListObjectsV2
+# captured: 2026-08-07T23:54:01.1158262+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/xml
+[header] x-amz-bucket-region: us-east-1
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): ListBucketResult
+  Contents: <nested>
+  ContinuationToken: 1n6PpJHtSvtj6qbso/zOP6baq+d7PbrkY3CcKd3qciEMsa/pSigBGYigd5ChzbkMhi+rMSIUU0v2xDp71MWy926wBZdWrkbde
+  IsTruncated: false
+  KeyCount: 1
+  MaxKeys: 1
+  Name: aws2azure-it-1786146839-459618-s3bucket
+  Prefix: 
