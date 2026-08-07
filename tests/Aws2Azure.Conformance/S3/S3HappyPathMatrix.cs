@@ -12,15 +12,19 @@ namespace Aws2Azure.Conformance.S3;
 /// future Tier-2/Tier-3 capture/diff runner will execute.
 ///
 /// <para>
-/// The real-Azure nightly storage account keeps blob versioning enabled so S3
-/// bucket teardown must behave like a versioned bucket. Azure Blob Storage
-/// rejects a hard delete of a version that is still the blob's *current*
-/// version (403 AuthorizationPermissionMismatch), so a plain
-/// <c>DeleteObject</c> must run first to unset the current-version pointer,
-/// and only then can that same version be purged with a versioned
-/// <c>?versionId=</c> hard delete. <c>DeleteBucket</c> still requires every
-/// retained version to be removed, so these plans always pair a plain delete
-/// with the matching versioned hard delete before tearing down the bucket.
+/// The real-Azure nightly storage account keeps blob versioning enabled and
+/// version-level immutability (<c>immutableStorageWithVersioning</c>) turned
+/// on, so a versioned object teardown here must unset the current-version
+/// pointer with a plain <c>DeleteObject</c> before the retained version can be
+/// purged with a versioned <c>?versionId=</c> hard delete. With version-level
+/// immutability enabled, Azure additionally rejects <c>DeleteBucket</c>
+/// (Delete Container) entirely through the data-plane REST API — even once
+/// every blob version has been purged — because that container-level
+/// operation is only permitted through the ARM management plane. These plans
+/// therefore never assert a <c>DeleteBucket</c> step; bucket cleanup is left
+/// to the nightly reaper (<c>.github/workflows/real-azure-reaper.yml</c>),
+/// matching the existing best-effort teardown convention used by
+/// <c>S3RealAzureConformanceTests</c>/<c>S3RealAzureSmokeTests</c>.
 /// </para>
 /// </summary>
 public static class S3HappyPathMatrix
@@ -57,10 +61,9 @@ public static class S3HappyPathMatrix
                 new(200, Notes: "Lists every retained version so the delete-marker version created above can be located."),
                 new(204, Notes: "Hard-deletes the original object version created by PutObject."),
                 new(204, Notes: "Hard-deletes the delete-marker version created by the plain DeleteObject above."),
-                new(204, Notes: "DeleteBucket returns an empty success response once every version has been purged."),
             ],
             semanticAssertion:
-            "The body returned by GetObject must byte-match the earlier PutObject payload, and teardown must purge every retained version (including the delete-marker) before DeleteBucket."),
+            "The body returned by GetObject must byte-match the earlier PutObject payload, and teardown must purge every retained object version (including the delete-marker). DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -85,7 +88,6 @@ public static class S3HappyPathMatrix
                         state.RequireXmlVersionIdExcluding(
                             "list-versions",
                             state.RequireHeaderValue("put-object", "x-amz-version-id")))),
-                    new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
 
@@ -119,10 +121,9 @@ public static class S3HappyPathMatrix
                 new(200),
                 new(204),
                 new(204),
-                new(204),
             ],
             semanticAssertion:
-            "Across both pages the harness should observe each seeded key exactly once, then purge both retained object versions (including their delete-marker versions) before deleting the bucket."),
+            "Across both pages the harness should observe each seeded key exactly once, then purge both retained object versions (including their delete-marker versions). DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -167,7 +168,6 @@ public static class S3HappyPathMatrix
                         state.RequireXmlVersionIdExcluding(
                             "list-versions-2",
                             state.RequireHeaderValue("seed-object-2", "x-amz-version-id")))),
-                    new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
 
@@ -189,10 +189,9 @@ public static class S3HappyPathMatrix
                 new(200),
                 new(204),
                 new(204),
-                new(204),
             ],
             semanticAssertion:
-            "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body, and teardown must purge every retained version (including the delete-marker) before DeleteBucket."),
+            "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body, and teardown must purge every retained version (including the delete-marker). DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -222,7 +221,6 @@ public static class S3HappyPathMatrix
                         state.RequireXmlVersionIdExcluding(
                             "list-versions",
                             state.RequireHeaderValue("seed-put", "x-amz-version-id")))),
-                    new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
 
