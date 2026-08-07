@@ -53,12 +53,14 @@ public static class S3HappyPathMatrix
                     200,
                     RequiredHeaders: [new("ETag", "Present on the GetObject response.")],
                     RequiredBodyAssertions: [new("Body", "Equals the exact bytes uploaded by PutObject.")]),
-                new(204, Notes: "Unsets the current version pointer; Azure requires this before a versioned hard-delete of that same version."),
+                new(204, Notes: "Unsets the current version pointer; Azure creates a new delete-marker version."),
+                new(200, Notes: "Lists every retained version so the delete-marker version created above can be located."),
                 new(204, Notes: "Hard-deletes the original object version created by PutObject."),
+                new(204, Notes: "Hard-deletes the delete-marker version created by the plain DeleteObject above."),
                 new(204, Notes: "DeleteBucket returns an empty success response once every version has been purged."),
             ],
             semanticAssertion:
-            "The body returned by GetObject must byte-match the earlier PutObject payload, and teardown must purge the retained object version before DeleteBucket."),
+            "The body returned by GetObject must byte-match the earlier PutObject payload, and teardown must purge every retained version (including the delete-marker) before DeleteBucket."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -70,11 +72,19 @@ public static class S3HappyPathMatrix
                     new ConformanceRequestStep("put-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("get-object", _ => BuildObjectRequest(context, HttpMethod.Get, bucket, key, Array.Empty<byte>())),
                     new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
+                    new ConformanceRequestStep("list-versions", _ => BuildListObjectVersionsRequest(context, bucket)),
                     new ConformanceRequestStep("delete-object-version", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
                         key,
                         state.RequireHeaderValue("put-object", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-marker-version", state => BuildVersionedDeleteRequest(
+                        context,
+                        bucket,
+                        key,
+                        state.RequireXmlVersionIdExcluding(
+                            "list-versions",
+                            state.RequireHeaderValue("put-object", "x-amz-version-id")))),
                     new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
@@ -102,13 +112,17 @@ public static class S3HappyPathMatrix
                         new("ListBucketResult.Contents", "Returns the remaining keys on page two."),
                     ]),
                 new(204),
+                new(200),
                 new(204),
+                new(204),
+                new(204),
+                new(200),
                 new(204),
                 new(204),
                 new(204),
             ],
             semanticAssertion:
-            "Across both pages the harness should observe each seeded key exactly once, then purge both retained object versions before deleting the bucket."),
+            "Across both pages the harness should observe each seeded key exactly once, then purge both retained object versions (including their delete-marker versions) before deleting the bucket."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -126,17 +140,33 @@ public static class S3HappyPathMatrix
                         return BuildListObjectsRequest(context, bucket, token);
                     }),
                     new ConformanceRequestStep("delete-object-1", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, "page/object-1.txt", Array.Empty<byte>())),
+                    new ConformanceRequestStep("list-versions-1", _ => BuildListObjectVersionsRequest(context, bucket, "page/object-1.txt")),
                     new ConformanceRequestStep("delete-object-version-1", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
                         "page/object-1.txt",
                         state.RequireHeaderValue("seed-object-1", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-marker-version-1", state => BuildVersionedDeleteRequest(
+                        context,
+                        bucket,
+                        "page/object-1.txt",
+                        state.RequireXmlVersionIdExcluding(
+                            "list-versions-1",
+                            state.RequireHeaderValue("seed-object-1", "x-amz-version-id")))),
                     new ConformanceRequestStep("delete-object-2", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, "page/object-2.txt", Array.Empty<byte>())),
+                    new ConformanceRequestStep("list-versions-2", _ => BuildListObjectVersionsRequest(context, bucket, "page/object-2.txt")),
                     new ConformanceRequestStep("delete-object-version-2", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
                         "page/object-2.txt",
                         state.RequireHeaderValue("seed-object-2", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-marker-version-2", state => BuildVersionedDeleteRequest(
+                        context,
+                        bucket,
+                        "page/object-2.txt",
+                        state.RequireXmlVersionIdExcluding(
+                            "list-versions-2",
+                            state.RequireHeaderValue("seed-object-2", "x-amz-version-id")))),
                     new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
@@ -156,11 +186,13 @@ public static class S3HappyPathMatrix
                     RequiredHeaders: [new("ETag", "Matches the entity tag from the seed PUT.")],
                     RequiredBodyAssertions: [new("Body", "Returned because the If-Match precondition succeeded.")]),
                 new(204),
+                new(200),
+                new(204),
                 new(204),
                 new(204),
             ],
             semanticAssertion:
-            "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body, and teardown must purge the retained object version before DeleteBucket."),
+            "The conditional GET must reuse the ETag emitted by PutObject and still return the full object body, and teardown must purge every retained version (including the delete-marker) before DeleteBucket."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-happy-bucket-" + Guid.NewGuid().ToString("N")[..12]);
@@ -177,11 +209,19 @@ public static class S3HappyPathMatrix
                         return request;
                     }),
                     new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
+                    new ConformanceRequestStep("list-versions", _ => BuildListObjectVersionsRequest(context, bucket, key)),
                     new ConformanceRequestStep("delete-object-version", state => BuildVersionedDeleteRequest(
                         context,
                         bucket,
                         key,
                         state.RequireHeaderValue("seed-put", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-marker-version", state => BuildVersionedDeleteRequest(
+                        context,
+                        bucket,
+                        key,
+                        state.RequireXmlVersionIdExcluding(
+                            "list-versions",
+                            state.RequireHeaderValue("seed-put", "x-amz-version-id")))),
                     new ConformanceRequestStep("delete-bucket", _ => BuildBucketRequest(context, HttpMethod.Delete, bucket)),
                 ], Tier1SkipReason));
             });
@@ -253,6 +293,26 @@ public static class S3HappyPathMatrix
         var path = continuationToken is null
             ? $"/{bucket}?list-type=2&max-keys=1"
             : $"/{bucket}?list-type=2&max-keys=1&continuation-token={Uri.EscapeDataString(continuationToken)}";
+
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ResolveBaseAddress(context), path));
+        ConformanceSigV4Signer.SignHeader(
+            request,
+            Array.Empty<byte>(),
+            context.AccessKeyId,
+            context.SecretAccessKey,
+            region: context.Region,
+            sessionToken: context.SessionToken);
+        return request;
+    }
+
+    private static HttpRequestMessage BuildListObjectVersionsRequest(
+        ConformanceCaseContext context,
+        string bucket,
+        string? prefix = null)
+    {
+        var path = string.IsNullOrEmpty(prefix)
+            ? $"/{bucket}?versions"
+            : $"/{bucket}?versions&prefix={Uri.EscapeDataString(prefix)}";
 
         var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ResolveBaseAddress(context), path));
         ConformanceSigV4Signer.SignHeader(
