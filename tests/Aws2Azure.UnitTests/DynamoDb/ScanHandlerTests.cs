@@ -433,6 +433,55 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_fused_response_emits_crc32_for_serialized_body_bytes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{\"TableName\":\"orders\"}"), cosmos, logger: null, enableGsi: false, ct: default);
+
+        var payload = body.ToArray();
+        Assert.True(ctx.Response.Headers.TryGetValue("x-amz-crc32", out var crc));
+        Assert.Equal(ComputeAwsCrc32Decimal(payload), crc.ToString());
+    }
+
+    [Fact]
+    public async Task Scan_materialized_response_emits_crc32_for_serialized_body_bytes()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"longer\"}}"),
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"},\"v\":{\"S\":\"x\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TableName\":\"orders\","
+                  + "\"FilterExpression\":\"size(v) > :min\","
+                  + "\"ExpressionAttributeValues\":{\":min\":{\"N\":\"3\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
+
+        var payload = body.ToArray();
+        Assert.True(ctx.Response.Headers.TryGetValue("x-amz-crc32", out var crc));
+        Assert.Equal(ComputeAwsCrc32Decimal(payload), crc.ToString());
+    }
+
+    [Fact]
     public async Task Scan_filter_expression_pushdown_appends_clause_to_cosmos_sql()
     {
         // A pushable predicate (v = :v over a string) must arrive at
@@ -723,6 +772,64 @@ public class ScanHandlerTests
         Assert.Equal("2", handler.Requests[1].Headers["x-ms-max-item-count"]);
         using var resp = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal(2, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+        var sentinel = resp.RootElement.GetProperty("LastEvaluatedKey")
+            .GetProperty("__a2a_continuation").GetProperty("S").GetString()!;
+        Assert.Equal("PAGE2", Encoding.UTF8.GetString(Convert.FromBase64String(sentinel)));
+    }
+
+    [Fact]
+    public async Task Scan_limit_preserves_cosmos_page_boundary_last_evaluated_key()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}")),
+                    continuation: "PAGE2"),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("b", "b", "{\"pk\":{\"S\":\"b\"}}")),
+                    continuation: "PAGE3"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"Limit\":1}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        var sentinel = resp.RootElement.GetProperty("LastEvaluatedKey")
+            .GetProperty("__a2a_continuation").GetProperty("S").GetString()!;
+        Assert.Equal("PAGE2", Encoding.UTF8.GetString(Convert.FromBase64String(sentinel)));
+    }
+
+    [Fact]
+    public async Task Scan_pushed_filter_preserves_first_non_empty_cosmos_page_boundary_last_evaluated_key()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"S\":\"x\"}}")),
+                    continuation: "PAGE2"),
+                CosmosOk(CountEnvelope(2)),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TableName\":\"orders\","
+                  + "\"Limit\":1,"
+                  + "\"FilterExpression\":\"v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"S\":\"x\"}}}";
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: false, ct: default);
+
+        Assert.Equal(2, handler.Requests.Count);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
         var sentinel = resp.RootElement.GetProperty("LastEvaluatedKey")
             .GetProperty("__a2a_continuation").GetProperty("S").GetString()!;
         Assert.Equal("PAGE2", Encoding.UTF8.GetString(Convert.FromBase64String(sentinel)));
@@ -1381,6 +1488,22 @@ public class ScanHandlerTests
 
     private sealed record CapturedRequest(
         HttpMethod Method, Uri Uri, Dictionary<string, string> Headers, string? Body);
+
+    private static string ComputeAwsCrc32Decimal(byte[] payload)
+    {
+        const uint polynomial = 0xEDB88320u;
+        uint crc = 0xFFFFFFFFu;
+        foreach (var b in payload)
+        {
+            crc ^= b;
+            for (var i = 0; i < 8; i++)
+            {
+                crc = (crc & 1u) != 0 ? (crc >> 1) ^ polynomial : crc >> 1;
+            }
+        }
+
+        return (~crc).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
 
     private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger
     {
