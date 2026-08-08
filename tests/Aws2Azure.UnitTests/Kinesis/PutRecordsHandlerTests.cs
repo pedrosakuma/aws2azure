@@ -59,7 +59,7 @@ public sealed class PutRecordsHandlerTests
 
         using var document = ReadJson(context);
         Assert.Equal(0, document.RootElement.GetProperty("FailedRecordCount").GetInt32());
-        Assert.Equal("NONE", document.RootElement.GetProperty("EncryptionType").GetString());
+        Assert.False(document.RootElement.TryGetProperty("EncryptionType", out _));
         var records = document.RootElement.GetProperty("Records");
         Assert.Equal(3, records.GetArrayLength());
 

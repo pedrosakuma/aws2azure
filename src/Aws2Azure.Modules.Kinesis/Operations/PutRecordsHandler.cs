@@ -179,7 +179,6 @@ internal static class PutRecordsHandler
         {
             FailedRecordCount = failedRecordCount,
             Records = responseEntries,
-            EncryptionType = "NONE",
         };
 
         await KinesisMetadataSupport.WriteJsonAsync(context, response, KinesisJsonSerializerContext.Default.PutRecordsResponse)

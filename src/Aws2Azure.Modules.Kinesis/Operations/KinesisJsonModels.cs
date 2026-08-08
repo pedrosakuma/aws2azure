@@ -85,7 +85,9 @@ internal sealed class PutRecordResponse
 {
     public string ShardId { get; set; } = string.Empty;
     public string SequenceNumber { get; set; } = string.Empty;
-    public string EncryptionType { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EncryptionType { get; set; }
 }
 
 internal sealed class PutRecordsRequest
@@ -106,7 +108,9 @@ internal sealed class PutRecordsResponse
 {
     public int FailedRecordCount { get; set; }
     public PutRecordsResultEntry[] Records { get; set; } = [];
-    public string EncryptionType { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EncryptionType { get; set; }
 }
 
 internal sealed class GetShardIteratorRequest
