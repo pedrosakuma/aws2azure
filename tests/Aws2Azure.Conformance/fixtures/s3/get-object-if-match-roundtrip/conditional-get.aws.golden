@@ -1,0 +1,14 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:PutObject/GetObject[If-Match]/DeleteObject
+# captured: 2026-08-07T23:54:01.8497851+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: binary/octet-stream
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[header] x-amz-server-side-encryption: AES256
+[header] x-amz-version-id: QCtYbItXDHy2RGrSK6GjsMWyBJ8bgzUh
+[body:opaque]
+  (raw): aws2azure conditional object

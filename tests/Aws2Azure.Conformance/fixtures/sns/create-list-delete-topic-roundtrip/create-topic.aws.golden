@@ -1,0 +1,12 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sns:CreateTopic/GetTopicAttributes/ListTopics/DeleteTopic
+# captured: 2026-08-07T23:53:48.9072813+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: text/xml
+[body:xml-error]
+  (root): CreateTopicResponse
+  CreateTopicResult: <nested>
+  ResponseMetadata: <nested>

@@ -1,0 +1,12 @@
+# aws2azure conformance golden
+# source: aws
+# operation: kinesis:PutRecords
+# captured: 2026-08-07T23:53:31.6107821+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/x-amz-json-1.1
+[header] x-amz-id-2: <MASKED>
+[body:json-error]
+  FailedRecordCount: 0
+  Records: <nested>

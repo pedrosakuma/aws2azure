@@ -1,0 +1,14 @@
+# aws2azure conformance golden
+# source: aws
+# operation: dynamodb:PutItem/Scan/DeleteItem
+# captured: 2026-08-07T23:53:59.2536291+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/x-amz-json-1.0
+[header] x-amz-crc32: 2782524545
+[body:json-error]
+  Count: 1
+  Items: <nested>
+  LastEvaluatedKey: <nested>
+  ScannedCount: 1
