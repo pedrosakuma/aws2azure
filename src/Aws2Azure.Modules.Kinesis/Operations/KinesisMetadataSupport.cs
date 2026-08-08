@@ -14,6 +14,8 @@ internal static class KinesisMetadataSupport
     private static readonly byte[] EmptyJsonObject = "{}"u8.ToArray();
     private static readonly double MinUnixTimestampMilliseconds = DateTimeOffset.MinValue.ToUnixTimeMilliseconds();
     private static readonly double MaxUnixTimestampMilliseconds = DateTimeOffset.MaxValue.ToUnixTimeMilliseconds();
+    private const string RequestIdHeaderName = "x-amzn-requestid";
+    private const string ExtendedRequestIdHeaderName = "x-amz-id-2";
     internal static readonly EnhancedMonitoringDescription[] DefaultEnhancedMonitoring =
     [
         new EnhancedMonitoringDescription
@@ -48,7 +50,9 @@ internal static class KinesisMetadataSupport
     {
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = KinesisErrorResponse.ContentType;
-        context.Response.Headers["x-amzn-requestid"] = context.TraceIdentifier;
+        var requestId = context.TraceIdentifier;
+        context.Response.Headers[RequestIdHeaderName] = requestId;
+        context.Response.Headers[ExtendedRequestIdHeaderName] = requestId;
     }
 
     public static bool TryResolveStreamName(string? streamName, string? streamArn, out string resolvedStreamName, out string? error)

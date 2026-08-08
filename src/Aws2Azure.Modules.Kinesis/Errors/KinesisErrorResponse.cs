@@ -22,13 +22,16 @@ public static class KinesisErrorResponse
 {
     public const string ContentType = "application/x-amz-json-1.1";
     private const string RequestIdHeaderName = "x-amzn-requestid";
+    private const string ExtendedRequestIdHeaderName = "x-amz-id-2";
 
     public static Task WriteAsync(
         HttpContext context,
         int statusCode,
         string code,
         string message)
-        => AwsErrorResponse.WriteAsync(
+    {
+        context.Response.Headers[ExtendedRequestIdHeaderName] = context.TraceIdentifier;
+        return AwsErrorResponse.WriteAsync(
             context,
             AwsErrorFormat.Json,
             statusCode,
@@ -36,4 +39,5 @@ public static class KinesisErrorResponse
             message,
             jsonContentType: ContentType,
             requestIdHeaderName: RequestIdHeaderName);
+    }
 }

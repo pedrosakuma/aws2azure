@@ -51,6 +51,7 @@ public sealed class PutRecordsHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(context.TraceIdentifier, context.Response.Headers["x-amz-id-2"].ToString());
         Assert.Equal(3, sender.BatchCalls.Count);
         Assert.Contains(sender.BatchCalls, c => c.EntityPath == "orders-eh/Partitions/0");
         Assert.Contains(sender.BatchCalls, c => c.EntityPath == "orders-eh/Partitions/1");
