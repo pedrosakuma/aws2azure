@@ -103,7 +103,6 @@ internal static class PutRecordHandler
             {
                 ShardId = PutRecordCommon.FormatShardId(partitionIndex),
                 SequenceNumber = PutRecordCommon.NextSyntheticSequenceNumber().ToString(CultureInfo.InvariantCulture),
-                EncryptionType = "NONE",
             };
 
             await KinesisMetadataSupport.WriteJsonAsync(context, response, KinesisJsonSerializerContext.Default.PutRecordResponse)

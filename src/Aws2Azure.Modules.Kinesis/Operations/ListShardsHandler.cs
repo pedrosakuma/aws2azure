@@ -246,4 +246,5 @@ internal static class ListShardsHandler
         await KinesisMetadataSupport.WriteJsonAsync(context, response, KinesisJsonSerializerContext.Default.ListShardsResponse)
             .ConfigureAwait(false);
     }
+
 }
