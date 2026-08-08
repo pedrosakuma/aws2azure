@@ -22,6 +22,7 @@ sub_features:
   disposition: by_design
 behavior_differences:
 - Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request.
+- Real S3 returns x-amz-version-id on successful DeleteObject responses, but Azure Blob Delete Blob does not surface an equivalent response header even when blob versioning is enabled; Tier-3 diff allow-lists [conformance:missing-header:x-amz-version-id] for delete-object and delete-object-version teardown steps until Azure exposes one.
 - Presigned DELETE is accepted (see PresignedUrl.yaml).
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
