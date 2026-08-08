@@ -293,7 +293,10 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
                 var headers = CollectHeaders(response);
                 var canonical = AwsErrorCanonicalizer.Canonicalize(actualStatus, headers, body);
-                var stepId = $"{index + 1:D2}-{step.Name}";
+                // The step name must match the real-AWS golden's step name
+                // verbatim (see RealAwsConformanceCaptureTests.SaveStep) so the
+                // offline Tier-3 diff can pair the two files up by identical
+                // service/case/step path — do not add an index prefix here.
                 store.Save(
                     canonical,
                     new ConformanceEvidenceMetadata(
@@ -301,7 +304,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
                         service,
                         testCase.Name,
                         testCase.Operation,
-                        stepId,
+                        step.Name,
                         DateTimeOffset.UtcNow,
                         plan.SkipReason));
 

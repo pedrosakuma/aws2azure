@@ -656,6 +656,20 @@ jobs:
             --logger "trx;LogFileName=conformance-case-evidence.trx" || status=$?
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
+      # Raw canonical evidence files (not just the TRX/summary reports) are the
+      # actual input the offline Tier-3 diff (RealAwsOfflineConformanceTests)
+      # needs to pair against the real-AWS goldens committed under
+      # tests/Aws2Azure.Conformance/fixtures. Publish them as their own artifact
+      # so the separate tier3-real-diff.yml workflow can download and compare
+      # without re-provisioning any live Azure resources.
+      - name: Upload canonical real-Azure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-azure-canonical-evidence
+          path: ${{ env.AWS2AZURE_CONFORMANCE_EVIDENCE_DIR }}
+          if-no-files-found: warn
+
       # Generate immutable matrix evidence from every available TRX and refresh
       # the Theme C divergence dossier even when tests failed. The test steps
       # preserve their exit codes; a final gate after teardown restores failure.
