@@ -48,6 +48,6 @@ internal static class DeleteTopicHandler
         }
 
         SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, topicName);
-        await SnsResponseWriter.WriteEmptyResponseAsync(context, "DeleteTopic").ConfigureAwait(false);
+        await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "DeleteTopic").ConfigureAwait(false);
     }
 }
