@@ -137,6 +137,29 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
+    public async Task DeleteObject_success_maps_version_id_header()
+    {
+        var handler = new ScriptedHandler();
+        var response = AzureResponse(HttpStatusCode.Accepted);
+        response.Headers.TryAddWithoutValidation("x-ms-version-id", "2026-08-08T12:34:56.0000000Z");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Delete, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.DeleteObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        Assert.Equal(
+            S3VersionIdCodec.Encode("2026-08-08T12:34:56.0000000Z"),
+            context.Response.Headers["x-amz-version-id"]);
+    }
+
+    [Fact]
     public async Task CopyObject_with_versioned_source_and_concrete_if_match_heads_source_and_forwards_version()
     {
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));

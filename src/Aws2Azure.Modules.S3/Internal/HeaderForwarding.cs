@@ -301,10 +301,17 @@ internal static class HeaderForwarding
 
     }
 
-    public static void ApplyBucketResponseHeaders(HttpResponse response, string bucketName)
+    public static void ApplyBucketResponseHeaders(HttpResponse response, string bucketName, bool includeRegion = true, bool includeArn = true)
     {
-        response.Headers["x-amz-bucket-region"] = DefaultBucketRegion;
-        response.Headers["x-amz-bucket-arn"] = "arn:aws:s3:::" + bucketName;
+        if (includeRegion)
+        {
+            response.Headers["x-amz-bucket-region"] = DefaultBucketRegion;
+        }
+
+        if (includeArn)
+        {
+            response.Headers["x-amz-bucket-arn"] = "arn:aws:s3:::" + bucketName;
+        }
     }
 
     public static void ApplyObjectResponseHeaders(
@@ -313,7 +320,7 @@ internal static class HeaderForwarding
         bool serverSideEncryption = false,
         bool checksumType = false)
     {
-        if (defaultContentType && string.IsNullOrEmpty(response.ContentType))
+        if (defaultContentType && ShouldApplyDefaultObjectContentType(response))
         {
             response.ContentType = DefaultObjectContentType;
         }
@@ -329,13 +336,20 @@ internal static class HeaderForwarding
         }
     }
 
-    public static void ApplyCommonS3ResponseHeaders(HttpResponse response, string? bucketName = null)
+    public static void ApplyCommonS3ResponseHeaders(HttpResponse response, string? bucketName = null, bool includeBucketRegion = true, bool includeBucketArn = true)
     {
         response.Headers["x-amz-request-id"] = response.HttpContext.TraceIdentifier;
         if (!string.IsNullOrEmpty(bucketName))
         {
-            ApplyBucketResponseHeaders(response, bucketName);
+            ApplyBucketResponseHeaders(response, bucketName, includeBucketRegion, includeBucketArn);
         }
+    }
+
+    private static bool ShouldApplyDefaultObjectContentType(HttpResponse response)
+    {
+        var contentType = response.ContentType;
+        return string.IsNullOrEmpty(contentType)
+            || string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase);
     }
 
     public static void ApplyObjectVersionSelection(HttpRequest request, HttpRequestMessage azureRequest)

@@ -41,6 +41,17 @@ public class HeaderForwardingTests
     }
 
     [Fact]
+    public void ApplyBucketResponseHeaders_can_skip_region_or_arn_independently()
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+
+        HeaderForwarding.ApplyBucketResponseHeaders(ctx.Response, "bucket-a", includeRegion: false, includeArn: true);
+
+        Assert.False(ctx.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.Equal("arn:aws:s3:::bucket-a", ctx.Response.Headers["x-amz-bucket-arn"]);
+    }
+
+    [Fact]
     public void ApplyObjectResponseHeaders_sets_requested_object_headers_only()
     {
         var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
@@ -66,6 +77,17 @@ public class HeaderForwardingTests
         Assert.False(target.Headers.ContainsKey("x-amz-server-side-encryption"));
         Assert.False(target.Headers.ContainsKey("x-amz-checksum-type"));
         Assert.False(target.Headers.ContainsKey("Content-Type"));
+    }
+
+    [Fact]
+    public void ApplyObjectResponseHeaders_rewrites_azure_default_octet_stream_to_s3_default()
+    {
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+        target.ContentType = "application/octet-stream";
+
+        HeaderForwarding.ApplyObjectResponseHeaders(target, defaultContentType: true);
+
+        Assert.Equal("binary/octet-stream", target.ContentType);
     }
 
     [Fact]
