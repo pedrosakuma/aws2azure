@@ -148,7 +148,7 @@ internal static class BucketCrudHandlers
         // at the new bucket. The Location is host-relative since we lack
         // per-account host configuration in slice 1.
         context.Response.StatusCode = StatusCodes.Status200OK;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket, includeBucketRegion: false);
         context.Response.Headers["Location"] = "/" + bucket;
         context.Response.ContentLength = 0;
     }

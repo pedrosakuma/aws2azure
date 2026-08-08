@@ -142,10 +142,10 @@ public static class OfflineConformanceDiffRunner
         var unexpected = new List<OfflineConformanceStepDifference>();
         foreach (var step in comparedSteps)
         {
-            var expected = NormalizeForComparison(
+            var expected = NormalizeForComparisonForTests(
                 testCase.Name,
                 CanonicalResponse.ParseRendered(step.RealAwsGolden.CanonicalText));
-            var actual = NormalizeForComparison(
+            var actual = NormalizeForComparisonForTests(
                 testCase.Name,
                 CanonicalResponse.ParseRendered(step.RealAzureEvidence.CanonicalText));
             var (_, unexpectedForStep) = allowList.Partition(
@@ -168,7 +168,7 @@ public static class OfflineConformanceDiffRunner
                 unexpected);
     }
 
-    private static CanonicalResponse NormalizeForComparison(string caseName, CanonicalResponse response)
+    internal static CanonicalResponse NormalizeForComparisonForTests(string caseName, CanonicalResponse response)
     {
         if (!string.Equals(caseName, "list-objects-v2-pagination", StringComparison.Ordinal))
         {
@@ -205,20 +205,32 @@ public static class OfflineConformanceDiffRunner
 
     private static string NormalizeBucketName(string value)
     {
-        const string suffix = "-s3bucket";
-        var end = value.EndsWith(suffix, StringComparison.Ordinal) ? suffix : string.Empty;
-        var core = end.Length == 0 ? value : value[..^end.Length];
-        var cut = core.LastIndexOf('-');
-        if (cut < 0)
+        return LooksLikeBucketName(value) ? "<bucket>" : value;
+    }
+
+    private static bool LooksLikeBucketName(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length < 3 || value.Length > 63)
         {
-            return value;
+            return false;
         }
-        var penultimate = core.LastIndexOf('-', cut - 1);
-        if (penultimate < 0)
+
+        if (value[0] == '-' || value[^1] == '-')
         {
-            return value;
+            return false;
         }
-        return core[..penultimate] + "-<bucket>" + end;
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            var ch = value[i];
+            var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '.';
+            if (!ok)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryLoadGolden(
