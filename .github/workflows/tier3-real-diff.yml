@@ -1,0 +1,98 @@
+name: tier3-real-diff
+
+# Bridges the two independently captured Tier-3 conformance sources (#708):
+#   - real-AWS goldens, committed under tests/Aws2Azure.Conformance/fixtures
+#     by capture-real-aws.yml
+#   - real-Azure canonical evidence, produced (but only uploaded as a
+#     short-lived artifact, never committed) by integration-real-azure.yml
+#
+# RealAwsOfflineConformanceTests never talks to AWS, Azure, or the proxy — it
+# only diffs already-recorded files on disk — so this job just downloads the
+# most recent real-Azure evidence artifact next to the checked-out goldens and
+# runs that credential-free comparer. Every case still individually skips (not
+# fails) if either side's file for it isn't present yet, matching the harness's
+# existing incremental-rollout design.
+on:
+  workflow_run:
+    workflows: [integration-real-azure]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      evidence_run_id:
+        description: Optional exact integration-real-azure run id to source evidence from
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diff:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT: ${{ github.workspace }}/evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Resolve source run id
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPLICIT_RUN_ID: ${{ inputs.evidence_run_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXPLICIT_RUN_ID" ]; then
+            echo "run_id=$EXPLICIT_RUN_ID" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          else
+            run_id="$(gh run list --workflow=integration-real-azure.yml --status=success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')"
+            if [ -z "$run_id" ]; then
+              echo "::error::No successful integration-real-azure run found to source evidence from."
+              exit 1
+            fi
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download real-Azure canonical evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          if ! gh run download "${{ steps.source.outputs.run_id }}" \
+            --name real-azure-canonical-evidence --dir evidence; then
+            echo "::notice::No real-azure-canonical-evidence artifact on run ${{ steps.source.outputs.run_id }} — every Tier-3 case will report skipped until the next successful export."
+          fi
+          # Re-root the downloaded tree onto <service>/<case>/<step>.evidence so
+          # it matches EvidenceStore's expected layout; upload-artifact already
+          # preserves that structure, this only guards against an empty/missing
+          # download.
+          find evidence -maxdepth 2 -type d | sort
+
+      - name: Build test harness
+        run: dotnet build -c Release --nologo
+
+      - name: Run Tier-3 credential-free real-AWS/real-Azure diff
+        run: |
+          dotnet test tests/Aws2Azure.Conformance -c Release --no-build --nologo \
+            --filter "FullyQualifiedName~RealAwsOfflineConformanceTests" \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=tier3-real-diff.trx" \
+            --results-directory TestResults
+
+      - name: Upload Tier-3 diff results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tier3-real-diff-results
+          path: TestResults/*.trx
+          if-no-files-found: warn
