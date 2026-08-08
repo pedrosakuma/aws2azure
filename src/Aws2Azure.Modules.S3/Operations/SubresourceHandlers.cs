@@ -643,6 +643,7 @@ internal static partial class SubresourceHandlers
                 context, blob, bucket, S3Operation.PutBucketVersioning, BucketVersioningMetadataKey, status, ct)
             .ConfigureAwait(false)) return;
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
     }
 
     // Parses the S3 <VersioningConfiguration><Status>…</Status></> body.

@@ -192,7 +192,7 @@ internal static class ObjectListHandlers
         }
 
         context.Response.StatusCode = StatusCodes.Status200OK;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentType = "application/xml; charset=utf-8";
 
         if (isV2)
@@ -357,7 +357,7 @@ internal static class ObjectListHandlers
         }
 
         context.Response.StatusCode = StatusCodes.Status200OK;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentType = "application/xml; charset=utf-8";
         await S3XmlWriter.WriteListVersionsResultAsync(
             context.Response.Body, bucket, prefix, delimiter, maxKeys,

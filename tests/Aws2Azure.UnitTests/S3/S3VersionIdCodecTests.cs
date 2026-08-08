@@ -13,6 +13,7 @@ public sealed class S3VersionIdCodecTests
 
         Assert.True(S3VersionIdCodec.TryDecode(encoded, out var decoded));
         Assert.Equal(azureVersionId, decoded);
+        Assert.StartsWith("azv-", encoded, StringComparison.Ordinal);
         Assert.DoesNotContain(":", encoded);
     }
 

@@ -49,6 +49,94 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
+    public async Task PutObject_does_not_emit_bucket_headers_and_keeps_checksum_type()
+    {
+        var handler = new ScriptedHandler();
+        var putResponse = AzureResponse(HttpStatusCode.Created, eTag: "\"0xPUT\"");
+        putResponse.Headers.TryAddWithoutValidation("x-ms-version-id", "2026-08-08T12:00:00.0000000Z");
+        handler.Enqueue(putResponse);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(body: "hello", method: HttpMethods.Put, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.PutObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+        Assert.Equal("FULL_OBJECT", context.Response.Headers["x-amz-checksum-type"]);
+        Assert.Equal("AES256", context.Response.Headers["x-amz-server-side-encryption"]);
+        Assert.Equal(S3VersionIdCodec.Encode("2026-08-08T12:00:00.0000000Z"), context.Response.Headers["x-amz-version-id"]);
+    }
+
+    [Fact]
+    public async Task GetObject_does_not_emit_bucket_headers_or_checksum_type()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(GetResponse("hello"u8.ToArray(), contentType: "application/octet-stream"));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Get, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.GetObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-type"));
+        Assert.Equal("AES256", context.Response.Headers["x-amz-server-side-encryption"]);
+    }
+
+    [Fact]
+    public async Task DeleteObject_does_not_emit_bucket_headers_or_content_type()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.Accepted));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Delete, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.DeleteObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+        Assert.False(context.Response.Headers.ContainsKey("Content-Type"));
+    }
+
+    [Fact]
+    public async Task DeleteObject_with_soft_delete_header_emits_delete_marker()
+    {
+        var handler = new ScriptedHandler();
+        var response = AzureResponse(HttpStatusCode.Accepted);
+        response.Headers.TryAddWithoutValidation("x-ms-delete-type-permanent", "false");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Delete, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.DeleteObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal("true", context.Response.Headers["x-amz-delete-marker"]);
+    }
+
+    [Fact]
     public async Task CopyObject_with_versioned_source_and_concrete_if_match_heads_source_and_forwards_version()
     {
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));

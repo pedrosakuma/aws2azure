@@ -586,8 +586,12 @@ internal static class ObjectHandlers
 
             // S3 PUT object response is empty with ETag in the header.
             context.Response.StatusCode = StatusCodes.Status200OK;
-            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
             HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+            HeaderForwarding.ApplyObjectResponseHeaders(
+                context.Response,
+                serverSideEncryption: true,
+                checksumType: true);
             context.Response.ContentLength = 0;
         }
         finally
@@ -622,8 +626,12 @@ internal static class ObjectHandlers
         }
 
         context.Response.StatusCode = (int)azureResp.StatusCode;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+        HeaderForwarding.ApplyObjectResponseHeaders(
+            context.Response,
+            defaultContentType: azureResp.StatusCode != System.Net.HttpStatusCode.NotModified,
+            serverSideEncryption: true);
         ApplyGetResponseOverrides(context.Request, context.Response);
 
         if (azureResp.StatusCode == System.Net.HttpStatusCode.NotModified)
@@ -688,12 +696,18 @@ internal static class ObjectHandlers
             // through cleanly — do NOT route through the error path which
             // would stamp an x-amz-error-code header.
             context.Response.StatusCode = StatusCodes.Status304NotModified;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
             HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
             return;
         }
 
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+        HeaderForwarding.ApplyObjectResponseHeaders(
+            context.Response,
+            defaultContentType: true,
+            serverSideEncryption: true);
 
         var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
         if (!string.IsNullOrEmpty(translatedEtag))
@@ -734,7 +748,19 @@ internal static class ObjectHandlers
         if (azureResp.IsSuccessStatusCode)
         {
             context.Response.StatusCode = StatusCodes.Status204NoContent;
-            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+            HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+            if (azureResp.Headers.TryGetValues("x-ms-delete-type-permanent", out var deleteType))
+            {
+                foreach (var value in deleteType)
+                {
+                    if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Response.Headers["x-amz-delete-marker"] = "true";
+                        break;
+                    }
+                }
+            }
             context.Response.ContentLength = 0;
             return;
         }
@@ -748,7 +774,7 @@ internal static class ObjectHandlers
             if (mapping.Code == "NoSuchKey")
             {
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
-                HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+                HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
                 context.Response.ContentLength = 0;
                 return;
             }

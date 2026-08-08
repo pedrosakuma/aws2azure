@@ -18,31 +18,54 @@ public class HeaderForwardingTests
     }
 
     [Fact]
-    public void ApplyCommonS3ResponseHeaders_sets_request_and_bucket_headers()
+    public void ApplyCommonS3ResponseHeaders_sets_only_request_id_by_default()
     {
         var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext { TraceIdentifier = "trace-123" };
 
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response, "bucket-a");
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
 
         Assert.Equal("trace-123", ctx.Response.Headers["x-amz-request-id"]);
+        Assert.False(ctx.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(ctx.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+    }
+
+    [Fact]
+    public void ApplyBucketResponseHeaders_sets_bucket_headers()
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+
+        HeaderForwarding.ApplyBucketResponseHeaders(ctx.Response, "bucket-a");
+
         Assert.Equal("us-east-1", ctx.Response.Headers["x-amz-bucket-region"]);
         Assert.Equal("arn:aws:s3:::bucket-a", ctx.Response.Headers["x-amz-bucket-arn"]);
     }
 
     [Fact]
-    public void CopyFromAzureResponse_sets_s3_default_object_headers()
+    public void ApplyObjectResponseHeaders_sets_requested_object_headers_only()
     {
-        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
-        {
-            Content = new System.Net.Http.ByteArrayContent("abc"u8.ToArray())
-        };
         var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
 
-        HeaderForwarding.CopyFromAzureResponse(azure, target);
+        HeaderForwarding.ApplyObjectResponseHeaders(
+            target,
+            defaultContentType: true,
+            serverSideEncryption: true,
+            checksumType: true);
 
         Assert.Equal("binary/octet-stream", target.ContentType);
         Assert.Equal("AES256", target.Headers["x-amz-server-side-encryption"]);
         Assert.Equal("FULL_OBJECT", target.Headers["x-amz-checksum-type"]);
+    }
+
+    [Fact]
+    public void ApplyObjectResponseHeaders_does_not_force_headers_when_not_requested()
+    {
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.ApplyObjectResponseHeaders(target);
+
+        Assert.False(target.Headers.ContainsKey("x-amz-server-side-encryption"));
+        Assert.False(target.Headers.ContainsKey("x-amz-checksum-type"));
+        Assert.False(target.Headers.ContainsKey("Content-Type"));
     }
 
     [Fact]

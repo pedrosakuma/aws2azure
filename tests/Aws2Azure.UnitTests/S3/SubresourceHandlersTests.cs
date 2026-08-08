@@ -171,6 +171,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, enableContext.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(enableContext.Response.Headers["x-amz-request-id"]));
         Assert.Equal("Enabled", backend.ContainerMetadata["bucket"]["aws2azureversioning"]);
         Assert.Equal("keep-me", backend.ContainerMetadata["bucket"]["existing"]);
         Assert.Equal("persist-me", backend.ContainerMetadata["bucket"]["aws2azurebuckettags"]);
