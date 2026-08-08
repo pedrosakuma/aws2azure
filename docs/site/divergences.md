@@ -206,7 +206,7 @@ the documented behaviour differences and the real-Azure seal state.
 | kinesis | PutRecord | ✅ | SequenceNumber is synthetic and proxy-generated from a per-process monotonic counter; it is not the Event Hubs broker-assigned sequence number or offset. [conformance:field-value:SequenceNumber] |
 | kinesis | PutRecord | ✅ | ShardId is derived client-side by hashing PartitionKey with MD5 and routing to {eventHub}/Partitions/{id}. This matches Event Hubs' historical partitioning algorithm, but the broker may diverge if Azure changes its internal hashing in the future. [conformance:field-value:ShardId] |
 | kinesis | PutRecord | ✅ | ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored. |
-| kinesis | PutRecord | ✅ | EncryptionType is always reported as NONE. |
+| kinesis | PutRecord | ✅ | EncryptionType is omitted because Event Hubs does not expose AWS-style stream encryption metadata on PutRecord responses. |
 | kinesis | PutRecord | ✅ | Record publication is validated against production Azure Event Hubs through the real-Azure conformance workflow. |
 | kinesis | PutRecords | ✅ | Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets. [conformance:field-value:Records[].SequenceNumber] |
 | kinesis | PutRecords | ✅ | ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count. [conformance:field-value:Records[].ShardId] |
