@@ -610,9 +610,7 @@ internal static class ScanHandler
 
         DynamoDbMetrics.RecordReadTransformPath(DynamoDbMetrics.OpScan, DynamoDbMetrics.PathFused);
 
-        ctx.Response.StatusCode = 200;
-        ctx.Response.ContentType = "application/x-amz-json-1.0";
-        await ctx.Response.BodyWriter.WriteAsync(outBuf.WrittenMemory, ct).ConfigureAwait(false);
+        await CosmosOpsShared.WriteBufferedJsonResponseAsync(ctx, 200, outBuf.WrittenMemory, ct).ConfigureAwait(false);
     }
 
     private static ReadOnlySpan<byte> ItemsNameU8 => "Items"u8;

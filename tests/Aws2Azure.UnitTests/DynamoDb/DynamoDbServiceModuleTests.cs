@@ -9,6 +9,8 @@ using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.DynamoDb;
+using Aws2Azure.Modules.DynamoDb.Operations;
+using Aws2Azure.Modules.DynamoDb.Errors;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 
@@ -84,6 +86,28 @@ public class DynamoDbServiceModuleTests
 
         Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
         Assert.Contains("AccessDeniedException", ReadBody(ctx));
+    }
+
+
+    [Fact]
+    public void ComputeAwsCrc32Decimal_matches_known_values()
+    {
+        Assert.Equal("2745614147", CosmosOpsShared.ComputeAwsCrc32Decimal("{}"u8));
+        Assert.Equal("4247354728", CosmosOpsShared.ComputeAwsCrc32Decimal("""{"Item":{"Id":{"S":"123"}}}"""u8));
+    }
+
+    [Fact]
+    public async Task HandleAsync_errors_emit_crc32_header()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.NotARealOp", body: "{}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        var body = ReadBody(ctx);
+        Assert.True(ctx.Response.Headers.TryGetValue("x-amz-crc32", out var crc));
+        Assert.Equal(DynamoDbErrorResponse.ComputeAwsCrc32Decimal(body), crc.ToString());
     }
 
     [Theory]
