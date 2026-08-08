@@ -20,7 +20,7 @@ sub_features:
   gap: Decodes the signed and unsigned trailer framings emitted by modern AWS SDKs when flexible checksums are enabled (the AWSSDK.S3 4.x / recent boto3 default). The trailing checksum / x-amz-trailer-signature section is consumed and discarded — Azure Blob validates content integrity independently; the proxy does not re-validate the x-amz-checksum-* trailer. The -ECDSA-* (SigV4a) streaming variants are not recognized.
 - name: versioning (x-amz-version-id)
   status: partial
-  gap: When account-level Blob versioning is enabled, the created version id (Azure x-ms-version-id) is echoed as x-amz-version-id.
+  gap: When account-level Blob versioning is enabled, the created Azure x-ms-version-id is reversibly encoded before being surfaced as x-amz-version-id so the token round-trips through S3 ?versionId without leaking Azure's raw timestamp format.
   disposition: by_design
 - name: server-side encryption (SSE-S3, SSE-KMS, SSE-C)
   status: unsupported
@@ -35,6 +35,8 @@ sub_features:
 behavior_differences:
 - ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object.
 - PUT always overwrites an existing blob, matching S3 default semantics.
+- x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
+- x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses.
 - 'Concrete-ETag preconditions (If-Match / If-None-Match with a value other than ''*'') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure''s raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The ''*'' sentinel is honored (forwarded to Azure).'
 - Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics.
 references:

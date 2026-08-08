@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
+using System.Text;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -17,6 +18,9 @@ namespace Aws2Azure.Modules.S3.Internal;
 /// </remarks>
 internal static class HeaderForwarding
 {
+    private const string DefaultBucketRegion = "us-east-1";
+    private const string DefaultServerSideEncryption = "AES256";
+    private const string DefaultObjectContentType = "binary/octet-stream";
     // S3 request → Azure PUT/GET/HEAD/DELETE request.
     //
     // If-Match / If-None-Match are NOT in this list — they carry ETags
@@ -216,6 +220,8 @@ internal static class HeaderForwarding
     /// </remarks>
     public static void CopyFromAzureResponse(HttpResponseMessage source, HttpResponse target)
     {
+        ApplyCommonS3ResponseHeaders(target);
+
         foreach (var header in StandardResponseHeaders)
         {
             if (header == HeaderNames.ETag)
@@ -291,9 +297,60 @@ internal static class HeaderForwarding
         {
             foreach (var v in versionId)
             {
-                if (!string.IsNullOrEmpty(v)) { target.Headers["x-amz-version-id"] = v; break; }
+                if (!string.IsNullOrEmpty(v)) { target.Headers["x-amz-version-id"] = S3VersionIdCodec.Encode(v); break; }
             }
         }
+
+        if (string.IsNullOrEmpty(target.ContentType))
+        {
+            target.ContentType = DefaultObjectContentType;
+        }
+
+        target.Headers["x-amz-server-side-encryption"] = DefaultServerSideEncryption;
+        target.Headers["x-amz-checksum-type"] = "FULL_OBJECT";
+    }
+
+    public static void ApplyCommonS3ResponseHeaders(HttpResponse response, string? bucketName = null)
+    {
+        response.Headers["x-amz-request-id"] = response.HttpContext.TraceIdentifier;
+        response.Headers["x-amz-bucket-region"] = DefaultBucketRegion;
+        if (!string.IsNullOrEmpty(bucketName))
+        {
+            response.Headers["x-amz-bucket-arn"] = "arn:aws:s3:::" + bucketName;
+        }
+    }
+
+    public static void ApplyObjectVersionSelection(HttpRequest request, HttpRequestMessage azureRequest)
+    {
+        var versionId = ReadVersionIdQuery(request);
+        if (versionId is null)
+        {
+            return;
+        }
+
+        azureRequest.RequestUri = AppendVersionIdQuery(azureRequest.RequestUri!, versionId);
+    }
+
+    public static string? ReadVersionIdQuery(HttpRequest request)
+    {
+        var s3VersionId = request.Query["versionId"].ToString();
+        if (string.IsNullOrEmpty(s3VersionId))
+        {
+            return null;
+        }
+
+        return S3VersionIdCodec.TryDecode(s3VersionId, out var azureVersionId)
+            ? azureVersionId
+            : s3VersionId;
+    }
+
+    public static Uri AppendVersionIdQuery(Uri uri, string azureVersionId)
+    {
+        var versionPart = "versionid=" + Uri.EscapeDataString(azureVersionId);
+        var builder = new StringBuilder(uri.AbsoluteUri);
+        builder.Append(uri.Query.Length == 0 ? '?' : '&');
+        builder.Append(versionPart);
+        return new Uri(builder.ToString(), UriKind.Absolute);
     }
 
     /// <summary>

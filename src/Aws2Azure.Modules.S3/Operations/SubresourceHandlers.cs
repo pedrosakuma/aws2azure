@@ -97,7 +97,7 @@ internal static partial class SubresourceHandlers
             if (op is S3Operation.GetObjectAcl or S3Operation.PutObjectAcl
                 && !string.IsNullOrEmpty(resolvedVersionId))
             {
-                context.Response.Headers["x-amz-version-id"] = resolvedVersionId;
+                context.Response.Headers["x-amz-version-id"] = S3VersionIdCodec.Encode(resolvedVersionId);
             }
         }
 
@@ -442,6 +442,11 @@ internal static partial class SubresourceHandlers
 
     private static string? StringOrNullQuery(HttpContext context, string key)
     {
+        if (string.Equals(key, "versionId", StringComparison.Ordinal))
+        {
+            return HeaderForwarding.ReadVersionIdQuery(context.Request);
+        }
+
         if (context.Request.Query.TryGetValue(key, out var values) && values.Count > 0)
         {
             var v = values[0];
@@ -456,7 +461,7 @@ internal static partial class SubresourceHandlers
         var versionId = FirstHeader(response, "x-ms-version-id") ?? requestedVersionId;
         if (!string.IsNullOrEmpty(versionId))
         {
-            context.Response.Headers["x-amz-version-id"] = versionId;
+            context.Response.Headers["x-amz-version-id"] = S3VersionIdCodec.Encode(versionId);
         }
     }
 
@@ -1005,6 +1010,7 @@ internal static partial class SubresourceHandlers
     private static async Task WriteXmlAsync(HttpContext context, string xml)
     {
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentType = "application/xml";
         var bytes = Encoding.UTF8.GetBytes(xml);
         context.Response.ContentLength = bytes.LongLength;

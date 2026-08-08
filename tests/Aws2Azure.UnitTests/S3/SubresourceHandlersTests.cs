@@ -99,7 +99,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, putContext.Response.StatusCode);
-        Assert.Equal("current-version", putContext.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("current-version"), putContext.Response.Headers["x-amz-version-id"].ToString());
         Assert.Contains("<Tags>", backend.Blobs[("bucket", "key.txt")].TagsXml, StringComparison.Ordinal);
         Assert.DoesNotContain("<Tagging", backend.Blobs[("bucket", "key.txt")].TagsXml, StringComparison.Ordinal);
 
@@ -115,7 +115,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, getContext.Response.StatusCode);
-        Assert.Equal("current-version", getContext.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("current-version"), getContext.Response.Headers["x-amz-version-id"].ToString());
         AssertTaggingXml(TestHttpContext.ReadBody(getContext), ("project", "aws2azure"), ("tier", "tests"));
 
         var deleteContext = TestHttpContext.CreateContext(
@@ -130,7 +130,7 @@ public sealed class SubresourceHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status204NoContent, deleteContext.Response.StatusCode);
-        Assert.Equal("current-version", deleteContext.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("current-version"), deleteContext.Response.Headers["x-amz-version-id"].ToString());
         Assert.Empty(ParseAzureTags(backend.Blobs[("bucket", "key.txt")].TagsXml));
 
         var getAfterDeleteContext = TestHttpContext.CreateContext(
@@ -397,7 +397,7 @@ public sealed class SubresourceHandlersTests
             BucketTaggingXml(("version", "one")),
             "key.txt");
         Assert.Equal(StatusCodes.Status200OK, put.Response.StatusCode);
-        Assert.Equal("ver-1", put.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("ver-1"), put.Response.Headers["x-amz-version-id"].ToString());
 
         var get = await InvokeAsync(
             backend,
@@ -406,7 +406,7 @@ public sealed class SubresourceHandlersTests
             "?tagging&versionId=ver-1",
             key: "key.txt");
         Assert.Equal(StatusCodes.Status200OK, get.Response.StatusCode);
-        Assert.Equal("ver-1", get.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("ver-1"), get.Response.Headers["x-amz-version-id"].ToString());
 
         var delete = await InvokeAsync(
             backend,
@@ -415,7 +415,7 @@ public sealed class SubresourceHandlersTests
             "?tagging&versionId=ver-1",
             key: "key.txt");
         Assert.Equal(StatusCodes.Status204NoContent, delete.Response.StatusCode);
-        Assert.Equal("ver-1", delete.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("ver-1"), delete.Response.Headers["x-amz-version-id"].ToString());
 
         var acl = await InvokeAsync(
             backend,
@@ -424,7 +424,7 @@ public sealed class SubresourceHandlersTests
             "?acl&versionId=ver-1",
             key: "key.txt");
         Assert.Equal(StatusCodes.Status200OK, acl.Response.StatusCode);
-        Assert.Equal("ver-1", acl.Response.Headers["x-amz-version-id"].ToString());
+        Assert.Equal(S3VersionIdCodec.Encode("ver-1"), acl.Response.Headers["x-amz-version-id"].ToString());
 
         Assert.Contains(backend.Requests, request =>
             request.Method == HttpMethod.Put
@@ -443,11 +443,12 @@ public sealed class SubresourceHandlersTests
         var backend = new FakeBlobBackend();
         backend.AddBlob("bucket", "key.txt");
 
+        var encodedVersionId = S3VersionIdCodec.Encode("2024-06-01T01:02:03.0000000Z");
         var putContext = TestHttpContext.CreateContext(
             body: RetentionXml("COMPLIANCE", "2030-01-02T03:04:05Z"),
             method: HttpMethods.Put,
             path: "/bucket/key.txt",
-            queryString: "?retention&versionId=ver-1");
+            queryString: "?retention&versionId=" + Uri.EscapeDataString(encodedVersionId));
 
         await SubresourceHandlers.HandleAsync(
             putContext,
@@ -462,14 +463,14 @@ public sealed class SubresourceHandlersTests
         var putRequest = backend.Requests.Last(request =>
             request.Method == HttpMethod.Put &&
             request.RequestUri!.Query.Contains("comp=immutabilityPolicies", StringComparison.Ordinal));
-        Assert.Contains("versionid=ver-1", putRequest.RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("versionid=" + Uri.EscapeDataString("2024-06-01T01:02:03.0000000Z"), putRequest.RequestUri!.Query, StringComparison.Ordinal);
         AssertHeader(putRequest.Headers, "x-ms-immutability-policy-mode", "Locked");
         AssertHeader(putRequest.Headers, "x-ms-immutability-policy-until-date", "Wed, 02 Jan 2030 03:04:05 GMT");
 
         var getContext = TestHttpContext.CreateContext(
             method: HttpMethods.Get,
             path: "/bucket/key.txt",
-            queryString: "?retention&versionId=ver-1");
+            queryString: "?retention&versionId=" + Uri.EscapeDataString(encodedVersionId));
 
         await SubresourceHandlers.HandleAsync(
             getContext,
@@ -483,8 +484,8 @@ public sealed class SubresourceHandlersTests
 
         var getRequest = backend.Requests.Last(request =>
             request.Method == HttpMethod.Head &&
-            request.RequestUri!.Query.Contains("versionid=ver-1", StringComparison.Ordinal));
-        Assert.Equal("?versionid=ver-1", getRequest.RequestUri!.Query);
+            request.RequestUri!.Query.Contains("versionid=2024-06-01T01%3A02%3A03.0000000Z", StringComparison.Ordinal));
+        Assert.Equal("?versionid=" + Uri.EscapeDataString("2024-06-01T01:02:03.0000000Z"), getRequest.RequestUri!.Query);
     }
 
     [Fact]
@@ -493,11 +494,12 @@ public sealed class SubresourceHandlersTests
         var backend = new FakeBlobBackend();
         backend.AddBlob("bucket", "key.txt");
 
+        var encodedVersionId = S3VersionIdCodec.Encode("2024-06-01T01:02:04.0000000Z");
         var putContext = TestHttpContext.CreateContext(
             body: LegalHoldXml("ON"),
             method: HttpMethods.Put,
             path: "/bucket/key.txt",
-            queryString: "?legal-hold&versionId=ver-2");
+            queryString: "?legal-hold&versionId=" + Uri.EscapeDataString(encodedVersionId));
 
         await SubresourceHandlers.HandleAsync(
             putContext,
@@ -511,13 +513,13 @@ public sealed class SubresourceHandlersTests
         var putRequest = backend.Requests.Last(request =>
             request.Method == HttpMethod.Put &&
             request.RequestUri!.Query.Contains("comp=legalhold", StringComparison.Ordinal));
-        Assert.Contains("versionid=ver-2", putRequest.RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("versionid=" + Uri.EscapeDataString("2024-06-01T01:02:04.0000000Z"), putRequest.RequestUri!.Query, StringComparison.Ordinal);
         AssertHeader(putRequest.Headers, "x-ms-legal-hold", "true");
 
         var getContext = TestHttpContext.CreateContext(
             method: HttpMethods.Get,
             path: "/bucket/key.txt",
-            queryString: "?legal-hold&versionId=ver-2");
+            queryString: "?legal-hold&versionId=" + Uri.EscapeDataString(encodedVersionId));
 
         await SubresourceHandlers.HandleAsync(
             getContext,
@@ -530,8 +532,8 @@ public sealed class SubresourceHandlersTests
 
         var getRequest = backend.Requests.Last(request =>
             request.Method == HttpMethod.Head &&
-            request.RequestUri!.Query.Contains("versionid=ver-2", StringComparison.Ordinal));
-        Assert.Equal("?versionid=ver-2", getRequest.RequestUri!.Query);
+            request.RequestUri!.Query.Contains("versionid=2024-06-01T01%3A02%3A04.0000000Z", StringComparison.Ordinal));
+        Assert.Equal("?versionid=" + Uri.EscapeDataString("2024-06-01T01:02:04.0000000Z"), getRequest.RequestUri!.Query);
     }
 
     [Fact]

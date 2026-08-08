@@ -14,7 +14,35 @@ public class HeaderForwardingTests
 
         HeaderForwarding.CopyFromAzureResponse(azure, target);
 
-        Assert.Equal("2024-05-06T07:08:09.0000000Z", target.Headers["x-amz-version-id"]);
+        Assert.Equal(S3VersionIdCodec.Encode("2024-05-06T07:08:09.0000000Z"), target.Headers["x-amz-version-id"]);
+    }
+
+    [Fact]
+    public void ApplyCommonS3ResponseHeaders_sets_request_and_bucket_headers()
+    {
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext { TraceIdentifier = "trace-123" };
+
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response, "bucket-a");
+
+        Assert.Equal("trace-123", ctx.Response.Headers["x-amz-request-id"]);
+        Assert.Equal("us-east-1", ctx.Response.Headers["x-amz-bucket-region"]);
+        Assert.Equal("arn:aws:s3:::bucket-a", ctx.Response.Headers["x-amz-bucket-arn"]);
+    }
+
+    [Fact]
+    public void CopyFromAzureResponse_sets_s3_default_object_headers()
+    {
+        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.ByteArrayContent("abc"u8.ToArray())
+        };
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.CopyFromAzureResponse(azure, target);
+
+        Assert.Equal("binary/octet-stream", target.ContentType);
+        Assert.Equal("AES256", target.Headers["x-amz-server-side-encryption"]);
+        Assert.Equal("FULL_OBJECT", target.Headers["x-amz-checksum-type"]);
     }
 
     [Fact]

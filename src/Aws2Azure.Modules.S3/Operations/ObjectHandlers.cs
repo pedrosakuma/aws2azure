@@ -377,6 +377,7 @@ internal static class ObjectHandlers
         var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
 
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, destBucket);
         context.Response.ContentType = "application/xml; charset=utf-8";
         // Expose x-amz-version-id / x-amz-server-side-encryption equivalents
         // in the future via HeaderForwarding if needed. For this slice we
@@ -585,6 +586,7 @@ internal static class ObjectHandlers
 
             // S3 PUT object response is empty with ETag in the header.
             context.Response.StatusCode = StatusCodes.Status200OK;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
             HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
             context.Response.ContentLength = 0;
         }
@@ -597,12 +599,9 @@ internal static class ObjectHandlers
     private static bool HasConcreteEtagPrecondition(HttpRequest request, string header)
         => HeaderForwarding.HasConcreteEtagPrecondition(request, header);
 
-    // Maps the S3 ?versionId selector to Azure's ?versionid query. The version
-    // identifier is the opaque x-ms-version-id surfaced on writes, so it passes
-    // through unchanged. No selector → the bare (current) blob URI.
     private static Uri BuildObjectUri(BlobClient blob, string bucket, string key, HttpRequest request)
     {
-        var versionId = request.Query["versionId"].ToString();
+        var versionId = HeaderForwarding.ReadVersionIdQuery(request);
         if (string.IsNullOrEmpty(versionId))
         {
             return blob.BuildBlobUri(bucket, key);
@@ -623,6 +622,7 @@ internal static class ObjectHandlers
         }
 
         context.Response.StatusCode = (int)azureResp.StatusCode;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
         ApplyGetResponseOverrides(context.Request, context.Response);
 
@@ -734,6 +734,7 @@ internal static class ObjectHandlers
         if (azureResp.IsSuccessStatusCode)
         {
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
             context.Response.ContentLength = 0;
             return;
         }
@@ -747,6 +748,7 @@ internal static class ObjectHandlers
             if (mapping.Code == "NoSuchKey")
             {
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
+                HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
                 context.Response.ContentLength = 0;
                 return;
             }
@@ -1057,7 +1059,7 @@ internal static class ObjectHandlers
     private static Task EmitHeadErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping)
     {
         context.Response.StatusCode = mapping.StatusCode;
-        context.Response.Headers["x-amz-request-id"] = context.TraceIdentifier;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.Headers["x-amz-error-code"] = mapping.Code;
         context.Response.ContentLength = 0;
         return Task.CompletedTask;

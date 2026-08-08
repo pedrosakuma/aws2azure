@@ -4,9 +4,7 @@ azure_equivalent: HEAD https://{account}.blob.core.windows.net/{container}?resty
 status: implemented
 sub_features:
 - name: x-amz-bucket-region
-  status: unsupported
-  gap: Region is implicit in the configured Azure storage account; the header is not emitted.
-  disposition: by_design
+  status: implemented
 behavior_differences:
 - '404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none).'
 references:

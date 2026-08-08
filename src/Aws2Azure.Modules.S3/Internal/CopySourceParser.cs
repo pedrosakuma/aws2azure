@@ -175,7 +175,7 @@ internal static class CopySourceParser
         {
             if (!string.IsNullOrEmpty(value))
             {
-                versionId = value;
+                versionId = S3VersionIdCodec.TryDecode(value, out var decoded) ? decoded : value;
                 return;
             }
         }
