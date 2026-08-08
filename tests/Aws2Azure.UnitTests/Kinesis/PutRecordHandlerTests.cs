@@ -47,6 +47,7 @@ public sealed class PutRecordHandlerTests
         Assert.Equal("customer-1", sender.Annotations!["x-opt-partition-key"]);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(context.TraceIdentifier, context.Response.Headers["x-amz-id-2"].ToString());
         using var document = ReadJson(context);
         Assert.Equal(PutRecordHandler.FormatShardId(expectedPartition), document.RootElement.GetProperty("ShardId").GetString());
         Assert.Equal("NONE", document.RootElement.GetProperty("EncryptionType").GetString());

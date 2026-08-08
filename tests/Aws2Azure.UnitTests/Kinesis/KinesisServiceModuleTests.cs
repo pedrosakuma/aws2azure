@@ -75,6 +75,7 @@ public class KinesisServiceModuleTests
 
         Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         AssertKinesisError(ctx, "ValidationException", "ShardIterator is required.");
+        Assert.Equal(ctx.TraceIdentifier, ctx.Response.Headers["x-amz-id-2"].ToString());
     }
 
     [Fact]

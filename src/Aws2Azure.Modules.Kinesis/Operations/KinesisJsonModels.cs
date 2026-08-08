@@ -136,7 +136,6 @@ internal sealed class GetRecordsResponse
     public KinesisRecord[] Records { get; set; } = [];
     public string NextShardIterator { get; set; } = string.Empty;
     public long MillisBehindLatest { get; set; }
-    public KinesisChildShard[] ChildShards { get; set; } = [];
 }
 
 internal sealed class KinesisRecord
@@ -148,10 +147,6 @@ internal sealed class KinesisRecord
     public string? PartitionKey { get; set; }
 
     public double ApproximateArrivalTimestamp { get; set; }
-}
-
-internal sealed class KinesisChildShard
-{
 }
 
 internal sealed class PutRecordsResultEntry

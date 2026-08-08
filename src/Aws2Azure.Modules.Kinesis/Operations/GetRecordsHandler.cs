@@ -265,9 +265,6 @@ internal static class GetRecordsHandler
             writer.WriteEndArray();
             writer.WriteString("NextShardIterator"u8, nextToken);
             writer.WriteNumber("MillisBehindLatest"u8, millisBehindLatest);
-            writer.WritePropertyName("ChildShards"u8);
-            writer.WriteStartArray();
-            writer.WriteEndArray();
             writer.WriteEndObject();
             writer.Flush();
         }

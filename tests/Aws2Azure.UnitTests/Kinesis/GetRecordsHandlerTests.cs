@@ -52,7 +52,9 @@ public sealed class GetRecordsHandlerTests
         Assert.Equal("offset:102", nextToken.Position);
         Assert.Equal(FixedNow.ToUnixTimeSeconds(), nextToken.IssuedAtUnixSeconds);
         Assert.Equal(1000L, document.RootElement.GetProperty("MillisBehindLatest").GetInt64());
-        Assert.Equal(0, document.RootElement.GetProperty("ChildShards").GetArrayLength());
+        Assert.False(document.RootElement.TryGetProperty("ChildShards", out _));
+        Assert.False(document.RootElement.TryGetProperty("EncryptionType", out _));
+        Assert.Equal(context.TraceIdentifier, context.Response.Headers["x-amz-id-2"].ToString());
     }
 
     [Fact]

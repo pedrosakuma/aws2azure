@@ -16,7 +16,7 @@
 
 ### Behaviour differences
 
-- Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>.
+- Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:Shards[].ShardId]
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
 - SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers.
 - Retention, creation metadata, and the two-partition topology are verified against a live Event Hubs namespace; emulator-focused runs may instead use a configured static partition count.
@@ -68,10 +68,10 @@
 
 ### Behaviour differences
 
-- Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from the synthetic sequence numbers returned by PutRecord/PutRecords.
-- NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque.
+- Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from AWS Kinesis sequence numbers and the proxy's synthetic PutRecord/PutRecords values. [conformance:field-value:Records[].SequenceNumber]
+- NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque. [conformance:field-value:NextShardIterator]
 - MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock.
-- ChildShards is always an empty array because Event Hubs partitions are fixed and the proxy does not model Kinesis split/merge lineage.
+- 
 - AT_TIMESTAMP is translated to an Event Hubs enqueue-time selector that is exclusive (>) rather than AWS's inclusive semantics, so a record at the exact timestamp boundary may be skipped.
 - AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy derives an Event Hubs enqueue-time position from aws2azure's synthetic PutRecord sequence number ((unixMs << 20) | counter). AT_SEQUENCE_NUMBER subtracts 1 ms before applying Event Hubs' exclusive selector so boundary records are included at millisecond granularity; records from the same millisecond may also be returned, which preserves AWS's inclusive boundary intent. If parsing fails the read falls back to the start of the shard.
 - Receive links are pooled per signed shard-iterator identity, so distinct iterators over the same partition keep independent broker cursors. Idle links are evicted after the iterator's 5-minute TTL without closing the shared Event Hubs connection.
@@ -100,7 +100,7 @@
 
 ### Behaviour differences
 
-- Iterators are proxy-issued opaque tokens rather than broker cursors; they remain valid for 5 minutes and require the proxy's configured shard-iterator signing key (or the process-local fallback key after restartless reuse).
+- Iterators are proxy-issued opaque tokens rather than broker cursors; they remain valid for 5 minutes and require the proxy's configured shard-iterator signing key (or the process-local fallback key after restartless reuse). [conformance:field-value:ShardIterator]
 - AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy interprets aws2azure's synthetic PutRecord sequence number as (unixMs << 20) | counter and derives an Event Hubs enqueue-time position from unixMs. If parsing fails the follow-up read falls back to the start of the shard.
 - AT_TIMESTAMP positions are stored as ISO-8601 UTC in the opaque token; Timestamp values outside DateTimeOffset's supported Unix-millisecond range are rejected with ValidationException instead of surfacing an internal error.
 - LATEST is translated to the AMQP filter `amqp.annotation.x-opt-offset > '@latest'` when the iterator's dedicated receiver link is first opened by GetRecords, not when GetShardIterator issues the token. A record published between those calls can be skipped; callers that need an explicit boundary can prime the iterator with GetRecords before publishing.
@@ -132,9 +132,9 @@
 
 ### Behaviour differences
 
-- Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>.
+- Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:Shards[].ShardId]
 - HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
-- NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes.
+- NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes. [conformance:field-value:NextToken]
 - AT_TRIM_HORIZON and AT_TIMESTAMP remain unsupported because Event Hubs can add partitions after creation in Premium/Dedicated tiers, but its APIs do not expose the per-partition open timestamps needed to answer those historical shard-topology queries.
 - Core shard listing and pagination are validated against a live Azure Event Hubs namespace.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
@@ -154,8 +154,8 @@
 
 ### Behaviour differences
 
-- SequenceNumber is synthetic and proxy-generated from a per-process monotonic counter; it is not the Event Hubs broker-assigned sequence number or offset.
-- ShardId is derived client-side by hashing PartitionKey with MD5 and routing to {eventHub}/Partitions/{id}. This matches Event Hubs' historical partitioning algorithm, but the broker may diverge if Azure changes its internal hashing in the future.
+- SequenceNumber is synthetic and proxy-generated from a per-process monotonic counter; it is not the Event Hubs broker-assigned sequence number or offset. [conformance:field-value:SequenceNumber]
+- ShardId is derived client-side by hashing PartitionKey with MD5 and routing to {eventHub}/Partitions/{id}. This matches Event Hubs' historical partitioning algorithm, but the broker may diverge if Azure changes its internal hashing in the future. [conformance:field-value:ShardId]
 - ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
 - EncryptionType is always reported as NONE.
 - Record publication is validated against production Azure Event Hubs through the real-Azure conformance workflow.
@@ -173,8 +173,8 @@
 
 ### Behaviour differences
 
-- Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets.
-- ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count.
+- Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets. [conformance:field-value:Records[].SequenceNumber]
+- ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count. [conformance:field-value:Records[].ShardId]
 - Batch sends are still grouped per partition, but broker dispositions are tracked per message; records accepted before a later reject remain successful in the PutRecords response so callers do not retry already-committed messages.
 - ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash.
 - Batch record publication and per-entry result handling are validated against production Azure Event Hubs through the real-Azure conformance workflow.
