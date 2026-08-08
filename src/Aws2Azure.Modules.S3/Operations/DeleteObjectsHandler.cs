@@ -158,6 +158,7 @@ internal static class DeleteObjectsHandler
 
         var body = S3XmlWriter.DeleteResult(parsed.Quiet, deleted, errors);
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
         context.Response.ContentType = "application/xml; charset=utf-8";
         await context.Response.WriteAsync(body, ct).ConfigureAwait(false);
     }

@@ -434,8 +434,8 @@ internal sealed partial class BlobClient
         return SendBlobRequestAsync(request, cancellationToken);
     }
 
-    // Builds "?comp=...&versionid=..." threading the S3 versionId (opaque
-    // Azure x-ms-version-id) onto the subresource query, both parts optional.
+    // Builds "?comp=...&versionid=..." threading the decoded Azure version id
+    // onto the subresource query, both parts optional.
     private static string VersionQuery(string? comp, string? versionId)
     {
         var hasComp = !string.IsNullOrEmpty(comp);

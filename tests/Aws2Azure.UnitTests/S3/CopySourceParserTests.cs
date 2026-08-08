@@ -28,6 +28,17 @@ public class CopySourceParserTests
         Assert.Equal(expectedVersionId, r.VersionId);
     }
 
+    [Fact]
+    public void Parses_and_decodes_encoded_version_id()
+    {
+        var encoded = S3VersionIdCodec.Encode("2024-01-15T10:30:00.1234567Z");
+
+        var result = CopySourceParser.Parse("/bucket/key.txt?versionId=" + encoded);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("2024-01-15T10:30:00.1234567Z", result.VersionId);
+    }
+
     [Theory]
     [InlineData(null,                 "required")]
     [InlineData("",                   "required")]

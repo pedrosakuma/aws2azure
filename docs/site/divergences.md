@@ -170,7 +170,7 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | UpdateTimeToLive | — | A DynamoDB attribute literally named `ttl` (the most common TTL attribute name) is supported: the proxy stores it shadow-encoded (`_a2a$ttl`) so the user value round-trips while Cosmos' reserved native `ttl` field carries the computed relative duration. The proxy's injected native `ttl` is stripped from read responses. This is an on-disk-format change: an item written by an earlier build that stored a literal `ttl` attribute (unshadowed) is no longer surfaced for that attribute. |
 | dynamodb | UpdateTimeToLive | — | Concurrency: arming the Cosmos container `defaultTtl` and persisting the TTL metadata are two steps, not one atomic unit. Racing concurrent enable/disable calls for the SAME table can interleave and leave the container/metadata states inconsistent (e.g. metadata disabled while the container stays armed). Accepted limitation — TTL is a rare control-plane op and a single DynamoDB client serialises UpdateTimeToLive per table (real DynamoDB uses transient ENABLING/DISABLING states); cross-sidecar coordination is out of scope. |
 | dynamodb | UpdateTimeToLive | — | Validated against real Azure Cosmos DB (container `defaultTtl` armed, per-item `ttl` written and read back); background expiry timing is not asserted in tests. |
-| kinesis | DescribeStream | ✅ | Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:Shards[].ShardId] |
+| kinesis | DescribeStream | ✅ | Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:StreamDescription.Shards[].ShardId] |
 | kinesis | DescribeStream | ✅ | HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments. |
 | kinesis | DescribeStream | ✅ | SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers. |
 | kinesis | DescribeStream | ✅ | Retention, creation metadata, and the two-partition topology are verified against a live Event Hubs namespace; emulator-focused runs may instead use a configured static partition count. |
@@ -182,7 +182,6 @@ the documented behaviour differences and the real-Azure seal state.
 | kinesis | GetRecords | ✅ | Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from AWS Kinesis sequence numbers and the proxy's synthetic PutRecord/PutRecords values. [conformance:field-value:Records[].SequenceNumber] |
 | kinesis | GetRecords | ✅ | NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque. [conformance:field-value:NextShardIterator] |
 | kinesis | GetRecords | ✅ | MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock. |
-| kinesis | GetRecords | ✅ |  |
 | kinesis | GetRecords | ✅ | AT_TIMESTAMP is translated to an Event Hubs enqueue-time selector that is exclusive (>) rather than AWS's inclusive semantics, so a record at the exact timestamp boundary may be skipped. |
 | kinesis | GetRecords | ✅ | AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy derives an Event Hubs enqueue-time position from aws2azure's synthetic PutRecord sequence number ((unixMs << 20) \| counter). AT_SEQUENCE_NUMBER subtracts 1 ms before applying Event Hubs' exclusive selector so boundary records are included at millisecond granularity; records from the same millisecond may also be returned, which preserves AWS's inclusive boundary intent. If parsing fails the read falls back to the start of the shard. |
 | kinesis | GetRecords | ✅ | Receive links are pooled per signed shard-iterator identity, so distinct iterators over the same partition keep independent broker cursors. Idle links are evicted after the iterator's 5-minute TTL without closing the shared Event Hubs connection. |
@@ -263,6 +262,9 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetBucketWebsite | — | GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | GetObject | ✅ | Streaming end-to-end: response body is forwarded without buffering. |
 | s3 | GetObject | ✅ | x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing. |
+| s3 | GetObject | ✅ | The default object Content-Type when Azure has none is binary/octet-stream to match observed S3 behavior. |
+| s3 | GetObject | ✅ | x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline. |
+| s3 | GetObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. |
 | s3 | GetObject | ✅ | Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host. |
 | s3 | GetObject | ✅ | Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2] |
 | s3 | GetObject | ✅ | Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId] |
@@ -294,6 +296,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | ListObjectsV2 | ✅ | Pagination is server-driven against Azure; the proxy paginates internally to fill max-keys. |
 | s3 | ListObjectsV2 | ✅ | Blob storage is flat — delimiter-based grouping is computed by Azure and surfaced as CommonPrefixes. |
 | s3 | ListObjectsV2 | ✅ | CommonPrefixes are de-duplicated across Azure pages. |
+| s3 | ListObjectsV2 | ✅ | NextContinuationToken / ContinuationToken use a proxy-defined opaque encoding of Azure's marker rather than AWS's token format; clients must treat them as opaque. [conformance:list-objects-v2-pagination::field-value:NextContinuationToken] [conformance:list-objects-v2-pagination::field-value:ContinuationToken] |
+| s3 | ListObjectsV2 | ✅ | Offline Tier-3 real-AWS vs real-Azure diffs normalize the echoed bucket Name field when captures were recorded against different ephemeral bucket names for the same case. [conformance:list-objects-v2-pagination::field-value:Name] |
 | s3 | ListParts | — | <ETag> values returned by ListParts are synthetic (derived from the Azure block name) and are NOT equal to the per-part ETags returned by UploadPart. Azure's Get Block List response does not expose per-block MD5s, so this permanent incompatibility remains explicit. |
 | s3 | ListParts | — | <LastModified> for every part is the multipart upload's initiation timestamp from the durable state record; Azure exposes no per-block timestamp. |
 | s3 | ListParts | — | <Owner> / <Initiator> are omitted because aws2azure does not model IAM principals. |
@@ -319,6 +323,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PutBucketWebsite | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutObject | ✅ | ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object. |
 | s3 | PutObject | ✅ | PUT always overwrites an existing blob, matching S3 default semantics. |
+| s3 | PutObject | ✅ | x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline. |
+| s3 | PutObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses. |
 | s3 | PutObject | ✅ | Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure). |
 | s3 | PutObject | ✅ | Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
 | s3 | PutObjectAcl | — | The versionId selects the object existence check only; Azure stores no S3 ACL document. |

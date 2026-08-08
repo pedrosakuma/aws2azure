@@ -9,6 +9,7 @@ namespace Aws2Azure.Modules.S3.Operations;
 
 internal static partial class SubresourceHandlers
 {
+    private const string DefaultServerSideEncryption = "AES256";
     private const long MaxConfigurationBodyBytes = 64 * 1024;
     private const string BucketOwnershipMetadataKey = "aws2azureownership";
     private const string PublicAccessBlockMetadataKey = "aws2azurepublicaccessblock";
@@ -142,7 +143,7 @@ internal static partial class SubresourceHandlers
 
         if (!await MutateContainerMetadataAsync(
                 context, blob, bucket, S3Operation.PutBucketEncryption,
-                BucketEncryptionMetadataKey, "AES256", ct).ConfigureAwait(false)) return;
+                BucketEncryptionMetadataKey, DefaultServerSideEncryption, ct).ConfigureAwait(false)) return;
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 

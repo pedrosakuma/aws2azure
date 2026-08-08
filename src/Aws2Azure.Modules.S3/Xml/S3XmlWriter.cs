@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Xml;
+using Aws2Azure.Modules.S3.Internal;
 
 namespace Aws2Azure.Modules.S3.Xml;
 
@@ -585,7 +586,7 @@ internal static class S3XmlWriter
             {
                 writer.WriteStartElement("Version");
                 writer.WriteElementString("Key", Encode(v.Key, encodeUrl));
-                writer.WriteElementString("VersionId", string.IsNullOrEmpty(v.VersionId) ? "null" : v.VersionId);
+                writer.WriteElementString("VersionId", string.IsNullOrEmpty(v.VersionId) ? "null" : S3VersionIdCodec.Encode(v.VersionId));
                 writer.WriteElementString("IsLatest", v.IsLatest ? "true" : "false");
                 WriteDateTimeElement(writer, "LastModified", v.LastModified.UtcDateTime);
                 var etag = NormalizeETag(v.ETag);

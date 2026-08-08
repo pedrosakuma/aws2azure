@@ -1,5 +1,6 @@
 using System.Text;
 using System.Xml.Linq;
+using Aws2Azure.Modules.S3.Internal;
 using Aws2Azure.Modules.S3.Xml;
 
 namespace Aws2Azure.UnitTests.S3;
@@ -171,7 +172,7 @@ public class S3ListXmlTests
         Assert.Equal("ListVersionsResult", doc.Root!.Name.LocalName);
         var v = doc.Root!.Elements(S3Ns + "Version").ToArray();
         Assert.Equal(2, v.Length);
-        Assert.Equal("v2", v[0].Element(S3Ns + "VersionId")!.Value);
+        Assert.Equal(S3VersionIdCodec.Encode("v2"), v[0].Element(S3Ns + "VersionId")!.Value);
         Assert.Equal("true", v[0].Element(S3Ns + "IsLatest")!.Value);
         Assert.Equal("v-start", doc.Root!.Element(S3Ns + "VersionIdMarker")!.Value);
         Assert.Equal("k.txt", doc.Root!.Element(S3Ns + "NextKeyMarker")!.Value);

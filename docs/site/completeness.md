@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 122 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 121 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
@@ -222,7 +222,6 @@ _No remaining feasible backlog is documented for this service._
 - Sub-feature [GetObject](s3.md#getobject) / server-side encryption customer keys (SSE-C) — 🔵 by design
 - Sub-feature [GetObject](s3.md#getobject) / versioning (versionId query) — 🔵 by design
 - Sub-feature [GetPublicAccessBlock](s3.md#getpublicaccessblock) / public-access enforcement — 🔵 by design
-- Sub-feature [HeadBucket](s3.md#headbucket) / x-amz-bucket-region — 🔵 by design
 - Sub-feature [ListBuckets](s3.md#listbuckets) / owner-identity — 🔵 by design
 - Sub-feature [ListObjectVersions](s3.md#listobjectversions) / delete markers — 🔵 by design
 - Sub-feature [ListObjectsV2](s3.md#listobjectsv2) / fetch-owner — 🔵 by design

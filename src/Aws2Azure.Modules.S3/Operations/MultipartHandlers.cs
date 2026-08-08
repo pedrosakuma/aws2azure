@@ -190,6 +190,7 @@ internal static class MultipartHandlers
 
             var etag = "\"" + Convert.ToHexString(hashing.GetFinalHash()).ToLowerInvariant() + "\"";
             ctx.Response.StatusCode = StatusCodes.Status200OK;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
             ctx.Response.Headers["ETag"] = etag;
             ctx.Response.ContentLength = 0;
         }
@@ -643,6 +644,7 @@ internal static class MultipartHandlers
         if (legacyMultipart)
         {
             ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
             ctx.Response.ContentLength = 0;
             return;
         }
@@ -661,6 +663,7 @@ internal static class MultipartHandlers
             deletedState = true;
 
             ctx.Response.StatusCode = StatusCodes.Status204NoContent;
+            HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
             ctx.Response.ContentLength = 0;
             return;
         }
@@ -1245,6 +1248,7 @@ internal static class MultipartHandlers
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(xml);
         ctx.Response.StatusCode = status;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
         ctx.Response.ContentType = "application/xml";
         ctx.Response.ContentLength = bytes.Length;
         await ctx.Response.Body.WriteAsync(bytes, ct).ConfigureAwait(false);

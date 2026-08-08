@@ -1,5 +1,6 @@
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
+using Aws2Azure.Conformance.Diff;
 
 namespace Aws2Azure.Conformance.Canonicalization;
 
@@ -152,5 +153,79 @@ public sealed class ConformanceAllowListTests
         // be empty until divergences are documented — loading must not throw.
         var allow = ConformanceAllowList.FromGapDocs("s3");
         Assert.NotNull(allow.Tags);
+    }
+
+    [Fact]
+    public async Task Offline_diff_normalizes_ephemeral_list_objects_bucket_name()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "offline-diff-normalized");
+        Directory.CreateDirectory(root);
+        var goldens = new Aws2Azure.Conformance.Goldens.GoldenStore(Path.Combine(root, "goldens"));
+        var evidence = new Aws2Azure.Conformance.Goldens.EvidenceStore(Path.Combine(root, "evidence"));
+
+        var responseA = CanonicalResponse.ParseRendered("""
+HTTP 200
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): ListBucketResult
+  Name: aws2azure-it-111-aaa-s3bucket
+""");
+        var responseB = CanonicalResponse.ParseRendered("""
+HTTP 200
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): ListBucketResult
+  Name: aws2azure-it-222-bbb-s3bucket
+""");
+
+        goldens.SaveStep("list-objects-v2-pagination", "create-bucket", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "create-bucket", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "enable-versioning", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "enable-versioning", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "seed-object-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "seed-object-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "seed-object-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "seed-object-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "list-page-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "list-page-1", responseB,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "list-page-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "list-page-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "delete-object-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "delete-object-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "delete-object-version-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "delete-object-version-1", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "delete-object-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "delete-object-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        goldens.SaveStep("list-objects-v2-pagination", "delete-object-version-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("aws", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+        evidence.SaveStep("list-objects-v2-pagination", "delete-object-version-2", responseA,
+            new Aws2Azure.Conformance.Goldens.GoldenProvenance("azure", "s3:ListObjectsV2", DateTimeOffset.UtcNow));
+
+        var result = await OfflineConformanceDiffRunner.CompareAsync(
+            "s3",
+            Aws2Azure.Conformance.S3.S3HappyPathMatrix.Cases.Single(c => c.Name == "list-objects-v2-pagination"),
+            goldens,
+            evidence,
+            new ConformanceAllowList(Array.Empty<string>()));
+
+        Assert.Equal(OfflineConformanceDiffStatus.Passed, result.Status);
     }
 }

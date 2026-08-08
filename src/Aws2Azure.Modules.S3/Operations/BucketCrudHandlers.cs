@@ -148,6 +148,7 @@ internal static class BucketCrudHandlers
         // at the new bucket. The Location is host-relative since we lack
         // per-account host configuration in slice 1.
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
         context.Response.Headers["Location"] = "/" + bucket;
         context.Response.ContentLength = 0;
     }
@@ -198,6 +199,7 @@ internal static class BucketCrudHandlers
         }
 
         context.Response.StatusCode = StatusCodes.Status204NoContent;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
         context.Response.ContentLength = 0;
     }
 
@@ -221,12 +223,14 @@ internal static class BucketCrudHandlers
         }
 
         context.Response.StatusCode = StatusCodes.Status200OK;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
         context.Response.ContentLength = 0;
     }
 
     private static Task WriteXmlAsync(HttpContext context, int statusCode, string body)
     {
         context.Response.StatusCode = statusCode;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentType = "application/xml; charset=utf-8";
         return context.Response.WriteAsync(body);
     }
@@ -234,7 +238,7 @@ internal static class BucketCrudHandlers
     private static Task EmitHeadErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping)
     {
         context.Response.StatusCode = mapping.StatusCode;
-        context.Response.Headers["x-amz-request-id"] = context.TraceIdentifier;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         // S3 surfaces the error code in a header on HEAD so SDKs can map it.
         context.Response.Headers["x-amz-error-code"] = mapping.Code;
         context.Response.ContentLength = 0;

@@ -142,8 +142,12 @@ public static class OfflineConformanceDiffRunner
         var unexpected = new List<OfflineConformanceStepDifference>();
         foreach (var step in comparedSteps)
         {
-            var expected = CanonicalResponse.ParseRendered(step.RealAwsGolden.CanonicalText);
-            var actual = CanonicalResponse.ParseRendered(step.RealAzureEvidence.CanonicalText);
+            var expected = NormalizeForComparison(
+                testCase.Name,
+                CanonicalResponse.ParseRendered(step.RealAwsGolden.CanonicalText));
+            var actual = NormalizeForComparison(
+                testCase.Name,
+                CanonicalResponse.ParseRendered(step.RealAzureEvidence.CanonicalText));
             var (_, unexpectedForStep) = allowList.Partition(
                 CanonicalDiff.Compare(expected, actual),
                 testCase.Name);
@@ -162,6 +166,41 @@ public static class OfflineConformanceDiffRunner
                 BuildFailureMessage(service, testCase, comparedSteps, unexpected),
                 comparedSteps,
                 unexpected);
+    }
+
+    private static CanonicalResponse NormalizeForComparison(string caseName, CanonicalResponse response)
+    {
+        if (!string.Equals(caseName, "list-objects-v2-pagination", StringComparison.Ordinal))
+        {
+            return response;
+        }
+
+        var fields = new List<CanonicalField>(response.BodyFields.Count);
+        foreach (var field in response.BodyFields)
+        {
+            fields.Add(field.Name == "Name"
+                ? new CanonicalField(field.Name, NormalizeBucketName(field.Value))
+                : field);
+        }
+        return response with { BodyFields = fields };
+    }
+
+    private static string NormalizeBucketName(string value)
+    {
+        const string suffix = "-s3bucket";
+        var end = value.EndsWith(suffix, StringComparison.Ordinal) ? suffix : string.Empty;
+        var core = end.Length == 0 ? value : value[..^end.Length];
+        var cut = core.LastIndexOf('-');
+        if (cut < 0)
+        {
+            return value;
+        }
+        var penultimate = core.LastIndexOf('-', cut - 1);
+        if (penultimate < 0)
+        {
+            return value;
+        }
+        return core[..penultimate] + "-<bucket>" + end;
     }
 
     private static bool TryLoadGolden(
