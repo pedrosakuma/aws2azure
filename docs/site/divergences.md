@@ -264,7 +264,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | GetObject | ✅ | x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing. |
 | s3 | GetObject | ✅ | The default object Content-Type when Azure has none is binary/octet-stream to match observed S3 behavior. |
 | s3 | GetObject | ✅ | x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline. |
-| s3 | GetObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. |
+| s3 | GetObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme] |
 | s3 | GetObject | ✅ | Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host. |
 | s3 | GetObject | ✅ | Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2] |
 | s3 | GetObject | ✅ | Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId] |
@@ -322,9 +322,10 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | PutBucketVersioning | ✅ | Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries. |
 | s3 | PutBucketWebsite | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | PutObject | ✅ | ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object. |
+| s3 | PutObject | ✅ | x-amz-version-id is a proxy-encoded Azure version token (azv-...); it preserves presence/round-trip semantics but will not byte-match AWS's opaque version id. [conformance:header-value:x-amz-version-id] |
 | s3 | PutObject | ✅ | PUT always overwrites an existing blob, matching S3 default semantics. |
 | s3 | PutObject | ✅ | x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline. |
-| s3 | PutObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses. |
+| s3 | PutObject | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme] |
 | s3 | PutObject | ✅ | Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure). |
 | s3 | PutObject | ✅ | Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
 | s3 | PutObjectAcl | — | The versionId selects the object existence check only; Azure stores no S3 ACL document. |

@@ -220,8 +220,6 @@ internal static class HeaderForwarding
     /// </remarks>
     public static void CopyFromAzureResponse(HttpResponseMessage source, HttpResponse target)
     {
-        ApplyCommonS3ResponseHeaders(target);
-
         foreach (var header in StandardResponseHeaders)
         {
             if (header == HeaderNames.ETag)
@@ -301,22 +299,42 @@ internal static class HeaderForwarding
             }
         }
 
-        if (string.IsNullOrEmpty(target.ContentType))
+    }
+
+    public static void ApplyBucketResponseHeaders(HttpResponse response, string bucketName)
+    {
+        response.Headers["x-amz-bucket-region"] = DefaultBucketRegion;
+        response.Headers["x-amz-bucket-arn"] = "arn:aws:s3:::" + bucketName;
+    }
+
+    public static void ApplyObjectResponseHeaders(
+        HttpResponse response,
+        bool defaultContentType = false,
+        bool serverSideEncryption = false,
+        bool checksumType = false)
+    {
+        if (defaultContentType && string.IsNullOrEmpty(response.ContentType))
         {
-            target.ContentType = DefaultObjectContentType;
+            response.ContentType = DefaultObjectContentType;
         }
 
-        target.Headers["x-amz-server-side-encryption"] = DefaultServerSideEncryption;
-        target.Headers["x-amz-checksum-type"] = "FULL_OBJECT";
+        if (serverSideEncryption)
+        {
+            response.Headers["x-amz-server-side-encryption"] = DefaultServerSideEncryption;
+        }
+
+        if (checksumType)
+        {
+            response.Headers["x-amz-checksum-type"] = "FULL_OBJECT";
+        }
     }
 
     public static void ApplyCommonS3ResponseHeaders(HttpResponse response, string? bucketName = null)
     {
         response.Headers["x-amz-request-id"] = response.HttpContext.TraceIdentifier;
-        response.Headers["x-amz-bucket-region"] = DefaultBucketRegion;
         if (!string.IsNullOrEmpty(bucketName))
         {
-            response.Headers["x-amz-bucket-arn"] = "arn:aws:s3:::" + bucketName;
+            ApplyBucketResponseHeaders(response, bucketName);
         }
     }
 

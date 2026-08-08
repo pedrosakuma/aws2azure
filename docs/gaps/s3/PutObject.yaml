@@ -34,9 +34,10 @@ sub_features:
   disposition: by_design
 behavior_differences:
 - ETag value comes from Azure (hex of MD5 for single-part uploads); shape matches S3 but bytes differ from a re-uploaded object.
+- x-amz-version-id is a proxy-encoded Azure version token (azv-...); it preserves presence/round-trip semantics but will not byte-match AWS's opaque version id. [conformance:header-value:x-amz-version-id]
 - PUT always overwrites an existing blob, matching S3 default semantics.
 - x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
-- x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses.
+- x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme]
 - 'Concrete-ETag preconditions (If-Match / If-None-Match with a value other than ''*'') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure''s raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The ''*'' sentinel is honored (forwarded to Azure).'
 - Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics.
 references:

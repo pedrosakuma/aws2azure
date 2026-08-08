@@ -178,11 +178,29 @@ public static class OfflineConformanceDiffRunner
         var fields = new List<CanonicalField>(response.BodyFields.Count);
         foreach (var field in response.BodyFields)
         {
-            fields.Add(field.Name == "Name"
-                ? new CanonicalField(field.Name, NormalizeBucketName(field.Value))
+            fields.Add(field.Name is "Name" or "BucketArn"
+                ? new CanonicalField(field.Name, NormalizeBucketNameWithinValue(field.Value))
                 : field);
         }
-        return response with { BodyFields = fields };
+        var headers = new List<CanonicalField>(response.Headers.Count);
+        foreach (var header in response.Headers)
+        {
+            headers.Add(header.Name == "x-amz-bucket-arn"
+                ? new CanonicalField(header.Name, NormalizeBucketNameWithinValue(header.Value))
+                : header);
+        }
+        return response with { BodyFields = fields, Headers = headers };
+    }
+
+    private static string NormalizeBucketNameWithinValue(string value)
+    {
+        const string arnPrefix = "arn:aws:s3:::";
+        if (value.StartsWith(arnPrefix, StringComparison.Ordinal))
+        {
+            return arnPrefix + NormalizeBucketName(value[arnPrefix.Length..]);
+        }
+
+        return NormalizeBucketName(value);
     }
 
     private static string NormalizeBucketName(string value)

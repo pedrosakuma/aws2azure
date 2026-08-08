@@ -12,7 +12,7 @@ sub_features:
   gap: Azure returns 404 for a missing blob; the proxy mirrors S3 by returning 204 in that case.
 - name: versioning (versionId query)
   status: partial
-  gap: ?versionId selector reversibly decodes the client-facing x-amz-version-id token back to Azure ?versionid. Delete-marker semantics and x-amz-delete-marker are not modelled; requires account-level versioning enabled out-of-band.
+  gap: ?versionId selector reversibly decodes the client-facing x-amz-version-id token back to Azure ?versionid. Version-scoped deletes round-trip and versionless deletes surface x-amz-delete-marker when Azure reports a soft delete; list-versions delete-marker entries remain unmodelled and require account-level versioning enabled out-of-band.
   disposition: by_design
 - name: MFA delete (x-amz-mfa)
   status: unsupported
