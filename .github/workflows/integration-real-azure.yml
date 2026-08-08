@@ -133,7 +133,12 @@ jobs:
       AZURE_EVENTHUBS_PARTITION_COUNT: '2'
       TEST_RESULTS_DIR: TestResults/real-azure
       EVIDENCE_DIR: TestResults/real-azure-conformance
-      AWS2AZURE_CONFORMANCE_EVIDENCE_DIR: TestResults/real-azure-conformance/canonical-cases
+      # Must be absolute: ConformanceEvidenceStore.ResolveRoot() calls
+      # Path.GetFullPath on this value, which resolves relative paths against
+      # the dotnet-test host's working directory (not necessarily the repo
+      # root), so a relative value here silently writes evidence somewhere
+      # the later "Upload canonical real-Azure evidence" step never finds.
+      AWS2AZURE_CONFORMANCE_EVIDENCE_DIR: ${{ github.workspace }}/TestResults/real-azure-conformance/canonical-cases
       CONFORMANCE_PLAN: TestResults/real-azure-conformance-plan.json
       QUALIFICATION_DIR: artifacts/real-azure-qualification
       PRIVATE_DIR: artifacts/real-azure-qualification-private
