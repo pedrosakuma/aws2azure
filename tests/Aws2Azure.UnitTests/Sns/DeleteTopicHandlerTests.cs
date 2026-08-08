@@ -42,7 +42,9 @@ public sealed class DeleteTopicHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains("<DeleteTopicResponse", ReadBody(context));
+        var body = ReadBody(context);
+        Assert.Contains("<DeleteTopicResponse", body);
+        Assert.DoesNotContain("DeleteTopicResult", body);
     }
 
     [Fact]
@@ -64,7 +66,9 @@ public sealed class DeleteTopicHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains("<DeleteTopicResponse", ReadBody(context));
+        var body = ReadBody(context);
+        Assert.Contains("<DeleteTopicResponse", body);
+        Assert.DoesNotContain("DeleteTopicResult", body);
     }
 
     [Theory]
