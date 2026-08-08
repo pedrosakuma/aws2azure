@@ -142,10 +142,10 @@ public static class OfflineConformanceDiffRunner
         var unexpected = new List<OfflineConformanceStepDifference>();
         foreach (var step in comparedSteps)
         {
-            var expected = NormalizeForComparisonForTests(
+            var expected = NormalizeForComparison(
                 testCase.Name,
                 CanonicalResponse.ParseRendered(step.RealAwsGolden.CanonicalText));
-            var actual = NormalizeForComparisonForTests(
+            var actual = NormalizeForComparison(
                 testCase.Name,
                 CanonicalResponse.ParseRendered(step.RealAzureEvidence.CanonicalText));
             var (_, unexpectedForStep) = allowList.Partition(
@@ -168,13 +168,8 @@ public static class OfflineConformanceDiffRunner
                 unexpected);
     }
 
-    internal static CanonicalResponse NormalizeForComparisonForTests(string caseName, CanonicalResponse response)
+    internal static CanonicalResponse NormalizeForComparison(string _caseName, CanonicalResponse response)
     {
-        if (!string.Equals(caseName, "list-objects-v2-pagination", StringComparison.Ordinal))
-        {
-            return response;
-        }
-
         var fields = new List<CanonicalField>(response.BodyFields.Count);
         foreach (var field in response.BodyFields)
         {

@@ -1,4 +1,3 @@
-using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.Conformance.Diff;
 
 namespace Aws2Azure.Conformance.Canonicalization;
@@ -6,7 +5,7 @@ namespace Aws2Azure.Conformance.Canonicalization;
 public sealed class OfflineConformanceDiffRunnerTests
 {
     [Fact]
-    public void NormalizeForComparison_treats_any_bucket_shaped_s3_arn_as_equivalent_for_list_objects_case()
+    public void NormalizeForComparison_treats_any_bucket_shaped_s3_arn_as_equivalent_across_case_names()
     {
         var expected = new CanonicalResponse(
             200,
@@ -22,8 +21,8 @@ public sealed class OfflineConformanceDiffRunnerTests
             string.Empty);
 
         var diffs = CanonicalDiff.Compare(
-            OfflineConformanceDiffRunner.NormalizeForComparisonForTests("list-objects-v2-pagination", expected),
-            OfflineConformanceDiffRunner.NormalizeForComparisonForTests("list-objects-v2-pagination", actual));
+            OfflineConformanceDiffRunner.NormalizeForComparison("list-objects-v2-pagination", expected),
+            OfflineConformanceDiffRunner.NormalizeForComparison("put-get-delete-object-roundtrip", actual));
 
         Assert.DoesNotContain(diffs, d => d.Tag == "header-value:x-amz-bucket-arn");
     }

@@ -237,6 +237,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | DeleteBucketOwnershipControls | — | The operation clears persisted proxy intent only. |
 | s3 | DeleteBucketTagging | — | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and removes only its bucket-tagging key. |
 | s3 | DeleteObject | ✅ | Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request. |
+| s3 | DeleteObject | ✅ | Real S3 returns x-amz-version-id on successful DeleteObject responses, but Azure Blob Delete Blob does not surface an equivalent response header even when blob versioning is enabled; Tier-3 diff allow-lists [conformance:missing-header:x-amz-version-id] for delete-object and delete-object-version teardown steps until Azure exposes one. |
 | s3 | DeleteObject | ✅ | Presigned DELETE is accepted (see PresignedUrl.yaml). |
 | s3 | DeleteObjectTagging | — | Returns 204 No Content matching the S3 spec. |
 | s3 | DeleteObjectTagging | — | Version selection requires account-level Blob versioning enabled out-of-band. |
