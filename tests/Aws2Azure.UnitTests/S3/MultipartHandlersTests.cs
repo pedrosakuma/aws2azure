@@ -148,6 +148,68 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task Upload_part_copy_without_copy_source_returns_invalid_argument()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var token = UploadIdCodec.Issue(AccountName, "dest-bucket", "dest.txt", AccountKeyBytes);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(token.Encoded) + "&partNumber=1");
+
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPartCopy, "dest-bucket", "dest.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("InvalidArgument", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("?uploadId=&partNumber=1", "NoSuchUpload")]
+    [InlineData("?uploadId=bad-token&partNumber=1", "NoSuchUpload")]
+    [InlineData("?uploadId=&partNumber=0", "InvalidArgument")]
+    public async Task Upload_part_validates_upload_id_and_part_number(string queryString, string expectedCode)
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var upload = TestHttpContext.CreateContext(
+            body: "body",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: queryString);
+        await MultipartHandlers.HandleAsync(upload, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.True(
+            upload.Response.StatusCode is StatusCodes.Status400BadRequest or StatusCodes.Status404NotFound,
+            $"Unexpected status: {upload.Response.StatusCode}");
+        Assert.Contains(expectedCode, await TestHttpContext.ReadBodyAsync(upload), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("?uploadId=", "NoSuchUpload")]
+    [InlineData("?uploadId=bad-token", "NoSuchUpload")]
+    public async Task List_parts_validates_upload_id(string queryString, string expectedCode)
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket/object.txt",
+            queryString: queryString);
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.ListParts, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Contains(expectedCode, await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Upload_part_copy_with_versioned_source_and_concrete_if_match_heads_source_and_forwards_version()
     {
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
@@ -185,6 +247,41 @@ public sealed class MultipartHandlersTests
         var copyRequest = Assert.Single(handler.Requests, static request => request.Headers.ContainsKey("x-ms-copy-source"));
         Assert.Contains("versionid=ver-1", Assert.Single(copyRequest.Headers["x-ms-copy-source"]), StringComparison.Ordinal);
         Assert.DoesNotContain("x-ms-source-if-match", copyRequest.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Abort_multipart_without_upload_id_returns_no_such_upload()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Delete,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=");
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.AbortMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Contains("NoSuchUpload", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Complete_multipart_without_upload_id_returns_no_such_upload()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            body: "<CompleteMultipartUpload />",
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=");
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Contains("NoSuchUpload", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
     }
 
     [Fact]
