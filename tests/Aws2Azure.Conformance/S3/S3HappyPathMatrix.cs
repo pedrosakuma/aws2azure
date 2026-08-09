@@ -44,6 +44,8 @@ public static class S3HappyPathMatrix
         CreateRoundTripCase(),
         CreatePaginationCase(),
         CreateConditionalCase(),
+        CreateObjectTaggingRoundTripCase(),
+        CreateDeleteObjectsBatchRoundTripCase(),
         CreateMultipartCopyCompleteRoundTripCase(),
         CreateMultipartAbortRoundTripCase(),
         CreateCopyObjectRoundTripCase(),
@@ -292,6 +294,153 @@ public static class S3HappyPathMatrix
         ConformanceSigV4Signer.SignHeader(
             request,
             Array.Empty<byte>(),
+            context.AccessKeyId,
+            context.SecretAccessKey,
+            region: context.Region,
+            sessionToken: context.SessionToken);
+        return request;
+    }
+
+
+    private static PlannedConformanceCase CreateObjectTaggingRoundTripCase()
+        => new(
+            "object-tagging-roundtrip",
+            "s3:PutObject/PutObjectTagging/GetObjectTagging/DeleteObjectTagging",
+            ConformanceCaseExpectation.Success(
+            [
+                new(200, Notes: "CreateBucket."),
+                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
+                new(200, RequiredHeaders: [new("ETag", "Present on the seed PutObject response.")]),
+                new(200, RequiredHeaders: [new("x-amz-version-id", "Emitted by the proxy for object-tagging writes after resolving the blob version.")]),
+                new(200,
+                    RequiredHeaders: [new("x-amz-version-id", "Echoes the resolved version id for the tagged object.")],
+                    RequiredBodyAssertions:
+                    [
+                        new("Tagging.TagSet.Tag", "Returns both tags written by PutObjectTagging."),
+                    ]),
+                new(204, RequiredHeaders: [new("x-amz-version-id", "Emitted by the proxy for DeleteObjectTagging after resolving the blob version.")]),
+                new(200,
+                    RequiredHeaders: [new("x-amz-version-id", "Still present when the tag set is empty.")],
+                    RequiredBodyAssertions:
+                    [
+                        new("Tagging.TagSet", "Present and empty after DeleteObjectTagging."),
+                    ]),
+                new(204, Notes: "Deletes the tagged object current version."),
+                new(204, Notes: "Hard-deletes the tagged object's retained version."),
+            ],
+            semanticAssertion:
+            "GetObjectTagging must echo the exact tags written by PutObjectTagging, DeleteObjectTagging must clear them back to an empty TagSet, and teardown must purge the retained object version. DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
+            static (context, _) =>
+            {
+                var bucket = context.GetProperty("bucketName") ?? ("conf-tagging-bucket-" + Guid.NewGuid().ToString("N")[..12]);
+                var key = "tagging/object.txt";
+                var body = Encoding.UTF8.GetBytes("aws2azure object tagging payload");
+                var taggingBody = Encoding.UTF8.GetBytes(
+                    "<Tagging><TagSet><Tag><Key>project</Key><Value>aws2azure</Value></Tag><Tag><Key>tier</Key><Value>conformance</Value></Tag></TagSet></Tagging>");
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
+                    new ConformanceRequestStep("seed-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
+                    new ConformanceRequestStep("put-object-tagging", _ => BuildObjectSubresourceRequest(context, HttpMethod.Put, bucket, key, "tagging", taggingBody)),
+                    new ConformanceRequestStep("get-object-tagging", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "tagging", Array.Empty<byte>())),
+                    new ConformanceRequestStep("delete-object-tagging", _ => BuildObjectSubresourceRequest(context, HttpMethod.Delete, bucket, key, "tagging", Array.Empty<byte>())),
+                    new ConformanceRequestStep("get-object-tagging-after-delete", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "tagging", Array.Empty<byte>())),
+                    new ConformanceRequestStep("delete-object", _ => BuildObjectRequest(context, HttpMethod.Delete, bucket, key, Array.Empty<byte>())),
+                    new ConformanceRequestStep("delete-object-version", state => BuildVersionedDeleteRequest(
+                        context,
+                        bucket,
+                        key,
+                        state.RequireHeaderValue("seed-object", "x-amz-version-id"))),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateDeleteObjectsBatchRoundTripCase()
+        => new(
+            "delete-objects-batch-roundtrip",
+            "s3:PutObject/DeleteObjects/GetObject",
+            ConformanceCaseExpectation.Success(
+            [
+                new(200, Notes: "CreateBucket."),
+                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
+                new(200, RequiredHeaders: [new("ETag", "Present on the first seed PutObject response.")]),
+                new(200, RequiredHeaders: [new("ETag", "Present on the second seed PutObject response.")]),
+                new(200, RequiredHeaders: [new("ETag", "Present on the third seed PutObject response.")]),
+                new(200, RequiredBodyAssertions:
+                    [
+                        new("DeleteResult.Deleted", "Contains each seeded key exactly once in request order."),
+                    ]),
+                new(204, Notes: "Hard-deletes the first retained object version after DeleteObjects clears the current pointer."),
+                new(204, Notes: "Hard-deletes the second retained object version after DeleteObjects clears the current pointer."),
+                new(204, Notes: "Hard-deletes the third retained object version after DeleteObjects clears the current pointer."),
+            ],
+            semanticAssertion:
+            "DeleteObjects must report every requested key as Deleted in request order, and teardown must purge the retained blob versions left behind by versioning. Follow-up NoSuchKey verification belongs to the differential capture tier, not the Tier-1 happy-path seed contract. DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
+            static (context, _) =>
+            {
+                var bucket = context.GetProperty("bucketName") ?? ("conf-delete-batch-" + Guid.NewGuid().ToString("N")[..12]);
+                var keys = new[] { "batch/key-1.txt", "batch/key-2.txt", "batch/key-3.txt" };
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
+                    new ConformanceRequestStep("seed-object-1", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, keys[0], Encoding.UTF8.GetBytes("delete-batch-1"))),
+                    new ConformanceRequestStep("seed-object-2", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, keys[1], Encoding.UTF8.GetBytes("delete-batch-2"))),
+                    new ConformanceRequestStep("seed-object-3", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, keys[2], Encoding.UTF8.GetBytes("delete-batch-3"))),
+                    new ConformanceRequestStep("delete-objects", _ => BuildDeleteObjectsRequest(context, bucket, keys)),
+                    new ConformanceRequestStep("delete-object-version-1", state => BuildVersionedDeleteRequest(context, bucket, keys[0], state.RequireHeaderValue("seed-object-1", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-object-version-2", state => BuildVersionedDeleteRequest(context, bucket, keys[1], state.RequireHeaderValue("seed-object-2", "x-amz-version-id"))),
+                    new ConformanceRequestStep("delete-object-version-3", state => BuildVersionedDeleteRequest(context, bucket, keys[2], state.RequireHeaderValue("seed-object-3", "x-amz-version-id"))),
+                ], Tier1SkipReason));
+            });
+
+    private static HttpRequestMessage BuildObjectSubresourceRequest(
+        ConformanceCaseContext context,
+        HttpMethod method,
+        string bucket,
+        string key,
+        string subresource,
+        byte[] body)
+    {
+        var request = new HttpRequestMessage(
+            method,
+            new Uri(ResolveBaseAddress(context), $"/{bucket}/{key}?{subresource}"));
+        if (body.Length > 0)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentLength = body.Length;
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+        }
+
+        ConformanceSigV4Signer.SignHeader(
+            request,
+            body,
+            context.AccessKeyId,
+            context.SecretAccessKey,
+            region: context.Region,
+            sessionToken: context.SessionToken);
+        return request;
+    }
+
+    private static HttpRequestMessage BuildDeleteObjectsRequest(
+        ConformanceCaseContext context,
+        string bucket,
+        IReadOnlyList<string> keys)
+    {
+        var xml = "<Delete>" + string.Concat(keys.Select(key => $"<Object><Key>{key}</Key></Object>")) + "</Delete>";
+        var body = Encoding.UTF8.GetBytes(xml);
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(ResolveBaseAddress(context), $"/{bucket}?delete"))
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+        request.Content.Headers.ContentLength = body.Length;
+        request.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(body)));
+        ConformanceSigV4Signer.SignHeader(
+            request,
+            body,
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
