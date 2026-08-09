@@ -36,7 +36,7 @@ public sealed record KinesisErrorCase(
             ExpectedCode,
             "Proxy-side Kinesis rejection asserted from the AWS JSON 1.1 contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(string accessKey, string secret, string? sessionToken)
     {
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
@@ -60,7 +60,8 @@ public sealed record KinesisErrorCase(
         // where SDKs always sign it) enforces it via RequiredSignedHeaders.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "kinesis",
-            extraSignedHeaders: new[] { "x-amz-target" });
+            extraSignedHeaders: new[] { "x-amz-target" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -71,7 +72,7 @@ public sealed record KinesisErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey, context.SessionToken))]));
 }
 
 /// <summary>

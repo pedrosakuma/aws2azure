@@ -51,14 +51,26 @@
              Link="Conformance\Evidence\ConformanceEvidenceStore.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\ConformanceSigV4Signer.cs"
              Link="Conformance\S3\ConformanceSigV4Signer.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3ErrorMatrix.cs"
+             Link="Conformance\S3\S3ErrorMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3BackendErrorMatrix.cs"
+             Link="Conformance\S3\S3BackendErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.cs"
              Link="Conformance\S3\S3HappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbErrorMatrix.cs"
+             Link="Conformance\DynamoDb\DynamoDbErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs"
              Link="Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Kinesis\KinesisErrorMatrix.cs"
+             Link="Conformance\Kinesis\KinesisErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Kinesis\KinesisHappyPathMatrix.cs"
              Link="Conformance\Kinesis\KinesisHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Sns\SnsErrorMatrix.cs"
+             Link="Conformance\Sns\SnsErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Sns\SnsHappyPathMatrix.cs"
              Link="Conformance\Sns\SnsHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\Sqs\SqsErrorMatrix.cs"
+             Link="Conformance\Sqs\SqsErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Sqs\SqsHappyPathMatrix.cs"
              Link="Conformance\Sqs\SqsHappyPathMatrix.cs" />
   </ItemGroup>

@@ -36,7 +36,7 @@ public sealed record SnsErrorCase(
             ExpectedCode,
             "Proxy-side SNS rejection asserted from the AWS Query XML contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(string accessKey, string secret, string? sessionToken)
     {
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
@@ -55,7 +55,8 @@ public sealed record SnsErrorCase(
         // case and harmless-but-faithful for the auth cases.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "sns",
-            extraSignedHeaders: new[] { "content-type" });
+            extraSignedHeaders: new[] { "content-type" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -66,7 +67,7 @@ public sealed record SnsErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey, context.SessionToken))]));
 }
 
 /// <summary>

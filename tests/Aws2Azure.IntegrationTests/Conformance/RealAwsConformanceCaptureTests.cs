@@ -13,6 +13,8 @@ using Aws2Azure.Conformance.Kinesis;
 using Aws2Azure.Conformance.S3;
 using Aws2Azure.Conformance.Sns;
 using Aws2Azure.Conformance.Sqs;
+using System.Text.Json;
+using System.Xml.Linq;
 using Xunit;
 using Xunit.Sdk;
 
@@ -28,7 +30,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         Skip.IfNot(fixture.IsConfigured, fixture.SkipReason);
         await ExecuteServiceCasesAsync(
             "s3",
-            S3HappyPathMatrix.Cases,
+            Enumerate(S3ErrorMatrix.Cases, S3HappyPathMatrix.Cases),
             CreateContext(
                 "s3",
                 new Dictionary<string, string>(StringComparer.Ordinal)
@@ -59,7 +61,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
             await ExecuteServiceCasesAsync(
                 "dynamodb",
-                DynamoDbHappyPathMatrix.Cases,
+                Enumerate(DynamoDbErrorMatrix.Cases, DynamoDbHappyPathMatrix.Cases),
                 CreateContext(
                     "dynamodb",
                     new Dictionary<string, string>(StringComparer.Ordinal)
@@ -96,7 +98,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
             await ExecuteServiceCasesAsync(
                 "kinesis",
-                KinesisHappyPathMatrix.Cases,
+                Enumerate(KinesisErrorMatrix.Cases, KinesisHappyPathMatrix.Cases),
                 CreateContext(
                     "kinesis",
                     new Dictionary<string, string>(StringComparer.Ordinal)
@@ -132,7 +134,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
             await ExecuteServiceCasesAsync(
                 "sns",
-                SnsHappyPathMatrix.Cases,
+                Enumerate(SnsErrorMatrix.Cases, SnsHappyPathMatrix.Cases),
                 CreateContext(
                     "sns",
                     new Dictionary<string, string>(StringComparer.Ordinal)
@@ -155,7 +157,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         Skip.IfNot(fixture.IsConfigured, fixture.SkipReason);
         await ExecuteServiceCasesAsync(
             "sqs",
-            SqsHappyPathMatrix.Cases,
+            Enumerate(SqsErrorMatrix.Cases, SqsHappyPathMatrix.Cases),
             CreateContext(
                 "sqs",
                 new Dictionary<string, string>(StringComparer.Ordinal)
@@ -177,6 +179,9 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             fixture.Region,
             properties,
             fixture.SessionToken);
+
+    private static IReadOnlyList<IConformanceCase> Enumerate(params IEnumerable<IConformanceCase>[] groups) =>
+        groups.SelectMany(static group => group).ToArray();
 
     private static async Task RunBatchesBestEffortAsync<T>(
         IReadOnlyList<T> items,
@@ -314,8 +319,9 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     ? string.Empty
                     : await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
+                var expectedStep = testCase.Expected.Steps[index];
                 var actualStatus = (int)response.StatusCode;
-                var expectedStatus = testCase.Expected.Steps[index].ExpectedStatus;
+                var expectedStatus = expectedStep.ExpectedStatus;
                 if (actualStatus != expectedStatus)
                 {
                     throw new XunitException(
@@ -325,6 +331,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
                 var headers = CollectHeaders(response);
                 var canonical = AwsErrorCanonicalizer.Canonicalize(actualStatus, headers, body);
+                AssertStepMatchesExpected(testCase, step.Name, expectedStep, response, body, canonical);
                 store.SaveStep(
                     testCase.Name,
                     step.Name,
@@ -342,6 +349,120 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     body));
             }
         }
+    }
+
+    private static void AssertStepMatchesExpected(
+        IConformanceCase testCase,
+        string stepName,
+        ConformanceStepExpectation expectedStep,
+        HttpResponseMessage response,
+        string body,
+        CanonicalResponse canonical)
+    {
+        if (expectedStep.ExpectedErrorCode is not null)
+        {
+            var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code").Value;
+            if (!string.Equals(expectedStep.ExpectedErrorCode, code, StringComparison.Ordinal))
+            {
+                throw new XunitException(
+                    $"Conformance case '{testCase.Name}' step '{stepName}' returned error code '{code}' " +
+                    $"instead of '{expectedStep.ExpectedErrorCode}'. Body: {body}");
+            }
+
+            return;
+        }
+
+        if (expectedStep.RequiredHeaders is not null)
+        {
+            foreach (var expectedHeader in expectedStep.RequiredHeaders)
+            {
+                if (!response.Headers.TryGetValues(expectedHeader.Name, out var headerValues)
+                    && !(response.Content?.Headers.TryGetValues(expectedHeader.Name, out headerValues) ?? false)
+                    || !headerValues.Any(value => !string.IsNullOrWhiteSpace(value)))
+                {
+                    throw new XunitException(
+                        $"Conformance case '{testCase.Name}' step '{stepName}' missing required header '{expectedHeader.Name}'.");
+                }
+            }
+        }
+
+        if (expectedStep.RequiredBodyAssertions is not null)
+        {
+            foreach (var assertion in expectedStep.RequiredBodyAssertions)
+            {
+                if (!BodyAssertionSatisfied(canonical, body, assertion.Path))
+                {
+                    throw new XunitException(
+                        $"Conformance case '{testCase.Name}' step '{stepName}' did not satisfy required body assertion '{assertion.Path}'.");
+                }
+            }
+        }
+    }
+
+    private static bool BodyAssertionSatisfied(CanonicalResponse canonical, string body, string path)
+    {
+        if (string.Equals(path, "Body", StringComparison.Ordinal))
+        {
+            return !string.IsNullOrEmpty(body);
+        }
+
+        if (canonical.BodyKind == CanonicalResponse.BodyKindJsonError || LooksLikeJson(body))
+        {
+            return JsonPathExists(body, path);
+        }
+
+        return XmlPathExists(body, path);
+    }
+
+    private static bool LooksLikeJson(string body)
+        => !string.IsNullOrWhiteSpace(body) && (body.TrimStart().StartsWith("{", StringComparison.Ordinal) || body.TrimStart().StartsWith("[", StringComparison.Ordinal));
+
+    private static bool JsonPathExists(string body, string path)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var current = doc.RootElement;
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current.ValueKind == JsonValueKind.Array)
+            {
+                if (current.GetArrayLength() == 0)
+                {
+                    return false;
+                }
+
+                current = current[0];
+            }
+
+            if (!current.TryGetProperty(segment, out current))
+            {
+                return false;
+            }
+        }
+
+        return current.ValueKind switch
+        {
+            JsonValueKind.Null => false,
+            JsonValueKind.Array => current.GetArrayLength() > 0,
+            JsonValueKind.String => !string.IsNullOrEmpty(current.GetString()),
+            _ => true,
+        };
+    }
+
+    private static bool XmlPathExists(string body, string path)
+    {
+        var document = XDocument.Parse(body);
+        IEnumerable<XElement> current = [document.Root!];
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = current.SelectMany(
+                element => element.Descendants().Where(descendant => descendant.Name.LocalName == segment));
+            if (!current.Any())
+            {
+                return false;
+            }
+        }
+
+        return current.Any(element => !string.IsNullOrWhiteSpace(element.Value) || element.HasElements);
     }
 }
 

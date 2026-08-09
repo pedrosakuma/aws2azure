@@ -50,7 +50,7 @@ public sealed record SqsErrorCase(
             ExpectedCode,
             "Proxy-side SQS rejection asserted from the AWS Query/AWS JSON contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(string accessKey, string secret, string? sessionToken)
     {
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
@@ -87,7 +87,8 @@ public sealed record SqsErrorCase(
         // caller's protocol vocabulary.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "sqs",
-            extraSignedHeaders: extraSigned);
+            extraSignedHeaders: extraSigned,
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -98,7 +99,7 @@ public sealed record SqsErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey, context.SessionToken))]));
 }
 
 /// <summary>

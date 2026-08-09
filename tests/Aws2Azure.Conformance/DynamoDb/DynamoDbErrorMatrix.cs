@@ -32,7 +32,7 @@ public sealed record DynamoDbErrorCase(
             ExpectedCode,
             "Proxy-side DynamoDB rejection asserted from the AWS JSON 1.0 contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(string accessKey, string secret, string? sessionToken)
     {
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
@@ -56,7 +56,8 @@ public sealed record DynamoDbErrorCase(
         // where SDKs always sign it) enforces it via RequiredSignedHeaders.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "dynamodb",
-            extraSignedHeaders: new[] { "x-amz-target" });
+            extraSignedHeaders: new[] { "x-amz-target" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -67,7 +68,7 @@ public sealed record DynamoDbErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey, context.SessionToken))]));
 }
 
 /// <summary>
