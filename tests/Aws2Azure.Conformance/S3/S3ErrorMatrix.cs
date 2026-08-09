@@ -16,7 +16,7 @@ public sealed record S3ErrorCase(
     string Operation,
     int ExpectedStatus,
     string ExpectedCode,
-    Action<HttpRequestMessage> Sign,
+    Action<HttpRequestMessage, ConformanceCaseContext> Sign,
     HttpMethod? Method = null,
     string? Path = null) : IConformanceCase
 {
@@ -30,12 +30,12 @@ public sealed record S3ErrorCase(
             ExpectedCode,
             "Proxy-side S3 rejection asserted from the AWS REST-XML contract.");
 
-    public HttpRequestMessage BuildRequest()
+    public HttpRequestMessage BuildRequest(ConformanceCaseContext context)
     {
         var request = new HttpRequestMessage(
             Method ?? HttpMethod.Get,
-            new Uri("http://s3.us-east-1.amazonaws.com" + (Path ?? DefaultPath)));
-        Sign(request);
+            new Uri(S3ErrorMatrix.ResolveBaseAddress(context), Path ?? DefaultPath));
+        Sign(request, context);
         return request;
     }
 
@@ -44,7 +44,7 @@ public sealed record S3ErrorCase(
         ConformanceCaseContext context,
         CancellationToken cancellationToken = default)
         => new(new ConformanceExecutionPlan(
-            [new ConformanceRequestStep(Name, BuildRequest)]));
+            [new ConformanceRequestStep(Name, _ => BuildRequest(context))]));
 }
 
 /// <summary>
@@ -55,6 +55,7 @@ public sealed record S3ErrorCase(
 public static class S3ErrorMatrix
 {
     private static readonly byte[] EmptyBody = Array.Empty<byte>();
+    private static readonly Uri DefaultBaseAddress = new("http://s3.us-east-1.amazonaws.com/");
 
     public static IReadOnlyList<S3ErrorCase> Cases { get; } = new[]
     {
@@ -63,34 +64,37 @@ public static class S3ErrorMatrix
             "s3:SignatureDoesNotMatch",
             403,
             "SignatureDoesNotMatch",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
+                context.AccessKeyId,
                 // Wrong secret → valid key, bad signature.
-                ConformanceProxyFixture.Secret + "TAMPERED")),
+                context.SecretAccessKey + "TAMPERED",
+                sessionToken: context.SessionToken)),
 
         new S3ErrorCase(
             "invalid-access-key-id",
             "s3:InvalidAccessKeyId",
             403,
             "InvalidAccessKeyId",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
                 // Unknown access key.
                 "AKIAUNKNOWNKEY000001",
-                ConformanceProxyFixture.Secret)),
+                context.SecretAccessKey,
+                sessionToken: context.SessionToken)),
 
         new S3ErrorCase(
             "request-time-too-skewed",
             "s3:RequestTimeTooSkewed",
             403,
             "RequestTimeTooSkewed",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
-                ConformanceProxyFixture.Secret,
+                context.AccessKeyId,
+                context.SecretAccessKey,
                 // Correctly signed but a day in the past → clock-skew rejection.
-                now: DateTimeOffset.UtcNow.AddDays(-1))),
+                now: DateTimeOffset.UtcNow.AddDays(-1),
+                sessionToken: context.SessionToken)),
 
         // Validly signed (passes SigV4) but targets a syntactically invalid
         // bucket name. The proxy rejects it in the request-validation stage
@@ -104,10 +108,11 @@ public static class S3ErrorMatrix
             "s3:InvalidBucketName",
             400,
             "InvalidBucketName",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
-                ConformanceProxyFixture.Secret),
+                context.AccessKeyId,
+                context.SecretAccessKey,
+                sessionToken: context.SessionToken),
             Path: "/ab/key.txt"),
 
         // Validly signed GET against a bucket name that is length-legal (3-63)
@@ -122,10 +127,11 @@ public static class S3ErrorMatrix
             "s3:NoSuchBucket",
             404,
             "NoSuchBucket",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
-                ConformanceProxyFixture.Secret),
+                context.AccessKeyId,
+                context.SecretAccessKey,
+                sessionToken: context.SessionToken),
             Path: "/conformance_invalid_bucket/key.txt"),
 
         // Multipart lookup paths classify the destination bucket BEFORE decoding
@@ -138,10 +144,11 @@ public static class S3ErrorMatrix
             "s3:InvalidBucketName",
             400,
             "InvalidBucketName",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
-                ConformanceProxyFixture.Secret),
+                context.AccessKeyId,
+                context.SecretAccessKey,
+                sessionToken: context.SessionToken),
             Path: "/ab/key.txt?uploadId=nonexistent"),
 
         // Same multipart lookup path, Azure-illegal (length-legal) bucket name:
@@ -152,10 +159,14 @@ public static class S3ErrorMatrix
             "s3:NoSuchBucket",
             404,
             "NoSuchBucket",
-            req => ConformanceSigV4Signer.SignHeader(
+            (req, context) => ConformanceSigV4Signer.SignHeader(
                 req, EmptyBody,
-                ConformanceProxyFixture.AccessKeyId,
-                ConformanceProxyFixture.Secret),
+                context.AccessKeyId,
+                context.SecretAccessKey,
+                sessionToken: context.SessionToken),
             Path: "/conformance_invalid_bucket/key.txt?uploadId=nonexistent"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }

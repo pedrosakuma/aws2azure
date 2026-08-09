@@ -32,13 +32,16 @@ public sealed record DynamoDbErrorCase(
             ExpectedCode,
             "Proxy-side DynamoDB rejection asserted from the AWS JSON 1.0 contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(ConformanceCaseContext context)
     {
+        var accessKey = context.AccessKeyId;
+        var secret = context.SecretAccessKey;
+        var sessionToken = context.SessionToken;
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
         var bytes = Encoding.UTF8.GetBytes(Body);
         var request = new HttpRequestMessage(
-            HttpMethod.Post, new Uri("http://dynamodb.us-east-1.amazonaws.com/"))
+            HttpMethod.Post, new Uri(DynamoDbErrorMatrix.ResolveBaseAddress(context), "/"))
         {
             Content = new ByteArrayContent(bytes),
         };
@@ -56,7 +59,8 @@ public sealed record DynamoDbErrorCase(
         // where SDKs always sign it) enforces it via RequiredSignedHeaders.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "dynamodb",
-            extraSignedHeaders: new[] { "x-amz-target" });
+            extraSignedHeaders: new[] { "x-amz-target" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -67,7 +71,7 @@ public sealed record DynamoDbErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context))]));
 }
 
 /// <summary>
@@ -78,6 +82,8 @@ public sealed record DynamoDbErrorCase(
 /// </summary>
 public static class DynamoDbErrorMatrix
 {
+    private static readonly Uri DefaultBaseAddress = new("http://dynamodb.us-east-1.amazonaws.com/");
+
     public static IReadOnlyList<DynamoDbErrorCase> Cases { get; } = new[]
     {
         // A syntactically valid, validly-signed request whose X-Amz-Target names
@@ -138,4 +144,7 @@ public static class DynamoDbErrorMatrix
             AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
             SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }

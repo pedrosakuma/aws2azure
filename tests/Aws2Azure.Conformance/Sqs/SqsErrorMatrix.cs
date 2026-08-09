@@ -50,13 +50,16 @@ public sealed record SqsErrorCase(
             ExpectedCode,
             "Proxy-side SQS rejection asserted from the AWS Query/AWS JSON contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(ConformanceCaseContext context)
     {
+        var accessKey = context.AccessKeyId;
+        var secret = context.SecretAccessKey;
+        var sessionToken = context.SessionToken;
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
         var bytes = Encoding.UTF8.GetBytes(Body);
         var request = new HttpRequestMessage(
-            HttpMethod.Post, new Uri("http://sqs.us-east-1.amazonaws.com/"))
+            HttpMethod.Post, new Uri(SqsErrorMatrix.ResolveBaseAddress(context), "/"))
         {
             Content = new ByteArrayContent(bytes),
         };
@@ -87,7 +90,8 @@ public sealed record SqsErrorCase(
         // caller's protocol vocabulary.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "sqs",
-            extraSignedHeaders: extraSigned);
+            extraSignedHeaders: extraSigned,
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -98,7 +102,7 @@ public sealed record SqsErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context))]));
 }
 
 /// <summary>
@@ -113,6 +117,8 @@ public sealed record SqsErrorCase(
 /// </summary>
 public static class SqsErrorMatrix
 {
+    private static readonly Uri DefaultBaseAddress = new("http://sqs.us-east-1.amazonaws.com/");
+
     public static IReadOnlyList<SqsErrorCase> Cases { get; } = new[]
     {
         // --- Query (legacy XML) protocol ---
@@ -181,4 +187,7 @@ public static class SqsErrorMatrix
             AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
             SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }

@@ -36,13 +36,16 @@ public sealed record KinesisErrorCase(
             ExpectedCode,
             "Proxy-side Kinesis rejection asserted from the AWS JSON 1.1 contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(ConformanceCaseContext context)
     {
+        var accessKey = context.AccessKeyId;
+        var secret = context.SecretAccessKey;
+        var sessionToken = context.SessionToken;
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
         var bytes = Encoding.UTF8.GetBytes(Body);
         var request = new HttpRequestMessage(
-            HttpMethod.Post, new Uri("http://kinesis.us-east-1.amazonaws.com/"))
+            HttpMethod.Post, new Uri(KinesisErrorMatrix.ResolveBaseAddress(context), "/"))
         {
             Content = new ByteArrayContent(bytes),
         };
@@ -60,7 +63,8 @@ public sealed record KinesisErrorCase(
         // where SDKs always sign it) enforces it via RequiredSignedHeaders.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "kinesis",
-            extraSignedHeaders: new[] { "x-amz-target" });
+            extraSignedHeaders: new[] { "x-amz-target" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -71,7 +75,7 @@ public sealed record KinesisErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context))]));
 }
 
 /// <summary>
@@ -85,6 +89,8 @@ public sealed record KinesisErrorCase(
 /// </summary>
 public static class KinesisErrorMatrix
 {
+    private static readonly Uri DefaultBaseAddress = new("http://kinesis.us-east-1.amazonaws.com/");
+
     public static IReadOnlyList<KinesisErrorCase> Cases { get; } = new[]
     {
         // A syntactically valid, validly-signed request whose X-Amz-Target names
@@ -143,4 +149,7 @@ public static class KinesisErrorMatrix
             AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
             SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }

@@ -33,7 +33,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "s3",
-            S3HappyPathMatrix.Cases,
+            Enumerate(S3ErrorMatrix.Cases, S3HappyPathMatrix.Cases),
             CreateContext("s3")).ConfigureAwait(false);
     }
 
@@ -60,7 +60,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
             await ExecuteServiceCasesAsync(
                 "dynamodb",
-                DynamoDbHappyPathMatrix.Cases,
+                Enumerate(DynamoDbErrorMatrix.Cases, DynamoDbHappyPathMatrix.Cases),
                 CreateContext(
                     "dynamodb",
                     new Dictionary<string, string>(StringComparer.Ordinal)
@@ -88,7 +88,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "kinesis",
-            KinesisHappyPathMatrix.Cases,
+            Enumerate(KinesisErrorMatrix.Cases, KinesisHappyPathMatrix.Cases),
             CreateContext(
                 "kinesis",
                 new Dictionary<string, string>(StringComparer.Ordinal)
@@ -120,7 +120,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
             await ExecuteServiceCasesAsync(
                 "sns",
-                SnsHappyPathMatrix.Cases,
+                Enumerate(SnsErrorMatrix.Cases, SnsHappyPathMatrix.Cases),
                 CreateContext("sns")).ConfigureAwait(false);
         }
         finally
@@ -141,7 +141,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "sqs",
-            SqsHappyPathMatrix.Cases,
+            Enumerate(SqsErrorMatrix.Cases, SqsHappyPathMatrix.Cases),
             CreateContext("sqs")).ConfigureAwait(false);
     }
 
@@ -158,6 +158,9 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
             RealAzureProxyFixture.AwsSecret,
             new Uri(fixture.GetServiceUrl(service)),
             Properties: properties);
+
+    private static IReadOnlyList<IConformanceCase> Enumerate(params IEnumerable<IConformanceCase>[] groups) =>
+        groups.SelectMany(static group => group).ToArray();
 
     private static async Task RunBatchesAsync<T>(
         IReadOnlyList<T> items,

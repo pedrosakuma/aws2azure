@@ -36,13 +36,16 @@ public sealed record SnsErrorCase(
             ExpectedCode,
             "Proxy-side SNS rejection asserted from the AWS Query XML contract.");
 
-    public HttpRequestMessage BuildRequest(string accessKey, string secret)
+    public HttpRequestMessage BuildRequest(ConformanceCaseContext context)
     {
+        var accessKey = context.AccessKeyId;
+        var secret = context.SecretAccessKey;
+        var sessionToken = context.SessionToken;
         var signKey = AccessKeyOverride ?? accessKey;
         var signSecret = SecretOverride ?? secret;
         var bytes = Encoding.UTF8.GetBytes(Body);
         var request = new HttpRequestMessage(
-            HttpMethod.Post, new Uri("http://sns.us-east-1.amazonaws.com/"))
+            HttpMethod.Post, new Uri(SnsErrorMatrix.ResolveBaseAddress(context), "/"))
         {
             Content = new ByteArrayContent(bytes),
         };
@@ -55,7 +58,8 @@ public sealed record SnsErrorCase(
         // case and harmless-but-faithful for the auth cases.
         ConformanceSigV4Signer.SignHeader(
             request, bytes, signKey, signSecret, service: "sns",
-            extraSignedHeaders: new[] { "content-type" });
+            extraSignedHeaders: new[] { "content-type" },
+            sessionToken: sessionToken);
         return request;
     }
 
@@ -66,7 +70,7 @@ public sealed record SnsErrorCase(
         => new(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(
                 Name,
-                _ => BuildRequest(context.AccessKeyId, context.SecretAccessKey))]));
+                _ => BuildRequest(context))]));
 }
 
 /// <summary>
@@ -81,6 +85,8 @@ public sealed record SnsErrorCase(
 /// </summary>
 public static class SnsErrorMatrix
 {
+    private static readonly Uri DefaultBaseAddress = new("http://sns.us-east-1.amazonaws.com/");
+
     public static IReadOnlyList<SnsErrorCase> Cases { get; } = new[]
     {
         // A validly-signed Query request naming an action SNS does not expose.
@@ -117,4 +123,7 @@ public static class SnsErrorMatrix
             AccessKeyOverride: "AKIACONFORMANCEUNKNOWN",
             SecretOverride: "any-secret-since-the-key-is-unknown-00000000"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }
