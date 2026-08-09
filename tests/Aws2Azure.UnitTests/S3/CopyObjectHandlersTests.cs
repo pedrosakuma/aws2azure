@@ -35,7 +35,7 @@ public sealed class CopyObjectHandlersTests
     }
 
     [Fact]
-    public async Task Copy_object_success_returns_copy_result_body_and_version_header()
+    public async Task Copy_object_success_returns_copy_result_body_without_version_header()
     {
         var handler = new ScriptedHandler();
         handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", versionId: "v-copy", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
@@ -59,6 +59,7 @@ public sealed class CopyObjectHandlersTests
         Assert.Equal("CopyObjectResult", doc.Root!.Name.LocalName);
         Assert.False(string.IsNullOrEmpty(doc.Root!.Element(S3Ns + "ETag")?.Value));
         Assert.False(string.IsNullOrEmpty(doc.Root!.Element(S3Ns + "LastModified")?.Value));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-version-id"));
         Assert.Equal(2, handler.Requests.Count);
     }
 

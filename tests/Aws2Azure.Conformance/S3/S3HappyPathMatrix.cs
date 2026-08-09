@@ -421,7 +421,7 @@ public static class S3HappyPathMatrix
                         context,
                         bucket,
                         destKey,
-                        state.RequireHeaderValue("complete-multipart-upload", "x-amz-version-id"))),
+                        state.RequireHeaderValue("get-completed-object", "x-amz-version-id"))),
                 ], Tier1SkipReason));
             });
 
@@ -533,7 +533,7 @@ public static class S3HappyPathMatrix
                         context,
                         bucket,
                         destKey,
-                        state.RequireHeaderValue("copy-object", "x-amz-version-id"))),
+                        state.RequireHeaderValue("get-copied-object", "x-amz-version-id"))),
                 ], Tier1SkipReason));
             });
 
