@@ -34,7 +34,7 @@ public sealed record S3ErrorCase(
     {
         var request = new HttpRequestMessage(
             Method ?? HttpMethod.Get,
-            new Uri("http://s3.us-east-1.amazonaws.com" + (Path ?? DefaultPath)));
+            new Uri(S3ErrorMatrix.ResolveBaseAddress(context), Path ?? DefaultPath));
         Sign(request, context);
         return request;
     }
@@ -55,6 +55,7 @@ public sealed record S3ErrorCase(
 public static class S3ErrorMatrix
 {
     private static readonly byte[] EmptyBody = Array.Empty<byte>();
+    private static readonly Uri DefaultBaseAddress = new("http://s3.us-east-1.amazonaws.com/");
 
     public static IReadOnlyList<S3ErrorCase> Cases { get; } = new[]
     {
@@ -165,4 +166,7 @@ public static class S3ErrorMatrix
                 sessionToken: context.SessionToken),
             Path: "/conformance_invalid_bucket/key.txt?uploadId=nonexistent"),
     };
+
+    internal static Uri ResolveBaseAddress(ConformanceCaseContext context)
+        => context.BaseAddress ?? DefaultBaseAddress;
 }
