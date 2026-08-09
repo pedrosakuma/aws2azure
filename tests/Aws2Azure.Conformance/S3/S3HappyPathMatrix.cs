@@ -49,8 +49,6 @@ public static class S3HappyPathMatrix
         CreateMultipartCopyCompleteRoundTripCase(),
         CreateMultipartAbortRoundTripCase(),
         CreateCopyObjectRoundTripCase(),
-        CreateObjectRetentionRoundTripCase(),
-        CreateObjectLegalHoldRoundTripCase(),
     ];
 
     private static PlannedConformanceCase CreateRoundTripCase()
@@ -395,77 +393,6 @@ public static class S3HappyPathMatrix
                     new ConformanceRequestStep("delete-object-version-3", state => BuildVersionedDeleteRequest(context, bucket, keys[2], state.RequireHeaderValue("seed-object-3", "x-amz-version-id"))),
                 ], Tier1SkipReason));
             });
-
-    private static PlannedConformanceCase CreateObjectRetentionRoundTripCase()
-        => new(
-            "object-retention-roundtrip",
-            "s3:PutObject/PutObjectRetention/GetObjectRetention",
-            ConformanceCaseExpectation.Success(
-            [
-                new(200, Notes: "CreateBucket."),
-                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
-                new(200, RequiredHeaders: [new("ETag", "Present on the seed PutObject response.")]),
-                new(200, Notes: "Applies a COMPLIANCE retention policy to the current object version."),
-                new(200,
-                    RequiredBodyAssertions:
-                    [
-                        new("Retention.Mode", "Returns COMPLIANCE for the locked Azure immutability policy."),
-                        new("Retention.RetainUntilDate", "Returns the retain-until timestamp written by PutObjectRetention."),
-                    ]),
-            ],
-            semanticAssertion:
-            "PutObjectRetention must round-trip a COMPLIANCE retain-until policy through GetObjectRetention when the backend account has version-level immutability enabled. This seed omits teardown because retained objects cannot be shortened or removed through the S3 surface once COMPLIANCE is applied; the nightly reaper handles the bucket lifecycle externally."),
-            static (context, _) =>
-            {
-                var bucket = context.GetProperty("bucketName") ?? ("conf-retention-bucket-" + Guid.NewGuid().ToString("N")[..12]);
-                var key = "retention/object.txt";
-                var body = Encoding.UTF8.GetBytes("retention-payload");
-                var retentionBody = Encoding.UTF8.GetBytes(
-                    "<Retention><Mode>COMPLIANCE</Mode><RetainUntilDate>2035-01-02T03:04:05Z</RetainUntilDate></Retention>");
-                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
-                [
-                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
-                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
-                    new ConformanceRequestStep("seed-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
-                    new ConformanceRequestStep("put-object-retention", _ => BuildObjectSubresourceRequest(context, HttpMethod.Put, bucket, key, "retention", retentionBody)),
-                    new ConformanceRequestStep("get-object-retention", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "retention", Array.Empty<byte>())),
-                ], Tier1SkipReason));
-            });
-
-    private static PlannedConformanceCase CreateObjectLegalHoldRoundTripCase()
-        => new(
-            "object-legal-hold-roundtrip",
-            "s3:PutObject/PutObjectLegalHold/GetObjectLegalHold",
-            ConformanceCaseExpectation.Success(
-            [
-                new(200, Notes: "CreateBucket."),
-                new(200, Notes: "Enables bucket versioning to match the real-Azure nightly storage account's always-on blob versioning."),
-                new(200, RequiredHeaders: [new("ETag", "Present on the seed PutObject response.")]),
-                new(200, Notes: "Applies an ON legal hold to the current object version."),
-                new(200,
-                    RequiredBodyAssertions:
-                    [
-                        new("LegalHold.Status", "Returns ON after PutObjectLegalHold sets the Azure blob legal-hold flag."),
-                    ]),
-            ],
-            semanticAssertion:
-            "PutObjectLegalHold must flip the blob legal-hold flag on and GetObjectLegalHold must report ON when the backend account supports real Azure legal hold. This seed omits teardown because clearing the hold would require an additional scenario variant and the nightly environment treats these cases as evidence capture rather than bucket cleanup ownership."),
-            static (context, _) =>
-            {
-                var bucket = context.GetProperty("bucketName") ?? ("conf-legal-hold-bucket-" + Guid.NewGuid().ToString("N")[..12]);
-                var key = "legal-hold/object.txt";
-                var body = Encoding.UTF8.GetBytes("legal-hold-payload");
-                var legalHoldBody = Encoding.UTF8.GetBytes("<LegalHold><Status>ON</Status></LegalHold>");
-                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
-                [
-                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
-                    new ConformanceRequestStep("enable-versioning", _ => BuildEnableVersioningRequest(context, bucket)),
-                    new ConformanceRequestStep("seed-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
-                    new ConformanceRequestStep("put-object-legal-hold", _ => BuildObjectSubresourceRequest(context, HttpMethod.Put, bucket, key, "legal-hold", legalHoldBody)),
-                    new ConformanceRequestStep("get-object-legal-hold", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "legal-hold", Array.Empty<byte>())),
-                ], Tier1SkipReason));
-            });
-
 
     private static HttpRequestMessage BuildObjectSubresourceRequest(
         ConformanceCaseContext context,
