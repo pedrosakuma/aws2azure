@@ -489,6 +489,67 @@ public sealed class SubresourceHandlersTests
         Assert.Equal("?versionid=" + Uri.EscapeDataString("2024-06-01T01:02:03.0000000Z"), getRequest.RequestUri!.Query);
     }
 
+    public static IEnumerable<object[]> MalformedSubresourcePayloadCases()
+    {
+        yield return [S3Operation.PutBucketTagging, HttpMethods.Put, "?tagging", "<Tagging></Tagging>", "MalformedXML"];
+        yield return [S3Operation.PutObjectTagging, HttpMethods.Put, "?tagging", "<Tagging></Tagging>", "MalformedXML"];
+        yield return [S3Operation.PutObjectRetention, HttpMethods.Put, "?retention", "<Retention></Retention>", "MalformedXML"];
+        yield return [S3Operation.PutObjectLegalHold, HttpMethods.Put, "?legal-hold", "<LegalHold></LegalHold>", "MalformedXML"];
+    }
+
+    [Theory]
+    [MemberData(nameof(MalformedSubresourcePayloadCases))]
+    public async Task HandleAsync_malformed_subresource_payloads_return_malformed_xml(
+        S3Operation operation,
+        string method,
+        string queryString,
+        string body,
+        string expectedCode)
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+        backend.AddBlob("bucket", "key.txt");
+
+        var context = TestHttpContext.CreateContext(
+            body: body,
+            method: method,
+            path: "/bucket/key.txt",
+            queryString: queryString);
+
+        await SubresourceHandlers.HandleAsync(
+            context,
+            Route(operation, "bucket", "key.txt"),
+            backend.Client,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal(expectedCode, ParseErrorCode(TestHttpContext.ReadBody(context)));
+    }
+
+    [Fact]
+    public async Task HandleAsync_get_bucket_tagging_without_existing_tags_returns_no_such_tag_set()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["existing"] = "keep-me"
+        });
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket",
+            queryString: "?tagging");
+
+        await SubresourceHandlers.HandleAsync(
+            context,
+            Route(S3Operation.GetBucketTagging, "bucket"),
+            backend.Client,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal("NoSuchTagSet", ParseErrorCode(TestHttpContext.ReadBody(context)));
+    }
+
     [Fact]
     public async Task HandleAsync_object_legal_hold_put_get_roundtrips_and_forwards_version_id()
     {

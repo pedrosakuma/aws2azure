@@ -97,4 +97,13 @@ public class DeleteRequestParserTests
         Assert.False(r.Success);
         Assert.Contains("1000", r.Error!);
     }
+
+    [Fact]
+    public void Preserves_request_order_for_duplicate_and_missing_keys()
+    {
+        var r = Parse("<Delete><Object><Key>a</Key></Object><Object><Key>missing</Key></Object><Object><Key>a</Key></Object></Delete>");
+        Assert.True(r.Success, r.Error);
+        Assert.Equal(new[] { "a", "missing", "a" }, r.Objects.Select(o => o.Key));
+    }
+
 }
