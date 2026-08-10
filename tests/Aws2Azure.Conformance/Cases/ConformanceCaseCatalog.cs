@@ -1,6 +1,7 @@
 using Aws2Azure.Conformance.DynamoDb;
 using Aws2Azure.Conformance.Kinesis;
 using Aws2Azure.Conformance.S3;
+using Aws2Azure.Conformance.SecretsManager;
 using Aws2Azure.Conformance.Sns;
 using Aws2Azure.Conformance.Sqs;
 
@@ -33,6 +34,7 @@ public static class ConformanceCaseCatalog
         .. ForService("sns", SnsHappyPathMatrix.Cases),
         .. ForService("sqs", SqsErrorMatrix.Cases),
         .. ForService("sqs", SqsHappyPathMatrix.Cases),
+        .. ForService("secretsmanager", SecretsManagerHappyPathMatrix.Cases),
     ];
 
     public static ConformanceCaseDescriptor Get(string service, string caseName) =>

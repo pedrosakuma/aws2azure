@@ -538,6 +538,36 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal("ResourceExistsException", document.RootElement.GetProperty("__type").GetString());
     }
 
+    [Theory]
+    [InlineData("SecretsManager.CreateSecret", "{\"SecretString\":\"value\"}")]
+    [InlineData("SecretsManager.GetSecretValue", "{}")]
+    [InlineData("SecretsManager.UpdateSecret", "{\"SecretString\":\"value\"}")]
+    [InlineData("SecretsManager.DeleteSecret", "{}")]
+    [InlineData("SecretsManager.DescribeSecret", "{}")]
+    public async Task HandleAsync_returns_invalid_parameter_when_secret_identifier_is_missing(string target, string requestJson)
+    {
+        // CreateSecret keys off "Name" while the other four operations key off
+        // "SecretId"; both paths route through KeyVaultSecretClient.NormalizeSecretName,
+        // which throws ArgumentException before any Key Vault HTTP call is issued. This
+        // covers issue #708's Tier-3 happy-path matrix precondition that every case's
+        // required identifier fields are actually validated, not merely assumed.
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("Key Vault should not be called when the identifier is missing.", Encoding.UTF8, "text/plain"),
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext(target, requestJson);
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("InvalidParameterException", document.RootElement.GetProperty("__type").GetString());
+    }
+
     [Fact]
     public async Task HandleAsync_CreateSecret_returns_invalid_parameter_for_malformed_base64()
     {
