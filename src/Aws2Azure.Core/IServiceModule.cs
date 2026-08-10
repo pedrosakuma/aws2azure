@@ -119,12 +119,19 @@ public interface IServiceModule
 
     /// <summary>
     /// The auth-error vocabulary this module's callers speak. The default maps
-    /// the wire <see cref="ErrorFormat"/> to a dialect — JSON → AWS-JSON, XML →
-    /// the AWS Query front-door dialect (<c>InvalidClientTokenId</c> for an
-    /// unknown key), which is the common case for XML services (SNS, SQS-Query,
-    /// STS, EC2, …). S3, whose unknown-key code is the bespoke
+    /// the wire <see cref="ErrorFormat"/> to a dialect — JSON →
+    /// <see cref="AwsAuthErrorDialect.Json"/> (the DynamoDB/Kinesis AWS-JSON
+    /// dialect; confirmed 400 for <c>InvalidSignatureException</c> by a
+    /// real-AWS capture, workflow run 31397375332), XML → the AWS Query
+    /// front-door dialect (<c>InvalidClientTokenId</c> for an unknown key),
+    /// which is the common case for XML services (SNS, SQS-Query, STS, EC2,
+    /// …). S3, whose unknown-key code is the bespoke
     /// <c>InvalidAccessKeyId</c>, overrides this to
-    /// <see cref="AwsAuthErrorDialect.S3Xml"/>. See issue #247.
+    /// <see cref="AwsAuthErrorDialect.S3Xml"/>. SQS, whose JSON front door is a
+    /// separately-confirmed 403 dialect, overrides this to
+    /// <see cref="AwsAuthErrorDialect.SqsJson"/> per request. See issues #241
+    /// and #247, and the <see cref="AuthErrorVocabulary"/> class doc comment
+    /// for why the AWS-JSON dialect is not uniform across services.
     /// </summary>
     AwsAuthErrorDialect AuthErrorDialect
         => ErrorFormat == AwsErrorFormat.Json ? AwsAuthErrorDialect.Json : AwsAuthErrorDialect.QueryXml;
@@ -150,12 +157,15 @@ public interface IServiceModule
     /// keys the vocabulary on <see cref="AuthErrorDialect"/> via
     /// <see cref="AuthErrorVocabulary"/> — REST-XML services keep the 403 shape
     /// (S3 → <c>InvalidAccessKeyId</c>, Query front door → <c>InvalidClientTokenId</c>
-    /// for an unknown key), AWS-JSON services (DynamoDB, Kinesis) get the
-    /// 403 + <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c>
-    /// shape — then delegates rendering to <see cref="EmitAuthErrorAsync"/>.
-    /// Modules whose callers split across wire protocols (SQS Query vs
-    /// AWS-JSON) override this to negotiate the per-request dialect before
-    /// resolving the vocabulary. See issues #241 and #247.
+    /// for an unknown key); the DynamoDB/Kinesis AWS-JSON dialect answers
+    /// <c>InvalidSignatureException</c> at HTTP 400 (confirmed by a real-AWS
+    /// capture, workflow run 31397375332) with the remaining codes unverified;
+    /// SQS's own AWS-JSON dialect separately answers 403 (confirmed by a
+    /// real-AWS capture, workflow run 31347507212) — then delegates rendering
+    /// to <see cref="EmitAuthErrorAsync"/>. Modules whose callers split across
+    /// wire protocols (SQS Query vs AWS-JSON) override this to negotiate the
+    /// per-request dialect before resolving the vocabulary. See issues #241
+    /// and #247.
     /// </summary>
     ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
     {

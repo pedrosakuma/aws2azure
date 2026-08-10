@@ -29,10 +29,29 @@ public enum AwsAuthErrorDialect
     QueryXml,
 
     /// <summary>
-    /// AWS-JSON 1.x (DynamoDB, Kinesis, modern SQS-Json). Unknown key →
-    /// <c>UnrecognizedClientException</c> / 403. Service-agnostic.
+    /// AWS-JSON 1.x for DynamoDB and Kinesis. <b>Not</b> confirmed uniform
+    /// across the whole AWS-JSON family — see the class doc comment. A
+    /// real-AWS capture (workflow run 31397375332, 2026-08-10) proved
+    /// <c>InvalidSignatureException</c> is HTTP <b>400</b> here, contradicting
+    /// the "shared 403 JSON front door" assumption a prior fix (#750) drew
+    /// from SQS-JSON evidence plus the CommonErrors API reference pages. Every
+    /// other code in this dialect (<c>UnrecognizedClientException</c>,
+    /// <c>IncompleteSignatureException</c>) has never been exercised against
+    /// real AWS and is kept at the conservative pre-#750 baseline (400) until
+    /// independently confirmed — do not assume 403 for those either.
     /// </summary>
     Json,
+
+    /// <summary>
+    /// AWS-JSON 1.0 for SQS's modern JSON front door only. Confirmed distinct
+    /// from <see cref="Json"/> (DynamoDB/Kinesis): a real-AWS capture (workflow
+    /// run 31347507212, 2026-08-10) proved <c>AmazonSQS.ListQueues</c> signed
+    /// with a wrong secret answers HTTP <b>403</b> with
+    /// <c>InvalidSignatureException</c>. This dialect must not be conflated
+    /// with <see cref="Json"/> — the AWS-JSON wire format is shared, but the
+    /// auth-error status is per-service, not per-protocol.
+    /// </summary>
+    SqsJson,
 }
 
 /// <summary>
@@ -40,33 +59,38 @@ public enum AwsAuthErrorDialect
 /// on-the-wire (HTTP status, error code) pair that real AWS returns for the
 /// caller's protocol family.
 ///
-/// <para>AWS-JSON protocol services (DynamoDB, Kinesis, the modern SQS JSON path)
-/// answer SigV4 failures with HTTP <b>403</b> and a distinct exception vocabulary
-/// (<c>InvalidSignatureException</c>, <c>UnrecognizedClientException</c>, …)
-/// emitted by the shared AWS front door — so the code and the status are both
-/// observable to an AWS SDK and must not be the S3 vocabulary. Emitting S3 codes
-/// for a JSON caller is a wire-faithfulness break (issue #241).
-///
-/// A real-AWS capture (workflow run 31347507212, 2026-08-10) proved
-/// <c>AmazonSQS.ListQueues</c> signed with a wrong secret answers HTTP
-/// <b>403</b> with <c>{"__type":"com.amazon.coral.service#InvalidSignatureException"}</c>
-/// — not 400 as this vocabulary previously assumed. The DynamoDB and Kinesis
-/// "Common Error Types" API reference pages
+/// <para><b>The AWS-JSON auth-error status is per-service, not per-protocol.</b>
+/// A prior fix (#750) assumed the AWS-JSON front door answers SigV4 failures
+/// uniformly at HTTP 403 across DynamoDB, Kinesis, and SQS-JSON, based on a
+/// real-AWS SQS-JSON capture (workflow run 31347507212, 2026-08-10, confirming
+/// <c>AmazonSQS.ListQueues</c> signed with a wrong secret returns
+/// <b>403</b> with <c>{"__type":"com.amazon.coral.service#InvalidSignatureException"}</c>)
+/// plus the DynamoDB/Kinesis "Common Error Types" API reference pages
 /// (https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/CommonErrors.html,
-/// https://docs.aws.amazon.com/kinesis/latest/APIReference/CommonErrors.html,
-/// fetched 2026-08-10) independently corroborate this for the shared AWS-JSON
-/// front door: both list <c>IncompleteSignature</c> and
-/// <c>UnrecognizedClientException</c> at HTTP 403 (not 400), and
-/// <c>ExpiredTokenException</c> at 403. Since <c>InvalidSignatureException</c>,
-/// clock-skew, and expiry are all raised by that same shared front-door
-/// authenticator before any service-specific dispatch, and every documented
-/// code in that authenticator's family is 403 across both services, the JSON
-/// vocabulary below now answers 403 uniformly for every SigV4 failure mode,
-/// matching the XML vocabulary's status (the two protocols differ in error
-/// *code*/envelope shape, not in status code, for auth failures).</para>
+/// https://docs.aws.amazon.com/kinesis/latest/APIReference/CommonErrors.html),
+/// which were <b>interpreted</b> (not directly captured) as implying the same
+/// 403 for the whole shared front door. A fresh real-AWS capture (workflow run
+/// 31397375332, 2026-08-10) disproved that generalization:
+/// <c>dynamodb.InvalidSignatureException</c> and
+/// <c>kinesis.InvalidSignatureException</c> both return HTTP <b>400</b>, not
+/// 403, on real AWS. So the JSON-protocol dialect is NOT uniform across
+/// services — SQS-JSON really is 403 for this failure mode, DynamoDB/Kinesis
+/// really are 400, and API-reference pages are not a substitute for a live
+/// capture when doc language ("this error can occur") doesn't pin the exact
+/// status per raising code path.</para>
 ///
-/// <para>The XML vocabulary is <b>not</b> uniform: the unknown-key code is
-/// service-specific (S3 → <c>InvalidAccessKeyId</c>; the Query front door →
+/// <para>This is expressed as two separate <see cref="AwsAuthErrorDialect"/>
+/// values instead of one shared <c>Json</c> dialect:
+/// <see cref="AwsAuthErrorDialect.Json"/> for DynamoDB/Kinesis (confirmed 400
+/// for <c>InvalidSignatureException</c>; every other code in this dialect is
+/// unverified and kept at the conservative pre-#750 baseline of 400) and
+/// <see cref="AwsAuthErrorDialect.SqsJson"/> for SQS's modern JSON front door
+/// (confirmed 403 for <c>InvalidSignatureException</c>). Callers must not
+/// assume these two dialects agree on status code for any failure mode
+/// without an independent capture.</para>
+///
+/// <para>The XML vocabulary is <b>not</b> uniform either: the unknown-key code
+/// is service-specific (S3 → <c>InvalidAccessKeyId</c>; the Query front door →
 /// <c>InvalidClientTokenId</c>), so it is keyed on <see cref="AwsAuthErrorDialect"/>
 /// rather than the wire format alone (issue #247). The remaining XML codes
 /// (<c>SignatureDoesNotMatch</c>, <c>RequestTimeTooSkewed</c>, …) are shared
@@ -82,30 +106,51 @@ public static class AuthErrorVocabulary
     public static (int StatusCode, string Code) Resolve(AwsAuthErrorDialect dialect, SigV4ValidationStatus status)
         => dialect switch
         {
-            AwsAuthErrorDialect.Json  => ResolveJson(status),
-            AwsAuthErrorDialect.S3Xml => ResolveXml(status, unknownKeyCode: "InvalidAccessKeyId"),
-            _                         => ResolveXml(status, unknownKeyCode: "InvalidClientTokenId"),
+            AwsAuthErrorDialect.Json    => ResolveJson(status),
+            AwsAuthErrorDialect.SqsJson => ResolveSqsJson(status),
+            AwsAuthErrorDialect.S3Xml   => ResolveXml(status, unknownKeyCode: "InvalidAccessKeyId"),
+            _                           => ResolveXml(status, unknownKeyCode: "InvalidClientTokenId"),
         };
 
+    // DynamoDB / Kinesis AWS-JSON dialect. Only InvalidSignatureException has
+    // a live real-AWS capture (run 31397375332, 2026-08-10: HTTP 400). Every
+    // other code here is unverified and kept at the pre-#750 conservative
+    // baseline (400) rather than assumed 403 — see the class doc comment.
     private static (int, string) ResolveJson(SigV4ValidationStatus status) => status switch
     {
         // Bad signature and clock skew both surface as InvalidSignatureException
         // on the JSON front door (skew is reported as "Signature expired …").
-        // Confirmed 403 by a real-AWS SQS-JSON capture (run 31347507212).
-        SigV4ValidationStatus.InvalidSignature  => (403, "InvalidSignatureException"),
-        SigV4ValidationStatus.ClockSkewTooLarge => (403, "InvalidSignatureException"),
-        SigV4ValidationStatus.Expired           => (403, "InvalidSignatureException"),
-        // Unknown / unconfigured access key. AWS's DynamoDB/Kinesis
-        // CommonErrors reference documents UnrecognizedClientException at 403.
-        SigV4ValidationStatus.UnknownAccessKey  => (403, "UnrecognizedClientException"),
+        // Confirmed 400 by a real-AWS DynamoDB/Kinesis capture (run 31397375332).
+        SigV4ValidationStatus.InvalidSignature  => (400, "InvalidSignatureException"),
+        SigV4ValidationStatus.ClockSkewTooLarge => (400, "InvalidSignatureException"),
+        SigV4ValidationStatus.Expired           => (400, "InvalidSignatureException"),
+        // Unknown / unconfigured access key. Unverified against real AWS;
+        // kept at the pre-#750 baseline rather than the unconfirmed 403 that
+        // #750 assumed from API-reference doc language alone.
+        SigV4ValidationStatus.UnknownAccessKey  => (400, "UnrecognizedClientException"),
         // A malformed / incomplete Authorization header (unparseable, missing
         // date, bad presigned params). The pure no-credentials case is also
         // folded into Malformed by the validator; real AWS would answer that
         // narrow sub-case with MissingAuthenticationTokenException/403, but the
         // dominant Malformed case here is a genuinely malformed signature, for
-        // which IncompleteSignatureException is the faithful JSON code. AWS's
-        // CommonErrors reference documents the Query-protocol twin
-        // (IncompleteSignature) at 403 for this same shared front door.
+        // which IncompleteSignatureException/400 is the faithful JSON code
+        // (unverified against real AWS; pre-#750 baseline).
+        _                                       => (400, "IncompleteSignatureException"),
+    };
+
+    // SQS's modern AWS-JSON 1.0 front door. Confirmed distinct from
+    // ResolveJson (DynamoDB/Kinesis): a real-AWS capture (run 31347507212,
+    // 2026-08-10) proved AmazonSQS.ListQueues signed with a wrong secret
+    // answers HTTP 403 with InvalidSignatureException. The remaining codes
+    // here mirror that capture's status for consistency within SQS's own
+    // dialect, matching the previously-shipped (#750) SQS conformance
+    // expectations, which are left untouched by this fix.
+    private static (int, string) ResolveSqsJson(SigV4ValidationStatus status) => status switch
+    {
+        SigV4ValidationStatus.InvalidSignature  => (403, "InvalidSignatureException"),
+        SigV4ValidationStatus.ClockSkewTooLarge => (403, "InvalidSignatureException"),
+        SigV4ValidationStatus.Expired           => (403, "InvalidSignatureException"),
+        SigV4ValidationStatus.UnknownAccessKey  => (403, "UnrecognizedClientException"),
         _                                       => (403, "IncompleteSignatureException"),
     };
 

@@ -100,9 +100,12 @@ public sealed class SqsServiceModule : IServiceModule
     /// SQS speaks two wire protocols, and the SigV4 auth-error vocabulary
     /// differs between them: the AWS-JSON path uses
     /// <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c> at
-    /// HTTP 403, while the legacy Query path keeps the XML
-    /// <c>SignatureDoesNotMatch</c>/403 shape (unknown key →
-    /// <c>InvalidClientTokenId</c> via the AWS Query front door). The
+    /// HTTP 403 (<see cref="AwsAuthErrorDialect.SqsJson"/> — confirmed by a
+    /// real-AWS capture, workflow run 31347507212, and distinct from the
+    /// DynamoDB/Kinesis JSON dialect, which real AWS answers at 400; see the
+    /// <see cref="AuthErrorVocabulary"/> class doc comment), while the legacy
+    /// Query path keeps the XML <c>SignatureDoesNotMatch</c>/403 shape (unknown
+    /// key → <c>InvalidClientTokenId</c> via the AWS Query front door). The
     /// module-level <see cref="ErrorFormat"/> can't capture this — it's
     /// per-request — so we sniff the protocol the caller used and resolve the
     /// vocabulary for that dialect before rendering. See issues #241 and #247.
@@ -110,7 +113,7 @@ public sealed class SqsServiceModule : IServiceModule
     public ValueTask EmitSigV4FailureAsync(HttpContext context, SigV4ValidationStatus status, string reason)
     {
         var dialect = SqsWireProtocolParser.Sniff(context) == SqsWireProtocol.AwsJson
-            ? AwsAuthErrorDialect.Json
+            ? AwsAuthErrorDialect.SqsJson
             : AwsAuthErrorDialect.QueryXml;
         var (statusCode, code) = AuthErrorVocabulary.Resolve(dialect, status);
         return EmitAuthErrorAsync(context, statusCode, code,

@@ -12,27 +12,44 @@ namespace Aws2Azure.UnitTests.Modules;
 
 /// <summary>
 /// Unit coverage for the protocol-aware SigV4 auth-error vocabulary (issues #241
-/// and #247). AWS-JSON services answer SigV4 failures with HTTP 403 and the JSON
-/// exception vocabulary (confirmed by a real-AWS SQS-JSON capture, workflow run
-/// 31347507212, and the DynamoDB/Kinesis CommonErrors API reference); XML
-/// services also answer with HTTP 403, but the unknown-key
-/// code is service-specific — S3 returns <c>InvalidAccessKeyId</c> while the AWS
-/// Query front door (SNS, SQS-Query) returns <c>InvalidClientTokenId</c>. The
-/// proxy must render the shape matching the caller's wire dialect or an AWS SDK
-/// sees a non-faithful error.
+/// and #247). The AWS-JSON dialect is <b>not</b> uniform across services: the
+/// DynamoDB/Kinesis dialect (<see cref="AwsAuthErrorDialect.Json"/>) answers
+/// <c>InvalidSignatureException</c> at HTTP 400 (confirmed by a real-AWS
+/// capture, workflow run 31397375332), while SQS's own JSON front door
+/// (<see cref="AwsAuthErrorDialect.SqsJson"/>) answers it at HTTP 403
+/// (confirmed by a real-AWS capture, workflow run 31347507212). XML services
+/// also answer with HTTP 403, but the unknown-key code is service-specific —
+/// S3 returns <c>InvalidAccessKeyId</c> while the AWS Query front door (SNS,
+/// SQS-Query) returns <c>InvalidClientTokenId</c>. The proxy must render the
+/// shape matching the caller's wire dialect or an AWS SDK sees a non-faithful
+/// error.
 /// </summary>
 public class AuthErrorVocabularyTests
 {
+    [Theory]
+    [InlineData(SigV4ValidationStatus.InvalidSignature, 400, "InvalidSignatureException")]
+    [InlineData(SigV4ValidationStatus.ClockSkewTooLarge, 400, "InvalidSignatureException")]
+    [InlineData(SigV4ValidationStatus.Expired, 400, "InvalidSignatureException")]
+    [InlineData(SigV4ValidationStatus.UnknownAccessKey, 400, "UnrecognizedClientException")]
+    [InlineData(SigV4ValidationStatus.Malformed, 400, "IncompleteSignatureException")]
+    public void Json_dialect_maps_to_400_with_json_exception_vocabulary(
+        SigV4ValidationStatus status, int expectedStatus, string expectedCode)
+    {
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.Json, status);
+        Assert.Equal(expectedStatus, statusCode);
+        Assert.Equal(expectedCode, code);
+    }
+
     [Theory]
     [InlineData(SigV4ValidationStatus.InvalidSignature, 403, "InvalidSignatureException")]
     [InlineData(SigV4ValidationStatus.ClockSkewTooLarge, 403, "InvalidSignatureException")]
     [InlineData(SigV4ValidationStatus.Expired, 403, "InvalidSignatureException")]
     [InlineData(SigV4ValidationStatus.UnknownAccessKey, 403, "UnrecognizedClientException")]
     [InlineData(SigV4ValidationStatus.Malformed, 403, "IncompleteSignatureException")]
-    public void Json_dialect_maps_to_403_with_json_exception_vocabulary(
+    public void SqsJson_dialect_maps_to_403_with_json_exception_vocabulary(
         SigV4ValidationStatus status, int expectedStatus, string expectedCode)
     {
-        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.Json, status);
+        var (statusCode, code) = AuthErrorVocabulary.Resolve(AwsAuthErrorDialect.SqsJson, status);
         Assert.Equal(expectedStatus, statusCode);
         Assert.Equal(expectedCode, code);
     }
@@ -111,27 +128,30 @@ public class EmitSigV4FailureDefaultTests
     }
 
     [Fact]
-    public async Task Json_module_renders_403_invalid_signature_exception()
+    public async Task Json_module_renders_400_invalid_signature_exception()
     {
+        // Default IServiceModule.AuthErrorDialect for a JSON module is the
+        // DynamoDB/Kinesis dialect (AwsAuthErrorDialect.Json), confirmed 400
+        // for InvalidSignatureException by a real-AWS capture (run 31397375332).
         IServiceModule module = new VocabularyModule { ErrorFormat = AwsErrorFormat.Json };
         var ctx = NewContext();
 
         await module.EmitSigV4FailureAsync(ctx, SigV4ValidationStatus.InvalidSignature, "bad sig");
 
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(ReadBody(ctx));
         Assert.Equal("InvalidSignatureException", doc.RootElement.GetProperty("__type").GetString());
     }
 
     [Fact]
-    public async Task Json_module_renders_403_unrecognized_client_for_unknown_key()
+    public async Task Json_module_renders_400_unrecognized_client_for_unknown_key()
     {
         IServiceModule module = new VocabularyModule { ErrorFormat = AwsErrorFormat.Json };
         var ctx = NewContext();
 
         await module.EmitSigV4FailureAsync(ctx, SigV4ValidationStatus.UnknownAccessKey, "no such key");
 
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(ReadBody(ctx));
         Assert.Equal("UnrecognizedClientException", doc.RootElement.GetProperty("__type").GetString());
     }
@@ -255,8 +275,11 @@ public class RegistryAuthErrorVocabularyTests
     }
 
     [Fact]
-    public async Task Json_module_unknown_key_returns_403_unrecognized_client()
+    public async Task Json_module_unknown_key_returns_400_unrecognized_client()
     {
+        // Default AuthErrorDialect for a JSON module is the DynamoDB/Kinesis
+        // dialect; UnrecognizedClientException is unverified against real AWS
+        // and kept at the conservative pre-#750 baseline (400).
         var module = new RegistryTestModule { ErrorFormat = AwsErrorFormat.Json };
         var registry = new ServiceModuleRegistry([module], new SigV4Validator(ResolverWithKey("AKIA")));
         var ctx = UnknownKeyRequest();
@@ -264,7 +287,7 @@ public class RegistryAuthErrorVocabularyTests
         await registry.DispatchAsync(ctx);
 
         Assert.False(module.Invoked);
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         using var doc = JsonDocument.Parse(ReadBody(ctx));
         Assert.Equal("UnrecognizedClientException", doc.RootElement.GetProperty("__type").GetString());
     }

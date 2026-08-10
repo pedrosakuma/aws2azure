@@ -138,9 +138,10 @@ public sealed class ServiceModuleRegistry
                         // A required header missing from SignedHeaders is a
                         // signature-coverage failure — surface it with the same
                         // protocol-aware vocabulary as a signature mismatch
-                        // (S3: SignatureDoesNotMatch/403; AWS-JSON:
-                        // InvalidSignatureException/403) rather than hard-coding
-                        // the S3 shape for every module.
+                        // (S3: SignatureDoesNotMatch/403; DynamoDB/Kinesis
+                        // AWS-JSON: InvalidSignatureException/400; SQS-JSON:
+                        // InvalidSignatureException/403) rather than
+                        // hard-coding the S3 shape for every module.
                         await module.EmitSigV4FailureAsync(context,
                             SigV4ValidationStatus.InvalidSignature,
                             $"Required header '{name}' must be included in SignedHeaders.");
