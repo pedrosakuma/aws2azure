@@ -139,7 +139,7 @@ public sealed class ServiceModuleRegistry
                         // signature-coverage failure — surface it with the same
                         // protocol-aware vocabulary as a signature mismatch
                         // (S3: SignatureDoesNotMatch/403; AWS-JSON:
-                        // InvalidSignatureException/400) rather than hard-coding
+                        // InvalidSignatureException/403) rather than hard-coding
                         // the S3 shape for every module.
                         await module.EmitSigV4FailureAsync(context,
                             SigV4ValidationStatus.InvalidSignature,

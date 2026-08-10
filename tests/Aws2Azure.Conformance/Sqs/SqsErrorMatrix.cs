@@ -15,7 +15,11 @@ public enum SqsCaseProtocol
 
     /// <summary>Modern AWS JSON 1.0 protocol: JSON body, <c>X-Amz-Target:
     /// AmazonSQS.&lt;Op&gt;</c>, <c>{"__type":"…#Code"}</c> error envelope at HTTP
-    /// 400 for SigV4 failures.</summary>
+    /// 403 for SigV4 failures (confirmed by a real-AWS capture of
+    /// AmazonSQS.ListQueues, workflow run 31347507212, and corroborated by the
+    /// DynamoDB/Kinesis CommonErrors API references, which document
+    /// UnrecognizedClientException and IncompleteSignature at 403 for the same
+    /// shared AWS-JSON front door).</summary>
     Json,
 }
 
@@ -25,7 +29,9 @@ public enum SqsCaseProtocol
 /// (issue #241): legacy Query callers get the XML <c>&lt;ErrorResponse&gt;</c>
 /// envelope with the S3-style codes at HTTP 403, while modern AWS-JSON callers get
 /// the <c>{"__type":"…#Code"}</c> envelope with <c>InvalidSignatureException</c>/
-/// <c>UnrecognizedClientException</c> at HTTP 400. Each case crafts a signed
+/// <c>UnrecognizedClientException</c> at HTTP 403 as well — the two protocols
+/// differ in error code/envelope shape, not in HTTP status, for auth failures.
+/// Each case crafts a signed
 /// request the proxy must reject before any Service Bus call — in the SigV4 stage
 /// or the wire-protocol parser — paired with the AWS-contract outcome (HTTP status
 /// + short error code) for that rejection. The outcomes are derived from the AWS
@@ -161,26 +167,30 @@ public static class SqsErrorMatrix
         // --- AWS-JSON protocol (same auth failures, different wire shape) ---
 
         // The JSON twin of query-invalid-signature: the AWS-JSON front door
-        // answers InvalidSignatureException / 400 with the {"__type":…} envelope.
+        // answers InvalidSignatureException / 403 with the {"__type":…} envelope.
+        // Confirmed by a real-AWS capture (workflow run 31347507212): a wrong-
+        // secret AmazonSQS.ListQueues request returns HTTP 403 with
+        // {"__type":"com.amazon.coral.service#InvalidSignatureException"}.
         // Together with the Query case above this pins both branches of the SQS
         // EmitSigV4FailureAsync override.
         new SqsErrorCase(
             "json-invalid-signature",
             "sqs:InvalidSignatureException",
             SqsCaseProtocol.Json,
-            400,
+            403,
             "InvalidSignatureException",
             Body: "{}",
             Target: "AmazonSQS.ListQueues",
             SecretOverride: "this-is-not-the-configured-secret-000000000"),
 
         // The JSON twin of query-unrecognized-client: UnrecognizedClientException
-        // / 400.
+        // / 403 (per the DynamoDB/Kinesis CommonErrors API reference, which
+        // documents this code at 403 for the shared AWS-JSON front door).
         new SqsErrorCase(
             "json-unrecognized-client",
             "sqs:UnrecognizedClientException",
             SqsCaseProtocol.Json,
-            400,
+            403,
             "UnrecognizedClientException",
             Body: "{}",
             Target: "AmazonSQS.ListQueues",

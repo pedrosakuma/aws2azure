@@ -112,20 +112,25 @@ public static class DynamoDbErrorMatrix
             Body: "this is not json"),
 
         // SigV4 auth-stage rejections. Unlike S3 (REST-XML, 403 + S3 codes),
-        // AWS-JSON services answer SigV4 failures with HTTP 400 and the JSON
+        // AWS-JSON services answer SigV4 failures with HTTP 403 and the JSON
         // exception vocabulary emitted by the shared AWS front door. These pin
         // the issue #241 fix — the proxy previously mis-rendered the S3 codes at
-        // 403 for every module. Tier-1-only: LocalStack can't be the oracle for
-        // these (it ignores signatures), so the expected outcome is taken from
-        // the AWS JSON-protocol contract, not from a backend.
+        // 403 for every module, and later mis-rendered the JSON auth codes at
+        // 400 (corrected after a real-AWS SQS-JSON capture, workflow run
+        // 31347507212, showed 403; independently corroborated by the
+        // DynamoDB/Kinesis CommonErrors API reference, which documents
+        // UnrecognizedClientException and IncompleteSignature at 403 for this
+        // same shared front door). Tier-1-only: LocalStack can't be the oracle
+        // for these (it ignores signatures), so the expected outcome is taken
+        // from the AWS JSON-protocol contract, not from a backend.
 
         // A well-formed request signed with the WRONG secret: the proxy
         // recomputes the signature from the configured secret, mismatches, and
-        // must answer InvalidSignatureException / 400.
+        // must answer InvalidSignatureException / 403.
         new DynamoDbErrorCase(
             "invalid-signature",
             "dynamodb:InvalidSignatureException",
-            400,
+            403,
             "InvalidSignatureException",
             Target: "DynamoDB_20120810.GetItem",
             Body: "{\"TableName\":\"t\",\"Key\":{}}",
@@ -133,11 +138,11 @@ public static class DynamoDbErrorMatrix
 
         // A well-formed request signed with an access key the proxy doesn't
         // know: the credential lookup fails before signature verification, and
-        // the faithful JSON answer is UnrecognizedClientException / 400.
+        // the faithful JSON answer is UnrecognizedClientException / 403.
         new DynamoDbErrorCase(
             "unrecognized-client",
             "dynamodb:UnrecognizedClientException",
-            400,
+            403,
             "UnrecognizedClientException",
             Target: "DynamoDB_20120810.GetItem",
             Body: "{\"TableName\":\"t\",\"Key\":{}}",
