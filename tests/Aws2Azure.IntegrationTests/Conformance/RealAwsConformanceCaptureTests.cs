@@ -81,7 +81,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         }
         finally
         {
-            await fixture.DeleteBucketBestEffortAsync(euWestBucket).ConfigureAwait(false);
+            await fixture.DeleteBucketBestEffortAsync(fixture.S3EuWest1, euWestBucket).ConfigureAwait(false);
             await fixture.DeleteBucketBestEffortAsync(bucket).ConfigureAwait(false);
         }
     }
@@ -558,7 +558,15 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             }
         }
 
-        return current.Any(element => !string.IsNullOrWhiteSpace(element.Value) || element.HasElements);
+        // Every path segment already proved to exist in the loop above (an
+        // empty match short-circuits to false immediately), so no further
+        // filtering is needed here. A prior version additionally required the
+        // final element to be non-empty or have children, which incorrectly
+        // failed assertions for elements that are legitimately present-but-
+        // empty on the wire (e.g. real AWS's <TagSet/> after all tags are
+        // removed) — this assertion only needs to confirm the path exists,
+        // not that its terminal element has content.
+        return true;
     }
 }
 
@@ -580,6 +588,17 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
     public string SessionToken => _credentials?.GetCredentials().Token ?? string.Empty;
 
     public IAmazonS3 S3 { get; private set; } = null!;
+
+    /// <summary>
+    /// A client bound to the eu-west-1 endpoint. Real AWS S3 requires bucket
+    /// operations (list/delete, not just create) to target the bucket's own
+    /// regional endpoint outside us-east-1 — using the us-east-1-bound
+    /// <see cref="S3"/> client against an eu-west-1 bucket fails with
+    /// "The bucket you are attempting to access must be addressed using the
+    /// specified endpoint." Needed for teardown of the dedicated eu-west-1
+    /// bucket created for <c>bucketalreadyownedbyyou-recreate</c> (issue #752).
+    /// </summary>
+    public IAmazonS3 S3EuWest1 { get; private set; } = null!;
 
     public IAmazonDynamoDB DynamoDb { get; private set; } = null!;
 
@@ -603,6 +622,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
         _credentials = new SessionAWSCredentials(accessKey, secretKey, sessionToken);
         S3 = new AmazonS3Client(_credentials, Amazon.RegionEndpoint.USEast1);
+        S3EuWest1 = new AmazonS3Client(_credentials, Amazon.RegionEndpoint.EUWest1);
         DynamoDb = new AmazonDynamoDBClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Kinesis = new AmazonKinesisClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Sns = new AmazonSimpleNotificationServiceClient(_credentials, Amazon.RegionEndpoint.USEast1);
@@ -613,6 +633,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
     public Task DisposeAsync()
     {
         (S3 as IDisposable)?.Dispose();
+        (S3EuWest1 as IDisposable)?.Dispose();
         (DynamoDb as IDisposable)?.Dispose();
         (Kinesis as IDisposable)?.Dispose();
         (Sns as IDisposable)?.Dispose();
@@ -651,20 +672,22 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         ["created"] = DateTimeOffset.UtcNow.ToString("O"),
     };
 
-    public async Task DeleteBucketBestEffortAsync(string bucket)
+    public Task DeleteBucketBestEffortAsync(string bucket) => DeleteBucketBestEffortAsync(S3, bucket);
+
+    public async Task DeleteBucketBestEffortAsync(IAmazonS3 client, string bucket)
     {
         try
         {
-            var listing = await S3.ListObjectsV2Async(new ListObjectsV2Request
+            var listing = await client.ListObjectsV2Async(new ListObjectsV2Request
             {
                 BucketName = bucket,
             }).ConfigureAwait(false);
             foreach (var obj in listing.S3Objects)
             {
-                await S3.DeleteObjectAsync(bucket, obj.Key).ConfigureAwait(false);
+                await client.DeleteObjectAsync(bucket, obj.Key).ConfigureAwait(false);
             }
 
-            await S3.DeleteBucketAsync(bucket).ConfigureAwait(false);
+            await client.DeleteBucketAsync(bucket).ConfigureAwait(false);
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
