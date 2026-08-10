@@ -151,7 +151,7 @@ public interface IServiceModule
     /// <see cref="AuthErrorVocabulary"/> — REST-XML services keep the 403 shape
     /// (S3 → <c>InvalidAccessKeyId</c>, Query front door → <c>InvalidClientTokenId</c>
     /// for an unknown key), AWS-JSON services (DynamoDB, Kinesis) get the
-    /// 400 + <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c>
+    /// 403 + <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c>
     /// shape — then delegates rendering to <see cref="EmitAuthErrorAsync"/>.
     /// Modules whose callers split across wire protocols (SQS Query vs
     /// AWS-JSON) override this to negotiate the per-request dialect before

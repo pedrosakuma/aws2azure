@@ -117,8 +117,12 @@ public static class KinesisErrorMatrix
             Body: "this is not json"),
 
         // SigV4 auth-stage rejections. Like DynamoDB and unlike S3 (REST-XML, 403
-        // + S3 codes), AWS-JSON Kinesis answers SigV4 failures with HTTP 400 and
-        // the JSON exception vocabulary emitted by the shared AWS front door.
+        // + S3 codes), AWS-JSON Kinesis answers SigV4 failures with HTTP 403 and
+        // the JSON exception vocabulary emitted by the shared AWS front door
+        // (corrected after a real-AWS SQS-JSON capture, workflow run 31347507212,
+        // showed 403; independently corroborated by the Kinesis/DynamoDB
+        // CommonErrors API reference, which documents UnrecognizedClientException
+        // and IncompleteSignature at 403 for this same shared front door).
         // These pin the issue #241 fix on a module that uses the default
         // EmitSigV4FailureAsync (no SQS-style per-request override). Tier-1-only:
         // LocalStack can't be the oracle for these (it ignores signatures), so
@@ -126,11 +130,11 @@ public static class KinesisErrorMatrix
 
         // A well-formed request signed with the WRONG secret: the proxy
         // recomputes the signature from the configured secret, mismatches, and
-        // must answer InvalidSignatureException / 400.
+        // must answer InvalidSignatureException / 403.
         new KinesisErrorCase(
             "invalid-signature",
             "kinesis:InvalidSignatureException",
-            400,
+            403,
             "InvalidSignatureException",
             Target: "Kinesis_20131202.DescribeStreamSummary",
             Body: "{\"StreamName\":\"s\"}",
@@ -138,11 +142,11 @@ public static class KinesisErrorMatrix
 
         // A well-formed request signed with an access key the proxy doesn't
         // know: the credential lookup fails before signature verification, and
-        // the faithful JSON answer is UnrecognizedClientException / 400.
+        // the faithful JSON answer is UnrecognizedClientException / 403.
         new KinesisErrorCase(
             "unrecognized-client",
             "kinesis:UnrecognizedClientException",
-            400,
+            403,
             "UnrecognizedClientException",
             Target: "Kinesis_20131202.DescribeStreamSummary",
             Body: "{\"StreamName\":\"s\"}",

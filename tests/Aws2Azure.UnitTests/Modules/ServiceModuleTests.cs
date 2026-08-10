@@ -283,7 +283,7 @@ public class ServiceModuleRegistryTests
 
         await registry.DispatchAsync(ctx);
 
-        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
         Assert.False(fake.Invoked); // pre-handler rejection
         // Body must still be replayable for the (would-be) module handler:
         ctx.Request.Body.Position = 0;

@@ -156,7 +156,9 @@ AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT=/path/to/downloaded/evidence dotnet te
   by the wire-protocol parser before any Cosmos call: `UnknownOperationException`
   (unknown `X-Amz-Target` op) and `SerializationException` (non-JSON body) — plus
   two SigV4 auth-stage cases: `InvalidSignatureException` (wrong secret) and
-  `UnrecognizedClientException` (unknown access key), both **HTTP 400**. The
+  `UnrecognizedClientException` (unknown access key), both **HTTP 403**
+  (confirmed by a real-AWS SQS-JSON capture, workflow run 31347507212, and the
+  DynamoDB/Kinesis CommonErrors API reference). The
   proxy's `{"__type":"…#Code","message":"…"}` envelope is asserted against the
   AWS contract (status + `json-error` body kind + short `__type` dispatch code +
   `application/x-amz-json` media type). `X-Amz-Target` is part of the signed
@@ -168,7 +170,7 @@ AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT=/path/to/downloaded/evidence dotnet te
   *bare* error code with no `com.amazonaws…#` namespace prefix, so this matrix
   additionally validates the canonicalizer's prefix-free `__type` path. The two
   auth-stage cases (`InvalidSignatureException`, `UnrecognizedClientException`,
-  both **HTTP 400**) exercise the issue #241 fix through a module that uses the
+  both **HTTP 403**) exercise the issue #241 fix through a module that uses the
   *default* `EmitSigV4FailureAsync` (no per-request SQS-style override), while the
   parser-stage cases assert `UnknownOperationException` (unknown `X-Amz-Target`
   op) and `SerializationException` (non-JSON body).
@@ -185,7 +187,8 @@ AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT=/path/to/downloaded/evidence dotnet te
   answers `SignatureDoesNotMatch` / `InvalidClientTokenId` at **HTTP 403** (the
   AWS Query front-door unknown-key code, issue #247); the
   AWS-JSON branch answers `InvalidSignatureException` / `UnrecognizedClientException`
-  at **HTTP 400**. Each case asserts the protocol-correct raw wire shape (Query →
+  at **HTTP 403** as well — the two protocols differ in error code/envelope shape,
+  not in HTTP status, for auth failures. Each case asserts the protocol-correct raw wire shape (Query →
   `text/xml` + `<ErrorResponse>` root; JSON → `application/x-amz-json` + `__type`
   ending in the dispatch code) in addition to the protocol-independent status +
   short code.
@@ -216,7 +219,9 @@ AWS2AZURE_CONFORMANCE_TIER3_EVIDENCE_ROOT=/path/to/downloaded/evidence dotnet te
 > returns `InvalidClientTokenId`; the shared codes are `SignatureDoesNotMatch` /
 > `RequestTimeTooSkewed`. AWS-JSON services (DynamoDB, Kinesis, the modern SQS
 > JSON path) return `InvalidSignatureException` / `UnrecognizedClientException`
-> at **HTTP 400**, via `AuthErrorVocabulary.Resolve(dialect, status)` where the
+> at **HTTP 403** as well (corrected after a real-AWS SQS-JSON capture, workflow
+> run 31347507212, and the DynamoDB/Kinesis CommonErrors API reference), via
+> `AuthErrorVocabulary.Resolve(dialect, status)` where the
 > dialect comes from each module's `AuthErrorDialect`. The DynamoDB and Kinesis
 > auth cases above are Tier-1-only: LocalStack can't be their oracle (it ignores
 > signatures), so the expected outcome is the AWS JSON-protocol contract.

@@ -100,7 +100,7 @@ public sealed class SqsServiceModule : IServiceModule
     /// SQS speaks two wire protocols, and the SigV4 auth-error vocabulary
     /// differs between them: the AWS-JSON path uses
     /// <c>InvalidSignatureException</c>/<c>UnrecognizedClientException</c> at
-    /// HTTP 400, while the legacy Query path keeps the XML
+    /// HTTP 403, while the legacy Query path keeps the XML
     /// <c>SignatureDoesNotMatch</c>/403 shape (unknown key →
     /// <c>InvalidClientTokenId</c> via the AWS Query front door). The
     /// module-level <see cref="ErrorFormat"/> can't capture this — it's
