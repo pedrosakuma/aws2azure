@@ -110,4 +110,17 @@ public sealed class RealAwsConformanceCaptureBodyAssertionTests
         Assert.False(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
             EmptyCanonical, body, "ListBucketResult.NextContinuationToken"));
     }
+
+    [Fact]
+    public void XmlPath_matches_a_present_but_empty_self_closing_element()
+    {
+        // Real AWS answers GetObjectTagging with an empty <TagSet/> once all
+        // tags are removed. The assertion only needs to confirm the element
+        // is present on the wire, not that it has content — a self-closing
+        // (present-but-empty) element must satisfy the path.
+        const string body = """<Tagging><TagSet/></Tagging>""";
+
+        Assert.True(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Tagging.TagSet"));
+    }
 }
