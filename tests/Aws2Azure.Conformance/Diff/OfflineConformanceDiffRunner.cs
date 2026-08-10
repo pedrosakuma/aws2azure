@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Aws2Azure.Conformance.AllowList;
 using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.Conformance.Cases;
@@ -173,19 +174,40 @@ public static class OfflineConformanceDiffRunner
         var fields = new List<CanonicalField>(response.BodyFields.Count);
         foreach (var field in response.BodyFields)
         {
-            fields.Add(field.Name is "Name" or "BucketArn"
-                ? new CanonicalField(field.Name, NormalizeBucketNameWithinValue(field.Value))
-                : field);
+            var value = field.Name is "Name" or "BucketArn"
+                ? NormalizeBucketNameWithinValue(field.Value)
+                : field.Value;
+            fields.Add(new CanonicalField(field.Name, NormalizeArnAccountIdWithinValue(value)));
         }
         var headers = new List<CanonicalField>(response.Headers.Count);
         foreach (var header in response.Headers)
         {
-            headers.Add(header.Name == "x-amz-bucket-arn"
-                ? new CanonicalField(header.Name, NormalizeBucketNameWithinValue(header.Value))
-                : header);
+            var value = header.Name == "x-amz-bucket-arn"
+                ? NormalizeBucketNameWithinValue(header.Value)
+                : header.Value;
+            headers.Add(new CanonicalField(header.Name, NormalizeArnAccountIdWithinValue(value)));
         }
         return response with { BodyFields = fields, Headers = headers };
     }
+
+    // Any AWS ARN carries the caller's 12-digit account id (e.g.
+    // "arn:aws:sns:us-east-1:123456789012:my-topic"). Real-AWS goldens embed the
+    // real capturing account; the proxy always synthesizes ARNs against its own
+    // fixed placeholder account id (see SnsTopicSupport.PlaceholderAccountId).
+    // That is a faithful, service-wide divergence rather than a per-case one, so
+    // it is masked generically here instead of via per-case allow-list tags -
+    // any field or header whose value contains an "arn:aws:<service>:<region>:
+    // <accountId>:" segment has that account id replaced before comparison. This
+    // covers TopicArn, SubscriptionArn, and any SQS-endpoint ARN referenced by an
+    // SNS subscription's Endpoint attribute.
+    private static readonly Regex ArnAccountIdPattern = new(
+        @"(arn:aws:[a-z0-9-]+:[a-z0-9-]*:)\d{12}(?=:)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static string NormalizeArnAccountIdWithinValue(string value)
+        => string.IsNullOrEmpty(value) || !value.Contains("arn:aws:", StringComparison.Ordinal)
+            ? value
+            : ArnAccountIdPattern.Replace(value, "$1<account>");
 
     private static string NormalizeBucketNameWithinValue(string value)
     {
