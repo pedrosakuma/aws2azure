@@ -857,6 +857,13 @@ public static class S3HappyPathMatrix
     private static Uri ResolveBaseAddress(ConformanceCaseContext context)
         => context.BaseAddress ?? DefaultBaseAddress;
 
+    private static byte[] CreateDeterministicBuffer(int length, byte fill)
+    {
+        var buffer = new byte[length];
+        Array.Fill(buffer, fill);
+        return buffer;
+    }
+
     private static PlannedConformanceCase CreateMultipartCopyCompleteRoundTripCase()
         => new(
             "multipart-upload-copy-complete-roundtrip",
@@ -904,7 +911,7 @@ public static class S3HappyPathMatrix
                     RequiredHeaders: [new("ETag", "Present on the final GetObject response.")],
                     RequiredBodyAssertions:
                     [
-                        new("Body", "Equals raw-part-1 concatenated with the copied source bytes."),
+                        new("Body", "Equals the 5 MiB raw part-1 buffer concatenated with the copied source bytes."),
                     ]),
                 new(204, Notes: "Deletes the copied source object current version."),
                 new(204, Notes: "Hard-deletes the copied source object's retained version."),
@@ -912,14 +919,20 @@ public static class S3HappyPathMatrix
                 new(204, Notes: "Hard-deletes the completed multipart destination's retained version."),
             ],
             semanticAssertion:
-            "The completed object must byte-match the uploaded raw part followed by the copied source object bytes, and ListParts pagination must enumerate both staged parts exactly once before completion. DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
+            "The completed object must byte-match the uploaded raw part (a 5 MiB buffer, satisfying S3's non-final-part minimum-size requirement) followed by the copied source object bytes, and ListParts pagination must enumerate both staged parts exactly once before completion. DeleteBucket is not asserted here: version-level immutability rejects Delete Container via the data plane even on an empty container, so bucket cleanup is left to the nightly reaper."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-multipart-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var sourceKey = "multipart/source.txt";
                 var destKey = "multipart/final.txt";
                 var sourceBody = Encoding.UTF8.GetBytes("copied-source-segment");
-                var rawPart = Encoding.UTF8.GetBytes("raw-part-1|");
+                // AWS/Azure S3 rejects CompleteMultipartUpload with EntityTooSmall when any
+                // non-final part is below the 5 MiB (5,242,880-byte) minimum part size. Part 1
+                // (this raw UploadPart) precedes part 2 (the UploadPartCopy, which is last and
+                // therefore exempt), so it must meet the minimum. Build a deterministic buffer
+                // rather than a literal string so the size is easy to reason about and the
+                // eventual byte-match assertion stays correct.
+                var rawPart = CreateDeterministicBuffer(5 * 1024 * 1024, (byte)'A');
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
