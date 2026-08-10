@@ -51,6 +51,8 @@
              Link="Conformance\Evidence\ConformanceEvidenceStore.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\ConformanceSigV4Signer.cs"
              Link="Conformance\S3\ConformanceSigV4Signer.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\ConformancePresignedUrlBuilder.cs"
+             Link="Conformance\S3\ConformancePresignedUrlBuilder.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\S3ErrorMatrix.cs"
              Link="Conformance\S3\S3ErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\S3BackendErrorMatrix.cs"
