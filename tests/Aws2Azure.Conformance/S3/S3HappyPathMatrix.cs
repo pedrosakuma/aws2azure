@@ -629,7 +629,11 @@ public static class S3HappyPathMatrix
         };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
         request.Content.Headers.ContentLength = body.Length;
-        request.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(body)));
+        // Content-MD5 is a content header, not a request header: setting it via
+        // request.Headers.TryAddWithoutValidation silently fails (returns false)
+        // and the header is never sent, which real AWS/Azure both reject as a
+        // missing required header for DeleteObjects.
+        request.Content.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(body)));
         ConformanceSigV4Signer.SignHeader(
             request,
             body,
