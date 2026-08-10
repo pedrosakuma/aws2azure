@@ -435,10 +435,17 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             {
                 propertyName = rawSegment[..bracketStart];
                 var indexText = rawSegment[(bracketStart + 1)..^1];
-                if (int.TryParse(indexText, out var parsedIndex))
+                if (!int.TryParse(indexText, out var parsedIndex))
                 {
-                    explicitIndex = parsedIndex;
+                    // Malformed bracket syntax (non-numeric or nested brackets,
+                    // e.g. "Records[abc]" or "Records[0][1]") must fail fast
+                    // rather than silently degrading to a bracket-less lookup,
+                    // which would mask a typo'd assertion path instead of
+                    // surfacing it as a broken test fixture.
+                    return false;
                 }
+
+                explicitIndex = parsedIndex;
             }
 
             if (current.ValueKind == JsonValueKind.Array)

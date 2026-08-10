@@ -61,6 +61,27 @@ public sealed class RealAwsConformanceCaptureBodyAssertionTests
     }
 
     [Fact]
+    public void JsonPath_malformed_non_numeric_index_fails_fast()
+    {
+        const string body = """{"Records":[{"SequenceNumber":"1"}]}""";
+
+        // "Records[abc]" must not silently degrade to a bracket-less
+        // "Records" lookup (which would default to index 0 and mask the
+        // typo) — it must fail outright.
+        Assert.False(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Records[abc].SequenceNumber"));
+    }
+
+    [Fact]
+    public void JsonPath_malformed_nested_bracket_index_fails_fast()
+    {
+        const string body = """{"Records":[{"SequenceNumber":"1"}]}""";
+
+        Assert.False(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Records[0][1].SequenceNumber"));
+    }
+
+    [Fact]
     public void XmlPath_matches_when_first_segment_is_the_document_root()
     {
         const string body =
