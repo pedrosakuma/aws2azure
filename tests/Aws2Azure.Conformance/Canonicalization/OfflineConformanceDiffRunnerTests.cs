@@ -26,4 +26,54 @@ public sealed class OfflineConformanceDiffRunnerTests
 
         Assert.DoesNotContain(diffs, d => d.Tag == "header-value:x-amz-bucket-arn");
     }
+
+    [Fact]
+    public void NormalizeForComparison_masks_the_account_id_segment_of_any_aws_arn_body_field()
+    {
+        var expected = new CanonicalResponse(
+            200,
+            [],
+            CanonicalResponse.BodyKindOpaque,
+            [new CanonicalField("TopicArn", "arn:aws:sns:us-east-1:123456789012:conf-happy-topic-abc123")],
+            string.Empty);
+        var actual = new CanonicalResponse(
+            200,
+            [],
+            CanonicalResponse.BodyKindOpaque,
+            [new CanonicalField("TopicArn", "arn:aws:sns:us-east-1:000000000000:conf-happy-topic-abc123")],
+            string.Empty);
+
+        var diffs = CanonicalDiff.Compare(
+            OfflineConformanceDiffRunner.NormalizeForComparison("topic-attributes-roundtrip", expected),
+            OfflineConformanceDiffRunner.NormalizeForComparison("topic-attributes-roundtrip", actual));
+
+        Assert.DoesNotContain(diffs, d => d.Tag == "field-value:TopicArn");
+    }
+
+    [Fact]
+    public void NormalizeForComparison_masks_the_account_id_segment_of_a_subscription_endpoint_arn()
+    {
+        var expected = new CanonicalResponse(
+            200,
+            [],
+            CanonicalResponse.BodyKindOpaque,
+            [new CanonicalField(
+                "Endpoint",
+                "arn:aws:sqs:us-east-1:123456789012:conf-happy-queue")],
+            string.Empty);
+        var actual = new CanonicalResponse(
+            200,
+            [],
+            CanonicalResponse.BodyKindOpaque,
+            [new CanonicalField(
+                "Endpoint",
+                "arn:aws:sqs:us-east-1:000000000000:conf-happy-queue")],
+            string.Empty);
+
+        var diffs = CanonicalDiff.Compare(
+            OfflineConformanceDiffRunner.NormalizeForComparison("list-subscriptions-roundtrip", expected),
+            OfflineConformanceDiffRunner.NormalizeForComparison("list-subscriptions-roundtrip", actual));
+
+        Assert.DoesNotContain(diffs, d => d.Tag == "field-value:Endpoint");
+    }
 }
