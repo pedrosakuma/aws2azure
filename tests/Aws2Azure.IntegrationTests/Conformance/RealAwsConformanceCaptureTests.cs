@@ -47,6 +47,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         Skip.IfNot(fixture.IsConfigured, fixture.SkipReason);
 
         var bucket = fixture.CreateEphemeralName("s3backenderr");
+        // "bucketalreadyownedbyyou-recreate" is signed for eu-west-1 and, on
+        // real AWS, must actually be created in eu-west-1 — a mismatched
+        // signed scope is rejected with AuthorizationHeaderMalformed before
+        // ownership is ever evaluated, so it needs its own regional bucket
+        // rather than reusing the shared us-east-1 one above.
+        var euWestBucket = fixture.CreateEphemeralName("s3backenderreuw");
         try
         {
             await fixture.S3.PutBucketAsync(bucket).ConfigureAwait(false);
@@ -55,6 +61,11 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 BucketName = bucket,
                 Key = S3BackendErrorMatrix.ExistingKey,
                 ContentBody = "conformance conditional object",
+            }).ConfigureAwait(false);
+            await fixture.S3.PutBucketAsync(new PutBucketRequest
+            {
+                BucketName = euWestBucket,
+                BucketRegion = S3Region.EUWest1,
             }).ConfigureAwait(false);
 
             await ExecuteServiceCasesAsync(
@@ -65,10 +76,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["bucketName"] = bucket,
+                        ["euWestBucketName"] = euWestBucket,
                     })).ConfigureAwait(false);
         }
         finally
         {
+            await fixture.DeleteBucketBestEffortAsync(euWestBucket).ConfigureAwait(false);
             await fixture.DeleteBucketBestEffortAsync(bucket).ConfigureAwait(false);
         }
     }

@@ -30,7 +30,8 @@ public sealed record S3BackendErrorCase(
     System.Net.Http.HttpMethod? Method = null,
     string? SignRegion = null,
     bool TargetsBucketRoot = false,
-    string? LocationConstraint = null) : IConformanceCase
+    string? LocationConstraint = null,
+    string? BucketPropertyName = null) : IConformanceCase
 {
     private static readonly Uri DefaultBaseAddress = new("http://s3.us-east-1.amazonaws.com/");
 
@@ -50,11 +51,17 @@ public sealed record S3BackendErrorCase(
         CancellationToken cancellationToken = default)
     {
         // "nosuchbucket-get-object" is the one case that must target a bucket
-        // that does not exist on either backend; every other case needs the
-        // shared bucket the fixture already provisioned/seeded for this run.
+        // that does not exist on either backend. "bucketalreadyownedbyyou-
+        // recreate" needs its own bucket, provisioned by the harness in
+        // SignRegion, because real S3 rejects a SigV4 scope that doesn't match
+        // the target bucket's actual region (AuthorizationHeaderMalformed)
+        // before it ever reaches ownership-conflict handling — unlike
+        // LocalStack, which is lenient about signed-region vs bucket-region.
+        // Every other case reuses the shared bucket the fixture provisioned/
+        // seeded in the default region for this run.
         var bucket = RequiresExistingBucket
-            ? context.GetRequiredProperty("bucketName")
-            : context.GetRequiredProperty("bucketName") + "-missing";
+            ? context.GetRequiredProperty(BucketPropertyName ?? "bucketName")
+            : context.GetRequiredProperty(BucketPropertyName ?? "bucketName") + "-missing";
         var path = BuildPath(bucket);
         return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
             [new ConformanceRequestStep(Name, _ => BuildRequest(context, bucket, path))]));
@@ -82,9 +89,19 @@ public sealed record S3BackendErrorCase(
                 $"<LocationConstraint>{LocationConstraint}</LocationConstraint>" +
                 "</CreateBucketConfiguration>");
 
+        // Real S3 validates the SigV4 signed scope against the endpoint/bucket
+        // region and rejects a mismatch with 400 AuthorizationHeaderMalformed
+        // before evaluating the request itself, so a case signed for a region
+        // other than the context default must also target that region's
+        // regional endpoint (not the shared us-east-1 base address) to reach
+        // its intended contract outcome on real AWS.
+        var baseAddress = SignRegion is null || string.Equals(SignRegion, context.Region, StringComparison.Ordinal)
+            ? context.BaseAddress ?? DefaultBaseAddress
+            : new Uri($"https://s3.{SignRegion}.amazonaws.com/");
+
         var request = new HttpRequestMessage(
             Method ?? HttpMethod.Get,
-            new Uri(context.BaseAddress ?? DefaultBaseAddress, path));
+            new Uri(baseAddress, path));
         if (body.Length > 0)
         {
             request.Content = new ByteArrayContent(body);
@@ -172,6 +189,7 @@ public static class S3BackendErrorMatrix
             Method: System.Net.Http.HttpMethod.Put,
             SignRegion: "eu-west-1",
             TargetsBucketRoot: true,
-            LocationConstraint: "eu-west-1"),
+            LocationConstraint: "eu-west-1",
+            BucketPropertyName: "euWestBucketName"),
     };
 }
