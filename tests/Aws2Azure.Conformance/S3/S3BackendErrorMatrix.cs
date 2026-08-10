@@ -1,3 +1,5 @@
+using Aws2Azure.Conformance.Cases;
+
 namespace Aws2Azure.Conformance.S3;
 
 /// <summary>
@@ -7,6 +9,16 @@ namespace Aws2Azure.Conformance.S3;
 /// failure (container/blob not found) into its S3 equivalent. LocalStack S3
 /// produces the authoritative real-S3 shape for the same request, so the two
 /// are diffed.
+///
+/// <para>
+/// Because these requests are validly signed and reach a real backend, they are
+/// also meaningful Tier-3 real-AWS capture cases (unlike the Tier-1
+/// <see cref="S3ErrorCase"/> matrix, which is rejected before any backend call).
+/// <see cref="CreatePlanAsync"/> implements <see cref="IConformanceCase"/> so
+/// <c>RealAwsConformanceCaptureTests</c> can execute the same signed request
+/// against real S3 and capture its authoritative response as a golden, using the
+/// bucket/key provisioning the fixture already performs for the Tier-3 run.
+/// </para>
 /// </summary>
 public sealed record S3BackendErrorCase(
     string Name,
@@ -18,7 +30,79 @@ public sealed record S3BackendErrorCase(
     System.Net.Http.HttpMethod? Method = null,
     string? SignRegion = null,
     bool TargetsBucketRoot = false,
-    string? LocationConstraint = null);
+    string? LocationConstraint = null) : IConformanceCase
+{
+    private static readonly Uri DefaultBaseAddress = new("http://s3.us-east-1.amazonaws.com/");
+
+    /// <inheritdoc />
+    public string Operation => Name;
+
+    /// <inheritdoc />
+    public ConformanceCaseExpectation Expected =>
+        ConformanceCaseExpectation.Error(
+            ExpectedStatus,
+            ExpectedCode,
+            "Tier-2 backend-mapped S3 error asserted from the AWS S3 contract; also captured against real AWS (Tier-3).");
+
+    /// <inheritdoc />
+    public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
+        ConformanceCaseContext context,
+        CancellationToken cancellationToken = default)
+    {
+        // "nosuchbucket-get-object" is the one case that must target a bucket
+        // that does not exist on either backend; every other case needs the
+        // shared bucket the fixture already provisioned/seeded for this run.
+        var bucket = RequiresExistingBucket
+            ? context.GetRequiredProperty("bucketName")
+            : context.GetRequiredProperty("bucketName") + "-missing";
+        var path = BuildPath(bucket);
+        return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+            [new ConformanceRequestStep(Name, _ => BuildRequest(context, bucket, path))]));
+    }
+
+    /// <summary>
+    /// The request path for this case: the bucket root for
+    /// <see cref="TargetsBucketRoot"/> (CreateBucket-style) cases, the missing
+    /// key for the not-found cases, or the pre-seeded existing key for the
+    /// conditional-GET case.
+    /// </summary>
+    public string BuildPath(string bucket)
+        => TargetsBucketRoot
+            ? $"/{bucket}"
+            : RequiresExistingObject
+                ? $"/{bucket}/{S3BackendErrorMatrix.ExistingKey}"
+                : $"/{bucket}/{S3BackendErrorMatrix.MissingKey}";
+
+    private HttpRequestMessage BuildRequest(ConformanceCaseContext context, string bucket, string path)
+    {
+        var body = LocationConstraint is null
+            ? Array.Empty<byte>()
+            : System.Text.Encoding.UTF8.GetBytes(
+                "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" +
+                $"<LocationConstraint>{LocationConstraint}</LocationConstraint>" +
+                "</CreateBucketConfiguration>");
+
+        var request = new HttpRequestMessage(
+            Method ?? HttpMethod.Get,
+            new Uri(context.BaseAddress ?? DefaultBaseAddress, path));
+        if (body.Length > 0)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentLength = body.Length;
+        }
+
+        ConformanceSigV4Signer.SignHeader(
+            request,
+            body,
+            context.AccessKeyId,
+            context.SecretAccessKey,
+            region: SignRegion ?? context.Region,
+            sessionToken: context.SessionToken);
+
+        ConfigureRequest?.Invoke(request);
+        return request;
+    }
+}
 
 /// <summary>
 /// The S3 backend-error matrix. Most cases are <c>GET object</c> requests whose

@@ -3,6 +3,8 @@ using Amazon.DynamoDBv2.Model;
 using Amazon.Kinesis;
 using Amazon.Kinesis.Model;
 using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Aws2Azure.Conformance.Cases;
@@ -37,6 +39,38 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 {
                     ["bucketName"] = fixture.CreateEphemeralName("s3bucket"),
                 })).ConfigureAwait(false);
+    }
+
+    [SkippableFact]
+    public async Task S3_backend_error_cases_capture_real_aws_goldens()
+    {
+        Skip.IfNot(fixture.IsConfigured, fixture.SkipReason);
+
+        var bucket = fixture.CreateEphemeralName("s3backenderr");
+        try
+        {
+            await fixture.S3.PutBucketAsync(bucket).ConfigureAwait(false);
+            await fixture.S3.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = S3BackendErrorMatrix.ExistingKey,
+                ContentBody = "conformance conditional object",
+            }).ConfigureAwait(false);
+
+            await ExecuteServiceCasesAsync(
+                "s3",
+                S3BackendErrorMatrix.Cases.Cast<IConformanceCase>().ToArray(),
+                CreateContext(
+                    "s3",
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["bucketName"] = bucket,
+                    })).ConfigureAwait(false);
+        }
+        finally
+        {
+            await fixture.DeleteBucketBestEffortAsync(bucket).ConfigureAwait(false);
+        }
     }
 
     [SkippableFact]
@@ -532,6 +566,8 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
     public string SessionToken => _credentials?.GetCredentials().Token ?? string.Empty;
 
+    public IAmazonS3 S3 { get; private set; } = null!;
+
     public IAmazonDynamoDB DynamoDb { get; private set; } = null!;
 
     public IAmazonKinesis Kinesis { get; private set; } = null!;
@@ -553,6 +589,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         }
 
         _credentials = new SessionAWSCredentials(accessKey, secretKey, sessionToken);
+        S3 = new AmazonS3Client(_credentials, Amazon.RegionEndpoint.USEast1);
         DynamoDb = new AmazonDynamoDBClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Kinesis = new AmazonKinesisClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Sns = new AmazonSimpleNotificationServiceClient(_credentials, Amazon.RegionEndpoint.USEast1);
@@ -562,6 +599,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
     public Task DisposeAsync()
     {
+        (S3 as IDisposable)?.Dispose();
         (DynamoDb as IDisposable)?.Dispose();
         (Kinesis as IDisposable)?.Dispose();
         (Sns as IDisposable)?.Dispose();
@@ -599,6 +637,26 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         ["purpose"] = "aws2azure-it",
         ["created"] = DateTimeOffset.UtcNow.ToString("O"),
     };
+
+    public async Task DeleteBucketBestEffortAsync(string bucket)
+    {
+        try
+        {
+            var listing = await S3.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = bucket,
+            }).ConfigureAwait(false);
+            foreach (var obj in listing.S3Objects)
+            {
+                await S3.DeleteObjectAsync(bucket, obj.Key).ConfigureAwait(false);
+            }
+
+            await S3.DeleteBucketAsync(bucket).ConfigureAwait(false);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+        }
+    }
 
     public async Task DeleteTableBestEffortAsync(string tableName)
     {
