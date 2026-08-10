@@ -35,6 +35,24 @@ public class TaggingHandlersTests
         Assert.Empty(error);
     }
 
+    [Fact]
+    public void TryParseTableName_accepts_the_arn_shape_created_by_CreateTable()
+    {
+        // The Tier-3 conformance case "tag-list-untag-resource-roundtrip"
+        // feeds CreateTable's own TableDescription.TableArn straight into
+        // TagResource/UntagResource/ListTagsOfResource as ResourceArn. This
+        // pins the cross-module contract between DynamoDbNames.BuildTableArn
+        // (used to render CreateTable's response) and TryParseTableName
+        // (used to validate the tagging request) so a future change to
+        // either side's ARN shape fails loudly here instead of only at
+        // real-backend capture time.
+        var tableArn = DynamoDbNames.BuildTableArn(string.Empty, "conf-happy-tag-table-1");
+
+        Assert.True(TaggingHandlers.TryParseTableName(tableArn, out var tableName, out var error));
+        Assert.Equal("conf-happy-tag-table-1", tableName);
+        Assert.Empty(error);
+    }
+
     [Theory]
     [InlineData("arn:aws:s3:::bucket")]
     [InlineData("arn:aws:dynamodb:us-east-1:123456789012:table/")]
