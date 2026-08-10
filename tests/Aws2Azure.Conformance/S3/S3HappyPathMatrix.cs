@@ -1009,11 +1009,11 @@ public static class S3HappyPathMatrix
                     ]),
                 new(200, RequiredHeaders: [new("ETag", "Present on the staged UploadPart response.")]),
                 new(204, Notes: "AbortMultipartUpload succeeds and invalidates the UploadId immediately."),
-                new(200, Notes: "Tier-1 seed placeholder: Tier-3 capture validates the post-abort ListParts rejection semantics."),
-                new(200, Notes: "Tier-1 seed placeholder: Tier-3 capture validates that no completed object materializes after abort."),
+                new(404, Notes: "ListParts on the aborted UploadId is rejected with NoSuchUpload: aborting invalidates the upload immediately."),
+                new(404, Notes: "GetObject on the never-completed key is rejected with NoSuchKey: no destination object materializes after abort."),
             ],
             semanticAssertion:
-            "Aborting the upload must immediately invalidate the UploadId for subsequent multipart lookups and must not materialize a destination object; the seed matrix leaves those negative post-abort checks as live Tier-3 assertions because Tier-1 only validates the happy-path planning scaffold."),
+            "Aborting the upload must immediately invalidate the UploadId for subsequent multipart lookups (ListParts -> 404 NoSuchUpload) and must not materialize a destination object (GetObject -> 404 NoSuchKey)."),
             static (context, _) =>
             {
                 var bucket = context.GetProperty("bucketName") ?? ("conf-multipart-bucket-" + Guid.NewGuid().ToString("N")[..12]);
