@@ -55,6 +55,42 @@ public sealed class DescribeStreamSummaryHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_rejects_mismatched_stream_name_and_stream_arn()
+    {
+        var context = CreateContext();
+
+        await DescribeStreamSummaryHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamName\":\"orders\",\"StreamARN\":\"arn:aws:kinesis:azure:myns:stream/payments\"}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains("StreamName and StreamARN must refer to the same stream.", responseBody);
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_malformed_stream_arn()
+    {
+        var context = CreateContext();
+
+        await DescribeStreamSummaryHandler.HandleAsync(
+            context,
+            NewParseResult("{\"StreamARN\":\"not-a-valid-arn\"}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains("StreamARN must contain ", responseBody);
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_not_found_to_resource_not_found_exception()
     {
         var context = CreateContext();
