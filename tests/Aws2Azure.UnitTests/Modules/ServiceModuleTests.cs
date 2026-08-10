@@ -283,7 +283,11 @@ public class ServiceModuleRegistryTests
 
         await registry.DispatchAsync(ctx);
 
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        // Default AuthErrorDialect for a JSON module is the DynamoDB/Kinesis
+        // dialect: InvalidSignatureException is confirmed 400 by a real-AWS
+        // capture (workflow run 31397375332), disproving the prior #750
+        // assumption of a uniform 403 across the whole AWS-JSON family.
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
         Assert.False(fake.Invoked); // pre-handler rejection
         // Body must still be replayable for the (would-be) module handler:
         ctx.Request.Body.Position = 0;

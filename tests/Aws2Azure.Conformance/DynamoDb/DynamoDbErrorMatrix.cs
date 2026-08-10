@@ -112,37 +112,43 @@ public static class DynamoDbErrorMatrix
             Body: "this is not json"),
 
         // SigV4 auth-stage rejections. Unlike S3 (REST-XML, 403 + S3 codes),
-        // AWS-JSON services answer SigV4 failures with HTTP 403 and the JSON
-        // exception vocabulary emitted by the shared AWS front door. These pin
-        // the issue #241 fix — the proxy previously mis-rendered the S3 codes at
-        // 403 for every module, and later mis-rendered the JSON auth codes at
-        // 400 (corrected after a real-AWS SQS-JSON capture, workflow run
-        // 31347507212, showed 403; independently corroborated by the
-        // DynamoDB/Kinesis CommonErrors API reference, which documents
-        // UnrecognizedClientException and IncompleteSignature at 403 for this
-        // same shared front door). Tier-1-only: LocalStack can't be the oracle
-        // for these (it ignores signatures), so the expected outcome is taken
-        // from the AWS JSON-protocol contract, not from a backend.
+        // DynamoDB's AWS-JSON front door answers SigV4 failures with HTTP 400
+        // and its own JSON exception vocabulary. A real-AWS capture (workflow
+        // run 31397375332, 2026-08-10) confirmed InvalidSignatureException is
+        // HTTP 400 here, disproving a prior fix (#750) that had generalized a
+        // 403 finding from a separate SQS-JSON capture (run 31347507212) plus
+        // the DynamoDB/Kinesis CommonErrors API-reference pages to the whole
+        // AWS-JSON family. That generalization was wrong: the JSON dialect's
+        // auth-error status is per-service, not per-protocol — see
+        // AuthErrorVocabulary's class doc comment. UnrecognizedClientException
+        // below has never been exercised against real AWS (the test run that
+        // caught the InvalidSignatureException regression aborts on first
+        // failure, so it never reached this case); it is kept at the
+        // conservative pre-#750 baseline (400) rather than assumed either way.
+        // Tier-1-only: LocalStack can't be the oracle for these (it ignores
+        // signatures), so the expected outcome is taken from the AWS
+        // JSON-protocol contract, not from a backend.
 
         // A well-formed request signed with the WRONG secret: the proxy
         // recomputes the signature from the configured secret, mismatches, and
-        // must answer InvalidSignatureException / 403.
+        // must answer InvalidSignatureException / 400 (confirmed, run 31397375332).
         new DynamoDbErrorCase(
             "invalid-signature",
             "dynamodb:InvalidSignatureException",
-            403,
+            400,
             "InvalidSignatureException",
             Target: "DynamoDB_20120810.GetItem",
             Body: "{\"TableName\":\"t\",\"Key\":{}}",
             SecretOverride: "this-is-not-the-configured-secret-000000000"),
 
         // A well-formed request signed with an access key the proxy doesn't
-        // know: the credential lookup fails before signature verification, and
-        // the faithful JSON answer is UnrecognizedClientException / 403.
+        // know: the credential lookup fails before signature verification.
+        // Unverified against real AWS (see note above); kept at the
+        // pre-#750 baseline of UnrecognizedClientException / 400.
         new DynamoDbErrorCase(
             "unrecognized-client",
             "dynamodb:UnrecognizedClientException",
-            403,
+            400,
             "UnrecognizedClientException",
             Target: "DynamoDB_20120810.GetItem",
             Body: "{\"TableName\":\"t\",\"Key\":{}}",
