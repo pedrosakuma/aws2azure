@@ -9,8 +9,19 @@ namespace Aws2Azure.Conformance.Kinesis;
 /// Seed Kinesis happy-path matrix for issue #708. Kinesis differs from the CRUD-
 /// centric services here: stream lifecycle is provisioned outside the proxy, so
 /// the meaningful success paths revolve around writing records, reading them
-/// back, and paginating shard metadata. The current Tier-1 fixture has no Event
-/// Hubs oracle, so the cases are presently deferred after plan validation.
+/// back, describing/paginating shard metadata, and paginating shard metadata.
+/// The current Tier-1 fixture has no Event Hubs oracle, so the cases are
+/// presently deferred after plan validation.
+///
+/// Only cases for operations with a <c>status: implemented</c> (or
+/// substantially implemented, non-stub) sub-feature in <c>docs/gaps/kinesis/</c>
+/// are added here. <c>CreateStream</c>/<c>DeleteStream</c> and the
+/// <c>AddTagsToStream</c>/<c>ListTagsForStream</c>/<c>RemoveTagsFromStream</c>
+/// tagging trio have no gap doc and are still 501 stubs in
+/// <c>Aws2Azure.Modules.Kinesis.Operations.StubHandlers</c>, so no tagging or
+/// stream-lifecycle case is added — every case below targets the
+/// fixture/environment-provisioned stream directly (see the
+/// <c>streamName</c> context property) rather than creating/deleting one.
 /// </summary>
 public static class KinesisHappyPathMatrix
 {
@@ -25,6 +36,8 @@ public static class KinesisHappyPathMatrix
         CreateRoundTripCase(),
         CreatePaginationCase(),
         CreateBatchCase(),
+        CreateDescribeStreamCase(),
+        CreateDescribeStreamSummaryCase(),
     ];
 
     private static PlannedConformanceCase CreateRoundTripCase()
@@ -126,6 +139,69 @@ public static class KinesisHappyPathMatrix
                 [
                     new ConformanceRequestStep("put-records", _ => BuildRequest(context, "PutRecords",
                         $$"""{"StreamName":"{{stream}}","Records":[{"Data":"{{first}}","PartitionKey":"pk-a"},{"Data":"{{second}}","PartitionKey":"pk-b"}]}""")),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateDescribeStreamCase()
+        => new(
+            "describe-stream-roundtrip",
+            "kinesis:DescribeStream",
+            ConformanceCaseExpectation.Success(
+            [
+                new(
+                    200,
+                    RequiredBodyAssertions:
+                    [
+                        new("StreamDescription.StreamName", "Echoes the requested stream name."),
+                        new("StreamDescription.StreamARN", "Present as the synthetic aws2azure stream ARN."),
+                        new("StreamDescription.StreamStatus", "ACTIVE for a usable/provisioned stream."),
+                        new("StreamDescription.Shards", "Non-empty and matches the provisioned Event Hub partition count."),
+                        new("StreamDescription.RetentionPeriodHours", "Present and reflects the Event Hub message retention."),
+                    ]),
+            ],
+            semanticAssertion:
+            "DescribeStream must resolve the pre-provisioned stream/Event Hub and describe its full shard list; " +
+            "stream lifecycle (CreateStream/DeleteStream) is out of scope per docs/gaps/kinesis/DescribeStream.yaml " +
+            "(Event Hubs entities are provisioned out-of-band via ARM), so this case targets the fixture-provisioned " +
+            "stream directly rather than creating/deleting one."),
+            static (context, _) =>
+            {
+                var stream = context.GetProperty("streamName") ?? "conformance-stream";
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("describe-stream", _ => BuildRequest(context, "DescribeStream",
+                        $$"""{"StreamName":"{{stream}}"}""")),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateDescribeStreamSummaryCase()
+        => new(
+            "describe-stream-summary-roundtrip",
+            "kinesis:DescribeStreamSummary",
+            ConformanceCaseExpectation.Success(
+            [
+                new(
+                    200,
+                    RequiredBodyAssertions:
+                    [
+                        new("StreamDescriptionSummary.StreamName", "Echoes the requested stream name."),
+                        new("StreamDescriptionSummary.StreamARN", "Present as the synthetic aws2azure stream ARN."),
+                        new("StreamDescriptionSummary.StreamStatus", "ACTIVE for a usable/provisioned stream."),
+                        new("StreamDescriptionSummary.OpenShardCount", "Equals the Event Hub partition count, without a full shard list."),
+                        new("StreamDescriptionSummary.RetentionPeriodHours", "Present and reflects the Event Hub message retention."),
+                    ]),
+            ],
+            semanticAssertion:
+            "DescribeStreamSummary must report the same stream identity/status/retention as DescribeStream but as " +
+            "the lighter-weight summary shape (OpenShardCount instead of a materialized Shards list), so this case " +
+            "asserts the fields that differ from describe-stream-roundtrip rather than duplicating its assertions."),
+            static (context, _) =>
+            {
+                var stream = context.GetProperty("streamName") ?? "conformance-stream";
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("describe-stream-summary", _ => BuildRequest(context, "DescribeStreamSummary",
+                        $$"""{"StreamName":"{{stream}}"}""")),
                 ], Tier1SkipReason));
             });
 

@@ -93,6 +93,85 @@ public sealed class DescribeStreamHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_rejects_mismatched_stream_name_and_stream_arn()
+    {
+        var context = CreateContext();
+
+        await DescribeStreamHandler.HandleAsync(
+            context,
+            NewParseResult(
+                KinesisOperation.DescribeStream,
+                "{\"StreamName\":\"orders\",\"StreamARN\":\"arn:aws:kinesis:azure:myns:stream/payments\"}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains("StreamName and StreamARN must refer to the same stream.", responseBody);
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_malformed_stream_arn()
+    {
+        var context = CreateContext();
+
+        await DescribeStreamHandler.HandleAsync(
+            context,
+            NewParseResult(KinesisOperation.DescribeStream, "{\"StreamARN\":\"not-a-valid-arn\"}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains("StreamARN must contain ", responseBody);
+    }
+
+    [Theory]
+    [InlineData("{\"StreamName\":\"orders\",\"Limit\":0}", "Limit/MaxResults must be greater than zero.")]
+    [InlineData("{\"StreamName\":\"orders\",\"Limit\":-1}", "Limit/MaxResults must be greater than zero.")]
+    [InlineData("{\"StreamName\":\"orders\",\"Limit\":10001}", "Limit/MaxResults must be less than or equal to 10000.")]
+    public async Task HandleAsync_rejects_out_of_range_limit(string body, string expectedMessage)
+    {
+        var context = CreateContext();
+
+        await DescribeStreamHandler.HandleAsync(
+            context,
+            NewParseResult(KinesisOperation.DescribeStream, body),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains(expectedMessage, responseBody);
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_exclusive_start_shard_id_not_found()
+    {
+        var context = CreateContext();
+
+        await DescribeStreamHandler.HandleAsync(
+            context,
+            NewParseResult(
+                KinesisOperation.DescribeStream,
+                "{\"StreamName\":\"orders\",\"ExclusiveStartShardId\":\"shardId-999999999999\"}"),
+            NewCredentials(),
+            new FakeManagementClient((_, _, _, _) => ValueTask.FromResult(NewEventHubDescription())),
+            CancellationToken.None);
+
+        var responseBody = ReadBody(context);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("ValidationException", responseBody);
+        Assert.Contains("was not found for the stream.", responseBody);
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_not_found_to_resource_not_found_exception()
     {
         var context = CreateContext();
