@@ -1647,6 +1647,43 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
+    public async Task Success_with_put_and_condition_check_mixed_operations_returns_empty_200()
+    {
+        // Mirrors the Tier-3 conformance case
+        // "transact-get-write-items-roundtrip": a Put alongside a
+        // ConditionCheck (not another Put) on a different sort key within
+        // the same partition. Only Put is a write; the ConditionCheck target
+        // is never written, matching what the paired TransactGetItems case
+        // then observes (one present item, one still-absent key).
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TransactItems\":[" + PutOp("1") + "," +
+            BuildConditionCheckOp("2", "attribute_not_exists(pk)") + "]}";
+
+        await Run(ctx, cosmos, EnabledSproc(), req);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal("{}", ReadResponse(body));
+
+        var exec = handler.Requests[^1];
+        Assert.Contains("\"type\":\"PUT\"", exec.Body!);
+        Assert.Contains("\"type\":\"CHECK\"", exec.Body!);
+    }
+
+    private static string BuildConditionCheckOp(string sk, string expression)
+        => "{\"ConditionCheck\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\""
+            + sk + "\"}},\"ConditionExpression\":\"" + expression + "\"}}";
+
+    [Fact]
     public async Task Condition_failure_returns_transaction_cancelled_with_positional_reasons()
     {
         var (ctx, body) = NewCtx();
