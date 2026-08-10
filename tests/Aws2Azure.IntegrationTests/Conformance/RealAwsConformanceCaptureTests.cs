@@ -399,7 +399,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         }
     }
 
-    private static bool BodyAssertionSatisfied(CanonicalResponse canonical, string body, string path)
+    internal static bool BodyAssertionSatisfied(CanonicalResponse canonical, string body, string path)
     {
         if (string.Equals(path, "Body", StringComparison.Ordinal))
         {
@@ -421,21 +421,59 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
     {
         using var doc = JsonDocument.Parse(body);
         var current = doc.RootElement;
-        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawSegment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
         {
+            // Split "Records[0]" into a property name ("Records") and an
+            // optional explicit array index (0). Without this, a path like
+            // "Records[0].SequenceNumber" looks up a literal property named
+            // "Records[0]", which never exists, and the assertion always fails
+            // regardless of the actual response body.
+            var propertyName = rawSegment;
+            int? explicitIndex = null;
+            var bracketStart = rawSegment.IndexOf('[', StringComparison.Ordinal);
+            if (bracketStart >= 0 && rawSegment.EndsWith(']') && bracketStart < rawSegment.Length - 2)
+            {
+                propertyName = rawSegment[..bracketStart];
+                var indexText = rawSegment[(bracketStart + 1)..^1];
+                if (int.TryParse(indexText, out var parsedIndex))
+                {
+                    explicitIndex = parsedIndex;
+                }
+            }
+
             if (current.ValueKind == JsonValueKind.Array)
             {
-                if (current.GetArrayLength() == 0)
+                var index = explicitIndex ?? 0;
+                if (index < 0 || index >= current.GetArrayLength())
                 {
                     return false;
                 }
 
-                current = current[0];
+                current = current[index];
             }
 
-            if (!current.TryGetProperty(segment, out current))
+            if (propertyName.Length == 0)
+            {
+                // The segment was purely an index applied to the array we're
+                // already positioned on (already consumed above); nothing more
+                // to navigate for this segment.
+                continue;
+            }
+
+            if (!current.TryGetProperty(propertyName, out current))
             {
                 return false;
+            }
+
+            if (explicitIndex.HasValue && current.ValueKind == JsonValueKind.Array)
+            {
+                var index = explicitIndex.Value;
+                if (index < 0 || index >= current.GetArrayLength())
+                {
+                    return false;
+                }
+
+                current = current[index];
             }
         }
 
@@ -454,8 +492,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
         IEnumerable<XElement> current = [document.Root!];
         foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
         {
+            // DescendantsAndSelf (not Descendants) so a path whose first
+            // segment names the document's own root element (e.g.
+            // "ListBucketResult.IsTruncated" against a <ListBucketResult>
+            // root) still matches instead of unconditionally failing.
             current = current.SelectMany(
-                element => element.Descendants().Where(descendant => descendant.Name.LocalName == segment));
+                element => element.DescendantsAndSelf().Where(descendant => descendant.Name.LocalName == segment));
             if (!current.Any())
             {
                 return false;
