@@ -2,6 +2,10 @@ service: s3
 operation: PutObjectTagging
 azure_equivalent: PUT {blob}?comp=tags
 status: implemented
+verified_real_azure:
+  date: '2026-08-11'
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
 sub_features:
 - name: replace existing tag set
   status: implemented

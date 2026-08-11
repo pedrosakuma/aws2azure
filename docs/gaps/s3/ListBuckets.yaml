@@ -2,6 +2,10 @@ service: s3
 operation: ListBuckets
 azure_equivalent: GET https://{account}.blob.core.windows.net/?comp=list
 status: implemented
+verified_real_azure:
+  date: '2026-08-11'
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
 sub_features:
 - name: pagination
   status: implemented

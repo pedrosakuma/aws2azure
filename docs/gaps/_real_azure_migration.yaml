@@ -7,25 +7,6 @@ services:
       - ListTagsOfResource
       - TagResource
       - UntagResource
-  - service: s3
-    tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
-    expires_on: "2026-10-31"
-    operations:
-      - AbortMultipartUpload
-      - CompleteMultipartUpload
-      - CopyObject
-      - CreateMultipartUpload
-      - DeleteBucketTagging
-      - DeleteObjectTagging
-      - GetObjectTagging
-      - HeadBucket
-      - ListBuckets
-      - ListObjects
-      - ListParts
-      - PresignedUrl
-      - PutObjectTagging
-      - UploadPart
-      - UploadPartCopy
   - service: sqs
     tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
     expires_on: "2026-10-31"
