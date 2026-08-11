@@ -1,3 +1,4 @@
+using System.Net;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Xunit;
@@ -171,6 +172,63 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
             }, timeout.Token).ConfigureAwait(false);
             Assert.Equal("closed", item.Item["state"].S);
             Assert.StartsWith("contender-", item.Item["winner"].S, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (tableCreated)
+            {
+                try { await client.DeleteTableAsync(table).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task PutItem_condition_expression_failure_leaves_existing_item_unmodified()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var table = "tputcond" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var tableCreated = false;
+
+        try
+        {
+            await CreateTableAsync(client, table, timeout.Token).ConfigureAwait(false);
+            tableCreated = true;
+            await WaitForTableActiveAsync(client, table, timeout.Token).ConfigureAwait(false);
+            await client.PutItemAsync(new PutItemRequest
+            {
+                TableName = table,
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "seeded" },
+                    ["payload"] = new() { S = "original" },
+                },
+            }, timeout.Token).ConfigureAwait(false);
+
+            var exception = await Assert.ThrowsAsync<ConditionalCheckFailedException>(() =>
+                client.PutItemAsync(new PutItemRequest
+                {
+                    TableName = table,
+                    Item = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = "seeded" },
+                        ["payload"] = new() { S = "overwritten" },
+                    },
+                    ConditionExpression = "attribute_not_exists(pk)",
+                }, timeout.Token));
+            Assert.Equal("ConditionalCheckFailedException", exception.ErrorCode);
+            Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+
+            var item = await client.GetItemAsync(new GetItemRequest
+            {
+                TableName = table,
+                ConsistentRead = true,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new() { S = "seeded" } },
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal("original", item.Item["payload"].S);
         }
         finally
         {

@@ -503,6 +503,16 @@ services:
         operations: [UpdateItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Concurrent_conditional_updates_admit_one_winner
+      - id: conditional-write-check-failure
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: PutItem with a failing ConditionExpression (attribute_not_exists on an existing key) returns a native ConditionalCheckFailedException (HTTP 400) from real Cosmos DB and leaves the existing item unmodified.
+        operations: [PutItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.PutItem_condition_expression_failure_leaves_existing_item_unmodified
       - id: retry-exhaustion
         priority: p1
         category: retry_exhaustion
