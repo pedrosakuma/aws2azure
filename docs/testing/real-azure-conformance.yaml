@@ -685,6 +685,15 @@ services:
         operations: [GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetRecords_reads_from_real_event_hubs
+      - id: shard-iterator-missing-stream
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetShardIterator against a nonexistent stream returns the native ResourceNotFoundException against real Event Hubs management.
+        operations: [GetShardIterator]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetShardIterator_against_nonexistent_stream_returns_native_resource_not_found_error
       - id: stream-topology
         priority: p0
         category: core
@@ -797,6 +806,15 @@ services:
         operations: [CreateTopic, Subscribe, Publish, ListSubscriptionsByTopic, Unsubscribe, DeleteTopic]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_subscription_lifecycle_round_trips_against_real_service_bus
+      - id: publish-missing-topic
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Publish against a topic ARN with no corresponding Service Bus topic returns the native NotFound error.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error
       - id: subscription-metadata-restart
         priority: p0
         category: core
@@ -917,6 +935,15 @@ services:
         operations: [PutSecretValue, GetSecretValue]
         tests:
           - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureSmokeTests.PutSecretValue_versioning_and_idempotency_against_real_key_vault
+      - id: secret-value-missing-secret
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetSecretValue for a nonexistent secret returns the native ResourceNotFoundException against real Key Vault.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureConformanceTests.GetSecretValue_for_nonexistent_secret_returns_native_resource_not_found_error
       - id: secret-list-pagination
         priority: p1
         category: pagination
