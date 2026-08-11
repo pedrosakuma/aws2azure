@@ -169,6 +169,16 @@ services:
         operations: [TagResource, UntagResource, ListTagsOfResource]
         tests:
           - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
+      - id: list-tables-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: ListTables Limit/ExclusiveStartTableName/LastEvaluatedTableName cursor pagination across two seeded tables via the shared happy-path matrix (CreateListTablesPaginationCase).
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
       - id: query-pagination
         priority: p0
         category: pagination
