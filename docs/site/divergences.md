@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **76**, implemented-but-unsealed: **5**
+- Operations: **142** — real-Azure verified: **77**, implemented-but-unsealed: **4**
 
 ## Implemented without a real-Azure seal
 
@@ -14,7 +14,6 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | ListTagsOfResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | dynamodb | TagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 | dynamodb | UntagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
-| sqs | ListDeadLetterSourceQueues | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 
 ## Documented behaviour differences
 
@@ -493,8 +492,8 @@ the documented behaviour differences and the real-Azure seal state.
 | sqs | GetQueueUrl | ✅ | Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached. |
 | sqs | GetQueueUrl | ✅ | Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue. |
 | sqs | GetQueueUrl | ✅ | Validated against real Azure Service Bus through both the standard message lifecycle and queue discovery after proxy restart. |
-| sqs | ListDeadLetterSourceQueues | — | Linear scan: the proxy issues one or more SB management GETs per ListDeadLetterSourceQueues call. On namespaces with thousands of queues this is O(N) and may be slow; the NFR phase should consider a cached reverse index. |
-| sqs | ListDeadLetterSourceQueues | — | Emulator-backed validation is blocked because the Service Bus emulator does not expose management REST. The sqs-dlq-redrive real-Azure source scenario covers pagination and resume across proxy restart. |
+| sqs | ListDeadLetterSourceQueues | ✅ | Linear scan: the proxy issues one or more SB management GETs per ListDeadLetterSourceQueues call. On namespaces with thousands of queues this is O(N) and may be slow; the NFR phase should consider a cached reverse index. |
+| sqs | ListDeadLetterSourceQueues | ✅ | Emulator-backed validation is blocked because the Service Bus emulator does not expose management REST. The sqs-dlq-redrive real-Azure source scenario covers pagination and resume across proxy restart. |
 | sqs | ListQueueTags | — | Tags are stored inside an aws2azure-owned compact metadata envelope, base64-encoded into Service Bus QueueDescription.UserMetadata. Azure-side tools will see the opaque base64 blob rather than individual tag keys. |
 | sqs | ListQueueTags | — | Service Bus UserMetadata is limited to roughly 1024 characters in the legacy management schema, so TagQueue may reject otherwise-valid SQS tag sets that cannot fit. |
 | sqs | ListQueueTags | — | Real-Azure conformance coverage exists in Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus; it was not executed in this environment. |

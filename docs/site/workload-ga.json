@@ -1262,12 +1262,6 @@
         "message": "Required operation has no real-Azure verification seal."
       },
       {
-        "code": "real_azure_seal_missing",
-        "disposition": "blocking",
-        "subject": "sqs:ListDeadLetterSourceQueues",
-        "message": "Required operation has no real-Azure verification seal."
-      },
-      {
         "code": "partial_operation_accepted",
         "disposition": "advisory",
         "subject": "sqs:SetQueueAttributes",

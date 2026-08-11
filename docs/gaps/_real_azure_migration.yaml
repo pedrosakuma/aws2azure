@@ -7,8 +7,3 @@ services:
       - ListTagsOfResource
       - TagResource
       - UntagResource
-  - service: sqs
-    tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
-    expires_on: "2026-10-31"
-    operations:
-      - ListDeadLetterSourceQueues
