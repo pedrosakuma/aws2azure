@@ -56,6 +56,33 @@ services:
         operations: [DeleteObjects]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.DeleteObjects_reports_real_blob_batch_results
+      - id: object-metadata-and-listing
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: HeadBucket, ListBuckets, ListObjects (v1 pagination), presigned GET/PUT, and CopyObject round-trip against real Blob Storage via the shared happy-path matrix.
+        operations: [HeadBucket, ListBuckets, ListObjects, PresignedUrl, CopyObject]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
+      - id: object-tagging-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Object and bucket tagging put/get/delete round-trip against real Blob Storage index tags/metadata via the shared happy-path matrix.
+        operations: [PutObjectTagging, GetObjectTagging, DeleteObjectTagging, DeleteBucketTagging]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
+      - id: multipart-upload-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Create/UploadPart/UploadPartCopy/ListParts/Complete and Abort multipart upload round-trip against real Blob Storage Put Block / Put Block List via the shared happy-path matrix.
+        operations: [CreateMultipartUpload, UploadPart, UploadPartCopy, ListParts, CompleteMultipartUpload, AbortMultipartUpload]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
       - id: write-throttled
         priority: p1
         category: throttling
@@ -132,6 +159,16 @@ services:
         operations: [CreateTable, DescribeTable, PutItem, GetItem, DeleteItem, DeleteTable]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSmokeTests.Item_lifecycle_round_trips_against_real_cosmos_db
+      - id: tag-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: TagResource/ListTagsOfResource/UntagResource round-trip against a real Cosmos DB-backed table via the shared happy-path matrix (CreateTagListUntagResourceCase).
+        operations: [TagResource, UntagResource, ListTagsOfResource]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
       - id: query-pagination
         priority: p0
         category: pagination
