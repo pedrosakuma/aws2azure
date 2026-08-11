@@ -219,7 +219,7 @@ public sealed class ConformancePlanTests
             profile: "dynamodb-single-partition-transactions");
 
         Assert.Equal(
-            "sha256:d9d22e0461c3e0311f8fa8af7942a0af8e21da14b1c597c262c982bb750080dd",
+            "sha256:e94d1c42a36f8faa74b65ea53cb21773e6df04967565b8dd7468b04d09ba12c7",
             basic.ScenarioSetSha256);
         Assert.Equal(
             "sha256:72a44543a87d9eb1553d598c4b1aa8e9c1034e69115d9553dfeeca45af78dd21",

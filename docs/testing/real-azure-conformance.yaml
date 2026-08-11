@@ -541,6 +541,26 @@ services:
         operations: [GetItem, Query]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error
+      - id: table-create-conflict
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: CreateTable against an already-existing table name returns the native ResourceInUseException (HTTP 400) from real Cosmos DB.
+        operations: [CreateTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.CreateTable_with_existing_name_returns_native_resource_in_use_error
+      - id: table-delete-not-found
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: DeleteTable against a nonexistent table returns the native ResourceNotFoundException (HTTP 400) from real Cosmos DB.
+        operations: [DeleteTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.DeleteTable_against_nonexistent_table_returns_native_resource_not_found_error
       - id: retry-exhaustion
         priority: p1
         category: retry_exhaustion
