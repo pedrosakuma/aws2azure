@@ -1,3 +1,4 @@
+using Amazon.Runtime;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Azure.Messaging.ServiceBus.Administration;
@@ -231,6 +232,29 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
             }
         }
+    }
+
+    [SkippableFact]
+    public async Task SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error()
+    {
+        Skip.IfNot(fixture.ServiceBusConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
+
+        var queueName = "aws2azure-gone-" + Guid.NewGuid().ToString("N")[..10];
+        using var client = fixture.CreateSqsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+        var queueUrl = (await client.CreateQueueAsync(queueName, timeout.Token).ConfigureAwait(false)).QueueUrl;
+        await client.DeleteQueueAsync(queueUrl, timeout.Token).ConfigureAwait(false);
+
+        var exception = await Assert.ThrowsAsync<QueueDoesNotExistException>(() =>
+            client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = "should-not-be-delivered",
+            }, timeout.Token));
+        Assert.Equal("AWS.SimpleQueueService.NonExistentQueue", exception.ErrorCode);
+        Assert.Equal(ErrorType.Sender, exception.ErrorType);
     }
 
     private static async Task<Dictionary<string, string>> ReceiveBodiesAsync(

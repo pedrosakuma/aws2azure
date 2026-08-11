@@ -56,6 +56,15 @@ services:
         operations: [DeleteObjects]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.DeleteObjects_reports_real_blob_batch_results
+      - id: copy-object-missing-source
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: CopyObject against a nonexistent source key returns the native NoSuchKey error against real Blob Storage without creating a destination object.
+        operations: [CopyObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.CopyObject_from_nonexistent_source_key_returns_native_no_such_key_error
       - id: object-metadata-and-listing
         priority: p1
         category: core
@@ -572,6 +581,15 @@ services:
         operations: [CreateQueue, GetQueueAttributes, SetQueueAttributes, TagQueue, ListQueueTags, UntagQueue]
         tests:
           - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus
+      - id: send-to-deleted-queue
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: SendMessage against a queue deleted moments earlier returns the native NonExistentQueue error against real Service Bus.
+        operations: [SendMessage]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error
       - id: send-throttled
         priority: p1
         category: throttling
