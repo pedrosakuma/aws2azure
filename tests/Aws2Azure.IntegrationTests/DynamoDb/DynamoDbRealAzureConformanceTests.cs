@@ -239,6 +239,39 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
         }
     }
 
+    [SkippableFact]
+    public async Task GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var missingTable = "tmissing" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var getFailure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.GetItemAsync(new GetItemRequest
+            {
+                TableName = missingTable,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new() { S = "any" } },
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal("ResourceNotFoundException", getFailure.ErrorCode);
+        Assert.Equal(HttpStatusCode.BadRequest, getFailure.StatusCode);
+
+        var queryFailure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.QueryAsync(new QueryRequest
+            {
+                TableName = missingTable,
+                KeyConditionExpression = "pk = :pk",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":pk"] = new() { S = "any" },
+                },
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal("ResourceNotFoundException", queryFailure.ErrorCode);
+        Assert.Equal(HttpStatusCode.BadRequest, queryFailure.StatusCode);
+    }
+
     private static Task<CreateTableResponse> CreateTableAsync(
         IAmazonDynamoDB client,
         string table,

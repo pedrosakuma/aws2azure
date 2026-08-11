@@ -289,6 +289,27 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
     }
 
+    [SkippableFact]
+    public async Task GetObject_from_nonexistent_bucket_returns_native_no_such_bucket_error()
+    {
+        Skip.IfNot(fixture.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 conformance.");
+
+        var missingBucket = "aws2azure-nobucket-" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateS3Client();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var failure = await Assert.ThrowsAsync<AmazonS3Exception>(() =>
+            client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = missingBucket,
+                Key = "any/key.txt",
+            }, timeout.Token)).ConfigureAwait(false);
+
+        Assert.Equal(HttpStatusCode.NotFound, failure.StatusCode);
+        Assert.Equal("NoSuchBucket", failure.ErrorCode);
+    }
+
     private static async Task DeleteBucketBestEffortAsync(
         Amazon.S3.IAmazonS3 client,
         string bucket,

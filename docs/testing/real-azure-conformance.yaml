@@ -65,6 +65,15 @@ services:
         operations: [CopyObject]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.CopyObject_from_nonexistent_source_key_returns_native_no_such_key_error
+      - id: get-object-missing-bucket
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetObject against a nonexistent bucket returns the native NoSuchBucket error against real Blob Storage.
+        operations: [GetObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.GetObject_from_nonexistent_bucket_returns_native_no_such_bucket_error
       - id: object-metadata-and-listing
         priority: p1
         category: core
@@ -522,6 +531,16 @@ services:
         operations: [PutItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.PutItem_condition_expression_failure_leaves_existing_item_unmodified
+      - id: table-not-found
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: GetItem and Query against a nonexistent table return the native ResourceNotFoundException (HTTP 400) from real Cosmos DB.
+        operations: [GetItem, Query]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error
       - id: retry-exhaustion
         priority: p1
         category: retry_exhaustion
