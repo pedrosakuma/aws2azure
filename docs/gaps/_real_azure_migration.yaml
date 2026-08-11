@@ -4,6 +4,3 @@ services:
     expires_on: "2026-10-31"
     operations:
       - ListTables
-      - ListTagsOfResource
-      - TagResource
-      - UntagResource

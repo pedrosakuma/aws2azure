@@ -4,16 +4,13 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **77**, implemented-but-unsealed: **4**
+- Operations: **142** — real-Azure verified: **80**, implemented-but-unsealed: **1**
 
 ## Implemented without a real-Azure seal
 
 | Service | Operation | Tracking issue | Expires |
 |---|---|---|---|
 | dynamodb | ListTables | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
-| dynamodb | ListTagsOfResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
-| dynamodb | TagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
-| dynamodb | UntagResource | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
 
 ## Documented behaviour differences
 
@@ -72,9 +69,9 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | ListTables | — | Container names are sorted ordinally (case-sensitive). DynamoDB pagination is also ordinal so the cursor semantics match. |
 | dynamodb | ListTables | — | All containers in the configured database are surfaced, including sidecar-less ones. Operators using a shared database for non-DynamoDB workloads will see those container ids too. |
 | dynamodb | ListTables | — | Pagination is server-side: the proxy fetches all containers once and slices in-memory. For databases with thousands of containers this should be split across Cosmos result pages — tracked as a follow-up. |
-| dynamodb | ListTagsOfResource | — | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
-| dynamodb | ListTagsOfResource | — | Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
-| dynamodb | ListTagsOfResource | — | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
+| dynamodb | ListTagsOfResource | ✅ | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
+| dynamodb | ListTagsOfResource | ✅ | Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
+| dynamodb | ListTagsOfResource | ✅ | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
 | dynamodb | PutItem | — | Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing. |
 | dynamodb | PutItem | — | Attributes are stored *flat* on the Cosmos document — `{id, _a2a_pk, ...inferred attributes...}` — with no per-item type wrapper. Scalar values are stored without `{S}`/`{N}`/`{B}` tags; the type is inferred on read from the JSON value kind. Maps/lists nest as Cosmos JSON. Number values are normalised to DDB canonical form (matching real DDB) — e.g. `42.0`→`42`, `1e10`→`10000000000`. Values that cannot survive an IEEE 754 round-trip (high-precision numbers, binary, sets) are stored under a typed envelope (`_a2a:N`, `_a2a:B`, `_a2a:SS`, `_a2a:NS`, `_a2a:BS`). |
 | dynamodb | PutItem | — | Attribute names with the reserved `_a2a:` prefix are rejected with ValidationException at the API surface, both at top level and inside nested maps. The prefix is reserved for the typed-envelope encoding above; allowing user attributes to collide would let callers shadow / probe storage internals. |
@@ -114,9 +111,9 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | Scan | ✅ | Cosmos 429 (throttled) is surfaced as DynamoDB ProvisionedThroughputExceededException — expect this often on large scans. |
 | dynamodb | Scan | ✅ | RU cost is significant for cross-partition scans; the proxy does no rate-limiting beyond what Cosmos imposes. |
 | dynamodb | Scan | ✅ | Base and indexed Scan membership/projection are exercised against real Azure Cosmos DB; emulator coverage remains the faster regression signal for expression and pagination edge cases. |
-| dynamodb | TagResource | — | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
-| dynamodb | TagResource | — | Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
-| dynamodb | TagResource | — | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
+| dynamodb | TagResource | ✅ | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
+| dynamodb | TagResource | ✅ | Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
+| dynamodb | TagResource | ✅ | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
 | dynamodb | TransactGetItems | ✅ | **Single table + single partition key only.** Cross-table and cross-partition reads are rejected before the snapshot stored procedure is invoked. DynamoDB can transact across tables and partitions. |
 | dynamodb | TransactGetItems | ✅ | Duplicate keys in one request are rejected with ValidationException before item data is read. |
 | dynamodb | TransactGetItems | ✅ | Stored procedures must be enabled. The Cosmos Linux emulator does not execute server-side scripts, so snapshot execution remains a real-Azure-only test surface. |
@@ -134,9 +131,9 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | TransactWriteItems | ✅ | The approved runtime passed exact candidate-to-bootstrap rollback correctness, three production-shaped zero-failure load runs, and final qualification. The known v2 runtime remains ineligible because it uses independent reads and lacks the durable ClientRequestToken contract. |
 | dynamodb | TransactWriteItems | ✅ | The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. A bounded pooled writer stops on overflow, and token fingerprints are hashed incrementally instead of retaining a second canonical body. Oversize requests fail with ValidationException before stored-procedure I/O. |
 | dynamodb | TransactWriteItems | ✅ | Each Put first obeys the base 400 KiB item boundary; after metadata load, the base item plus all corresponding KEYS_ONLY/INCLUDE/ALL local-secondary-index entries must also fit within 400 KiB. |
-| dynamodb | UntagResource | — | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
-| dynamodb | UntagResource | — | Removing tags has no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
-| dynamodb | UntagResource | — | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
+| dynamodb | UntagResource | ✅ | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
+| dynamodb | UntagResource | ✅ | Removing tags has no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
+| dynamodb | UntagResource | ✅ | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |
 | dynamodb | UpdateItem | ✅ | Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing. |
 | dynamodb | UpdateItem | ✅ | Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), accepting Cosmos-forbidden characters (`/`, `\`, `?`, `#`) and fixing B byte-ordering. Effective raw key limit ~127 bytes; over-limit keys are rejected with ValidationException. **On-disk-format breaking change** vs earlier builds. See PutItem for the full rationale. |
 | dynamodb | UpdateItem | ✅ | Atomicity is implemented as a GET → modify → PUT(If-Match) (or atomic-create with If-None-Match) loop with up to 4 retries on Cosmos 412/409. Sustained contention surfaces as InternalServerError after the retry budget is exhausted. |
