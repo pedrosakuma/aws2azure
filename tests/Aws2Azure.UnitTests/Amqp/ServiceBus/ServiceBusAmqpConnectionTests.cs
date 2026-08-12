@@ -480,19 +480,11 @@ public sealed class ServiceBusAmqpConnectionTests
         ServiceBusBrokerSimulator broker,
         uint deliveryId)
     {
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (broker.Dispositions.ContainsKey(deliveryId))
-            {
-                return;
-            }
-
-            await Task.Delay(20);
-        }
-
-        throw new TimeoutException(
-            $"Disposition for delivery-id {deliveryId} did not arrive in time.");
+        // Delegates to the broker's signal-based wait (see issue #763) so
+        // the test resolves as soon as the disposition is recorded instead
+        // of polling on a fixed interval. The 30s timeout is only a safety
+        // net for genuine hangs.
+        await broker.WaitForDispositionAsync(deliveryId, TimeSpan.FromSeconds(30));
     }
 
     private static async Task<Exception?> CaptureExceptionAsync(Task task)

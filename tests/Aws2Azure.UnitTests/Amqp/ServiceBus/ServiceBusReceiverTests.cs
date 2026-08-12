@@ -435,12 +435,11 @@ public sealed class ServiceBusReceiverTests
 
     private static async Task WaitForDispositionAsync(ServiceBusBrokerSimulator broker, uint deliveryId)
     {
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (broker.Dispositions.ContainsKey(deliveryId)) return;
-            await Task.Delay(20);
-        }
-        throw new TimeoutException($"Disposition for delivery-id {deliveryId} did not arrive in time.");
+        // Delegates to the broker's signal-based wait so the test resolves
+        // as soon as the disposition is recorded instead of polling on a
+        // fixed interval — polling against a 5s wall-clock deadline was
+        // prone to spurious timeouts under full-suite CPU contention (see
+        // issue #763). The 30s timeout here is only a safety net.
+        await broker.WaitForDispositionAsync(deliveryId, TimeSpan.FromSeconds(30));
     }
 }

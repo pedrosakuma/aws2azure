@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using Aws2Azure.Amqp.Codec;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
@@ -55,7 +56,62 @@ internal sealed class ServiceBusBrokerSimulator
     public List<string> AuthorizedAudiences { get; } = new();
 
     /// <summary>Dispositions observed on receiver links, keyed by delivery-id.</summary>
-    public Dictionary<uint, DispositionRecord> Dispositions { get; } = new();
+    /// <remarks>
+    /// A <see cref="ConcurrentDictionary{TKey,TValue}"/> because it is
+    /// written from the broker's background <see cref="RunAsync"/> loop
+    /// and read from the test's awaiting thread — see
+    /// <see cref="WaitForDispositionAsync"/>.
+    /// </remarks>
+    public ConcurrentDictionary<uint, DispositionRecord> Dispositions { get; } = new();
+
+    /// <summary>
+    /// Per-delivery-id signals used by <see cref="WaitForDispositionAsync"/>
+    /// so tests can await a disposition deterministically instead of
+    /// polling <see cref="Dispositions"/> against a wall-clock deadline
+    /// (the polling approach is prone to spurious timeouts under CPU
+    /// contention — see issue #763).
+    /// </summary>
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<DispositionRecord>> _dispositionWaiters = new();
+
+    /// <summary>
+    /// Awaits the disposition for <paramref name="deliveryId"/>, resolving
+    /// as soon as <see cref="HandleDispositionAsync"/> records it rather
+    /// than polling on a fixed interval. <paramref name="timeout"/> is a
+    /// safety net for genuine hangs/bugs, not the primary synchronization
+    /// mechanism, so it can be generous.
+    /// </summary>
+    public async Task<DispositionRecord> WaitForDispositionAsync(
+        uint deliveryId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        if (Dispositions.TryGetValue(deliveryId, out var existing))
+            return existing;
+
+        var tcs = _dispositionWaiters.GetOrAdd(
+            deliveryId,
+            _ => new TaskCompletionSource<DispositionRecord>(TaskCreationOptions.RunContinuationsAsynchronously));
+
+        // Close the race where the disposition was recorded between the
+        // TryGetValue above and registering the waiter.
+        if (Dispositions.TryGetValue(deliveryId, out existing))
+            tcs.TrySetResult(existing);
+
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, cancellationToken);
+        await using var registration = linkedCts.Token.Register(
+            () => tcs.TrySetException(new TimeoutException(
+                $"Disposition for delivery-id {deliveryId} did not arrive in time.")));
+
+        try
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            _dispositionWaiters.TryRemove(deliveryId, out _);
+        }
+    }
 
     /// <summary>
     /// AMQP error payloads carried on <c>rejected</c> dispositions,
@@ -520,12 +576,14 @@ internal sealed class ServiceBusBrokerSimulator
         {
             for (var id = first; ; id++)
             {
-                Dispositions[id] = new DispositionRecord(
+                var record = new DispositionRecord(
                     outcome,
                     d.Settled ?? false,
                     deliveryFailed,
                     undeliverableHere);
+                Dispositions[id] = record;
                 if (rejectedError is { } re) RejectedErrors[id] = re;
+                if (_dispositionWaiters.TryGetValue(id, out var waiter)) waiter.TrySetResult(record);
                 if (id == last) break;
             }
         }
