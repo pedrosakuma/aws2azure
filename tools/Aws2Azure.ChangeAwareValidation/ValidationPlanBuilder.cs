@@ -93,7 +93,12 @@ public static class ValidationPlanBuilder
         var isBuildGraph = IsBuildGraph(path);
         var isProductSource = isSource && isDotnet;
         var isModuleSource = path.StartsWith("src/Aws2Azure.Modules.", StringComparison.Ordinal);
-        var isProtocol = ContainsAny(
+        // Scoped to production source: test folders intentionally mirror
+        // these folder names (e.g. tests/Aws2Azure.UnitTests/SigV4/**,
+        // tests/Aws2Azure.UnitTests/Amqp/Framing/**) without touching the
+        // wire-protocol implementation itself.
+        var isProtocol = isSource &&
+            ContainsAny(
             path,
             "/SigV4/",
             "/WireProtocol/",
@@ -315,7 +320,12 @@ public static class ValidationPlanBuilder
             (path.StartsWith("src/Aws2Azure.Modules.", StringComparison.Ordinal) &&
              (path.EndsWith("Client.cs", StringComparison.Ordinal) ||
               path.EndsWith("Publisher.cs", StringComparison.Ordinal))) ||
-            ContainsAny(
+            // Scoped to production source: test/tool/doc folders intentionally
+            // mirror these folder names (e.g. tests/Aws2Azure.UnitTests/Amqp/**
+            // mirrors src/Aws2Azure.Amqp/**) without touching auth/transport
+            // behavior, so the substring check must not match outside src/.
+            (path.StartsWith("src/", StringComparison.Ordinal) &&
+             ContainsAny(
                 path,
                 "/Auth/",
                 "/Transport/",
@@ -325,7 +335,7 @@ public static class ValidationPlanBuilder
                 "/EventHubsAmqp/",
                 "/EventHubsRest/",
                 "/Management/",
-                "/Streaming/");
+                "/Streaming/"));
     }
 
     private static bool IsHotPath(string path)

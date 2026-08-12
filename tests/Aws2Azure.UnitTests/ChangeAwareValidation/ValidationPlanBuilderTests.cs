@@ -99,6 +99,31 @@ public sealed class ValidationPlanBuilderTests
     [InlineData("eng/validate.ps1", "integration", "required")]
     [InlineData(".github/copilot-instructions.md", "build", "optional")]
     [InlineData(".github/copilot-instructions.md", "integration", "not-applicable")]
+    // Regression coverage for #765: test folders intentionally mirror
+    // src/ folder names (Amqp, Connection, Transport, SigV4, Framing, ...)
+    // without touching production auth/transport/protocol behavior, so the
+    // folder-name substring checks in IsAuthOrTransport/isProtocol must not
+    // match paths outside src/.
+    [InlineData(
+        "tests/Aws2Azure.UnitTests/Amqp/ServiceBus/ServiceBusBrokerSimulator.cs",
+        "real-azure",
+        "not-applicable")]
+    [InlineData(
+        "tests/Aws2Azure.UnitTests/Amqp/ServiceBus/ServiceBusBrokerSimulator.cs",
+        "integration",
+        "not-applicable")]
+    [InlineData(
+        "tests/Aws2Azure.UnitTests/Amqp/Connection/AmqpConnectionTests.cs",
+        "real-azure",
+        "not-applicable")]
+    [InlineData(
+        "tests/Aws2Azure.UnitTests/SigV4/SigV4ValidatorTests.cs",
+        "conformance",
+        "not-applicable")]
+    [InlineData(
+        "tests/Aws2Azure.UnitTests/Amqp/Framing/PerformativeCodecTests.cs",
+        "conformance",
+        "not-applicable")]
     public void RepresentativePathsMapToExpectedGate(
         string path,
         string gateName,
