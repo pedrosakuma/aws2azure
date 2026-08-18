@@ -1,8 +1,7 @@
 name: real-aws-reaper
 
-# Backstop cleanup for the future real-AWS capture flow from issue #708. The
-# capture workflow is not built yet, so this file also documents its cleanup
-# contract:
+# Backstop cleanup for the real-AWS capture flow from issue #708. This file
+# documents the cleanup contract shared with capture-real-aws.yml:
 #   - Every ephemeral AWS resource must use the
 #     `aws2azure-it-<unix-epoch-seconds>-<unique-suffix>` name shape.
 #   - Every ephemeral AWS resource must be tagged with:
@@ -31,8 +30,8 @@ name: real-aws-reaper
 # conservatively.
 #
 # It is safe to run alongside an active capture run: a fresh run's resources
-# are far younger than MAX_AGE_HOURS, and the future capture workflow should
-# follow the same single-run concurrency discipline as the real-Azure jobs.
+# are far younger than MAX_AGE_HOURS, and the capture workflow follows the same
+# single-run concurrency discipline as the real-Azure jobs.
 on:
   schedule:
     - cron: '30 */6 * * *'

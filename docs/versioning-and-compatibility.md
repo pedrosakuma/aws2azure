@@ -5,9 +5,12 @@ artifacts. It applies to the proxy binary and container, operator configuration,
 published manifests and schemas, workload support claims, and proxy-owned data
 formats stored in clients or Azure.
 
-The contract becomes binding with `v1.0.0`. The current `v0.1.0` release is a
-prerelease: compatibility is best effort and every `0.y` release must describe
-its migration and rollback impact.
+The contract became binding with the stable `v1.0.0` release. The active stable
+support window is `v1.0.x`; see the
+[v1.0.0 release notes](./releases/v1.0.0.md) for its artifact identities and
+promotion evidence. Legacy `0.y` releases remain prereleases whose compatibility
+was best effort and whose release notes must describe migration and rollback
+impact.
 
 ## Release versions and support window
 

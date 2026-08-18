@@ -32,9 +32,13 @@ liveness, readiness, module inventory, Prometheus metrics, a production
 runbook, emulator regression suites, real-Azure conformance, performance and
 footprint gates, and release/container workflows.
 
-The current public release is `v0.1.0` prerelease. A `v1.0` release requires the
-announced workload profiles to pass the gates in the active maturity roadmap;
-it does not require every documented AWS operation to be implemented.
+The current stable release is `v1.0.0`, with the `v1.0.x` support window
+documented in its [release notes](./releases/v1.0.0.md). Stable release status
+does not imply that every workload profile is currently GA: qualification and
+real-Azure evidence expire independently, so use the generated
+[workload GA certification](./site/workload-ga.md) for the live verdict of each
+profile. A stable release does not require every documented AWS operation to be
+implemented.
 Release numbering, the supported upgrade/rollback span, configuration and
 persisted-format obligations, deprecation, and mandatory release-note support
 matrices are defined in the
