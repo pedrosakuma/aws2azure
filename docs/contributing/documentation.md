@@ -1,0 +1,81 @@
+# Documentation portal
+
+The canonical public documentation URL is
+[https://pedrosakuma.github.io/aws2azure/](https://pedrosakuma.github.io/aws2azure/).
+The `documentation` workflow publishes that URL from the protected `main`
+branch. Pull requests build and validate the same portal but cannot deploy it.
+
+## Content architecture
+
+MkDocs reads the complete `docs/` tree:
+
+- Hand-authored guides cover evaluation, getting started, authentication,
+  workload profiles, deployment, operations, performance, versioning, releases,
+  and ADRs.
+- `docs/site/` contains generated operation and compatibility pages. These files
+  remain outputs of `tools/Aws2Azure.GapDocs`; do not edit them for portal
+  navigation or presentation.
+- Gap YAML, qualification manifests, evidence, and machine-readable baselines
+  stay repository source artifacts. They are excluded from the published site.
+
+The build hook in `.github/scripts/mkdocs_hooks.py` preserves links between
+documentation pages. A link from a guide to source outside the documentation
+tree, or to a non-Markdown source artifact, becomes a canonical GitHub `main`
+link. This keeps existing repository-relative authoring useful without copying
+source files into the published portal.
+
+## Local preview
+
+Create an isolated Python environment and install only the documentation
+dependencies:
+
+=== "PowerShell"
+
+    ```powershell
+    python -m venv .venv
+    .\.venv\Scripts\python -m pip install -r requirements-docs.txt
+    .\.venv\Scripts\python -m mkdocs serve --strict
+    ```
+
+=== "Bash"
+
+    ```bash
+    python3 -m venv .venv
+    .venv/bin/python -m pip install -r requirements-docs.txt
+    .venv/bin/python -m mkdocs serve --strict
+    ```
+
+Open [http://127.0.0.1:8000/aws2azure/](http://127.0.0.1:8000/aws2azure/).
+Search is generated locally with the rest of the site.
+
+## Strict validation
+
+Run the same bounded checks used by the publication workflow:
+
+=== "PowerShell"
+
+    ```powershell
+    .\.venv\Scripts\python -m mkdocs build --strict
+    .\.venv\Scripts\python .github\scripts\validate_docs_site.py site /aws2azure/
+    ```
+
+=== "Bash"
+
+    ```bash
+    .venv/bin/python -m mkdocs build --strict
+    .venv/bin/python .github/scripts/validate_docs_site.py site /aws2azure/
+    ```
+
+The MkDocs build rejects missing navigation entries, missing documentation
+targets, unrecognized links, and invalid anchors. The second check walks the
+built HTML for missing internal pages, assets, and fragments, then verifies
+that search indexes representative operation, configuration, workload-verdict,
+and production-procedure terms.
+
+## Publication boundary
+
+`.github/workflows/documentation.yml` runs only when documentation inputs or
+its own tooling change. Each run has a fixed timeout and concurrency group.
+Pull requests execute the build and validation jobs. A push to `main` uploads
+the validated static artifact and deploys it through the `github-pages`
+environment; a manual run on any other branch remains validation-only.

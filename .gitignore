@@ -30,6 +30,8 @@ Thumbs.db
 .tools/
 TestResults/
 BenchmarkDotNet.Artifacts/
+__pycache__/
+*.py[cod]
 
 # Local-only spikes / experiments (build artifacts, not tracked)
 experiments/
@@ -39,3 +41,6 @@ docs/perf/history.csv
 # Perf — machine-readable per-run results consumed by the relative gate (fresh each run; not committed)
 docs/perf/baseline-latest.json
 change-aware-validation.json
+
+# MkDocs local build output
+/site/
