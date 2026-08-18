@@ -3,23 +3,7 @@ name: documentation
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
-      - '.github/scripts/mkdocs_hooks.py'
-      - '.github/scripts/test_mkdocs_hooks.py'
-      - '.github/scripts/validate_docs_site.py'
-      - '.github/workflows/documentation.yml'
   pull_request:
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
-      - '.github/scripts/mkdocs_hooks.py'
-      - '.github/scripts/test_mkdocs_hooks.py'
-      - '.github/scripts/validate_docs_site.py'
-      - '.github/workflows/documentation.yml'
   workflow_dispatch:
 
 permissions:
@@ -42,8 +26,10 @@ jobs:
           cache-dependency-path: requirements-docs.txt
       - name: Install documentation dependencies
         run: python -m pip install --disable-pip-version-check -r requirements-docs.txt
-      - name: Test documentation hooks
-        run: python .github/scripts/test_mkdocs_hooks.py
+      - name: Test documentation source links and hooks
+        run: |
+          python .github/scripts/test_docs_source.py
+          python .github/scripts/test_mkdocs_hooks.py
       - name: Build documentation
         run: python -m mkdocs build --strict
       - name: Validate links and search coverage

@@ -27,6 +27,29 @@ class PageParser(HTMLParser):
                 self.references.append((attribute, value))
 
 
+class PersonaLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.container_depth = 0
+        self.references: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        classes = (values.get("class") or "").split()
+        if self.container_depth:
+            self.container_depth += 1
+        elif "portal-path__links" in classes:
+            self.container_depth = 1
+
+        if self.container_depth and tag == "a" and values.get("href"):
+            self.references.add(str(values["href"]))
+
+    def handle_endtag(self, tag: str) -> None:
+        del tag
+        if self.container_depth:
+            self.container_depth -= 1
+
+
 def parse_pages(site_dir: Path) -> dict[Path, PageParser]:
     pages: dict[Path, PageParser] = {}
     for html_file in site_dir.rglob("*.html"):
@@ -109,6 +132,38 @@ def validate_search(site_dir: Path) -> list[str]:
     return errors
 
 
+def validate_persona_links(site_dir: Path, base_path: str) -> list[str]:
+    index_path = site_dir / "index.html"
+    parser = PersonaLinkParser()
+    parser.feed(index_path.read_text(encoding="utf-8"))
+
+    actual: set[str] = set()
+    for reference in parser.references:
+        path = unquote(urlsplit(reference).path)
+        if base_path != "/" and path.startswith(base_path):
+            path = path[len(base_path) :]
+        actual.add(path.lstrip("./"))
+
+    expected = {
+        "project-maturity/",
+        "site/workload-compatibility/",
+        "site/coverage/",
+        "getting-started/",
+        "azure-authentication/",
+        "workloads/",
+        "deployment/sidecar/",
+        "deployment/production-runbook/",
+        "versioning-and-compatibility/",
+    }
+    if actual == expected:
+        return []
+
+    return [
+        "Built persona links differ from expected directory URLs: "
+        f"expected={sorted(expected)!r}, actual={sorted(actual)!r}"
+    ]
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(
@@ -130,6 +185,7 @@ def main() -> int:
 
     errors = validate_internal_links(site_dir, pages, base_path)
     errors.extend(validate_search(site_dir))
+    errors.extend(validate_persona_links(site_dir, base_path))
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)

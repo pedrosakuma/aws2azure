@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from mkdocs_hooks import on_page_markdown
+from mkdocs_hooks import on_page_content, on_page_markdown
 
 
 class MkDocsHooksTests(unittest.TestCase):
@@ -71,6 +71,25 @@ class MkDocsHooksTests(unittest.TestCase):
         self.assertIn("`[inline](../source.json)`", rewritten)
         self.assertIn("[fenced](../source.json)", rewritten)
         self.assertEqual(1, rewritten.count("/blob/main/source.json"))
+
+    def test_rewrites_raw_html_markdown_links_for_published_site(self) -> None:
+        html = (
+            '<a href="project-maturity.md">Maturity</a>'
+            '<a href="workloads/README.md#profiles">Profiles</a>'
+            '<a href="https://example.com/guide.md">External</a>'
+        )
+        config = {"use_directory_urls": True}
+
+        rewritten = on_page_content(
+            html,
+            page=None,
+            config=config,
+            files=None,
+        )
+
+        self.assertIn('href="project-maturity/"', rewritten)
+        self.assertIn('href="workloads/#profiles"', rewritten)
+        self.assertIn('href="https://example.com/guide.md"', rewritten)
 
 
 if __name__ == "__main__":

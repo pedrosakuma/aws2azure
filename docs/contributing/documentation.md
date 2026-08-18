@@ -74,8 +74,10 @@ and production-procedure terms.
 
 ## Publication boundary
 
-`.github/workflows/documentation.yml` runs only when documentation inputs or
-its own tooling change. Each run has a fixed timeout and concurrency group.
-Pull requests execute the build and validation jobs. A push to `main` uploads
-the validated static artifact and deploys it through the `github-pages`
-environment; a manual run on any other branch remains validation-only.
+`.github/workflows/documentation.yml` runs for every pull request and every
+push to `main`. This is intentional: published guides link to source throughout
+the repository, so a source rename or deletion must not bypass link validation.
+Each run has a fixed timeout and concurrency group. Pull requests execute the
+build and validation jobs. A push to `main` uploads the validated static
+artifact and deploys it through the `github-pages` environment; a manual run on
+any other branch remains validation-only.

@@ -14,6 +14,12 @@ _MARKDOWN_LINK = re.compile(
     r"(?P<suffix>(?:\s+(?:\"[^\"]*\"|'[^']*'))?\))"
 )
 _FENCE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})(?P<remainder>.*)$")
+_HTML_MARKDOWN_HREF = re.compile(
+    r"(?P<prefix>\bhref=(?P<quote>[\"']))"
+    r"(?P<destination>(?![a-z]+:|/|#)[^\"']+\.md(?:[?#][^\"']*)?)"
+    r"(?P=quote)",
+    re.IGNORECASE,
+)
 
 
 def _rewrite_outside_code(
@@ -174,3 +180,32 @@ def on_page_markdown(markdown: str, *, page, config, files) -> str:
         return f"{match.group('prefix')}{rewritten}{match.group('suffix')}"
 
     return _rewrite_outside_code(markdown, replace)
+
+
+def on_page_content(html: str, *, page, config, files) -> str:
+    """Rewrite raw-HTML Markdown hrefs to the configured published URL shape."""
+
+    del page, files
+    use_directory_urls = bool(config["use_directory_urls"])
+
+    def replace(match: re.Match[str]) -> str:
+        destination = urlsplit(match.group("destination"))
+        path = destination.path
+        filename = Path(path).name.casefold()
+        if use_directory_urls:
+            if filename in ("index.md", "readme.md"):
+                published_path = f"{Path(path).parent.as_posix().rstrip('/')}/"
+                if published_path == "./":
+                    published_path = ""
+            else:
+                published_path = f"{path[:-3]}/"
+        else:
+            published_path = f"{path[:-3]}.html"
+
+        rewritten = urlunsplit(
+            ("", "", published_path, destination.query, destination.fragment)
+        )
+        quote_character = match.group("quote")
+        return f"{match.group('prefix')}{rewritten}{quote_character}"
+
+    return _HTML_MARKDOWN_HREF.sub(replace, html)

@@ -29,9 +29,9 @@ operation-level gaps, and production procedures into one searchable surface.
       <p>Start with maturity and workload verdicts, then verify every required operation and semantic difference.</p>
     </div>
     <div class="portal-path__links">
-      <a href="project-maturity/">Maturity terms</a>
-      <a href="site/workload-compatibility/">Workload verdicts</a>
-      <a href="site/coverage/">Operation coverage</a>
+      <a href="project-maturity.md">Maturity terms</a>
+      <a href="site/workload-compatibility.md">Workload verdicts</a>
+      <a href="site/coverage.md">Operation coverage</a>
     </div>
   </section>
   <section class="portal-path">
@@ -41,9 +41,9 @@ operation-level gaps, and production procedures into one searchable surface.
       <p>Run the local round-trip, select authentication, and match your application to a versioned workload profile.</p>
     </div>
     <div class="portal-path__links">
-      <a href="getting-started/">Getting started</a>
-      <a href="azure-authentication/">Authentication</a>
-      <a href="workloads/">Workload profiles</a>
+      <a href="getting-started.md">Getting started</a>
+      <a href="azure-authentication.md">Authentication</a>
+      <a href="workloads/README.md">Workload profiles</a>
     </div>
   </section>
   <section class="portal-path">
@@ -53,9 +53,9 @@ operation-level gaps, and production procedures into one searchable surface.
       <p>Choose the topology, qualify against real Azure, set workload gates, and retain an exact rollback target.</p>
     </div>
     <div class="portal-path__links">
-      <a href="deployment/sidecar/">Deploy</a>
-      <a href="deployment/production-runbook/">Production runbook</a>
-      <a href="versioning-and-compatibility/">Versioning</a>
+      <a href="deployment/sidecar.md">Deploy</a>
+      <a href="deployment/production-runbook.md">Production runbook</a>
+      <a href="versioning-and-compatibility.md">Versioning</a>
     </div>
   </section>
 </div>
