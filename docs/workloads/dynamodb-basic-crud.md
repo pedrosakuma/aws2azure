@@ -2,9 +2,11 @@
 
 This profile covers `CreateTable`, `DescribeTable`, `PutItem`, `GetItem`,
 `UpdateItem`, `DeleteItem`, and `DeleteTable` against Azure Cosmos DB for NoSQL.
-It is `ga`: operation compatibility, real-Azure seals, and a reviewed
-production-shaped load/rollback qualification (issue #627) all pass against
-three comparable sealed real-Azure runs.
+Its current generated verdict is `conditional`: the historical
+production-shaped load/rollback qualification from issue #627 remains recorded,
+but the required `PutItem` and `DeleteItem` real-Azure seals are currently
+missing. Treat [workload GA certification](../site/workload-ga.md) as the live
+authority because seals and qualification evidence expire independently.
 
 ## Required configuration
 
@@ -102,4 +104,3 @@ profile's approved-runtime ledger
 rolling back to the original bootstrap baseline. Do not copy emulator
 baselines or feature-specific A/B measurements into this SLO, and do not
 raise the floor without a fresh set of comparable reviewed runs.
-

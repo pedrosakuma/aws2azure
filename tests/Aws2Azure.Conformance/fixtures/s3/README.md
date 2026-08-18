@@ -20,10 +20,11 @@ every PR; the golden faithfulness diff activates per-case as goldens appear.
 Regenerate with record mode against the Tier-2 LocalStack fixture:
 
 ```bash
-AWS2AZURE_CONFORMANCE_RECORD=1 dotnet test tests/Aws2Azure.IntegrationTests --filter Conformance
+AWS2AZURE_CONFORMANCE_TIER2=1 AWS2AZURE_CONFORMANCE_RECORD=1 \
+  dotnet test tests/Aws2Azure.Conformance --filter Conformance
 ```
 
-A future Tier-3 real-AWS capture job will write authoritative S3 goldens
+The Tier-3 real-AWS capture job writes authoritative S3 goldens
 through the same `GoldenStore.Save(...)` API, using
 `GoldenProvenance.SourceRealAws` and a note explaining the file is the
 authoritative oracle.

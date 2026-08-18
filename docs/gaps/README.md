@@ -32,7 +32,11 @@ azure_equivalent: "Azure Cosmos DB (Core SQL API)"   # required
 status: partial              # implemented | partial | stub | unsupported
 disposition: feasible_backlog # required when status != implemented
 tracking_issue: "#687"        # required only for feasible_backlog
-verified_real_azure: ""      # optional — date / run URL; empty == emulator-only
+# Omit verified_real_azure until the operation has a real-Azure seal.
+# verified_real_azure:
+#   date: "YYYY-MM-DD"
+#   evidence: "https://github.com/.../actions/runs/..."
+#   workflow_run: "https://github.com/.../actions/runs/..."
 sub_features:
   - name: KeyConditionExpression on HASH+RANGE tables
     status: implemented      # implemented | partial | unsupported
@@ -41,7 +45,7 @@ sub_features:
     notes: "…"
     gap: "…"                 # what is missing
     workaround: "…"
-    verified_real_azure: ""
+    # Omit verified_real_azure until this sub-feature has its own seal.
 behavior_differences:
   - "Cosmos 429 is surfaced as ProvisionedThroughputExceededException."
 references:

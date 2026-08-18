@@ -239,4 +239,4 @@ because GitHub-hosted runners are themselves Azure VMs whose IMDS identity is
 **not** our provisioned identity and has no RBAC on the test resources. The
 authoritative validation is therefore a **manual procedure run on real Azure
 compute** — see
-[Managed / Workload Identity validation](./testing/real-azure-nightly.md#managed--workload-identity-validation-manual).
+[Managed / Workload Identity validation](./testing/real-azure-nightly.md#managed-identity-validation-manual).

@@ -91,12 +91,17 @@ manifest independently and rejects stale generated output.
 
 Profile-specific adoption guidance:
 
+- [S3 basic object CRUD](s3-basic-object-crud.md)
 - [S3 metadata and compatibility controls](s3-metadata-compatibility.md)
 - [SQS standard messaging](sqs-standard-messaging.md)
+- [SQS dead-letter and redrive](sqs-dlq-redrive.md)
+- [SQS FIFO messaging over AMQP](sqs-fifo-amqp.md)
 - [Kinesis basic record ingestion](kinesis-basic-record-ingestion.md)
 - [Kinesis single consumer per shard](kinesis-single-consumer-per-shard.md)
+- [DynamoDB basic table and item CRUD](dynamodb-basic-crud.md)
 - [DynamoDB Query, Scan, and secondary indexes](dynamodb-query-scan-indexes.md)
 - [DynamoDB single-partition transactions](dynamodb-single-partition-transactions.md)
+- [Secrets Manager basic lifecycle](secretsmanager-basic-lifecycle.md)
 - [SNS standard publish (Service Bus Topics backend)](sns-standard-publish-service-bus.md)
 - [SNS standard publish (Event Grid backend)](sns-standard-publish-event-grid.md)
 - [SNS subscription management (Service Bus Topics backend)](sns-subscription-management-service-bus.md)

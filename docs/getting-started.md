@@ -283,18 +283,25 @@ automatically.
 
 ## Prebuilt release binaries
 
-Each tagged release attaches a self-contained Native-AOT binary for
-`linux-x64` and `linux-arm64` (plus a SHA-256 checksum) to the
-[GitHub Releases page](https://github.com/pedrosakuma/aws2azure/releases):
+Each stable release attaches promoted, self-contained Native-AOT archives for
+`linux-x64` and `linux-arm64`, with the immutable SHA-256 in each filename, to the
+[GitHub Releases page](https://github.com/pedrosakuma/aws2azure/releases).
+Promoted archives retain their release-candidate identity in the filename, so
+download them by platform pattern with the GitHub CLI:
 
 ```bash
-VERSION=v0.1.0   # pick a release tag
+VERSION=v1.0.0   # pick a supported release tag
 ARCH=linux-x64   # or linux-arm64
-curl -fsSL -O "https://github.com/pedrosakuma/aws2azure/releases/download/${VERSION}/aws2azure-${VERSION}-${ARCH}.tar.gz"
-curl -fsSL -O "https://github.com/pedrosakuma/aws2azure/releases/download/${VERSION}/aws2azure-${VERSION}-${ARCH}.tar.gz.sha256"
-sha256sum -c "aws2azure-${VERSION}-${ARCH}.tar.gz.sha256"
-tar -xzf "aws2azure-${VERSION}-${ARCH}.tar.gz"
-cd "aws2azure-${VERSION}-${ARCH}"
+gh release download "$VERSION" --repo pedrosakuma/aws2azure \
+  --pattern "aws2azure-*-${ARCH}-*.tar.gz"
+ARCHIVE=$(find . -maxdepth 1 -name "aws2azure-*-${ARCH}-*.tar.gz" -print -quit)
+ARCHIVE_NAME=${ARCHIVE##*/}
+EXPECTED_SHA256=${ARCHIVE_NAME%.tar.gz}
+EXPECTED_SHA256=${EXPECTED_SHA256##*-}
+printf '%s  %s\n' "$EXPECTED_SHA256" "$ARCHIVE" | sha256sum --check -
+ROOT_DIR=$(tar -tzf "$ARCHIVE" | sed -n '1s#/.*##p')
+tar -xzf "$ARCHIVE"
+cd "$ROOT_DIR"
 
 AWS2AZURE_CONFIG_FILE=config.example.json \
 ASPNETCORE_URLS=http://localhost:8080 \
