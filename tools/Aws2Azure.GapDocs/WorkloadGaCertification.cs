@@ -63,6 +63,8 @@ public sealed class WorkloadGaReport
     public string MinimumProxyVersion { get; set; } = string.Empty;
     public string Verdict { get; set; } = "blocked";
     public List<WorkloadGaFinding> Findings { get; set; } = new();
+    public WorkloadGaEvaluationMetadata? Evaluation { get; set; }
+    public WorkloadGaAuthorityMetadata? Authority { get; set; }
 }
 
 public sealed class WorkloadGaFinding
@@ -865,14 +867,11 @@ public static class WorkloadGaRenderer
 {
     public static string RenderJson(
         WorkloadGaReport report,
-        WorkloadGaEvaluationMetadata evaluation) =>
-        JsonSerializer.Serialize(
-            new WorkloadGaProfileCertification
-            {
-                Evaluation = evaluation,
-                Profile = report,
-            },
-            WorkloadGaJsonContext.Default.WorkloadGaProfileCertification);
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        AttachAuthority(report, evaluation);
+        return JsonSerializer.Serialize(report, WorkloadGaJsonContext.Default.WorkloadGaReport);
+    }
 
     public static string RenderMarkdown(
         WorkloadGaReport report,
@@ -903,6 +902,10 @@ public static class WorkloadGaRenderer
         string jsonPath)
     {
         var ordered = reports.OrderBy(report => report.ProfileId, StringComparer.Ordinal).ToList();
+        foreach (var report in ordered)
+        {
+            AttachAuthority(report, evaluation);
+        }
         var builder = new StringBuilder();
         builder.AppendLine("# Workload GA certification");
         builder.AppendLine();
@@ -924,17 +927,20 @@ public static class WorkloadGaRenderer
         builder.AppendLine(
             "A profile reaches GA only when every required operation is compatible or explicitly accepted, every real-Azure seal is fresh, and a matching reviewed qualification artifact is `qualified`.");
 
-        var index = new WorkloadGaCertificationIndex
-        {
-            Evaluation = evaluation,
-            Profiles = ordered,
-        };
         Directory.CreateDirectory(Path.GetDirectoryName(markdownPath)!);
         File.WriteAllText(markdownPath, builder.ToString());
         File.WriteAllText(
             jsonPath,
-            JsonSerializer.Serialize(index, WorkloadGaJsonContext.Default.WorkloadGaCertificationIndex)
+            JsonSerializer.Serialize(ordered, WorkloadGaJsonContext.Default.ListWorkloadGaReport)
             + Environment.NewLine);
+    }
+
+    private static void AttachAuthority(
+        WorkloadGaReport report,
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        report.Evaluation = evaluation;
+        report.Authority = new WorkloadGaAuthorityMetadata();
     }
 
     private static void AppendAuthorityNotice(
@@ -987,6 +993,5 @@ public static class WorkloadGaRenderer
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     WriteIndented = true)]
 [JsonSerializable(typeof(WorkloadGaReport))]
-[JsonSerializable(typeof(WorkloadGaCertificationIndex))]
-[JsonSerializable(typeof(WorkloadGaProfileCertification))]
+[JsonSerializable(typeof(List<WorkloadGaReport>))]
 internal sealed partial class WorkloadGaJsonContext : JsonSerializerContext;

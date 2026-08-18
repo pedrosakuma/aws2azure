@@ -107,8 +107,15 @@ cannot alter the bytes being evaluated or published.
 The contract separately pins
 `expected_evaluator_implementation_revision`, a reproducible digest over all
 GapDocs C# sources plus its project, repository build properties, and pinned SDK
-definition. `expected_evaluator_schema_version` describes the output/evaluator
-format only; it is not presented as implementation identity. Canonical or
+definition. MSBuild computes the same normalized digest and embeds it as a
+generated constant in the executing GapDocs assembly. Generation and
+certification require the captured source digest, authority contract digest,
+and embedded executing-assembly digest to match, so running a stale `--no-build`
+binary fails closed. The generated identity source is excluded from its own
+inputs to avoid a circular digest.
+
+`expected_evaluator_schema_version` describes the authority evaluator format
+only; it is not presented as implementation identity. Canonical or
 implementation changes fail validation until their expected digests are
 deliberately reviewed and updated. Paths and line endings are normalized before
 hashing, so both identities are checkout-independent and reproducible.
@@ -117,6 +124,13 @@ hashing, so both identities are checkout-independent and reproducible.
 `.yaml` manifests under `docs/workloads`; those bytes are therefore part of the
 canonical identity. `check-workload` remains available for non-authoritative
 inspection of arbitrary manifests.
+
+JSON compatibility is additive. `certify-workload --format json` remains a raw
+schema-1 profile report, and `docs/site/workload-ga.json` remains an array of
+schema-1 profile reports. Each report now carries optional `evaluation` and
+`authority` properties; existing schema-1 consumers that ignore unknown fields
+retain their original root shape and fields. The authority contract's own
+`schema_version` is independent and does not change the report schema.
 
 For current workload adoption, the generated workload certification has the
 highest precedence. Profile manifests and gap docs are normative inputs,

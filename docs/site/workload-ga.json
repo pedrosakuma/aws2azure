@@ -1,901 +1,1607 @@
-{
-  "schema_version": 3,
-  "evaluation": {
-    "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
-    "contract": "docs/workloads/certification/authority.yaml",
-    "source": {
-      "repository": "pedrosakuma/aws2azure",
-      "canonical_inputs_revision_type": "normalized_yaml_sha256",
-      "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
-      "evaluator_schema_version": 3,
-      "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
-      "evaluator_implementation_revision": "sha256:a2af8e2219436862e3c259a36cbf03e5286fc81c98e5ebe1347d9a8a1a561372",
-      "canonical_input_roots": [
-        "docs/gaps/**/*.yaml",
-        "docs/workloads/**/*.yaml"
-      ],
-      "excluded_canonical_inputs": [
-        "docs/workloads/certification/authority.yaml"
-      ],
-      "evaluator_implementation_roots": [
-        "tools/Aws2Azure.GapDocs/**/*.cs",
-        "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
-        "Directory.Build.props",
-        "global.json"
-      ]
-    }
-  },
-  "authority": {
-    "scope": "current_workload_adoption",
-    "temporal_scope": "point_in_time",
-    "highest_precedence_source": "live_workload_certification",
-    "historical_claims_may_override": false,
-    "precedence": [
+[
+  {
+    "schema_version": 1,
+    "profile_id": "dynamodb-basic-crud",
+    "profile_version": 1,
+    "name": "DynamoDB basic table and item CRUD",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
       {
-        "rank": 1,
-        "source": "live_workload_certification",
-        "role": "authoritative_current_verdict"
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:DeleteItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "rank": 2,
-        "source": "workload_profile_manifests",
-        "role": "normative_certification_input"
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb:DeleteItem",
+        "message": "Required operation has no real-Azure verification seal."
       },
       {
-        "rank": 3,
-        "source": "gap_docs",
-        "role": "normative_capability_input"
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:GetItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "rank": 4,
-        "source": "release_notes",
-        "role": "immutable_historical_record"
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:PutItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
       },
       {
-        "rank": 5,
-        "source": "explanatory_guides",
-        "role": "non_authoritative_explanation"
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb:PutItem",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:UpdateItem",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Consistency and read-your-writes",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Key encoding and on-disk storage format",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
       }
-    ]
-  },
-  "profiles": [
-    {
-      "schema_version": 1,
-      "profile_id": "dynamodb-basic-crud",
-      "profile_version": 1,
-      "name": "DynamoDB basic table and item CRUD",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "conditional",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:DeleteItem",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "dynamodb:DeleteItem",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:GetItem",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:PutItem",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "dynamodb:PutItem",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:UpdateItem",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Consistency and read-your-writes",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Key encoding and on-disk storage format",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
-        }
-      ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
     },
-    {
-      "schema_version": 1,
-      "profile_id": "dynamodb-query-scan-indexes",
-      "profile_version": 1,
-      "name": "DynamoDB Query, Scan, and secondary indexes",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "conditional",
-      "findings": [
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
         {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Query",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
         },
         {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Scan",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
         },
         {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Secondary indexes (GSI / LSI)",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
         },
         {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Throughput and throttling model",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
         },
         {
-          "code": "sub_feature_real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "dynamodb:DescribeTable#GSI/LSI schema / status / projection description",
-          "message": "Required backend-specific sub-feature has no real-Azure verification seal."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "dynamodb-single-partition-transactions",
-      "profile_version": 1,
-      "name": "DynamoDB single-table single-partition transactions",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:TransactGetItems",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:TransactWriteItems",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Transaction execution has one configured Cosmos authority",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_single_partition_transactions\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "dynamodb:Transaction scope is single-partition, single-table",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_single_partition_transactions\u0027."
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[0] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[1] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[2] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.correctness_run is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: qualified real-Azure artifact is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027representative-load\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-read-after-write\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-atomicity-rollback\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-conditions-cancellation\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-scope-rejection\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-idempotency\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-contention\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-restart-versioning\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-sproc-body-verification\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
-          "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027rollback\u0027 measurement is stale"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "kinesis-basic-record-ingestion",
-      "profile_version": 1,
-      "name": "Kinesis basic record ingestion",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:PutRecord",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:PutRecords",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_record_ingestion\u0027."
-        },
-        {
-          "code": "qualification_evidence_missing",
-          "disposition": "blocking",
-          "subject": "kinesis-basic-record-ingestion",
-          "message": "No reviewed real-Azure workload qualification artifact is referenced."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "kinesis-single-consumer-per-shard",
-      "profile_version": 1,
-      "name": "Kinesis single consumer per shard",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:DescribeStream",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:DescribeStreamSummary",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:GetRecords",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:GetShardIterator",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:ListShards",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:Iterator link lifetime and durable replay",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
-        },
-        {
-          "code": "qualification_evidence_missing",
-          "disposition": "blocking",
-          "subject": "kinesis-single-consumer-per-shard",
-          "message": "No reviewed real-Azure workload qualification artifact is referenced."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "s3-basic-object-crud",
-      "profile_version": 1,
-      "name": "S3 basic object CRUD",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[0] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[1] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[2] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.correctness_run is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: qualified real-Azure artifact is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
-          "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "secretsmanager-basic-lifecycle",
-      "profile_version": 1,
-      "name": "Secrets Manager basic lifecycle",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "secretsmanager:PutSecretValue",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "secretsmanager:Deletion recovery semantics differ",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_basic_lifecycle\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "secretsmanager:Versioning and staging modelled on Key Vault version tags",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_version_stages\u0027."
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[0] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[1] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[2] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.correctness_run is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: qualified real-Azure artifact is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027representative-load\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027restart\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027credential-rotation\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
-          "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sns-standard-publish-event-grid",
-      "profile_version": 1,
-      "name": "SNS standard publish (Event Grid backend)",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:CreateTopic",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:DeleteTopic",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Publish",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:PublishBatch",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Two backends with different fidelity",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-        },
-        {
-          "code": "qualification_evidence_missing",
-          "disposition": "blocking",
-          "subject": "sns-standard-publish-event-grid",
-          "message": "No reviewed real-Azure workload qualification artifact is referenced."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sns-standard-publish-service-bus",
-      "profile_version": 1,
-      "name": "SNS standard publish (Service Bus Topics backend)",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:CreateTopic",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:DeleteTopic",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Publish",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:PublishBatch",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Two backends with different fidelity",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-        },
-        {
-          "code": "qualification_evidence_missing",
-          "disposition": "blocking",
-          "subject": "sns-standard-publish-service-bus",
-          "message": "No reviewed real-Azure workload qualification artifact is referenced."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sns-subscription-management-service-bus",
-      "profile_version": 1,
-      "name": "SNS subscription management (Service Bus Topics backend)",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:ConfirmSubscription",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:GetSubscriptionAttributes",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:ListSubscriptions",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:ListSubscriptionsByTopic",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:SetSubscriptionAttributes",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Subscribe",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Unsubscribe",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Event Grid subscription management is excluded",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sns:No AWS region / account namespace",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sns:Two backends with different fidelity",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
-        },
-        {
-          "code": "qualification_evidence_missing",
-          "disposition": "blocking",
-          "subject": "sns-subscription-management-service-bus",
-          "message": "No reviewed real-Azure workload qualification artifact is referenced."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sqs-dlq-redrive",
-      "profile_version": 1,
-      "name": "SQS dead-letter and redrive",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "blocked",
-      "findings": [
-        {
-          "code": "partial_operation_not_accepted",
-          "disposition": "blocking",
-          "subject": "sqs:ChangeMessageVisibility",
-          "message": "Required operation is partial and is not explicitly accepted by the profile."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:ChangeMessageVisibility",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:GetQueueAttributes",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:GetQueueAttributes",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:ListDeadLetterSourceQueues",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "partial_operation_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:SetQueueAttributes",
-          "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:SetQueueAttributes",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:No AWS region / account namespace",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:Transport-dependent capability differences",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
-        },
-        {
-          "code": "sub_feature_real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:GetQueueAttributes#Attribute.RedrivePolicy",
-          "message": "Required backend-specific sub-feature has no real-Azure verification seal."
-        },
-        {
-          "code": "sub_feature_real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:ListDeadLetterSourceQueues#MaxResults / NextToken pagination",
-          "message": "Required backend-specific sub-feature has no real-Azure verification seal."
-        },
-        {
-          "code": "sub_feature_real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:SetQueueAttributes#RedrivePolicy \u2192 ForwardDeadLetteredMessagesTo",
-          "message": "Required backend-specific sub-feature has no real-Azure verification seal."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sqs-fifo-amqp",
-      "profile_version": 1,
-      "name": "SQS FIFO messaging over AMQP",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "blocked",
-      "findings": [
-        {
-          "code": "partial_operation_not_accepted",
-          "disposition": "blocking",
-          "subject": "sqs:ChangeMessageVisibility",
-          "message": "Required operation is partial and is not explicitly accepted by the profile."
-        },
-        {
-          "code": "real_azure_seal_missing",
-          "disposition": "blocking",
-          "subject": "sqs:ChangeMessageVisibility",
-          "message": "Required operation has no real-Azure verification seal."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:FIFO ordering requires the AMQP transport",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
-        },
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:Transport-dependent capability differences",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
-        }
-      ]
-    },
-    {
-      "schema_version": 1,
-      "profile_id": "sqs-standard-messaging",
-      "profile_version": 1,
-      "name": "SQS standard messaging",
-      "minimum_proxy_version": "0.1.0",
-      "verdict": "candidate",
-      "findings": [
-        {
-          "code": "design_gap_accepted",
-          "disposition": "advisory",
-          "subject": "sqs:Transport-dependent capability differences",
-          "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[0] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[1] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[2] is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.correctness_run is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: qualified real-Azure artifact is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027representative-load\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027redelivery\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027concurrency\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027restart\u0027 measurement is stale"
-        },
-        {
-          "code": "qualification_evidence_invalid",
-          "disposition": "blocking",
-          "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
-          "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027rollback\u0027 measurement is stale"
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
         }
       ]
     }
-  ]
-}
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "dynamodb-query-scan-indexes",
+    "profile_version": 1,
+    "name": "DynamoDB Query, Scan, and secondary indexes",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "conditional",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Query",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Scan",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Secondary indexes (GSI / LSI)",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Throughput and throttling model",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_query_scan_indexes\u0027."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "dynamodb:DescribeTable#GSI/LSI schema / status / projection description",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "dynamodb-single-partition-transactions",
+    "profile_version": 1,
+    "name": "DynamoDB single-table single-partition transactions",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:TransactGetItems",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:TransactWriteItems",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Transaction execution has one configured Cosmos authority",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_single_partition_transactions\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "dynamodb:Transaction scope is single-partition, single-table",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_single_partition_transactions\u0027."
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-read-after-write\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-atomicity-rollback\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-conditions-cancellation\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-scope-rejection\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-idempotency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-contention\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-restart-versioning\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027transaction-sproc-body-verification\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
+        "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027rollback\u0027 measurement is stale"
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "kinesis-basic-record-ingestion",
+    "profile_version": 1,
+    "name": "Kinesis basic record ingestion",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:PutRecord",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:PutRecords",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_record_ingestion\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "kinesis-basic-record-ingestion",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "kinesis-single-consumer-per-shard",
+    "profile_version": 1,
+    "name": "Kinesis single consumer per shard",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:DescribeStream",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:DescribeStreamSummary",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:GetRecords",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:GetShardIterator",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:ListShards",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Iterator link lifetime and durable replay",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "kinesis:Synthetic sequence numbers and iterator positioning",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027kinesis_single_consumer_per_shard\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "kinesis-single-consumer-per-shard",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "s3-basic-object-crud",
+    "profile_version": 1,
+    "name": "S3 basic object CRUD",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
+        "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "secretsmanager-basic-lifecycle",
+    "profile_version": 1,
+    "name": "Secrets Manager basic lifecycle",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:PutSecretValue",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:Deletion recovery semantics differ",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_basic_lifecycle\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "secretsmanager:Versioning and staging modelled on Key Vault version tags",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027secretsmanager_version_stages\u0027."
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027credential-rotation\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
+        "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sns-standard-publish-event-grid",
+    "profile_version": 1,
+    "name": "SNS standard publish (Event Grid backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:CreateTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:DeleteTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Publish",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:PublishBatch",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sns-standard-publish-event-grid",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sns-standard-publish-service-bus",
+    "profile_version": 1,
+    "name": "SNS standard publish (Service Bus Topics backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:CreateTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:DeleteTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Publish",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:PublishBatch",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sns-standard-publish-service-bus",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sns-subscription-management-service-bus",
+    "profile_version": 1,
+    "name": "SNS subscription management (Service Bus Topics backend)",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ConfirmSubscription",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:GetSubscriptionAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ListSubscriptions",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:ListSubscriptionsByTopic",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:SetSubscriptionAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Subscribe",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Unsubscribe",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Event Grid subscription management is excluded",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:No AWS region / account namespace",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Two backends with different fidelity",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
+      },
+      {
+        "code": "qualification_evidence_missing",
+        "disposition": "blocking",
+        "subject": "sns-subscription-management-service-bus",
+        "message": "No reviewed real-Azure workload qualification artifact is referenced."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sqs-dlq-redrive",
+    "profile_version": 1,
+    "name": "SQS dead-letter and redrive",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "blocked",
+    "findings": [
+      {
+        "code": "partial_operation_not_accepted",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation is partial and is not explicitly accepted by the profile."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:GetQueueAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:GetQueueAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ListDeadLetterSourceQueues",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "partial_operation_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:SetQueueAttributes",
+        "message": "The profile explicitly accepts the operation\u0027s documented partial semantics."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SetQueueAttributes",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:No AWS region / account namespace",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_dlq_redrive\u0027."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:GetQueueAttributes#Attribute.RedrivePolicy",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ListDeadLetterSourceQueues#MaxResults / NextToken pagination",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      },
+      {
+        "code": "sub_feature_real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:SetQueueAttributes#RedrivePolicy \u2192 ForwardDeadLetteredMessagesTo",
+        "message": "Required backend-specific sub-feature has no real-Azure verification seal."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sqs-fifo-amqp",
+    "profile_version": 1,
+    "name": "SQS FIFO messaging over AMQP",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "blocked",
+    "findings": [
+      {
+        "code": "partial_operation_not_accepted",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation is partial and is not explicitly accepted by the profile."
+      },
+      {
+        "code": "real_azure_seal_missing",
+        "disposition": "blocking",
+        "subject": "sqs:ChangeMessageVisibility",
+        "message": "Required operation has no real-Azure verification seal."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:FIFO ordering requires the AMQP transport",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "profile_id": "sqs-standard-messaging",
+    "profile_version": 1,
+    "name": "SQS standard messaging",
+    "minimum_proxy_version": "0.1.0",
+    "verdict": "candidate",
+    "findings": [
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sqs:Transport-dependent capability differences",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027redelivery\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027concurrency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027rollback\u0027 measurement is stale"
+      }
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:82e8777b16615b5c8d66f91b488dc6aacd3015db6d3ee5ed9f5fa052da30ff93",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
+  }
+]

@@ -49,6 +49,7 @@ public sealed class WorkloadGaSourceIdentity
     [
         "tools/Aws2Azure.GapDocs/**/*.cs",
         "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+        "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
         "Directory.Build.props",
         "global.json",
     ];
@@ -193,6 +194,17 @@ public static class WorkloadGaEvaluationContractValidator
             evaluatorImplementationRevision,
             "expected_evaluator_implementation_revision",
             Err);
+        if (evaluatorImplementationRevision is not null
+            && !evaluatorImplementationRevision.Equals(
+                WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision,
+                StringComparison.Ordinal))
+        {
+            Err(
+                $"captured evaluator implementation revision '{evaluatorImplementationRevision}' " +
+                "does not match executing assembly revision " +
+                $"'{WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision}'; " +
+                "rebuild the GapDocs evaluator");
+        }
 
         return errors;
     }
@@ -224,6 +236,8 @@ public static class WorkloadGaEvaluationMetadataBuilder
 {
     public const string ContractPath = "docs/workloads/certification/authority.yaml";
     public const int CurrentEvaluatorSchemaVersion = 3;
+    public static string EmbeddedEvaluatorImplementationRevision =>
+        WorkloadGaEmbeddedEvaluatorIdentity.Revision;
 
     public static WorkloadGaEvaluationMetadata Build(WorkloadGaInputSnapshot snapshot)
     {
@@ -303,7 +317,12 @@ public static class WorkloadGaEvaluationMetadataBuilder
         {
             Append(hash, relativePath);
             Append(hash, "\n");
-            var content = Encoding.UTF8.GetString(bytes)
+            var content = Encoding.UTF8.GetString(bytes);
+            if (content.Length > 0 && content[0] == '\uFEFF')
+            {
+                content = content[1..];
+            }
+            content = content
                 .Replace("\r\n", "\n", StringComparison.Ordinal)
                 .Replace("\r", "\n", StringComparison.Ordinal);
             Append(hash, content);
@@ -362,6 +381,7 @@ public static class WorkloadGaEvaluationMetadataBuilder
         foreach (var relativePath in new[]
                  {
                      "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+                     "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
                      "Directory.Build.props",
                      "global.json",
                  })
@@ -708,20 +728,4 @@ public static class WorkloadGaTemporalValidator
         check(identity.Producer.RunStartedAt, prefix + ".producer.run_started_at");
         check(identity.Artifact.CreatedAt, prefix + ".artifact.created_at");
     }
-}
-
-public sealed class WorkloadGaCertificationIndex
-{
-    public int SchemaVersion { get; set; } = 3;
-    public WorkloadGaEvaluationMetadata Evaluation { get; set; } = new();
-    public WorkloadGaAuthorityMetadata Authority { get; set; } = new();
-    public List<WorkloadGaReport> Profiles { get; set; } = new();
-}
-
-public sealed class WorkloadGaProfileCertification
-{
-    public int SchemaVersion { get; set; } = 3;
-    public WorkloadGaEvaluationMetadata Evaluation { get; set; } = new();
-    public WorkloadGaAuthorityMetadata Authority { get; set; } = new();
-    public WorkloadGaReport Profile { get; set; } = new();
 }

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Aws2Azure.GapDocs;
 
 namespace Aws2Azure.UnitTests.GapDocs;
@@ -214,7 +215,8 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal(first, second);
         using var document = JsonDocument.Parse(first);
         var root = document.RootElement;
-        Assert.Equal(3, root.GetProperty("schema_version").GetInt32());
+        Assert.Equal(1, root.GetProperty("schema_version").GetInt32());
+        Assert.False(root.TryGetProperty("profile", out _));
         Assert.Equal(
             "2026-08-18T17:30:00Z",
             root.GetProperty("evaluation").GetProperty("evaluated_as_of_utc").GetString());
@@ -242,13 +244,24 @@ public sealed class WorkloadGaCertificationTests
             root.GetProperty("evaluation").GetProperty("source")
                 .GetProperty("evaluator_implementation_revision").GetString());
         Assert.Equal(
+            WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision,
+            root.GetProperty("evaluation").GetProperty("source")
+                .GetProperty("evaluator_implementation_revision").GetString());
+        Assert.Equal(
             "live_workload_certification",
             root.GetProperty("authority").GetProperty("highest_precedence_source").GetString());
         Assert.False(root.GetProperty("authority").GetProperty("historical_claims_may_override").GetBoolean());
         Assert.Equal(
             "s3-basic-object-crud",
-            root.GetProperty("profile").GetProperty("profile_id").GetString());
-        Assert.Equal("candidate", root.GetProperty("profile").GetProperty("verdict").GetString());
+            root.GetProperty("profile_id").GetString());
+        Assert.Equal("candidate", root.GetProperty("verdict").GetString());
+
+        var legacy = JsonSerializer.Deserialize<LegacyWorkloadGaReport>(first);
+        Assert.NotNull(legacy);
+        Assert.Equal(1, legacy.SchemaVersion);
+        Assert.Equal("s3-basic-object-crud", legacy.ProfileId);
+        Assert.Equal("candidate", legacy.Verdict);
+        Assert.NotEmpty(legacy.Findings);
     }
 
     [Fact]
@@ -359,6 +372,38 @@ public sealed class WorkloadGaCertificationTests
             error => error.Contains(
                 "expected_evaluator_implementation_revision",
                 StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Evaluation_contract_rejects_stale_executing_evaluator()
+    {
+        var capturedRevision = Digest(
+            WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision[^1]
+                == 'f'
+                ? 'e'
+                : 'f');
+        var contract = ValidContract(Digest('a'), capturedRevision);
+
+        var errors = WorkloadGaEvaluationContractValidator.Validate(
+            contract,
+            UtcInstant(2026, 8, 18, 17, 30, 0),
+            Digest('a'),
+            capturedRevision);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "does not match executing assembly revision",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Embedded_evaluator_revision_matches_current_normalized_sources()
+    {
+        Assert.Equal(
+            WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
+                RepoRoot),
+            WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision);
     }
 
     [Fact]
@@ -635,10 +680,20 @@ public sealed class WorkloadGaCertificationTests
 
             using var document = JsonDocument.Parse(File.ReadAllText(jsonPath));
             var root = document.RootElement;
-            Assert.Equal("point_in_time", root.GetProperty("authority").GetProperty("temporal_scope").GetString());
+            Assert.Equal(JsonValueKind.Array, root.ValueKind);
+            Assert.Equal(1, root[0].GetProperty("schema_version").GetInt32());
+            Assert.Equal(
+                "point_in_time",
+                root[0].GetProperty("authority").GetProperty("temporal_scope").GetString());
             Assert.Equal(
                 "s3-basic-object-crud",
-                root.GetProperty("profiles")[0].GetProperty("profile_id").GetString());
+                root[0].GetProperty("profile_id").GetString());
+            Assert.False(root[0].TryGetProperty("profile", out _));
+            var legacy = JsonSerializer.Deserialize<List<LegacyWorkloadGaReport>>(
+                File.ReadAllText(jsonPath));
+            Assert.NotNull(legacy);
+            Assert.Single(legacy);
+            Assert.Equal("s3-basic-object-crud", legacy[0].ProfileId);
             var markdown = File.ReadAllText(markdownPath);
             Assert.Contains(
                 "Current adoption authority (as of `2026-08-18T17:30:00Z`)",
@@ -1673,6 +1728,9 @@ public sealed class WorkloadGaCertificationTests
         File.WriteAllText(
             Path.Combine(evaluatorRoot, "Aws2Azure.GapDocs.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        File.WriteAllText(
+            Path.Combine(evaluatorRoot, "GenerateEvaluatorIdentity.targets"),
+            "<Project />\n");
         File.WriteAllText(Path.Combine(root, "Directory.Build.props"), "<Project />\n");
         File.WriteAllText(Path.Combine(root, "global.json"), "{}\n");
     }
@@ -1681,6 +1739,27 @@ public sealed class WorkloadGaCertificationTests
     {
         using var snapshot = WorkloadGaInputSnapshot.Capture(RepoRoot);
         return WorkloadGaEvaluationMetadataBuilder.Build(snapshot);
+    }
+
+    private sealed class LegacyWorkloadGaReport
+    {
+        [JsonPropertyName("schema_version")]
+        public int SchemaVersion { get; set; }
+
+        [JsonPropertyName("profile_id")]
+        public string ProfileId { get; set; } = string.Empty;
+
+        [JsonPropertyName("verdict")]
+        public string Verdict { get; set; } = string.Empty;
+
+        [JsonPropertyName("findings")]
+        public List<LegacyWorkloadGaFinding> Findings { get; set; } = new();
+    }
+
+    private sealed class LegacyWorkloadGaFinding
+    {
+        [JsonPropertyName("code")]
+        public string Code { get; set; } = string.Empty;
     }
 
     private static WorkloadGaManifest LoadManifest(string fileName) =>
