@@ -1,0 +1,1133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pedrosakuma/aws2azure/config.schema.json",
+  "title": "aws2azure operator configuration",
+  "description": "Normative binding-centric ConfigDocument selected by AWS2AZURE_CONFIG_FILE.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "services": {
+      "$ref": "#/$defs/services"
+    },
+    "bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/binding"
+      }
+    },
+    "azureIdentities": {
+      "type": "object",
+      "description": "Named Entra identities referenced by AAD-capable backend auth blocks.",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/azureIdentity"
+      }
+    }
+  },
+  "required": [
+    "bindings"
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "s3": {
+          "$ref": "#/$defs/s3Service"
+        },
+        "sqs": {
+          "$ref": "#/$defs/serviceToggle"
+        },
+        "dynamodb": {
+          "$ref": "#/$defs/dynamoDbService"
+        },
+        "sns": {
+          "$ref": "#/$defs/snsService"
+        },
+        "kinesis": {
+          "$ref": "#/$defs/serviceToggle"
+        },
+        "secretsmanager": {
+          "$ref": "#/$defs/serviceToggle"
+        }
+      }
+    },
+    "serviceToggle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "s3Service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "presignedTrustedSigningHosts": {
+          "type": "array",
+          "description": "Lowercase bare signing hosts; schemes, paths, and whitespace are not allowed.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!.*://)[^A-Z/\\s]\u002B$"
+          }
+        }
+      }
+    },
+    "snsService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "defaultBackend": {
+          "type": "string",
+          "enum": [
+            "ServiceBusTopics",
+            "EventGrid"
+          ],
+          "default": "ServiceBusTopics"
+        }
+      }
+    },
+    "dynamoDbService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "useStoredProcedures": {
+          "type": "string",
+          "enum": [
+            "Disabled",
+            "Preferred",
+            "Required"
+          ],
+          "default": "Disabled"
+        },
+        "consistencyCheck": {
+          "type": "string",
+          "enum": [
+            "Disabled",
+            "Warn",
+            "Required"
+          ],
+          "default": "Disabled"
+        },
+        "cosmosBinaryResponses": {
+          "type": "boolean",
+          "default": false
+        },
+        "cosmosBinaryRequests": {
+          "type": "boolean",
+          "default": false
+        },
+        "enableGlobalSecondaryIndexQueries": {
+          "type": "boolean",
+          "default": false
+        },
+        "enableLocalSecondaryIndexNumericOrdering": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "aws": {
+          "$ref": "#/$defs/awsIdentity"
+        },
+        "azure": {
+          "$ref": "#/$defs/azureBindings"
+        }
+      },
+      "required": [
+        "aws",
+        "azure"
+      ]
+    },
+    "awsIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accessKeyId": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "secretAccessKey": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "accessKeyId",
+        "secretAccessKey"
+      ]
+    },
+    "azureBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "s3": {
+          "$ref": "#/$defs/s3Backend"
+        },
+        "sqs": {
+          "$ref": "#/$defs/sqsBackend"
+        },
+        "dynamodb": {
+          "$ref": "#/$defs/dynamoDbBackend"
+        },
+        "sns": {
+          "$ref": "#/$defs/snsBackend"
+        },
+        "kinesis": {
+          "$ref": "#/$defs/kinesisBackend"
+        },
+        "secretsmanager": {
+          "$ref": "#/$defs/secretsManagerBackend"
+        }
+      }
+    },
+    "azureIdentity": {
+      "description": "A reusable Entra identity. Workload identity fields come from AZURE_* environment variables.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authMode": {
+              "const": "clientSecret"
+            },
+            "tenantId": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "clientId": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "clientSecret": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "required": [
+            "authMode",
+            "tenantId",
+            "clientId",
+            "clientSecret"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authMode": {
+              "const": "managedIdentity"
+            },
+            "clientId": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "required": [
+            "authMode"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authMode": {
+              "const": "workloadIdentity"
+            }
+          },
+          "required": [
+            "authMode"
+          ]
+        }
+      ]
+    },
+    "s3Backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "blob"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accountName": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            }
+          },
+          "required": [
+            "accountName"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/sharedKeyAuth"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "sqsBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "serviceBus"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "managementEndpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "transport": {
+              "type": "string",
+              "enum": [
+                "Rest",
+                "Amqp"
+              ],
+              "default": "Rest"
+            }
+          },
+          "required": [
+            "namespace"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/sasAuth"
+        },
+        "queues": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/queueSettings"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "dynamoDbBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "cosmos"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "databaseName": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "preferredRegions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/nonEmptyString"
+              }
+            }
+          },
+          "required": [
+            "endpoint",
+            "databaseName"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/keyOrAadAuth"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "snsBackend": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/snsServiceBusTopicsBackend"
+        },
+        {
+          "$ref": "#/$defs/snsEventGridBackend"
+        }
+      ]
+    },
+    "snsServiceBusTopicsBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "serviceBusTopics"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^(?:https?|amqps?)://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "managementEndpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            }
+          },
+          "required": [
+            "namespace"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/sasOrAadAuth"
+        },
+        "topics": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/topicSettings"
+          }
+        },
+        "eventGridFallback": {
+          "$ref": "#/$defs/eventGridFallback"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "required": [
+                "eventGridFallback"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "topics": {
+                "type": "object",
+                "propertyNames": {
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/topicSettingsWithoutFallback"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snsEventGridBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "eventGrid"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "namespace": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "topicName": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "endpoint"
+              ]
+            },
+            {
+              "required": [
+                "namespace",
+                "topicName"
+              ]
+            }
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/keyOrAadAuth"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "eventGridFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "eventGrid"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "namespace": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "topicName": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "endpoint"
+              ]
+            },
+            {
+              "required": [
+                "namespace",
+                "topicName"
+              ]
+            }
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/keyOrAadAuth"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "kinesisBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "eventHubs"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^(?:https?|amqps?)://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            }
+          },
+          "required": [
+            "namespace"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/sasOrAadAuth"
+        },
+        "streams": {
+          "type": "object",
+          "propertyNames": {
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/streamSettings"
+          }
+        },
+        "shardIteratorSigningKey": {
+          "type": "string",
+          "description": "Base64-encoded HMAC key that decodes to at least 32 bytes.",
+          "minLength": 44,
+          "contentEncoding": "base64",
+          "pattern": "^(?![A-Za-z0-9\u002B/]{42}==$)(?=.{44,}$)(?:[A-Za-z0-9\u002B/]{4})*(?:[A-Za-z0-9\u002B/]{2}==|[A-Za-z0-9\u002B/]{3}=)?$"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "secretsManagerBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "keyVault"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vaultUrl": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            }
+          },
+          "required": [
+            "vaultUrl"
+          ]
+        },
+        "auth": {
+          "$ref": "#/$defs/aadAuth"
+        }
+      },
+      "required": [
+        "kind",
+        "target",
+        "auth"
+      ]
+    },
+    "sharedKeyAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "sharedKey"
+        },
+        "key": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "mode",
+        "key"
+      ]
+    },
+    "sasAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "sas"
+        },
+        "keyName": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "key": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "mode",
+        "keyName",
+        "key"
+      ]
+    },
+    "managedIdentityAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "managedIdentity"
+        },
+        "clientId": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "clientSecretAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "clientSecret"
+        },
+        "tenantId": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "clientId": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "clientSecret": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "mode",
+        "tenantId",
+        "clientId",
+        "clientSecret"
+      ]
+    },
+    "workloadIdentityAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "workloadIdentity"
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "referenceAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "reference"
+        },
+        "identity": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "required": [
+        "mode",
+        "identity"
+      ]
+    },
+    "aadAuth": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/managedIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/clientSecretAuth"
+        },
+        {
+          "$ref": "#/$defs/workloadIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/referenceAuth"
+        }
+      ]
+    },
+    "keyOrAadAuth": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sharedKeyAuth"
+        },
+        {
+          "$ref": "#/$defs/managedIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/clientSecretAuth"
+        },
+        {
+          "$ref": "#/$defs/workloadIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/referenceAuth"
+        }
+      ]
+    },
+    "sasOrAadAuth": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sasAuth"
+        },
+        {
+          "$ref": "#/$defs/managedIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/clientSecretAuth"
+        },
+        {
+          "$ref": "#/$defs/workloadIdentityAuth"
+        },
+        {
+          "$ref": "#/$defs/referenceAuth"
+        }
+      ]
+    },
+    "queueSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transport": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "Rest",
+            "Amqp",
+            null
+          ]
+        }
+      }
+    },
+    "topicSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "ServiceBusTopics",
+            "EventGrid"
+          ],
+          "default": "ServiceBusTopics"
+        },
+        "serviceBusTopicName": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "eventGridTopicEndpoint": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+        },
+        "eventGridAccessKey": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "topicSettingsWithoutFallback": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "const": "ServiceBusTopics",
+              "default": "ServiceBusTopics"
+            },
+            "serviceBusTopicName": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "const": "EventGrid"
+            },
+            "eventGridTopicEndpoint": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            },
+            "eventGridAccessKey": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          },
+          "required": [
+            "backend",
+            "eventGridTopicEndpoint",
+            "eventGridAccessKey"
+          ]
+        }
+      ]
+    },
+    "streamSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventHubName": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "consumerGroup": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "partitionCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "services"
+        ],
+        "properties": {
+          "services": {
+            "required": [
+              "sns"
+            ],
+            "properties": {
+              "sns": {
+                "required": [
+                  "defaultBackend"
+                ],
+                "properties": {
+                  "defaultBackend": {
+                    "const": "EventGrid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "if": {
+                "required": [
+                  "azure"
+                ],
+                "properties": {
+                  "azure": {
+                    "required": [
+                      "sns"
+                    ],
+                    "properties": {
+                      "sns": {
+                        "required": [
+                          "kind"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "serviceBusTopics"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "azure": {
+                    "properties": {
+                      "sns": {
+                        "required": [
+                          "eventGridFallback"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "services": {
+        "s3": {
+          "enabled": true,
+          "presignedTrustedSigningHosts": [
+            "s3.us-east-1.amazonaws.com"
+          ]
+        },
+        "sqs": {
+          "enabled": true
+        },
+        "dynamodb": {
+          "enabled": true,
+          "useStoredProcedures": "Preferred",
+          "consistencyCheck": "Warn",
+          "cosmosBinaryResponses": false,
+          "cosmosBinaryRequests": false,
+          "enableGlobalSecondaryIndexQueries": true,
+          "enableLocalSecondaryIndexNumericOrdering": false
+        },
+        "sns": {
+          "enabled": true,
+          "defaultBackend": "ServiceBusTopics"
+        },
+        "kinesis": {
+          "enabled": true
+        },
+        "secretsmanager": {
+          "enabled": true
+        }
+      },
+      "azureIdentities": {
+        "operator-mi": {
+          "authMode": "managedIdentity",
+          "clientId": "00000000-0000-0000-0000-000000000000"
+        }
+      },
+      "bindings": [
+        {
+          "aws": {
+            "accessKeyId": "AKIAEXAMPLE",
+            "secretAccessKey": "replace-me"
+          },
+          "azure": {
+            "s3": {
+              "kind": "blob",
+              "target": {
+                "accountName": "storageaccount"
+              },
+              "auth": {
+                "mode": "sharedKey",
+                "key": "replace-me"
+              }
+            },
+            "sqs": {
+              "kind": "serviceBus",
+              "target": {
+                "namespace": "queue-ns",
+                "transport": "Amqp"
+              },
+              "auth": {
+                "mode": "sas",
+                "keyName": "RootManageSharedAccessKey",
+                "key": "replace-me"
+              },
+              "queues": {
+                "orders": {
+                  "transport": "Rest"
+                }
+              }
+            },
+            "dynamodb": {
+              "kind": "cosmos",
+              "target": {
+                "endpoint": "https://account.documents.azure.com/",
+                "databaseName": "orders",
+                "preferredRegions": [
+                  "West US",
+                  "East US"
+                ]
+              },
+              "auth": {
+                "mode": "reference",
+                "identity": "operator-mi"
+              }
+            },
+            "sns": {
+              "kind": "serviceBusTopics",
+              "target": {
+                "namespace": "topic-ns"
+              },
+              "auth": {
+                "mode": "sas",
+                "keyName": "RootManageSharedAccessKey",
+                "key": "replace-me"
+              },
+              "topics": {
+                "orders-*": {
+                  "backend": "EventGrid",
+                  "serviceBusTopicName": "orders"
+                }
+              },
+              "eventGridFallback": {
+                "kind": "eventGrid",
+                "target": {
+                  "endpoint": "https://orders.westus-1.eventgrid.azure.net/api/events"
+                },
+                "auth": {
+                  "mode": "sharedKey",
+                  "key": "replace-me"
+                }
+              }
+            },
+            "kinesis": {
+              "kind": "eventHubs",
+              "target": {
+                "namespace": "events-ns"
+              },
+              "auth": {
+                "mode": "reference",
+                "identity": "operator-mi"
+              },
+              "shardIteratorSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+              "streams": {
+                "orders": {
+                  "eventHubName": "orders-v1",
+                  "consumerGroup": "aws-readers",
+                  "partitionCount": 4
+                }
+              }
+            },
+            "secretsmanager": {
+              "kind": "keyVault",
+              "target": {
+                "vaultUrl": "https://operator-vault.vault.azure.net/"
+              },
+              "auth": {
+                "mode": "reference",
+                "identity": "operator-mi"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
