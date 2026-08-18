@@ -10,10 +10,11 @@ namespace Aws2Azure.GapDocs;
 public sealed class WorkloadGaEvaluationContract
 {
     public int SchemaVersion { get; set; }
-    public string AsOf { get; set; } = string.Empty;
+    public string EvaluatedAsOfUtc { get; set; } = string.Empty;
     public string SourceRepository { get; set; } = string.Empty;
     public string ExpectedCanonicalInputsRevision { get; set; } = string.Empty;
-    public int ExpectedEvaluatorRevision { get; set; }
+    public int ExpectedEvaluatorSchemaVersion { get; set; }
+    public string ExpectedEvaluatorImplementationRevision { get; set; } = string.Empty;
 
     [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
@@ -21,7 +22,7 @@ public sealed class WorkloadGaEvaluationContract
 
 public sealed class WorkloadGaEvaluationMetadata
 {
-    public string EvaluatedAsOf { get; set; } = string.Empty;
+    public string EvaluatedAsOfUtc { get; set; } = string.Empty;
     public string Contract { get; set; } = string.Empty;
     public WorkloadGaSourceIdentity Source { get; set; } = new();
 }
@@ -31,8 +32,10 @@ public sealed class WorkloadGaSourceIdentity
     public string Repository { get; set; } = string.Empty;
     public string CanonicalInputsRevisionType { get; set; } = "normalized_yaml_sha256";
     public string CanonicalInputsRevision { get; set; } = string.Empty;
-    public string EvaluatorRevisionType { get; set; } = "workload_ga_evaluator_schema_version";
-    public int EvaluatorRevision { get; set; }
+    public int EvaluatorSchemaVersion { get; set; }
+    public string EvaluatorImplementationRevisionType { get; set; } =
+        "gapdocs_evaluator_implementation_sha256";
+    public string EvaluatorImplementationRevision { get; set; } = string.Empty;
     public List<string> CanonicalInputRoots { get; set; } =
     [
         "docs/gaps/**/*.yaml",
@@ -41,6 +44,13 @@ public sealed class WorkloadGaSourceIdentity
     public List<string> ExcludedCanonicalInputs { get; set; } =
     [
         WorkloadGaEvaluationMetadataBuilder.ContractPath,
+    ];
+    public List<string> EvaluatorImplementationRoots { get; set; } =
+    [
+        "tools/Aws2Azure.GapDocs/**/*.cs",
+        "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+        "Directory.Build.props",
+        "global.json",
     ];
 }
 
@@ -101,26 +111,35 @@ public static class WorkloadGaEvaluationContractLoader
             throw new FileNotFoundException("Workload GA evaluation contract not found", path);
         }
 
+        return Load(File.ReadAllBytes(path), path);
+    }
+
+    public static WorkloadGaEvaluationContract Load(
+        ReadOnlyMemory<byte> bytes,
+        string sourceFile)
+    {
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .WithDuplicateKeyChecking()
             .Build();
-        using var reader = new StreamReader(path);
+        using var stream = new MemoryStream(bytes.ToArray(), writable: false);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         var contract = deserializer.Deserialize<WorkloadGaEvaluationContract>(reader)
-            ?? throw new InvalidDataException($"{path}: empty document");
-        contract.SourceFile = path;
+            ?? throw new InvalidDataException($"{sourceFile}: empty document");
+        contract.SourceFile = sourceFile;
         return contract;
     }
 }
 
 public static class WorkloadGaEvaluationContractValidator
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public static IReadOnlyList<string> Validate(
         WorkloadGaEvaluationContract contract,
-        DateOnly trustedCurrentDate,
-        string? canonicalInputsRevision = null)
+        DateTimeOffset trustedUtcNow,
+        string? canonicalInputsRevision = null,
+        string? evaluatorImplementationRevision = null)
     {
         var errors = new List<string>();
         var source = string.IsNullOrWhiteSpace(contract.SourceFile)
@@ -134,20 +153,20 @@ public static class WorkloadGaEvaluationContractValidator
                 $"unsupported schema_version '{contract.SchemaVersion}'; " +
                 $"expected {CurrentSchemaVersion}");
         }
-        if (!DateOnly.TryParseExact(
-                contract.AsOf,
-                "yyyy-MM-dd",
+        if (!DateTimeOffset.TryParseExact(
+                contract.EvaluatedAsOfUtc,
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
                 CultureInfo.InvariantCulture,
-                DateTimeStyles.None,
-                out var asOf))
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var evaluatedAsOfUtc))
         {
-            Err("as_of must be a calendar date in yyyy-MM-dd format");
+            Err("evaluated_as_of_utc must be an exact UTC instant in yyyy-MM-ddTHH:mm:ssZ format");
         }
-        else if (asOf > trustedCurrentDate)
+        else if (evaluatedAsOfUtc > trustedUtcNow.ToUniversalTime())
         {
             Err(
-                $"as_of '{contract.AsOf}' must not be later than trusted UTC date " +
-                $"'{trustedCurrentDate:yyyy-MM-dd}'");
+                $"evaluated_as_of_utc '{contract.EvaluatedAsOfUtc}' must not be later than " +
+                $"trusted UTC instant '{trustedUtcNow.ToUniversalTime():yyyy-MM-ddTHH:mm:ssZ}'");
         }
         if (string.IsNullOrWhiteSpace(contract.SourceRepository)
             || contract.SourceRepository.Count(character => character == '/') != 1
@@ -161,14 +180,19 @@ public static class WorkloadGaEvaluationContractValidator
             canonicalInputsRevision,
             "expected_canonical_inputs_revision",
             Err);
-        if (contract.ExpectedEvaluatorRevision
-            != WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision)
+        if (contract.ExpectedEvaluatorSchemaVersion
+            != WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorSchemaVersion)
         {
             Err(
-                $"expected_evaluator_revision '{contract.ExpectedEvaluatorRevision}' " +
+                $"expected_evaluator_schema_version '{contract.ExpectedEvaluatorSchemaVersion}' " +
                 $"does not match evaluator schema revision " +
-                $"'{WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision}'");
+                $"'{WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorSchemaVersion}'");
         }
+        ValidateSha256Revision(
+            contract.ExpectedEvaluatorImplementationRevision,
+            evaluatorImplementationRevision,
+            "expected_evaluator_implementation_revision",
+            Err);
 
         return errors;
     }
@@ -199,40 +223,43 @@ public static class WorkloadGaEvaluationContractValidator
 public static class WorkloadGaEvaluationMetadataBuilder
 {
     public const string ContractPath = "docs/workloads/certification/authority.yaml";
-    public const int CurrentEvaluatorRevision = 2;
+    public const int CurrentEvaluatorSchemaVersion = 3;
 
-    public static WorkloadGaEvaluationMetadata Build(
-        WorkloadGaEvaluationContract contract,
-        string repoRoot)
+    public static WorkloadGaEvaluationMetadata Build(WorkloadGaInputSnapshot snapshot)
     {
-        return BuildFromRevision(
-            contract,
-            ComputeCanonicalInputRevision(repoRoot));
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return BuildFromRevisions(
+            snapshot.Contract,
+            snapshot.CanonicalInputsRevision,
+            snapshot.EvaluatorImplementationRevision);
     }
 
-    public static WorkloadGaEvaluationMetadata BuildFromRevision(
+    private static WorkloadGaEvaluationMetadata BuildFromRevisions(
         WorkloadGaEvaluationContract contract,
-        string canonicalInputsRevision)
+        string canonicalInputsRevision,
+        string evaluatorImplementationRevision)
     {
         return new WorkloadGaEvaluationMetadata
         {
-            EvaluatedAsOf = contract.AsOf,
+            EvaluatedAsOfUtc = contract.EvaluatedAsOfUtc,
             Contract = ContractPath,
             Source = new WorkloadGaSourceIdentity
             {
                 Repository = contract.SourceRepository,
                 CanonicalInputsRevision = canonicalInputsRevision,
-                EvaluatorRevision = CurrentEvaluatorRevision,
+                EvaluatorSchemaVersion = CurrentEvaluatorSchemaVersion,
+                EvaluatorImplementationRevision = evaluatorImplementationRevision,
             },
         };
     }
 
-    public static DateOnly ParseAsOf(WorkloadGaEvaluationContract contract) =>
-        DateOnly.ParseExact(
-            contract.AsOf,
-            "yyyy-MM-dd",
+    public static DateTimeOffset ParseEvaluatedAsOfUtc(
+        WorkloadGaEvaluationContract contract) =>
+        DateTimeOffset.ParseExact(
+            contract.EvaluatedAsOfUtc,
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
             CultureInfo.InvariantCulture,
-            DateTimeStyles.None);
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
 
     public static string ComputeCanonicalInputRevision(string repoRoot)
     {
@@ -240,24 +267,13 @@ public static class WorkloadGaEvaluationMetadataBuilder
         return ComputeNormalizedTextRevision(repoRoot, canonicalFiles);
     }
 
-    public static IReadOnlyList<string> ValidateCanonicalInputSnapshot(
-        string repoRoot,
-        string initialRevision)
+    public static string ComputeEvaluatorImplementationRevision(string repoRoot)
     {
-        var currentRevision = ComputeCanonicalInputRevision(repoRoot);
-        if (currentRevision.Equals(initialRevision, StringComparison.Ordinal))
-        {
-            return [];
-        }
-
-        return
-        [
-            $"canonical inputs changed during evaluation: started at '{initialRevision}', " +
-            $"now '{currentRevision}'",
-        ];
+        var evaluatorFiles = EnumerateEvaluatorImplementationFiles(repoRoot);
+        return ComputeNormalizedTextRevision(repoRoot, evaluatorFiles);
     }
 
-    private static string ComputeNormalizedTextRevision(
+    internal static string ComputeNormalizedTextRevision(
         string repoRoot,
         IReadOnlyList<string> files)
     {
@@ -277,7 +293,27 @@ public static class WorkloadGaEvaluationMetadataBuilder
         return "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
-    private static IReadOnlyList<string> EnumerateCanonicalFiles(string repoRoot)
+    internal static string ComputeNormalizedTextRevision(
+        IReadOnlyDictionary<string, byte[]> files)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var (relativePath, bytes) in files.OrderBy(
+                     pair => pair.Key,
+                     StringComparer.Ordinal))
+        {
+            Append(hash, relativePath);
+            Append(hash, "\n");
+            var content = Encoding.UTF8.GetString(bytes)
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace("\r", "\n", StringComparison.Ordinal);
+            Append(hash, content);
+            Append(hash, "\n\0");
+        }
+
+        return "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    internal static IReadOnlyList<string> EnumerateCanonicalFiles(string repoRoot)
     {
         var roots = new[]
         {
@@ -306,23 +342,259 @@ public static class WorkloadGaEvaluationMetadataBuilder
             .ToList();
     }
 
+    internal static IReadOnlyList<string> EnumerateEvaluatorImplementationFiles(string repoRoot)
+    {
+        var toolRoot = Path.Combine(repoRoot, "tools", "Aws2Azure.GapDocs");
+        if (!Directory.Exists(toolRoot))
+        {
+            throw new DirectoryNotFoundException(
+                $"GapDocs evaluator source directory not found: {toolRoot}");
+        }
+
+        var files = Directory.EnumerateFiles(toolRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains(
+                    $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                    StringComparison.Ordinal)
+                && !path.Contains(
+                    $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                    StringComparison.Ordinal))
+            .ToList();
+        foreach (var relativePath in new[]
+                 {
+                     "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+                     "Directory.Build.props",
+                     "global.json",
+                 })
+        {
+            var path = Path.Combine(
+                repoRoot,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path))
+            {
+                throw new FileNotFoundException(
+                    $"GapDocs evaluator implementation input not found: {relativePath}",
+                    path);
+            }
+            files.Add(path);
+        }
+
+        return files
+            .OrderBy(
+                path => Path.GetRelativePath(repoRoot, path).Replace('\\', '/'),
+                StringComparer.Ordinal)
+            .ToList();
+    }
+
     private static void Append(IncrementalHash hash, string value) =>
         hash.AppendData(Encoding.UTF8.GetBytes(value));
+}
+
+public sealed class WorkloadGaInputSnapshot : IDisposable
+{
+    private readonly string snapshotRoot;
+
+    private WorkloadGaInputSnapshot(
+        string snapshotRoot,
+        WorkloadGaEvaluationContract contract,
+        string canonicalInputsRevision,
+        string evaluatorImplementationRevision)
+    {
+        this.snapshotRoot = snapshotRoot;
+        Contract = contract;
+        CanonicalInputsRevision = canonicalInputsRevision;
+        EvaluatorImplementationRevision = evaluatorImplementationRevision;
+    }
+
+    public string RootPath => snapshotRoot;
+    public WorkloadGaEvaluationContract Contract { get; }
+    public string CanonicalInputsRevision { get; }
+    public string EvaluatorImplementationRevision { get; }
+
+    public static WorkloadGaInputSnapshot Capture(string repoRoot)
+    {
+        var fullRepoRoot = Path.GetFullPath(repoRoot);
+        var contractPath = Path.Combine(
+            fullRepoRoot,
+            WorkloadGaEvaluationMetadataBuilder.ContractPath
+                .Replace('/', Path.DirectorySeparatorChar));
+        var contractBytes = CaptureRegularFile(fullRepoRoot, contractPath);
+        var canonicalFiles = CaptureFiles(
+            fullRepoRoot,
+            WorkloadGaEvaluationMetadataBuilder.EnumerateCanonicalFiles(fullRepoRoot));
+        var evaluatorFiles = CaptureFiles(
+            fullRepoRoot,
+            WorkloadGaEvaluationMetadataBuilder.EnumerateEvaluatorImplementationFiles(
+                fullRepoRoot));
+        var canonicalInputsRevision =
+            WorkloadGaEvaluationMetadataBuilder.ComputeNormalizedTextRevision(canonicalFiles);
+        var evaluatorImplementationRevision =
+            WorkloadGaEvaluationMetadataBuilder.ComputeNormalizedTextRevision(evaluatorFiles);
+
+        var snapshotRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"aws2azure-workload-ga-snapshot-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(snapshotRoot);
+            Materialize(
+                snapshotRoot,
+                WorkloadGaEvaluationMetadataBuilder.ContractPath,
+                contractBytes);
+            foreach (var (relativePath, bytes) in canonicalFiles)
+            {
+                Materialize(snapshotRoot, relativePath, bytes);
+            }
+
+            var contract = WorkloadGaEvaluationContractLoader.Load(
+                contractBytes,
+                WorkloadGaEvaluationMetadataBuilder.ContractPath);
+            return new WorkloadGaInputSnapshot(
+                snapshotRoot,
+                contract,
+                canonicalInputsRevision,
+                evaluatorImplementationRevision);
+        }
+        catch
+        {
+            DeleteSnapshotDirectory(snapshotRoot);
+            throw;
+        }
+    }
+
+    public string GetPath(string repoRelativePath)
+    {
+        var normalized = repoRelativePath.Replace('\\', '/');
+        var fullPath = Path.GetFullPath(
+            normalized.Replace('/', Path.DirectorySeparatorChar),
+            snapshotRoot);
+        var relative = Path.GetRelativePath(snapshotRoot, fullPath);
+        if (relative.StartsWith("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relative)
+            || !File.Exists(fullPath))
+        {
+            throw new InvalidDataException(
+                $"'{repoRelativePath}' is not part of the workload authority snapshot.");
+        }
+        return fullPath;
+    }
+
+    public void Dispose()
+    {
+        DeleteSnapshotDirectory(snapshotRoot);
+    }
+
+    private static Dictionary<string, byte[]> CaptureFiles(
+        string repoRoot,
+        IReadOnlyList<string> paths)
+    {
+        var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        foreach (var path in paths)
+        {
+            var relativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+            files.Add(relativePath, CaptureRegularFile(repoRoot, path));
+        }
+        return files;
+    }
+
+    private static byte[] CaptureRegularFile(string repoRoot, string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath) || ContainsReparsePoint(repoRoot, fullPath))
+        {
+            throw new InvalidDataException(
+                $"Workload authority input '{path}' must be a regular repository file.");
+        }
+        return File.ReadAllBytes(fullPath);
+    }
+
+    internal static bool ContainsReparsePoint(string root, string path)
+    {
+        var fullRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(path);
+        var relative = Path.GetRelativePath(fullRoot, fullPath);
+        if (relative.StartsWith("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relative))
+        {
+            return true;
+        }
+
+        var current = fullRoot;
+        foreach (var segment in relative.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void Materialize(string root, string relativePath, byte[] bytes)
+    {
+        var path = Path.Combine(
+            root,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+    }
+
+    private static void DeleteSnapshotDirectory(string root)
+    {
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+        Directory.Delete(root, recursive: true);
+    }
+}
+
+public static class WorkloadGaAuthoritativeManifest
+{
+    public static string ResolveRelativePath(string repoRoot, string manifestPath)
+    {
+        var workloadsRoot = Path.GetFullPath(
+            Path.Combine(repoRoot, "docs", "workloads"));
+        var fullPath = Path.GetFullPath(manifestPath);
+        var relativeToWorkloads = Path.GetRelativePath(workloadsRoot, fullPath);
+        if (relativeToWorkloads.StartsWith("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relativeToWorkloads)
+            || !Path.GetExtension(fullPath).Equals(".yaml", StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(fullPath)
+            || WorkloadGaInputSnapshot.ContainsReparsePoint(workloadsRoot, fullPath))
+        {
+            throw new InvalidDataException(
+                "Authoritative certification manifests must be regular .yaml files under " +
+                "docs/workloads and must not traverse symbolic links.");
+        }
+
+        return Path.GetRelativePath(Path.GetFullPath(repoRoot), fullPath).Replace('\\', '/');
+    }
 }
 
 public static class WorkloadGaTemporalValidator
 {
     public static IReadOnlyList<string> ValidateQualification(
         SloQualificationDocument qualification,
-        DateOnly evaluatedAsOf)
+        DateTimeOffset evaluatedAsOfUtc)
     {
         var errors = new List<string>();
-        var cutoff = EndOfDay(evaluatedAsOf);
+        var cutoff = evaluatedAsOfUtc.ToUniversalTime();
         void Check(DateTimeOffset value, string field)
         {
             if (value != default && value.ToUniversalTime() > cutoff)
             {
-                errors.Add($"{field} postdates evaluated_as_of '{evaluatedAsOf:yyyy-MM-dd}'");
+                errors.Add(
+                    $"{field} postdates evaluated_as_of_utc " +
+                    $"'{cutoff:yyyy-MM-ddTHH:mm:ssZ}'");
             }
         }
 
@@ -392,15 +664,17 @@ public static class WorkloadGaTemporalValidator
 
     public static IReadOnlyList<string> ValidateApprovedRuntime(
         ApprovedRuntimeRecord record,
-        DateOnly evaluatedAsOf)
+        DateTimeOffset evaluatedAsOfUtc)
     {
         var errors = new List<string>();
-        var cutoff = EndOfDay(evaluatedAsOf);
+        var cutoff = evaluatedAsOfUtc.ToUniversalTime();
         void Check(DateTimeOffset value, string field)
         {
             if (value != default && value.ToUniversalTime() > cutoff)
             {
-                errors.Add($"{field} postdates evaluated_as_of '{evaluatedAsOf:yyyy-MM-dd}'");
+                errors.Add(
+                    $"{field} postdates evaluated_as_of_utc " +
+                    $"'{cutoff:yyyy-MM-ddTHH:mm:ssZ}'");
             }
         }
 
@@ -422,9 +696,6 @@ public static class WorkloadGaTemporalValidator
         return errors;
     }
 
-    private static DateTimeOffset EndOfDay(DateOnly date) =>
-        new(date.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
-
     private static void CheckRuntime(
         QualificationSealedRuntimeIdentity? identity,
         string prefix,
@@ -441,7 +712,7 @@ public static class WorkloadGaTemporalValidator
 
 public sealed class WorkloadGaCertificationIndex
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public WorkloadGaEvaluationMetadata Evaluation { get; set; } = new();
     public WorkloadGaAuthorityMetadata Authority { get; set; } = new();
     public List<WorkloadGaReport> Profiles { get; set; } = new();
@@ -449,7 +720,7 @@ public sealed class WorkloadGaCertificationIndex
 
 public sealed class WorkloadGaProfileCertification
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public WorkloadGaEvaluationMetadata Evaluation { get; set; } = new();
     public WorkloadGaAuthorityMetadata Authority { get; set; } = new();
     public WorkloadGaReport Profile { get; set; } = new();

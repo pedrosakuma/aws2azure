@@ -96,39 +96,41 @@ static int RunGapDocs(
     try
     {
         var options = CommandLineOptions.Parse(args);
-        var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
-            Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
-        var canonicalInputsRevision =
-            WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(repoRoot);
+        using var inputSnapshot = WorkloadGaInputSnapshot.Capture(repoRoot);
+        var evaluationContract = inputSnapshot.Contract;
         var evaluationContractErrors =
             WorkloadGaEvaluationContractValidator.Validate(
                 evaluationContract,
-                DateOnly.FromDateTime(DateTime.UtcNow),
-                canonicalInputsRevision);
+                DateTimeOffset.UtcNow,
+                inputSnapshot.CanonicalInputsRevision,
+                inputSnapshot.EvaluatorImplementationRevision);
         if (evaluationContractErrors.Count > 0)
         {
             WriteErrors("workload GA evaluation contract", evaluationContractErrors);
             return 1;
         }
-        var evaluatedAsOf = WorkloadGaEvaluationMetadataBuilder.ParseAsOf(evaluationContract);
-        var evaluatedAt = new DateTimeOffset(
-            evaluatedAsOf.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+        var evaluatedAsOfUtc =
+            WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(evaluationContract);
+        var evaluatedDate = DateOnly.FromDateTime(evaluatedAsOfUtc.UtcDateTime);
+        var snapshotGapsRoot = Path.Combine(inputSnapshot.RootPath, "docs", "gaps");
+        var snapshotWorkloadsRoot =
+            Path.Combine(inputSnapshot.RootPath, "docs", "workloads");
         var matrixPath = options.MatrixPath is null
             ? Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml")
             : Path.GetFullPath(options.MatrixPath);
 
-        Console.WriteLine($"[gap-docs] loading YAMLs under {gapsRoot}");
-        var docs = Loader.LoadAll(gapsRoot);
-        var designDocs = Loader.LoadDesignDocs(gapsRoot);
-        var migration = Loader.LoadRealAzureMigration(gapsRoot);
+        Console.WriteLine($"[gap-docs] loading authoritative YAML snapshot for {gapsRoot}");
+        var docs = Loader.LoadAll(snapshotGapsRoot);
+        var designDocs = Loader.LoadDesignDocs(snapshotGapsRoot);
+        var migration = Loader.LoadRealAzureMigration(snapshotGapsRoot);
         var matrix = ConformanceMatrixLoader.Load(matrixPath);
-        var workloadManifests = WorkloadGaManifestLoader.LoadAll(workloadsRoot);
+        var workloadManifests = WorkloadGaManifestLoader.LoadAll(snapshotWorkloadsRoot);
         var approvedRuntimes = ApprovedRuntimeLedgerLoader.LoadAll(
-            Path.Combine(workloadsRoot, "approved-runtimes"));
+            Path.Combine(snapshotWorkloadsRoot, "approved-runtimes"));
         var observationPolicies = RcObservationPolicyLoader.LoadAll(
-            Path.Combine(workloadsRoot, "observation"));
+            Path.Combine(snapshotWorkloadsRoot, "observation"));
         var errors = new List<string>();
-        errors.AddRange(Validator.Validate(docs, migration, evaluatedAsOf));
+        errors.AddRange(Validator.Validate(docs, migration, evaluatedDate));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
         errors.AddRange(ConformanceMatrixValidator.Validate(matrix, docs));
         foreach (var manifest in workloadManifests)
@@ -138,12 +140,12 @@ static int RunGapDocs(
         errors.AddRange(ApprovedRuntimeLedgerValidator.Validate(
             approvedRuntimes,
             workloadManifests,
-            evaluatedAt));
+            evaluatedAsOfUtc));
         errors.AddRange(RcObservationPolicyValidator.Validate(
             observationPolicies,
             workloadManifests,
             approvedRuntimes,
-            workloadsRoot));
+            snapshotWorkloadsRoot));
         if (errors.Count > 0)
         {
             WriteErrors("gap-doc validation", errors);
@@ -217,26 +219,15 @@ static int RunGapDocs(
             return 0;
         }
 
-        var evaluation = WorkloadGaEvaluationMetadataBuilder.BuildFromRevision(
-            evaluationContract,
-            canonicalInputsRevision);
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(inputSnapshot);
         var workloadReports = workloadManifests
             .Select(manifest => WorkloadGaEvaluator.Evaluate(
                 manifest,
                 docs,
                 designDocs,
-                repoRoot,
-                evaluatedAsOf))
+                inputSnapshot.RootPath,
+                evaluatedAsOfUtc))
             .ToList();
-        var snapshotErrors =
-            WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
-                repoRoot,
-                canonicalInputsRevision);
-        if (snapshotErrors.Count > 0)
-        {
-            WriteErrors("workload GA canonical snapshot", snapshotErrors);
-            return 1;
-        }
 
         MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
         Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
@@ -306,28 +297,33 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
 
     try
     {
-        var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
-            Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
-        var canonicalInputsRevision =
-            WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(repoRoot);
+        var manifestRelativePath =
+            WorkloadGaAuthoritativeManifest.ResolveRelativePath(repoRoot, manifestPath);
+        using var inputSnapshot = WorkloadGaInputSnapshot.Capture(repoRoot);
+        var evaluationContract = inputSnapshot.Contract;
         var evaluationContractErrors =
             WorkloadGaEvaluationContractValidator.Validate(
                 evaluationContract,
-                DateOnly.FromDateTime(DateTime.UtcNow),
-                canonicalInputsRevision);
+                DateTimeOffset.UtcNow,
+                inputSnapshot.CanonicalInputsRevision,
+                inputSnapshot.EvaluatorImplementationRevision);
         if (evaluationContractErrors.Count > 0)
         {
             WriteErrors("workload GA evaluation contract", evaluationContractErrors);
             return 1;
         }
-        var evaluatedAsOf = WorkloadGaEvaluationMetadataBuilder.ParseAsOf(evaluationContract);
-        var docs = Loader.LoadAll(gapsRoot);
-        var designDocs = Loader.LoadDesignDocs(gapsRoot);
-        var migration = Loader.LoadRealAzureMigration(gapsRoot);
+        var evaluatedAsOfUtc =
+            WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(evaluationContract);
+        var evaluatedDate = DateOnly.FromDateTime(evaluatedAsOfUtc.UtcDateTime);
+        var snapshotGapsRoot = Path.Combine(inputSnapshot.RootPath, "docs", "gaps");
+        var docs = Loader.LoadAll(snapshotGapsRoot);
+        var designDocs = Loader.LoadDesignDocs(snapshotGapsRoot);
+        var migration = Loader.LoadRealAzureMigration(snapshotGapsRoot);
         var errors = new List<string>();
-        errors.AddRange(Validator.Validate(docs, migration, evaluatedAsOf));
+        errors.AddRange(Validator.Validate(docs, migration, evaluatedDate));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
-        var manifest = WorkloadGaManifestLoader.Load(manifestPath);
+        var manifest = WorkloadGaManifestLoader.Load(
+            inputSnapshot.GetPath(manifestRelativePath));
         errors.AddRange(WorkloadGaManifestValidator.Validate(manifest, docs, designDocs));
         if (errors.Count > 0)
         {
@@ -339,20 +335,9 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
             manifest,
             docs,
             designDocs,
-            repoRoot,
-            evaluatedAsOf);
-        var evaluation = WorkloadGaEvaluationMetadataBuilder.BuildFromRevision(
-            evaluationContract,
-            canonicalInputsRevision);
-        var snapshotErrors =
-            WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
-                repoRoot,
-                canonicalInputsRevision);
-        if (snapshotErrors.Count > 0)
-        {
-            WriteErrors("workload GA canonical snapshot", snapshotErrors);
-            return 1;
-        }
+            inputSnapshot.RootPath,
+            evaluatedAsOfUtc);
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(inputSnapshot);
         var content = format == "json"
             ? WorkloadGaRenderer.RenderJson(report, evaluation) + Environment.NewLine
             : WorkloadGaRenderer.RenderMarkdown(report, evaluation);

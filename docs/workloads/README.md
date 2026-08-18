@@ -90,19 +90,33 @@ The default gap-doc generation writes the same aggregate verdicts to
 manifest independently and rejects stale generated output.
 
 `certification/authority.yaml` is the explicit, versioned evaluation contract.
-Its `as_of` date cannot be later than the trusted UTC date used by validation.
-Generation never inserts that wall-clock date into output. The contract binds
-the evaluation to both `expected_canonical_inputs_revision` (normalized YAML
-below `docs/gaps/` and `docs/workloads/`, excluding the authority contract
-itself) and `expected_evaluator_revision` (the explicit workload-GA evaluator
-behavior schema). A canonical input change fails validation until the expected
-hash is deliberately reviewed and updated; a behavior change must increment the
-evaluator revision in code and in the contract. The generator also re-hashes
-canonical inputs after loading and evaluation, before writing output, and
-aborts if the filesystem snapshot changed while it built the in-memory reports.
-Rendering then uses those validated in-memory objects. Paths and line endings
-are normalized before hashing, so the input identity is checkout-independent
-and reproducible.
+Its `evaluated_as_of_utc` is an exact, deterministic UTC instant and cannot be
+later than the trusted `UtcNow` used by validation. Every timestamped evidence,
+approval, qualification, runtime, rollback, and revocation cutoff uses that
+exact instant; generation never substitutes the wall clock into output.
+
+At startup the authoritative generation and certification paths capture the
+authority contract plus every canonical YAML input into one private immutable
+byte snapshot. The normalized canonical hash is derived from those captured
+bytes, and all parsing and evaluation reads the materialized snapshot rather
+than returning to the working tree. The authority contract is captured and
+parsed from the same snapshot but excluded from the canonical hash to avoid a
+circular expected-hash dependency. A source edit after capture therefore
+cannot alter the bytes being evaluated or published.
+
+The contract separately pins
+`expected_evaluator_implementation_revision`, a reproducible digest over all
+GapDocs C# sources plus its project, repository build properties, and pinned SDK
+definition. `expected_evaluator_schema_version` describes the output/evaluator
+format only; it is not presented as implementation identity. Canonical or
+implementation changes fail validation until their expected digests are
+deliberately reviewed and updated. Paths and line endings are normalized before
+hashing, so both identities are checkout-independent and reproducible.
+
+`certify-workload` only issues authoritative output for regular, non-symlink
+`.yaml` manifests under `docs/workloads`; those bytes are therefore part of the
+canonical identity. `check-workload` remains available for non-authoritative
+inspection of arbitrary manifests.
 
 For current workload adoption, the generated workload certification has the
 highest precedence. Profile manifests and gap docs are normative inputs,
@@ -110,8 +124,8 @@ release notes are immutable historical records of what was promoted at that
 time, and guides are explanatory only. A historical GA release claim never
 overrides a later `candidate`, `conditional`, or `blocked` certification
 verdict. Because the certification is point-in-time, consumers must also check
-`evaluated_as_of`, the canonical-input revision, and the evaluator revision
-rather than treating any verdict as permanent.
+`evaluated_as_of_utc`, the canonical-input revision, and the evaluator
+implementation revision rather than treating any verdict as permanent.
 
 Profile-specific adoption guidance:
 

@@ -370,8 +370,9 @@ public static class WorkloadGaEvaluator
         IReadOnlyList<OperationDoc> operationDocs,
         IReadOnlyList<ServiceDesignDoc> designDocs,
         string repoRoot,
-        DateOnly currentDate)
+        DateTimeOffset evaluatedAsOfUtc)
     {
+        var evaluatedDate = DateOnly.FromDateTime(evaluatedAsOfUtc.UtcDateTime);
         var report = new WorkloadGaReport
         {
             ProfileId = manifest.Id,
@@ -438,7 +439,7 @@ public static class WorkloadGaEvaluator
 
             var sealState = GetSealState(
                 doc.VerifiedRealAzure,
-                currentDate,
+                evaluatedDate,
                 manifest.RealAzureSealMaxAgeDays);
             if (sealState != "fresh")
             {
@@ -502,7 +503,7 @@ public static class WorkloadGaEvaluator
             }
             var sealState = GetSealState(
                 subFeature.VerifiedRealAzure,
-                currentDate,
+                evaluatedDate,
                 manifest.RealAzureSealMaxAgeDays);
             if (sealState != "fresh")
             {
@@ -597,11 +598,11 @@ public static class WorkloadGaEvaluator
         qualification.SourceFile = ToRepoRelativePath(resolvedPath, repoRoot);
         var qualificationErrors = SloQualificationValidator.Validate(
                 qualification,
-                currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
+                evaluatedAsOfUtc,
                 qualificationPath)
             .ToList();
         qualificationErrors.AddRange(
-            WorkloadGaTemporalValidator.ValidateQualification(qualification, currentDate)
+            WorkloadGaTemporalValidator.ValidateQualification(qualification, evaluatedAsOfUtc)
                 .Select(error => $"{qualificationPath}: {error}"));
         foreach (var error in qualificationErrors)
         {
@@ -613,7 +614,7 @@ public static class WorkloadGaEvaluator
                 qualification,
                 report,
                 repoRoot,
-                currentDate)
+                evaluatedAsOfUtc)
             || qualification.Verdict != "qualified")
         {
             report.Verdict = "candidate";
@@ -636,7 +637,7 @@ public static class WorkloadGaEvaluator
         SloQualificationDocument qualification,
         WorkloadGaReport report,
         string repoRoot,
-        DateOnly currentDate)
+        DateTimeOffset evaluatedAsOfUtc)
     {
         var matches = true;
         if (!qualification.Profile.Id.Equals(manifest.Id, StringComparison.Ordinal)
@@ -703,10 +704,12 @@ public static class WorkloadGaEvaluator
                 var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
                         [ledger],
                         [manifest],
-                        currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc))
+                        evaluatedAsOfUtc)
                     .ToList();
                 ledgerErrors.AddRange(
-                    WorkloadGaTemporalValidator.ValidateApprovedRuntime(ledger, currentDate)
+                    WorkloadGaTemporalValidator.ValidateApprovedRuntime(
+                            ledger,
+                            evaluatedAsOfUtc)
                         .Select(error => $"{ledger.SourceFile}: {error}"));
                 if (ledgerErrors.Count > 0)
                 {
@@ -723,13 +726,13 @@ public static class WorkloadGaEvaluator
                     manifest.Version,
                     qualification.Candidate.GitSha,
                     qualification.Candidate.ArtifactDigest,
-                    currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                    evaluatedAsOfUtc);
                 if (ledger.Status == "approved")
                 {
                     SealedRuntimeEvidenceValidator.ValidateApprovedCandidate(
                         qualification.Candidate.Runtime,
                         ledger,
-                        currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                        evaluatedAsOfUtc);
                     ValidateApprovedQualification(manifest, qualification, ledger, repoRoot);
                     var rollbackTarget = ledger.Qualification!.RollbackTarget!;
                     foreach (var proof in qualification.RollbackProofs)
@@ -737,7 +740,7 @@ public static class WorkloadGaEvaluator
                         SealedRuntimeEvidenceValidator.ValidateRollbackTarget(
                             proof.Prior,
                             rollbackTarget,
-                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                            evaluatedAsOfUtc);
                     }
                 }
                 else
@@ -747,7 +750,7 @@ public static class WorkloadGaEvaluator
                         SealedRuntimeEvidenceValidator.ValidatePrior(
                             proof.Prior,
                             ledger,
-                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                            evaluatedAsOfUtc);
                     }
                 }
             }
@@ -939,7 +942,7 @@ public static class WorkloadGaRenderer
         WorkloadGaEvaluationMetadata evaluation)
     {
         builder.AppendLine(
-            $"> **Current adoption authority (as of `{evaluation.EvaluatedAsOf}`):** " +
+            $"> **Current adoption authority (as of `{evaluation.EvaluatedAsOfUtc}`):** " +
             "This generated certification has the highest precedence for current workload adoption. " +
             "Release notes are immutable historical records and cannot override a current " +
             "`candidate`, `conditional`, or `blocked` verdict.");
@@ -947,9 +950,10 @@ public static class WorkloadGaRenderer
         builder.AppendLine(
             $"> Source repository: `{evaluation.Source.Repository}`; canonical inputs: " +
             $"`{evaluation.Source.CanonicalInputsRevisionType}:" +
-            $"{evaluation.Source.CanonicalInputsRevision["sha256:".Length..]}`; evaluator: " +
-            $"`{evaluation.Source.EvaluatorRevisionType}:" +
-            $"{evaluation.Source.EvaluatorRevision}`; " +
+            $"{evaluation.Source.CanonicalInputsRevision["sha256:".Length..]}`; evaluator schema: " +
+            $"`{evaluation.Source.EvaluatorSchemaVersion}`; evaluator implementation: " +
+            $"`{evaluation.Source.EvaluatorImplementationRevisionType}:" +
+            $"{evaluation.Source.EvaluatorImplementationRevision["sha256:".Length..]}`; " +
             $"contract: `{evaluation.Contract}`.");
         builder.AppendLine();
         builder.AppendLine("## Authority precedence");
