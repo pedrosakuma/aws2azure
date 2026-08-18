@@ -528,11 +528,7 @@ public static class ConfigDocumentTranslator
         {
             throw new ProxyConfigException($"{path}.kind is required.");
         }
-        if (kind.AsSpan().Trim().Length != kind.Length)
-        {
-            throw new ProxyConfigException($"{path}.kind must not contain surrounding whitespace.");
-        }
-        return kind.ToLowerInvariant();
+        return kind.Trim().ToLowerInvariant();
     }
 
     private static ProxyConfigException Invalid(string path, string actual, params string[] expected)

@@ -278,8 +278,8 @@ public enum AzureAuthKind
 }
 
 /// <summary>
-/// Reads defined enum names case-insensitively while rejecting numbers and
-/// surrounding whitespace so operator JSON has one schema-compatible contract.
+/// Reads defined enum names case-insensitively and preserves v1 compatibility
+/// for defined numeric values. Serialization always writes canonical names.
 /// </summary>
 public sealed class CaseInsensitiveStringEnumConverter<TEnum> : JsonConverter<TEnum>
     where TEnum : struct, Enum
@@ -289,9 +289,24 @@ public sealed class CaseInsensitiveStringEnumConverter<TEnum> : JsonConverter<TE
         Type typeToConvert,
         JsonSerializerOptions options)
     {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            if (reader.TryGetInt32(out var numeric))
+            {
+                var parsedNumeric = (TEnum)Enum.ToObject(typeof(TEnum), numeric);
+                if (Enum.IsDefined(parsedNumeric))
+                {
+                    return parsedNumeric;
+                }
+            }
+
+            throw new JsonException(
+                $"Numeric value for {typeof(TEnum).Name} must name a defined member.");
+        }
+
         if (reader.TokenType != JsonTokenType.String)
         {
-            throw new JsonException($"{typeof(TEnum).Name} must be a string.");
+            throw new JsonException($"{typeof(TEnum).Name} must be a string or defined numeric value.");
         }
 
         var value = reader.GetString();

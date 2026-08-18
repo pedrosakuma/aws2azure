@@ -313,27 +313,10 @@ public sealed class ConfigSchemaTests
     }
 
     [Theory]
-    [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": 1 } }, "bindings": [] }""")]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "1" } }, "bindings": [] }""")]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": " Preferred " } }, "bindings": [] }""")]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "Preferred\n" } }, "bindings": [] }""")]
-    [InlineData("""
-        {
-          "bindings": [
-            {
-              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
-              "azure": {
-                "s3": {
-                  "kind": " blob ",
-                  "target": { "accountName": "account" },
-                  "auth": { "key": "key" }
-                }
-              }
-            }
-          ]
-        }
-        """)]
-    public void Numeric_or_whitespace_padded_discriminators_are_rejected(string json)
+    public void Numeric_strings_or_whitespace_padded_enum_names_are_rejected(string json)
     {
         var instance = JsonNode.Parse(json)!;
 
@@ -347,6 +330,101 @@ public sealed class ConfigSchemaTests
         });
         Assert.IsAssignableFrom<Exception>(exception);
         Assert.True(exception is JsonException or ProxyConfigException);
+    }
+
+    [Fact]
+    public void Legacy_numeric_enums_and_whitespace_kind_preserve_translated_meaning()
+    {
+        const string legacyJson = """
+        {
+          "services": {
+            "dynamodb": {
+              "useStoredProcedures": 1,
+              "consistencyCheck": 1
+            }
+          },
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": " BLOB ",
+                  "target": { "accountName": "account" },
+                  "auth": { "mode": 0, "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """;
+        const string canonicalJson = """
+        {
+          "services": {
+            "dynamodb": {
+              "useStoredProcedures": "Preferred",
+              "consistencyCheck": "Warn"
+            }
+          },
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": { "accountName": "account" },
+                  "auth": { "mode": "sharedKey", "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """;
+
+        Assert.False(Evaluate(JsonNode.Parse(legacyJson)!).IsValid);
+        var legacyDocument = JsonSerializer.Deserialize(
+            legacyJson,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var canonicalDocument = JsonSerializer.Deserialize(
+            canonicalJson,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var legacy = ConfigDocumentTranslator.ToProxyConfig(legacyDocument);
+        var canonical = ConfigDocumentTranslator.ToProxyConfig(canonicalDocument);
+
+        Assert.Equal(canonical.DynamoDb.UseStoredProcedures, legacy.DynamoDb.UseStoredProcedures);
+        Assert.Equal(canonical.DynamoDb.ConsistencyCheck, legacy.DynamoDb.ConsistencyCheck);
+        var legacyCredential = Assert.Single(legacy.Credentials);
+        var canonicalCredential = Assert.Single(canonical.Credentials);
+        Assert.Equal(canonicalCredential.Azure.Blob!.AccountName, legacyCredential.Azure.Blob!.AccountName);
+        Assert.Equal(canonicalCredential.Azure.Blob.AccountKey, legacyCredential.Azure.Blob.AccountKey);
+
+        var serialized = JsonSerializer.Serialize(
+            legacyDocument,
+            ConfigDocumentJsonContext.Default.ConfigDocument);
+        Assert.Contains("\"useStoredProcedures\":\"Preferred\"", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"consistencyCheck\":\"Warn\"", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"mode\":\"sharedKey\"", serialized, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(999)]
+    public void Undefined_numeric_enum_values_are_rejected(int value)
+    {
+        var json = $$"""
+        {
+          "services": {
+            "dynamodb": { "useStoredProcedures": {{value}} }
+          },
+          "bindings": []
+        }
+        """;
+
+        Assert.False(Evaluate(JsonNode.Parse(json)!).IsValid);
+        var exception = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize(
+                json,
+                ConfigDocumentJsonContext.Default.ConfigDocument));
+        Assert.Contains("must name a defined member", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -50,9 +50,13 @@ acceptance does not make legacy spellings canonical.
 
 Enum values and backend `kind` discriminators remain case-insensitive for
 compatibility. The spellings shown in this document and the schema defaults are
-canonical. They must be JSON strings naming a defined value; numeric values and
-surrounding whitespace are rejected. Nullable optional properties may be set to JSON `null`, with the
-same effect as omission; semantically required values do not accept `null`.
+canonical. The authoring profile requires JSON strings without surrounding
+whitespace. Runtime reads additionally preserve v1 inputs that use a defined
+numeric enum value or surrounding whitespace on a backend `kind`; serialization
+emits enum names, and new documents should use the canonical strings. Undefined
+numeric enum values, numeric strings, and whitespace-padded enum names are
+rejected. Nullable optional properties may be set to JSON `null`, with the same
+effect as omission; semantically required values do not accept `null`.
 
 ## Services and defaults
 
