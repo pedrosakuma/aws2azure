@@ -96,6 +96,18 @@ static int RunGapDocs(
     try
     {
         var options = CommandLineOptions.Parse(args);
+        var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
+            Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
+        var evaluationContractErrors =
+            WorkloadGaEvaluationContractValidator.Validate(evaluationContract);
+        if (evaluationContractErrors.Count > 0)
+        {
+            WriteErrors("workload GA evaluation contract", evaluationContractErrors);
+            return 1;
+        }
+        var evaluatedAsOf = WorkloadGaEvaluationMetadataBuilder.ParseAsOf(evaluationContract);
+        var evaluatedAt = new DateTimeOffset(
+            evaluatedAsOf.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
         var matrixPath = options.MatrixPath is null
             ? Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml")
             : Path.GetFullPath(options.MatrixPath);
@@ -111,7 +123,7 @@ static int RunGapDocs(
         var observationPolicies = RcObservationPolicyLoader.LoadAll(
             Path.Combine(workloadsRoot, "observation"));
         var errors = new List<string>();
-        errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
+        errors.AddRange(Validator.Validate(docs, migration, evaluatedAsOf));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
         errors.AddRange(ConformanceMatrixValidator.Validate(matrix, docs));
         foreach (var manifest in workloadManifests)
@@ -121,7 +133,7 @@ static int RunGapDocs(
         errors.AddRange(ApprovedRuntimeLedgerValidator.Validate(
             approvedRuntimes,
             workloadManifests,
-            DateTimeOffset.UtcNow));
+            evaluatedAt));
         errors.AddRange(RcObservationPolicyValidator.Validate(
             observationPolicies,
             workloadManifests,
@@ -202,16 +214,18 @@ static int RunGapDocs(
 
         MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
         Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(evaluationContract, repoRoot);
         var workloadReports = workloadManifests
             .Select(manifest => WorkloadGaEvaluator.Evaluate(
                 manifest,
                 docs,
                 designDocs,
                 repoRoot,
-                DateOnly.FromDateTime(DateTime.UtcNow)))
+                evaluatedAsOf))
             .ToList();
         WorkloadGaRenderer.RenderIndex(
             workloadReports,
+            evaluation,
             Path.Combine(siteRoot, "workload-ga.md"),
             Path.Combine(siteRoot, "workload-ga.json"));
         Console.WriteLine($"[gap-docs] workload GA verdicts written under {siteRoot}");
@@ -275,11 +289,21 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
 
     try
     {
+        var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
+            Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
+        var evaluationContractErrors =
+            WorkloadGaEvaluationContractValidator.Validate(evaluationContract);
+        if (evaluationContractErrors.Count > 0)
+        {
+            WriteErrors("workload GA evaluation contract", evaluationContractErrors);
+            return 1;
+        }
+        var evaluatedAsOf = WorkloadGaEvaluationMetadataBuilder.ParseAsOf(evaluationContract);
         var docs = Loader.LoadAll(gapsRoot);
         var designDocs = Loader.LoadDesignDocs(gapsRoot);
         var migration = Loader.LoadRealAzureMigration(gapsRoot);
         var errors = new List<string>();
-        errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
+        errors.AddRange(Validator.Validate(docs, migration, evaluatedAsOf));
         errors.AddRange(Validator.ValidateDesign(designDocs, docs));
         var manifest = WorkloadGaManifestLoader.Load(manifestPath);
         errors.AddRange(WorkloadGaManifestValidator.Validate(manifest, docs, designDocs));
@@ -294,10 +318,11 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
             docs,
             designDocs,
             repoRoot,
-            DateOnly.FromDateTime(DateTime.UtcNow));
+            evaluatedAsOf);
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(evaluationContract, repoRoot);
         var content = format == "json"
-            ? WorkloadGaRenderer.RenderJson(report) + Environment.NewLine
-            : WorkloadGaRenderer.RenderMarkdown(report);
+            ? WorkloadGaRenderer.RenderJson(report, evaluation) + Environment.NewLine
+            : WorkloadGaRenderer.RenderMarkdown(report, evaluation);
         if (outputPath is null)
         {
             Console.Write(content);

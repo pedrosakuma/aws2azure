@@ -7,6 +7,12 @@ namespace Aws2Azure.UnitTests.GapDocs;
 public sealed class WorkloadGaCertificationTests
 {
     private static readonly string RepoRoot = FindRepoRoot();
+    private static readonly WorkloadGaEvaluationContract EvaluationContract =
+        WorkloadGaEvaluationContractLoader.Load(Path.Combine(
+            RepoRoot,
+            WorkloadGaEvaluationMetadataBuilder.ContractPath));
+    private static readonly WorkloadGaEvaluationMetadata Evaluation =
+        WorkloadGaEvaluationMetadataBuilder.Build(EvaluationContract, RepoRoot);
     private static readonly IReadOnlyList<OperationDoc> Operations =
         Loader.LoadAll(Path.Combine(RepoRoot, "docs", "gaps"));
     private static readonly IReadOnlyList<ServiceDesignDoc> Designs =
@@ -173,6 +179,25 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Fact]
+    public void Seal_after_explicit_evaluation_date_cannot_authorize_a_verdict()
+    {
+        var operations = MinimalOperations();
+        operations[0].VerifiedRealAzure!.Date = "2026-07-17";
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            MinimalManifest(),
+            operations,
+            [],
+            RepoRoot,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Equal("conditional", report.Verdict);
+        Assert.Contains(
+            report.Findings,
+            finding => finding.Code == "real_azure_seal_after_evaluation");
+    }
+
+    [Fact]
     public void Json_renderer_is_deterministic_and_machine_readable()
     {
         var manifest = LoadManifest("s3-basic-object-crud.yaml");
@@ -181,15 +206,213 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            new DateOnly(2026, 7, 16));
+            WorkloadGaEvaluationMetadataBuilder.ParseAsOf(EvaluationContract));
 
-        var first = WorkloadGaRenderer.RenderJson(report);
-        var second = WorkloadGaRenderer.RenderJson(report);
+        var first = WorkloadGaRenderer.RenderJson(report, Evaluation);
+        var second = WorkloadGaRenderer.RenderJson(report, Evaluation);
 
         Assert.Equal(first, second);
         using var document = JsonDocument.Parse(first);
-        Assert.Equal("s3-basic-object-crud", document.RootElement.GetProperty("profile_id").GetString());
-        Assert.Equal("candidate", document.RootElement.GetProperty("verdict").GetString());
+        var root = document.RootElement;
+        Assert.Equal(2, root.GetProperty("schema_version").GetInt32());
+        Assert.Equal("2026-08-18", root.GetProperty("evaluation").GetProperty("evaluated_as_of").GetString());
+        Assert.Equal(
+            "pedrosakuma/aws2azure",
+            root.GetProperty("evaluation").GetProperty("source").GetProperty("repository").GetString());
+        Assert.Matches(
+            "^sha256:[0-9a-f]{64}$",
+            root.GetProperty("evaluation").GetProperty("source").GetProperty("revision").GetString());
+        Assert.Equal(
+            "live_workload_certification",
+            root.GetProperty("authority").GetProperty("highest_precedence_source").GetString());
+        Assert.False(root.GetProperty("authority").GetProperty("historical_claims_may_override").GetBoolean());
+        Assert.Equal(
+            "s3-basic-object-crud",
+            root.GetProperty("profile").GetProperty("profile_id").GetString());
+        Assert.Equal("candidate", root.GetProperty("profile").GetProperty("verdict").GetString());
+    }
+
+    [Fact]
+    public void Evaluation_contract_is_valid_and_uses_an_explicit_point_in_time()
+    {
+        Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(EvaluationContract));
+        Assert.Equal(
+            new DateOnly(2026, 8, 18),
+            WorkloadGaEvaluationMetadataBuilder.ParseAsOf(EvaluationContract));
+    }
+
+    [Fact]
+    public void Evaluation_contract_rejects_non_deterministic_or_unidentified_inputs()
+    {
+        var contract = new WorkloadGaEvaluationContract
+        {
+            SchemaVersion = 2,
+            AsOf = "now",
+            SourceRepository = "missing-repository",
+        };
+
+        var errors = WorkloadGaEvaluationContractValidator.Validate(contract);
+
+        Assert.Contains(errors, error => error.Contains("unsupported schema_version", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("as_of must be", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("owner/repository", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Temporal_validator_rejects_qualification_just_after_as_of_cutoff()
+    {
+        var qualification = QualifiedDocument();
+        qualification.Provenance.GeneratedAtUtc =
+            new DateTimeOffset(2026, 7, 17, 0, 1, 0, TimeSpan.Zero);
+
+        var errors = WorkloadGaTemporalValidator.ValidateQualification(
+            qualification,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Contains(
+            errors,
+            error => error.StartsWith(
+                "provenance.generated_at_utc postdates evaluated_as_of",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Temporal_validator_rejects_source_artifact_created_after_as_of_cutoff()
+    {
+        var qualification = QualifiedDocument();
+        qualification.Provenance.CorrectnessRun!.EvidenceArtifact!.Artifact.CreatedAt =
+            new DateTimeOffset(2026, 7, 17, 0, 1, 0, TimeSpan.Zero);
+
+        var errors = WorkloadGaTemporalValidator.ValidateQualification(
+            qualification,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Contains(
+            errors,
+            error => error.StartsWith(
+                "provenance.correctness_run.evidence_artifact.artifact.created_at " +
+                "postdates evaluated_as_of",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Temporal_validator_rejects_approval_after_as_of_cutoff()
+    {
+        var record = ApprovedRuntimeLedgerLoader.Load(Path.Combine(
+            RepoRoot,
+            "docs",
+            "workloads",
+            "approved-runtimes",
+            "s3-basic-object-crud.yaml"));
+        record.Approval.ReviewedAt =
+            new DateTimeOffset(2026, 7, 17, 0, 1, 0, TimeSpan.Zero);
+
+        var errors = WorkloadGaTemporalValidator.ValidateApprovedRuntime(
+            record,
+            new DateOnly(2026, 7, 16));
+
+        Assert.Contains(
+            errors,
+            error => error.StartsWith(
+                "approval.reviewed_at postdates evaluated_as_of",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Canonical_input_revision_is_checkout_and_line_ending_independent()
+    {
+        var first = WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot);
+        var second = WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot);
+
+        Assert.Equal(first, second);
+        Assert.Matches("^sha256:[0-9a-f]{64}$", first);
+        Assert.DoesNotContain(RepoRoot, first, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Canonical_input_revision_changes_only_with_canonical_yaml()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-revision-{Guid.NewGuid():N}");
+        var gapsRoot = Path.Combine(tempRoot, "docs", "gaps", "s3");
+        var workloadsRoot = Path.Combine(tempRoot, "docs", "workloads");
+        Directory.CreateDirectory(gapsRoot);
+        Directory.CreateDirectory(workloadsRoot);
+        var gapPath = Path.Combine(gapsRoot, "PutObject.yaml");
+        try
+        {
+            File.WriteAllText(gapPath, "status: implemented\r\n");
+            File.WriteAllText(Path.Combine(workloadsRoot, "profile.yaml"), "version: 1\r\n");
+            var windowsRevision =
+                WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
+
+            File.WriteAllText(gapPath, "status: implemented\n");
+            File.WriteAllText(Path.Combine(tempRoot, "README.md"), "not a canonical input");
+            var normalizedRevision =
+                WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
+
+            File.WriteAllText(gapPath, "status: partial\n");
+            var changedRevision =
+                WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
+
+            Assert.Equal(windowsRevision, normalizedRevision);
+            Assert.NotEqual(normalizedRevision, changedRevision);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Index_renderer_exposes_temporal_authority_in_json_and_markdown()
+    {
+        var manifest = LoadManifest("s3-basic-object-crud.yaml");
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            Operations,
+            Designs,
+            RepoRoot,
+            new DateOnly(2026, 8, 18));
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-index-{Guid.NewGuid():N}");
+        var markdownPath = Path.Combine(tempRoot, "workload-ga.md");
+        var jsonPath = Path.Combine(tempRoot, "workload-ga.json");
+        try
+        {
+            WorkloadGaRenderer.RenderIndex([report], Evaluation, markdownPath, jsonPath);
+
+            using var document = JsonDocument.Parse(File.ReadAllText(jsonPath));
+            var root = document.RootElement;
+            Assert.Equal("point_in_time", root.GetProperty("authority").GetProperty("temporal_scope").GetString());
+            Assert.Equal(
+                "s3-basic-object-crud",
+                root.GetProperty("profiles")[0].GetProperty("profile_id").GetString());
+            var markdown = File.ReadAllText(markdownPath);
+            Assert.Contains("Current adoption authority (as of `2026-08-18`)", markdown, StringComparison.Ordinal);
+            Assert.Contains("| 4 | Release notes | Immutable historical record |", markdown, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Historical_release_notice_defers_to_live_certification()
+    {
+        var releaseNotes = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "docs",
+            "releases",
+            "v1.0.0.md"));
+        var notice = releaseNotes.IndexOf("**Historical release record:**", StringComparison.Ordinal);
+        var firstGaClaim = releaseNotes.IndexOf("| `s3-basic-object-crud` | 1 | GA", StringComparison.Ordinal);
+
+        Assert.InRange(notice, 0, firstGaClaim - 1);
+        Assert.Contains("live workload certification", releaseNotes, StringComparison.Ordinal);
+        Assert.Contains(
+            "a current `candidate`, `conditional`, or `blocked`",
+            releaseNotes,
+            StringComparison.Ordinal);
     }
 
     [Fact]

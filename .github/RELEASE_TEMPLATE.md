@@ -22,6 +22,13 @@ announcing or treating the release as supported.
 
 ## Supported workload profiles
 
+> **Historical release record:** After publication, this matrix records the
+> evidence accepted at promotion time. Current adoption decisions must defer to
+> the [live workload certification](https://github.com/pedrosakuma/aws2azure/blob/main/docs/site/workload-ga.md)
+> and its [machine-readable metadata](https://github.com/pedrosakuma/aws2azure/blob/main/docs/site/workload-ga.json);
+> a current `candidate`, `conditional`, or `blocked` verdict has higher
+> precedence than a historical GA claim.
+
 This matrix announces workload-scoped compatibility, **not full AWS service
 parity**.
 

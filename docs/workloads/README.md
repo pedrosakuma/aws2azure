@@ -89,6 +89,22 @@ The default gap-doc generation writes the same aggregate verdicts to
 `docs/site/workload-ga.md` and `docs/site/workload-ga.json`; CI evaluates every
 manifest independently and rejects stale generated output.
 
+`certification/authority.yaml` is the explicit, versioned evaluation contract.
+Its `as_of` date is advanced deliberately when the canonical certification
+inputs are reviewed; generation never inserts a wall-clock timestamp. The JSON
+and Markdown outputs identify that date and a deterministic SHA-256 revision of
+all YAML below `docs/gaps/` and `docs/workloads/`, with line endings normalized
+before hashing.
+
+For current workload adoption, the generated workload certification has the
+highest precedence. Profile manifests and gap docs are normative inputs,
+release notes are immutable historical records of what was promoted at that
+time, and guides are explanatory only. A historical GA release claim never
+overrides a later `candidate`, `conditional`, or `blocked` certification
+verdict. Because the certification is point-in-time, consumers must also check
+`evaluated_as_of` and the source revision rather than treating any verdict as
+permanent.
+
 Profile-specific adoption guidance:
 
 - [S3 basic object CRUD](s3-basic-object-crud.md)
