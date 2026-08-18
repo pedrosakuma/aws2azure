@@ -17,14 +17,21 @@
       }
     },
     "azureIdentities": {
-      "type": "object",
-      "description": "Named Entra identities referenced by AAD-capable backend auth blocks.",
-      "propertyNames": {
-        "minLength": 1
-      },
-      "additionalProperties": {
-        "$ref": "#/$defs/azureIdentity"
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Named Entra identities referenced by AAD-capable backend auth blocks.",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/azureIdentity"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -41,22 +48,64 @@
       "additionalProperties": false,
       "properties": {
         "s3": {
-          "$ref": "#/$defs/s3Service"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/s3Service"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sqs": {
-          "$ref": "#/$defs/serviceToggle"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/serviceToggle"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "dynamodb": {
-          "$ref": "#/$defs/dynamoDbService"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dynamoDbService"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sns": {
-          "$ref": "#/$defs/snsService"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/snsService"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "kinesis": {
-          "$ref": "#/$defs/serviceToggle"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/serviceToggle"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "secretsmanager": {
-          "$ref": "#/$defs/serviceToggle"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/serviceToggle"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -79,14 +128,21 @@
           "default": false
         },
         "presignedTrustedSigningHosts": {
-          "type": "array",
-          "description": "Lowercase bare signing hosts; schemes, paths, and whitespace are not allowed.",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^(?!.*://)[^A-Z/\\s]\u002B$"
-          }
+          "oneOf": [
+            {
+              "type": "array",
+              "description": "Lowercase bare signing hosts; schemes, paths, and whitespace are not allowed.",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!.*://)[^A-Z/\\s]\u002B(?![\\s\\S])"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -99,10 +155,15 @@
           "default": false
         },
         "defaultBackend": {
-          "type": "string",
-          "enum": [
-            "ServiceBusTopics",
-            "EventGrid"
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss][Tt][Oo][Pp][Ii][Cc][Ss](?![\\s\\S])"
+            },
+            {
+              "type": "string",
+              "pattern": "^[Ee][Vv][Ee][Nn][Tt][Gg][Rr][Ii][Dd](?![\\s\\S])"
+            }
           ],
           "default": "ServiceBusTopics"
         }
@@ -117,20 +178,36 @@
           "default": false
         },
         "useStoredProcedures": {
-          "type": "string",
-          "enum": [
-            "Disabled",
-            "Preferred",
-            "Required"
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[Dd][Ii][Ss][Aa][Bb][Ll][Ee][Dd](?![\\s\\S])"
+            },
+            {
+              "type": "string",
+              "pattern": "^[Pp][Rr][Ee][Ff][Ee][Rr][Rr][Ee][Dd](?![\\s\\S])"
+            },
+            {
+              "type": "string",
+              "pattern": "^[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Dd](?![\\s\\S])"
+            }
           ],
           "default": "Disabled"
         },
         "consistencyCheck": {
-          "type": "string",
-          "enum": [
-            "Disabled",
-            "Warn",
-            "Required"
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[Dd][Ii][Ss][Aa][Bb][Ll][Ee][Dd](?![\\s\\S])"
+            },
+            {
+              "type": "string",
+              "pattern": "^[Ww][Aa][Rr][Nn](?![\\s\\S])"
+            },
+            {
+              "type": "string",
+              "pattern": "^[Rr][Ee][Qq][Uu][Ii][Rr][Ee][Dd](?![\\s\\S])"
+            }
           ],
           "default": "Disabled"
         },
@@ -189,22 +266,64 @@
       "additionalProperties": false,
       "properties": {
         "s3": {
-          "$ref": "#/$defs/s3Backend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/s3Backend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sqs": {
-          "$ref": "#/$defs/sqsBackend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sqsBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "dynamodb": {
-          "$ref": "#/$defs/dynamoDbBackend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dynamoDbBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "sns": {
-          "$ref": "#/$defs/snsBackend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/snsBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "kinesis": {
-          "$ref": "#/$defs/kinesisBackend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/kinesisBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "secretsmanager": {
-          "$ref": "#/$defs/secretsManagerBackend"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/secretsManagerBackend"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -216,7 +335,9 @@
           "additionalProperties": false,
           "properties": {
             "authMode": {
-              "const": "clientSecret"
+              "type": "string",
+              "pattern": "^[Cc][Ll][Ii][Ee][Nn][Tt][Ss][Ee][Cc][Rr][Ee][Tt](?![\\s\\S])",
+              "default": "clientSecret"
             },
             "tenantId": {
               "$ref": "#/$defs/nonEmptyString"
@@ -229,7 +350,6 @@
             }
           },
           "required": [
-            "authMode",
             "tenantId",
             "clientId",
             "clientSecret"
@@ -240,10 +360,24 @@
           "additionalProperties": false,
           "properties": {
             "authMode": {
-              "const": "managedIdentity"
+              "type": "string",
+              "pattern": "^[Mm][Aa][Nn][Aa][Gg][Ee][Dd][Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy](?![\\s\\S])"
+            },
+            "tenantId": {
+              "type": "null"
             },
             "clientId": {
-              "$ref": "#/$defs/nonEmptyString"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "clientSecret": {
+              "type": "null"
             }
           },
           "required": [
@@ -255,7 +389,17 @@
           "additionalProperties": false,
           "properties": {
             "authMode": {
-              "const": "workloadIdentity"
+              "type": "string",
+              "pattern": "^[Ww][Oo][Rr][Kk][Ll][Oo][Aa][Dd][Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy](?![\\s\\S])"
+            },
+            "tenantId": {
+              "type": "null"
+            },
+            "clientId": {
+              "type": "null"
+            },
+            "clientSecret": {
+              "type": "null"
             }
           },
           "required": [
@@ -269,19 +413,48 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "blob"
+          "type": "string",
+          "pattern": "^[Bb][Ll][Oo][Bb](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "endpoint": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "accountName": {
               "$ref": "#/$defs/nonEmptyString"
             },
-            "endpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            "namespace": {
+              "type": "null"
+            },
+            "databaseName": {
+              "type": "null"
+            },
+            "managementEndpoint": {
+              "type": "null"
+            },
+            "preferredRegions": {
+              "type": "null"
+            },
+            "transport": {
+              "type": "null"
+            },
+            "vaultUrl": {
+              "type": "null"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -290,6 +463,21 @@
         },
         "auth": {
           "$ref": "#/$defs/sharedKeyAuth"
+        },
+        "queues": {
+          "type": "null"
+        },
+        "topics": {
+          "type": "null"
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -303,27 +491,65 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "serviceBus"
+          "type": "string",
+          "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "endpoint": {
+              "type": "null"
+            },
+            "accountName": {
+              "type": "null"
+            },
             "namespace": {
               "$ref": "#/$defs/nonEmptyString"
             },
+            "databaseName": {
+              "type": "null"
+            },
             "managementEndpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "preferredRegions": {
+              "type": "null"
             },
             "transport": {
-              "type": "string",
-              "enum": [
-                "Rest",
-                "Amqp"
-              ],
-              "default": "Rest"
+              "oneOf": [
+                {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[Rr][Ee][Ss][Tt](?![\\s\\S])"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[Aa][Mm][Qq][Pp](?![\\s\\S])"
+                    }
+                  ],
+                  "default": "Rest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "vaultUrl": {
+              "type": "null"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -334,14 +560,33 @@
           "$ref": "#/$defs/sasAuth"
         },
         "queues": {
-          "type": "object",
-          "propertyNames": {
-            "minLength": 1,
-            "pattern": "\\S"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/queueSettings"
-          }
+          "oneOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/queueSettings"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topics": {
+          "type": "null"
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -355,7 +600,8 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "cosmos"
+          "type": "string",
+          "pattern": "^[Cc][Oo][Ss][Mm][Oo][Ss](?![\\s\\S])"
         },
         "target": {
           "type": "object",
@@ -364,17 +610,42 @@
             "endpoint": {
               "type": "string",
               "format": "uri",
-              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+            },
+            "accountName": {
+              "type": "null"
+            },
+            "namespace": {
+              "type": "null"
             },
             "databaseName": {
               "$ref": "#/$defs/nonEmptyString"
             },
+            "managementEndpoint": {
+              "type": "null"
+            },
             "preferredRegions": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/nonEmptyString"
-              }
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "$ref": "#/$defs/nonEmptyString"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "transport": {
+              "type": "null"
+            },
+            "vaultUrl": {
+              "type": "null"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -384,6 +655,21 @@
         },
         "auth": {
           "$ref": "#/$defs/keyOrAadAuth"
+        },
+        "queues": {
+          "type": "null"
+        },
+        "topics": {
+          "type": "null"
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -393,38 +679,64 @@
       ]
     },
     "snsBackend": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/snsServiceBusTopicsBackend"
-        },
-        {
-          "$ref": "#/$defs/snsEventGridBackend"
-        }
-      ]
+      "$ref": "#/$defs/snsServiceBusTopicsBackend"
     },
     "snsServiceBusTopicsBackend": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "serviceBusTopics"
+          "type": "string",
+          "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss][Tt][Oo][Pp][Ii][Cc][Ss](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "endpoint": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss]|[Aa][Mm][Qq][Pp]|[Aa][Mm][Qq][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accountName": {
+              "type": "null"
+            },
             "namespace": {
               "$ref": "#/$defs/nonEmptyString"
             },
-            "endpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^(?:https?|amqps?)://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            "databaseName": {
+              "type": "null"
             },
             "managementEndpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https?://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "preferredRegions": {
+              "type": "null"
+            },
+            "transport": {
+              "type": "null"
+            },
+            "vaultUrl": {
+              "type": "null"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -434,18 +746,41 @@
         "auth": {
           "$ref": "#/$defs/sasOrAadAuth"
         },
+        "queues": {
+          "type": "null"
+        },
         "topics": {
-          "type": "object",
-          "propertyNames": {
-            "minLength": 1,
-            "pattern": "\\S"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/topicSettings"
-          }
+          "oneOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/topicSettings"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
         },
         "eventGridFallback": {
-          "$ref": "#/$defs/eventGridFallback"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/eventGridFallback"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -456,74 +791,45 @@
       "allOf": [
         {
           "if": {
-            "not": {
-              "required": [
-                "eventGridFallback"
-              ]
-            }
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "eventGridFallback"
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "eventGridFallback": {
+                    "type": "null"
+                  }
+                }
+              }
+            ]
           },
           "then": {
             "properties": {
               "topics": {
-                "type": "object",
-                "propertyNames": {
-                  "minLength": 1,
-                  "pattern": "\\S"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/topicSettingsWithoutFallback"
-                }
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "minLength": 1,
+                      "pattern": "\\S"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/topicSettingsWithoutFallback"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           }
         }
-      ]
-    },
-    "snsEventGridBackend": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "const": "eventGrid"
-        },
-        "target": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "endpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
-            },
-            "namespace": {
-              "$ref": "#/$defs/nonEmptyString"
-            },
-            "topicName": {
-              "$ref": "#/$defs/nonEmptyString"
-            }
-          },
-          "anyOf": [
-            {
-              "required": [
-                "endpoint"
-              ]
-            },
-            {
-              "required": [
-                "namespace",
-                "topicName"
-              ]
-            }
-          ]
-        },
-        "auth": {
-          "$ref": "#/$defs/keyOrAadAuth"
-        }
-      },
-      "required": [
-        "kind",
-        "target",
-        "auth"
       ]
     },
     "eventGridFallback": {
@@ -531,40 +837,110 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "eventGrid"
+          "type": "string",
+          "pattern": "^[Ee][Vv][Ee][Nn][Tt][Gg][Rr][Ii][Dd](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "endpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accountName": {
+              "type": "null"
             },
             "namespace": {
-              "$ref": "#/$defs/nonEmptyString"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "databaseName": {
+              "type": "null"
+            },
+            "managementEndpoint": {
+              "type": "null"
+            },
+            "preferredRegions": {
+              "type": "null"
+            },
+            "transport": {
+              "type": "null"
+            },
+            "vaultUrl": {
+              "type": "null"
             },
             "topicName": {
-              "$ref": "#/$defs/nonEmptyString"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "anyOf": [
             {
               "required": [
                 "endpoint"
-              ]
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                }
+              }
             },
             {
               "required": [
                 "namespace",
                 "topicName"
-              ]
+              ],
+              "properties": {
+                "namespace": {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                "topicName": {
+                  "$ref": "#/$defs/nonEmptyString"
+                }
+              }
             }
           ]
         },
         "auth": {
           "$ref": "#/$defs/keyOrAadAuth"
+        },
+        "queues": {
+          "type": "null"
+        },
+        "topics": {
+          "type": "null"
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -578,19 +954,48 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "eventHubs"
+          "type": "string",
+          "pattern": "^[Ee][Vv][Ee][Nn][Tt][Hh][Uu][Bb][Ss](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "endpoint": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp]|[Hh][Tt][Tt][Pp][Ss]|[Aa][Mm][Qq][Pp]|[Aa][Mm][Qq][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "accountName": {
+              "type": "null"
+            },
             "namespace": {
               "$ref": "#/$defs/nonEmptyString"
             },
-            "endpoint": {
-              "type": "string",
-              "format": "uri",
-              "pattern": "^(?:https?|amqps?)://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+            "databaseName": {
+              "type": "null"
+            },
+            "managementEndpoint": {
+              "type": "null"
+            },
+            "preferredRegions": {
+              "type": "null"
+            },
+            "transport": {
+              "type": "null"
+            },
+            "vaultUrl": {
+              "type": "null"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -600,22 +1005,45 @@
         "auth": {
           "$ref": "#/$defs/sasOrAadAuth"
         },
+        "queues": {
+          "type": "null"
+        },
+        "topics": {
+          "type": "null"
+        },
         "streams": {
-          "type": "object",
-          "propertyNames": {
-            "minLength": 1,
-            "pattern": "\\S"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/streamSettings"
-          }
+          "oneOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/streamSettings"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "shardIteratorSigningKey": {
-          "type": "string",
-          "description": "Base64-encoded HMAC key that decodes to at least 32 bytes.",
-          "minLength": 44,
-          "contentEncoding": "base64",
-          "pattern": "^(?![A-Za-z0-9\u002B/]{42}==$)(?=.{44,}$)(?:[A-Za-z0-9\u002B/]{4})*(?:[A-Za-z0-9\u002B/]{2}==|[A-Za-z0-9\u002B/]{3}=)?$"
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Base64-encoded HMAC key that decodes to at least 32 bytes.",
+              "minLength": 44,
+              "contentEncoding": "base64",
+              "pattern": "^(?![A-Za-z0-9\u002B/]{42}==(?![\\s\\S]))(?=.{44,}(?![\\s\\S]))(?:[A-Za-z0-9\u002B/]{4})*(?:[A-Za-z0-9\u002B/]{2}==|[A-Za-z0-9\u002B/]{3}=)?(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -629,16 +1057,41 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "const": "keyVault"
+          "type": "string",
+          "pattern": "^[Kk][Ee][Yy][Vv][Aa][Uu][Ll][Tt](?![\\s\\S])"
         },
         "target": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "endpoint": {
+              "type": "null"
+            },
+            "accountName": {
+              "type": "null"
+            },
+            "namespace": {
+              "type": "null"
+            },
+            "databaseName": {
+              "type": "null"
+            },
+            "managementEndpoint": {
+              "type": "null"
+            },
+            "preferredRegions": {
+              "type": "null"
+            },
+            "transport": {
+              "type": "null"
+            },
             "vaultUrl": {
               "type": "string",
               "format": "uri",
-              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+            },
+            "topicName": {
+              "type": "null"
             }
           },
           "required": [
@@ -647,6 +1100,21 @@
         },
         "auth": {
           "$ref": "#/$defs/aadAuth"
+        },
+        "queues": {
+          "type": "null"
+        },
+        "topics": {
+          "type": "null"
+        },
+        "streams": {
+          "type": "null"
+        },
+        "shardIteratorSigningKey": {
+          "type": "null"
+        },
+        "eventGridFallback": {
+          "type": "null"
         }
       },
       "required": [
@@ -660,14 +1128,30 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "sharedKey"
+          "type": "string",
+          "pattern": "^[Ss][Hh][Aa][Rr][Ee][Dd][Kk][Ee][Yy](?![\\s\\S])",
+          "default": "sharedKey"
         },
         "key": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "keyName": {
+          "type": "null"
+        },
+        "tenantId": {
+          "type": "null"
+        },
+        "clientId": {
+          "type": "null"
+        },
+        "clientSecret": {
+          "type": "null"
+        },
+        "identity": {
+          "type": "null"
         }
       },
       "required": [
-        "mode",
         "key"
       ]
     },
@@ -676,13 +1160,26 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "sas"
+          "type": "string",
+          "pattern": "^[Ss][Aa][Ss](?![\\s\\S])"
+        },
+        "key": {
+          "$ref": "#/$defs/nonEmptyString"
         },
         "keyName": {
           "$ref": "#/$defs/nonEmptyString"
         },
-        "key": {
-          "$ref": "#/$defs/nonEmptyString"
+        "tenantId": {
+          "type": "null"
+        },
+        "clientId": {
+          "type": "null"
+        },
+        "clientSecret": {
+          "type": "null"
+        },
+        "identity": {
+          "type": "null"
         }
       },
       "required": [
@@ -696,10 +1193,33 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "managedIdentity"
+          "type": "string",
+          "pattern": "^[Mm][Aa][Nn][Aa][Gg][Ee][Dd][Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy](?![\\s\\S])"
+        },
+        "key": {
+          "type": "null"
+        },
+        "keyName": {
+          "type": "null"
+        },
+        "tenantId": {
+          "type": "null"
         },
         "clientId": {
-          "$ref": "#/$defs/nonEmptyString"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clientSecret": {
+          "type": "null"
+        },
+        "identity": {
+          "type": "null"
         }
       },
       "required": [
@@ -711,7 +1231,14 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "clientSecret"
+          "type": "string",
+          "pattern": "^[Cc][Ll][Ii][Ee][Nn][Tt][Ss][Ee][Cc][Rr][Ee][Tt](?![\\s\\S])"
+        },
+        "key": {
+          "type": "null"
+        },
+        "keyName": {
+          "type": "null"
         },
         "tenantId": {
           "$ref": "#/$defs/nonEmptyString"
@@ -721,6 +1248,9 @@
         },
         "clientSecret": {
           "$ref": "#/$defs/nonEmptyString"
+        },
+        "identity": {
+          "type": "null"
         }
       },
       "required": [
@@ -735,7 +1265,26 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "workloadIdentity"
+          "type": "string",
+          "pattern": "^[Ww][Oo][Rr][Kk][Ll][Oo][Aa][Dd][Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy](?![\\s\\S])"
+        },
+        "key": {
+          "type": "null"
+        },
+        "keyName": {
+          "type": "null"
+        },
+        "tenantId": {
+          "type": "null"
+        },
+        "clientId": {
+          "type": "null"
+        },
+        "clientSecret": {
+          "type": "null"
+        },
+        "identity": {
+          "type": "null"
         }
       },
       "required": [
@@ -747,7 +1296,23 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "const": "reference"
+          "type": "string",
+          "pattern": "^[Rr][Ee][Ff][Ee][Rr][Ee][Nn][Cc][Ee](?![\\s\\S])"
+        },
+        "key": {
+          "type": "null"
+        },
+        "keyName": {
+          "type": "null"
+        },
+        "tenantId": {
+          "type": "null"
+        },
+        "clientId": {
+          "type": "null"
+        },
+        "clientSecret": {
+          "type": "null"
         },
         "identity": {
           "$ref": "#/$defs/nonEmptyString"
@@ -817,55 +1382,52 @@
       "additionalProperties": false,
       "properties": {
         "transport": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "enum": [
-            "Rest",
-            "Amqp",
-            null
+          "oneOf": [
+            {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[Rr][Ee][Ss][Tt](?![\\s\\S])"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[Aa][Mm][Qq][Pp](?![\\s\\S])"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
     },
     "topicSettings": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "backend": {
-          "type": "string",
-          "enum": [
-            "ServiceBusTopics",
-            "EventGrid"
-          ],
-          "default": "ServiceBusTopics"
-        },
-        "serviceBusTopicName": {
-          "$ref": "#/$defs/nonEmptyString"
-        },
-        "eventGridTopicEndpoint": {
-          "type": "string",
-          "format": "uri",
-          "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
-        },
-        "eventGridAccessKey": {
-          "$ref": "#/$defs/nonEmptyString"
-        }
-      }
-    },
-    "topicSettingsWithoutFallback": {
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "backend": {
-              "const": "ServiceBusTopics",
+              "type": "string",
+              "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss][Tt][Oo][Pp][Ii][Cc][Ss](?![\\s\\S])",
               "default": "ServiceBusTopics"
             },
             "serviceBusTopicName": {
-              "$ref": "#/$defs/nonEmptyString"
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "eventGridTopicEndpoint": {
+              "type": "null"
+            },
+            "eventGridAccessKey": {
+              "type": "null"
             }
           }
         },
@@ -874,12 +1436,85 @@
           "additionalProperties": false,
           "properties": {
             "backend": {
-              "const": "EventGrid"
+              "type": "string",
+              "pattern": "^[Ee][Vv][Ee][Nn][Tt][Gg][Rr][Ii][Dd](?![\\s\\S])"
+            },
+            "serviceBusTopicName": {
+              "type": "null"
+            },
+            "eventGridTopicEndpoint": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "eventGridAccessKey": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "backend"
+          ]
+        }
+      ]
+    },
+    "topicSettingsWithoutFallback": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss][Tt][Oo][Pp][Ii][Cc][Ss](?![\\s\\S])",
+              "default": "ServiceBusTopics"
+            },
+            "serviceBusTopicName": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/nonEmptyString"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "eventGridTopicEndpoint": {
+              "type": "null"
+            },
+            "eventGridAccessKey": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "pattern": "^[Ee][Vv][Ee][Nn][Tt][Gg][Rr][Ii][Dd](?![\\s\\S])"
+            },
+            "serviceBusTopicName": {
+              "type": "null"
             },
             "eventGridTopicEndpoint": {
               "type": "string",
               "format": "uri",
-              "pattern": "^https://(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?$"
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss])://(?:[^/?#@\\s]\u002B@)?(?:\\[[^\\]\\s]\u002B\\]|[^:/?#\\s]\u002B)(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][^\\s]*)?(?![\\s\\S])"
             },
             "eventGridAccessKey": {
               "$ref": "#/$defs/nonEmptyString"
@@ -898,14 +1533,35 @@
       "additionalProperties": false,
       "properties": {
         "eventHubName": {
-          "$ref": "#/$defs/nonEmptyString"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "consumerGroup": {
-          "$ref": "#/$defs/nonEmptyString"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "partitionCount": {
-          "type": "integer",
-          "minimum": 1
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     }
@@ -923,12 +1579,14 @@
             ],
             "properties": {
               "sns": {
+                "type": "object",
                 "required": [
                   "defaultBackend"
                 ],
                 "properties": {
                   "defaultBackend": {
-                    "const": "EventGrid"
+                    "type": "string",
+                    "pattern": "^[Ee][Vv][Ee][Nn][Tt][Gg][Rr][Ii][Dd](?![\\s\\S])"
                   }
                 }
               }
@@ -956,7 +1614,8 @@
                         ],
                         "properties": {
                           "kind": {
-                            "const": "serviceBusTopics"
+                            "type": "string",
+                            "pattern": "^[Ss][Ee][Rr][Vv][Ii][Cc][Ee][Bb][Uu][Ss][Tt][Oo][Pp][Ii][Cc][Ss](?![\\s\\S])"
                           }
                         }
                       }
@@ -971,7 +1630,12 @@
                       "sns": {
                         "required": [
                           "eventGridFallback"
-                        ]
+                        ],
+                        "properties": {
+                          "eventGridFallback": {
+                            "$ref": "#/$defs/eventGridFallback"
+                          }
+                        }
                       }
                     }
                   }
@@ -1082,8 +1746,7 @@
               },
               "topics": {
                 "orders-*": {
-                  "backend": "EventGrid",
-                  "serviceBusTopicName": "orders"
+                  "backend": "EventGrid"
                 }
               },
               "eventGridFallback": {

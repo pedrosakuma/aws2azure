@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Core.Configuration;
@@ -46,9 +47,11 @@ public sealed class ServicesConfig
 {
     public S3ServiceConfig? S3 { get; set; }
     public ServiceToggleConfig? Sqs { get; set; }
+    [JsonPropertyName("dynamodb")]
     public DynamoDbServiceConfig? DynamoDb { get; set; }
     public SnsServiceConfig? Sns { get; set; }
     public ServiceToggleConfig? Kinesis { get; set; }
+    [JsonPropertyName("secretsmanager")]
     public ServiceToggleConfig? SecretsManager { get; set; }
 }
 
@@ -119,9 +122,11 @@ public sealed class AzureBindingSet
 {
     public AzureBackendConfig? S3 { get; set; }
     public AzureBackendConfig? Sqs { get; set; }
+    [JsonPropertyName("dynamodb")]
     public AzureBackendConfig? DynamoDb { get; set; }
     public AzureBackendConfig? Sns { get; set; }
     public AzureBackendConfig? Kinesis { get; set; }
+    [JsonPropertyName("secretsmanager")]
     public AzureBackendConfig? SecretsManager { get; set; }
 }
 
@@ -250,7 +255,7 @@ public sealed class AzureAuthConfig
 /// Unified auth shape selector for Azure backends. Replaces the per-backend
 /// "is the key field empty?" heuristic with an explicit discriminator.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<AzureAuthKind>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<AzureAuthKind>))]
 public enum AzureAuthKind
 {
     /// <summary>Account/master/access key HMAC (blob, cosmos, eventGrid).</summary>
@@ -273,11 +278,79 @@ public enum AzureAuthKind
 }
 
 /// <summary>
+/// Reads defined enum names case-insensitively while rejecting numbers and
+/// surrounding whitespace so operator JSON has one schema-compatible contract.
+/// </summary>
+public sealed class CaseInsensitiveStringEnumConverter<TEnum> : JsonConverter<TEnum>
+    where TEnum : struct, Enum
+{
+    public override TEnum Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException($"{typeof(TEnum).Name} must be a string.");
+        }
+
+        var value = reader.GetString();
+        if (!ConfigEnumParser.TryParse(value, out TEnum parsed))
+        {
+            throw new JsonException($"'{value}' is not a valid {typeof(TEnum).Name}.");
+        }
+        return parsed;
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        TEnum value,
+        JsonSerializerOptions options)
+        => writer.WriteStringValue(ConfigEnumParser.GetCanonicalName(value));
+}
+
+internal static class ConfigEnumParser
+{
+    public static string GetCanonicalName<TEnum>(TEnum value)
+        where TEnum : struct, Enum
+    {
+        var name = value.ToString();
+        return typeof(TEnum) == typeof(AzureAuthKind)
+            || typeof(TEnum) == typeof(AzureAuthMode)
+            ? JsonNamingPolicy.CamelCase.ConvertName(name)
+            : name;
+    }
+
+    public static bool TryParse<TEnum>(string? value, out TEnum result)
+        where TEnum : struct, Enum
+    {
+        if (!string.IsNullOrEmpty(value)
+            && value.AsSpan().Trim().Length == value.Length)
+        {
+            foreach (var candidate in Enum.GetValues<TEnum>())
+            {
+                if (value.Equals(candidate.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    result = candidate;
+                    return true;
+                }
+            }
+        }
+
+        result = default;
+        return false;
+    }
+}
+
+/// <summary>
 /// System.Text.Json source-generated context for <see cref="ConfigDocument"/>.
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    PropertyNameCaseInsensitive = true,
+    PropertyNameCaseInsensitive = false,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    RespectNullableAnnotations = true,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     AllowTrailingCommas = true)]
 [JsonSerializable(typeof(ConfigDocument))]
 public sealed partial class ConfigDocumentJsonContext : JsonSerializerContext

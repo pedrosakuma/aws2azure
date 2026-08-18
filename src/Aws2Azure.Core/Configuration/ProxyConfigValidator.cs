@@ -164,6 +164,15 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{dynamoDbPrefix}.target.endpoint: required.");
             }
+            else
+            {
+                ValidateAbsoluteUri(
+                    cosmos.Endpoint,
+                    $"{dynamoDbPrefix}.target.endpoint",
+                    errors,
+                    Uri.UriSchemeHttp,
+                    Uri.UriSchemeHttps);
+            }
             if (string.IsNullOrWhiteSpace(cosmos.DatabaseName))
             {
                 errors.Add($"{dynamoDbPrefix}.target.databaseName: required.");
@@ -227,6 +236,23 @@ public static class ProxyConfigValidator
                 hasClientId: !string.IsNullOrWhiteSpace(eh.ClientId),
                 hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret),
                 mode: eh.AuthMode);
+
+            if (eh.ShardIteratorSigningKey is { } signingKey)
+            {
+                try
+                {
+                    if (Convert.FromBase64String(signingKey).Length < 32)
+                    {
+                        errors.Add(
+                            $"{kinesisPrefix}.shardIteratorSigningKey: must decode to at least 32 bytes.");
+                    }
+                }
+                catch (FormatException)
+                {
+                    errors.Add(
+                        $"{kinesisPrefix}.shardIteratorSigningKey: must be valid base64.");
+                }
+            }
 
             if (eh.Streams is { } streams)
             {
@@ -355,8 +381,26 @@ public static class ProxyConfigValidator
                 {
                     errors.Add($"{prefix}.topics.{name}.eventGridAccessKey: must be non-empty when set.");
                 }
-                if (settings.Backend == SnsTopicBackend.EventGrid)
+                if (settings.Backend == SnsTopicBackend.ServiceBusTopics)
                 {
+                    if (settings.EventGridTopicEndpoint is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.eventGridTopicEndpoint: not valid when backend=ServiceBusTopics.");
+                    }
+                    if (settings.EventGridAccessKey is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.eventGridAccessKey: not valid when backend=ServiceBusTopics.");
+                    }
+                }
+                else if (settings.Backend == SnsTopicBackend.EventGrid)
+                {
+                    if (settings.ServiceBusTopicName is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.serviceBusTopicName: not valid when backend=EventGrid.");
+                    }
                     ValidateSnsEventGridRoute($"{prefix}.topics.{name}", eventGrid, settings.EventGridTopicEndpoint, settings.EventGridAccessKey, errors);
                 }
             }
@@ -742,6 +786,15 @@ public static class ProxyConfigValidator
 
     private static void ValidateAbsoluteUri(string value, string field, List<string> errors, params string[] allowedSchemes)
     {
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                errors.Add($"{field}: must not contain whitespace.");
+                return;
+            }
+        }
+
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
         {
             errors.Add($"{field}: must be an absolute URI when set.");

@@ -88,13 +88,179 @@ public static class ProxyConfigLoader
         switch (path[0].ToUpperInvariant())
         {
             case "SERVICES":
-                ApplyServiceOverride(document.Services, path, value);
+                if (CanApplyServiceOverride(path, value))
+                {
+                    ApplyServiceOverride(document.Services, path, value);
+                }
                 return;
             case "BINDINGS":
-                ApplyBindingOverride(document, path, value);
+                if (CanApplyBindingOverride(path, value))
+                {
+                    ApplyBindingOverride(document, path, value);
+                }
                 return;
         }
     }
+
+    private static bool CanApplyServiceOverride(string[] path, string? value)
+    {
+        if (path.Length != 3)
+        {
+            return false;
+        }
+
+        var service = path[1].ToUpperInvariant();
+        var field = path[2].ToUpperInvariant();
+        if (field == "ENABLED")
+        {
+            return service is "S3" or "SQS" or "KINESIS" or "SECRETSMANAGER" or "SNS" or "DYNAMODB"
+                && bool.TryParse(value, out _);
+        }
+
+        return service switch
+        {
+            "SNS" when field == "DEFAULTBACKEND" =>
+                TryParseEnum<SnsTopicBackend>(value, out _),
+            "DYNAMODB" when field == "USESTOREDPROCEDURES" =>
+                TryParseEnum<StoredProcedureMode>(value, out _),
+            "DYNAMODB" when field == "CONSISTENCYCHECK" =>
+                TryParseEnum<ConsistencyCheckMode>(value, out _),
+            "DYNAMODB" when field is "COSMOSBINARYRESPONSES"
+                or "COSMOSBINARYREQUESTS"
+                or "ENABLEGLOBALSECONDARYINDEXQUERIES"
+                or "ENABLELOCALSECONDARYINDEXNUMERICORDERING" =>
+                bool.TryParse(value, out _),
+            _ => false,
+        };
+    }
+
+    private static bool CanApplyBindingOverride(string[] path, string? value)
+    {
+        if (path.Length < 4
+            || !int.TryParse(path[1], out var index)
+            || index < 0)
+        {
+            return false;
+        }
+
+        var section = path[2].ToUpperInvariant();
+        if (section == "AWS")
+        {
+            return path.Length == 4
+                && path[3].ToUpperInvariant() is "ACCESSKEYID" or "SECRETACCESSKEY";
+        }
+
+        if (section != "AZURE" || path.Length < 5)
+        {
+            return false;
+        }
+
+        var service = path[3].ToUpperInvariant();
+        if (service is not ("S3" or "SQS" or "DYNAMODB" or "SNS" or "KINESIS" or "SECRETSMANAGER"))
+        {
+            return false;
+        }
+
+        var group = path[4].ToUpperInvariant();
+        if (group == "KIND")
+        {
+            return path.Length == 5 && IsSupportedKind(service, value);
+        }
+        if (group == "SHARDITERATORSIGNINGKEY")
+        {
+            return service == "KINESIS" && path.Length == 5;
+        }
+        if (group == "AUTH")
+        {
+            if (path.Length != 6)
+            {
+                return false;
+            }
+
+            var field = path[5].ToUpperInvariant();
+            return IsSupportedAuthOverride(service, field, value);
+        }
+        if (group == "TARGET")
+        {
+            if (path.Length == 6)
+            {
+                var field = path[5].ToUpperInvariant();
+                return IsSupportedTargetOverride(service, field, value);
+            }
+            return service == "DYNAMODB"
+                && path.Length == 7
+                && path[5].Equals("PREFERREDREGIONS", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(path[6], out var regionIndex)
+                && regionIndex >= 0;
+        }
+        if (group == "QUEUES")
+        {
+            return service == "SQS"
+                && path.Length >= 7
+                && path[^1].Equals("TRANSPORT", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(string.Join("__", path, 5, path.Length - 6))
+                && TryParseEnum<SqsTransport>(value, out _);
+        }
+        return false;
+    }
+
+    private static bool IsSupportedKind(string service, string? value)
+    {
+        if (string.IsNullOrEmpty(value)
+            || value.AsSpan().Trim().Length != value.Length)
+        {
+            return false;
+        }
+
+        return service switch
+        {
+            "S3" => value.Equals("blob", StringComparison.OrdinalIgnoreCase),
+            "SQS" => value.Equals("serviceBus", StringComparison.OrdinalIgnoreCase),
+            "DYNAMODB" => value.Equals("cosmos", StringComparison.OrdinalIgnoreCase),
+            "SNS" => value.Equals("serviceBusTopics", StringComparison.OrdinalIgnoreCase),
+            "KINESIS" => value.Equals("eventHubs", StringComparison.OrdinalIgnoreCase),
+            "SECRETSMANAGER" => value.Equals("keyVault", StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        };
+    }
+
+    private static bool IsSupportedAuthOverride(
+        string service,
+        string field,
+        string? value)
+    {
+        if (field == "MODE")
+        {
+            return TryParseEnum<AzureAuthKind>(value, out _);
+        }
+
+        return service switch
+        {
+            "S3" => field == "KEY",
+            "SQS" => field is "KEY" or "KEYNAME",
+            "DYNAMODB" => field is "KEY" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            "SNS" => field is "KEY" or "KEYNAME" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            "KINESIS" => field is "KEY" or "KEYNAME" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            "SECRETSMANAGER" => field is "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            _ => false,
+        };
+    }
+
+    private static bool IsSupportedTargetOverride(
+        string service,
+        string field,
+        string? value)
+        => service switch
+        {
+            "S3" => field is "ACCOUNTNAME" or "ENDPOINT",
+            "SQS" => field is "NAMESPACE" or "MANAGEMENTENDPOINT"
+                || field == "TRANSPORT" && TryParseEnum<SqsTransport>(value, out _),
+            "DYNAMODB" => field is "ENDPOINT" or "DATABASENAME",
+            "SNS" => field is "ENDPOINT" or "NAMESPACE" or "MANAGEMENTENDPOINT" or "TOPICNAME",
+            "KINESIS" => field is "NAMESPACE" or "ENDPOINT",
+            "SECRETSMANAGER" => field == "VAULTURL",
+            _ => false,
+        };
 
     private static void ApplyServiceOverride(ServicesConfig services, string[] path, string? value)
     {
@@ -165,7 +331,7 @@ public static class ProxyConfigLoader
     private static void ApplyBindingOverride(ConfigDocument document, string[] path, string? value)
     {
         // path = [BINDINGS, index, ...]
-        if (path.Length < 4 || !int.TryParse(path[1], out var index))
+        if (path.Length < 4 || !int.TryParse(path[1], out var index) || index < 0)
         {
             return;
         }
@@ -176,6 +342,11 @@ public static class ProxyConfigLoader
         }
 
         var binding = document.Bindings[index];
+        if (binding is null)
+        {
+            throw new ProxyConfigException(
+                $"bindings[{index}]: cannot apply an environment override to a null entry.");
+        }
         var section = path[2].ToUpperInvariant();
 
         if (section == "AWS" && path.Length == 4)
@@ -306,14 +477,5 @@ public static class ProxyConfigLoader
     }
 
     private static bool TryParseEnum<TEnum>(string? value, out TEnum result) where TEnum : struct, Enum
-    {
-        if (!string.IsNullOrWhiteSpace(value)
-            && Enum.TryParse(value, ignoreCase: true, out result)
-            && Enum.IsDefined(result))
-        {
-            return true;
-        }
-        result = default;
-        return false;
-    }
+        => ConfigEnumParser.TryParse(value, out result);
 }

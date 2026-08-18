@@ -187,7 +187,7 @@ public sealed class DynamoDbSettings
 /// Startup validation mode for the Cosmos account default consistency level
 /// versus DynamoDB <c>ConsistentRead</c> semantics (#204).
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<ConsistencyCheckMode>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<ConsistencyCheckMode>))]
 public enum ConsistencyCheckMode
 {
     /// <summary>Do not probe account consistency at startup (no boot network call).</summary>
@@ -203,7 +203,7 @@ public enum ConsistencyCheckMode
 /// <summary>
 /// Stored procedure usage mode for DynamoDB conditional writes.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<StoredProcedureMode>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<StoredProcedureMode>))]
 public enum StoredProcedureMode
 {
     /// <summary>Do not use stored procedures; use GET→PUT with optimistic concurrency.</summary>
@@ -285,7 +285,7 @@ public sealed class ServiceBusCredentials
 /// (POST <c>/{queue}/messages</c> &amp; peek-lock); <see cref="Amqp"/>
 /// uses the in-process AMQP 1.0 client built in Phase 2.5.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<SqsTransport>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<SqsTransport>))]
 public enum SqsTransport
 {
     Rest = 0,
@@ -345,7 +345,7 @@ public sealed class ServiceBusTopicsCredentials : IAadAuthCredentials
     public Dictionary<string, SnsTopicSettings>? Topics { get; set; }
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<SnsTopicBackend>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<SnsTopicBackend>))]
 public enum SnsTopicBackend
 {
     ServiceBusTopics = 0,

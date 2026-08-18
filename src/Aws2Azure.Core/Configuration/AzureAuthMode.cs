@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Core.Configuration;
 
-[JsonConverter(typeof(JsonStringEnumConverter<AzureAuthMode>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<AzureAuthMode>))]
 public enum AzureAuthMode
 {
     ClientSecret = 0,

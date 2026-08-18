@@ -14,6 +14,10 @@ public sealed class ConfigSchemaTests
     private static readonly string RepoRoot = FindRepoRoot();
     private static readonly JsonSchema Schema = JsonSchema.FromText(
         File.ReadAllText(Path.Combine(RepoRoot, ConfigSchemaGenerator.ArtifactRelativePath)));
+    private static readonly EvaluationOptions EvaluationOptions = new()
+    {
+        RequireFormatValidation = true,
+    };
 
     [Fact]
     public void Generated_schema_matches_committed_artifact()
@@ -22,6 +26,15 @@ public sealed class ConfigSchemaTests
             Path.Combine(RepoRoot, ConfigSchemaGenerator.ArtifactRelativePath));
 
         Assert.Equal(committed, ConfigSchemaGenerator.Generate());
+    }
+
+    [Fact]
+    public void Queue_transport_has_no_schema_default_because_it_inherits_backend_transport()
+    {
+        var generated = JsonNode.Parse(ConfigSchemaGenerator.Generate())!;
+        var transport = generated["$defs"]!["queueSettings"]!["properties"]!["transport"]!;
+
+        Assert.DoesNotContain("\"default\"", transport.ToJsonString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -52,15 +65,358 @@ public sealed class ConfigSchemaTests
         {
             foreach (var property in type.Properties)
             {
-                var schemaName = property.Name switch
-                {
-                    "dynamoDb" => "dynamodb",
-                    "secretsManager" => "secretsmanager",
-                    _ => property.Name,
-                };
-                Assert.Contains($"\"{schemaName}\"", generated, StringComparison.Ordinal);
+                Assert.Contains($"\"{property.Name}\"", generated, StringComparison.Ordinal);
             }
         }
+    }
+
+    [Fact]
+    public void Source_context_serializes_canonical_names_and_defaults()
+    {
+        var document = new ConfigDocument
+        {
+            Services = new ServicesConfig
+            {
+                DynamoDb = new DynamoDbServiceConfig(),
+                SecretsManager = new ServiceToggleConfig(),
+            },
+            AzureIdentities = new Dictionary<string, AzureIdentity>
+            {
+                ["default-client-secret"] = new()
+                {
+                    TenantId = "tenant",
+                    ClientId = "client",
+                    ClientSecret = "secret",
+                },
+            },
+        };
+        document.Bindings.Add(new BindingEntry
+        {
+            Aws = new AwsIdentityConfig
+            {
+                AccessKeyId = "AKIA",
+                SecretAccessKey = "secret",
+            },
+            Azure = new AzureBindingSet
+            {
+                S3 = new AzureBackendConfig
+                {
+                    Kind = "blob",
+                    Target = new AzureTargetConfig { AccountName = "account" },
+                    Auth = new AzureAuthConfig { Key = "key" },
+                },
+            },
+        });
+
+        var json = JsonSerializer.Serialize(
+            document,
+            ConfigDocumentJsonContext.Default.ConfigDocument);
+        var serialized = JsonNode.Parse(json)!.AsObject();
+        var services = serialized["services"]!.AsObject();
+        var identity = serialized["azureIdentities"]!["default-client-secret"]!.AsObject();
+        var auth = serialized["bindings"]![0]!["azure"]!["s3"]!["auth"]!.AsObject();
+
+        Assert.True(services.ContainsKey("dynamodb"));
+        Assert.True(services.ContainsKey("secretsmanager"));
+        Assert.False(services.ContainsKey("dynamoDb"));
+        Assert.False(services.ContainsKey("secretsManager"));
+        Assert.Equal("clientSecret", identity["authMode"]!.GetValue<string>());
+        Assert.Equal("sharedKey", auth["mode"]!.GetValue<string>());
+        AssertValid(serialized);
+    }
+
+    [Fact]
+    public void Schema_and_runtime_reject_noncanonical_or_unknown_property_names()
+    {
+        var noncanonical = MinimalConfig().AsObject();
+        noncanonical["Bindings"] = noncanonical["bindings"]!.DeepClone();
+        noncanonical.Remove("bindings");
+        var unknown = MinimalConfig().AsObject();
+        unknown["unknown"] = true;
+
+        Assert.False(Evaluate(noncanonical).IsValid);
+        Assert.False(Evaluate(unknown).IsValid);
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(
+            noncanonical.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(
+            unknown.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument));
+    }
+
+    [Fact]
+    public void Defaulted_auth_discriminators_are_valid_in_schema_and_runtime()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "azureIdentities": {
+            "client-secret": {
+              "tenantId": "tenant",
+              "clientId": "client",
+              "clientSecret": "secret"
+            }
+          },
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "BLOB",
+                  "target": { "accountName": "account" },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+
+        AssertValid(instance);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        Assert.Equal(AzureAuthKind.SharedKey, document.Bindings[0].Azure.S3!.Auth.Mode);
+        Assert.Equal(AzureAuthMode.ClientSecret, document.AzureIdentities!["client-secret"].AuthMode);
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    [Fact]
+    public void Nullable_optional_properties_are_valid_in_schema_and_runtime()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "services": { "sqs": null },
+          "azureIdentities": null,
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": null,
+                    "namespace": null
+                  },
+                  "auth": { "key": "key", "clientSecret": null },
+                  "queues": null
+                },
+                "kinesis": null
+              }
+            }
+          ]
+        }
+        """)!;
+
+        AssertValid(instance);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    [Fact]
+    public void Nullable_sns_topics_are_treated_as_omitted()
+    {
+        var instance = ServiceBusTopicsConfig(
+            services: null,
+            topic: null,
+            fallback: null).AsObject();
+        instance["bindings"]![0]!["azure"]!["sns"]!["topics"] = null;
+
+        AssertValid(instance);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    [Fact]
+    public void Null_known_fields_in_conditional_shapes_are_treated_as_omitted()
+    {
+        var instance = ServiceBusTopicsConfig(
+            services: """
+            "services": { "sns": null },
+            """,
+            topic: """
+            {
+              "backend": "ServiceBusTopics",
+              "eventGridTopicEndpoint": null,
+              "eventGridAccessKey": null
+            }
+            """,
+            fallback: null).AsObject();
+        instance["azureIdentities"] = JsonNode.Parse("""
+        {
+          "managed": {
+            "authMode": "managedIdentity",
+            "tenantId": null,
+            "clientSecret": null
+          }
+        }
+        """);
+
+        AssertValid(instance);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    [Fact]
+    public void Backend_specific_extra_fields_are_rejected_by_schema_and_runtime()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": { "accountName": "account", "namespace": "not-blob" },
+                  "auth": { "key": "key", "clientSecret": "not-shared-key" },
+                  "queues": {}
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+
+        Assert.False(Evaluate(instance).IsValid);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        Assert.Throws<ProxyConfigException>(
+            () => ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    [Theory]
+    [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": 1 } }, "bindings": [] }""")]
+    [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "1" } }, "bindings": [] }""")]
+    [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": " Preferred " } }, "bindings": [] }""")]
+    [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "Preferred\n" } }, "bindings": [] }""")]
+    [InlineData("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": " blob ",
+                  "target": { "accountName": "account" },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)]
+    public void Numeric_or_whitespace_padded_discriminators_are_rejected(string json)
+    {
+        var instance = JsonNode.Parse(json)!;
+
+        Assert.False(Evaluate(instance).IsValid);
+        var exception = Record.Exception(() =>
+        {
+            var document = JsonSerializer.Deserialize(
+                json,
+                ConfigDocumentJsonContext.Default.ConfigDocument)!;
+            ConfigDocumentTranslator.ToProxyConfig(document);
+        });
+        Assert.IsAssignableFrom<Exception>(exception);
+        Assert.True(exception is JsonException or ProxyConfigException);
+    }
+
+    [Fact]
+    public void Null_binding_is_rejected_with_a_configuration_error()
+    {
+        var instance = JsonNode.Parse("""{ "bindings": [ null ] }""")!;
+
+        Assert.False(Evaluate(instance).IsValid);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ConfigDocumentTranslator.ToProxyConfig(document));
+        Assert.Contains("bindings[0]", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "dynamodb": {
+                  "kind": "cosmos",
+                  "target": { "endpoint": "not-a-uri", "databaseName": "db" },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)]
+    [InlineData("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": { "accountName": "account", "endpoint": "https://example.com/a b" },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)]
+    public void Schema_and_runtime_reject_invalid_absolute_uris(string json)
+    {
+        var instance = JsonNode.Parse(json)!;
+
+        Assert.False(Evaluate(instance).IsValid);
+        var document = JsonSerializer.Deserialize(
+            json,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigValidator.Validate(
+                ConfigDocumentTranslator.ToProxyConfig(document)));
+    }
+
+    [Fact]
+    public void Uppercase_schemes_and_ipv6_literals_are_valid_absolute_uris()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": "HTTP://[::1]:10000/devstoreaccount1"
+                  },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+
+        AssertValid(instance);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
     }
 
     [Fact]
@@ -117,7 +473,7 @@ public sealed class ConfigSchemaTests
         }
         """)!;
 
-        Assert.False(Schema.Evaluate(instance).IsValid);
+        Assert.False(Evaluate(instance).IsValid);
     }
 
     [Fact]
@@ -145,7 +501,7 @@ public sealed class ConfigSchemaTests
         }
         """)!;
 
-        Assert.False(Schema.Evaluate(invalid).IsValid);
+        Assert.False(Evaluate(invalid).IsValid);
     }
 
     [Fact]
@@ -162,7 +518,7 @@ public sealed class ConfigSchemaTests
         }
         """)!;
 
-        Assert.False(Schema.Evaluate(invalid).IsValid);
+        Assert.False(Evaluate(invalid).IsValid);
     }
 
     [Fact]
@@ -217,9 +573,9 @@ public sealed class ConfigSchemaTests
         }
         """)!;
 
-        Assert.False(Schema.Evaluate(invalidS3).IsValid);
-        Assert.False(Schema.Evaluate(invalidCosmos).IsValid);
-        Assert.False(Schema.Evaluate(invalidAuthority).IsValid);
+        Assert.False(Evaluate(invalidS3).IsValid);
+        Assert.False(Evaluate(invalidCosmos).IsValid);
+        Assert.False(Evaluate(invalidAuthority).IsValid);
     }
 
     [Fact]
@@ -227,9 +583,14 @@ public sealed class ConfigSchemaTests
     {
         var tooShort = KinesisConfig(Convert.ToBase64String(new byte[31]));
         var minimum = KinesisConfig(Convert.ToBase64String(new byte[32]));
+        var malformed = KinesisConfig("not-base64");
 
-        Assert.False(Schema.Evaluate(tooShort).IsValid);
+        Assert.False(Evaluate(tooShort).IsValid);
+        Assert.False(Evaluate(malformed).IsValid);
         AssertValid(minimum);
+        Assert.Throws<ProxyConfigException>(() => ValidateRuntime(tooShort));
+        Assert.Throws<ProxyConfigException>(() => ValidateRuntime(malformed));
+        ValidateRuntime(minimum);
     }
 
     [Fact]
@@ -252,8 +613,44 @@ public sealed class ConfigSchemaTests
             """,
             fallback: null);
 
-        Assert.False(Schema.Evaluate(invalid).IsValid);
+        Assert.False(Evaluate(invalid).IsValid);
         AssertValid(valid);
+    }
+
+    [Theory]
+    [InlineData("""
+        {
+          "backend": "ServiceBusTopics",
+          "eventGridTopicEndpoint": "https://orders.westus-1.eventgrid.azure.net/api/events"
+        }
+        """)]
+    [InlineData("""
+        {
+          "backend": "EventGrid",
+          "serviceBusTopicName": "orders"
+        }
+        """)]
+    public void Topic_backend_rejects_fields_from_the_other_backend(string topic)
+    {
+        var fallback = """
+        {
+          "kind": "eventGrid",
+          "target": { "endpoint": "https://fallback.westus-1.eventgrid.azure.net/api/events" },
+          "auth": { "key": "key" }
+        }
+        """;
+        var instance = ServiceBusTopicsConfig(
+            services: null,
+            topic: topic,
+            fallback: fallback);
+
+        Assert.False(Evaluate(instance).IsValid);
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigValidator.Validate(
+                ConfigDocumentTranslator.ToProxyConfig(document)));
     }
 
     [Fact]
@@ -268,14 +665,36 @@ public sealed class ConfigSchemaTests
             topic: null,
             fallback: null);
 
-        Assert.False(Schema.Evaluate(invalid).IsValid);
+        Assert.False(Evaluate(invalid).IsValid);
     }
 
     private static void AssertValid(JsonNode instance)
     {
-        var result = Schema.Evaluate(instance);
+        var result = Evaluate(instance);
         Assert.True(result.IsValid, JsonSerializer.Serialize(result));
     }
+
+    private static EvaluationResults Evaluate(JsonNode instance) =>
+        Schema.Evaluate(instance, EvaluationOptions);
+
+    private static void ValidateRuntime(JsonNode instance)
+    {
+        var document = JsonSerializer.Deserialize(
+            instance.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    private static JsonNode MinimalConfig() => JsonNode.Parse("""
+    {
+      "bindings": [
+        {
+          "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+          "azure": {}
+        }
+      ]
+    }
+    """)!;
 
     private static JsonNode KinesisConfig(string signingKey) => JsonNode.Parse($$"""
     {

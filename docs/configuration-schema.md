@@ -30,6 +30,20 @@ array contains a complete valid document exercising all six services,
 `azureIdentities`, queue/topic/stream overrides, `eventGridFallback`,
 `shardIteratorSigningKey`, and every DynamoDB behavior flag.
 
+Property names are case-sensitive and must use the canonical spelling in the
+schema. In particular, the service keys are `dynamodb` and `secretsmanager`.
+Startup deserialization enforces both canonical property casing and rejection
+of unknown properties so runtime behavior matches `additionalProperties:
+false`. Before this contract became normative, the loader accepted
+case-insensitive and unknown property names; operators must update those files
+to the canonical names when adopting this schema.
+
+Enum values and backend `kind` discriminators remain case-insensitive for
+compatibility. The spellings shown in this document and the schema defaults are
+canonical. They must be JSON strings naming a defined value; numeric values and
+surrounding whitespace are rejected. Nullable optional properties may be set to JSON `null`, with the
+same effect as omission; semantically required values do not accept `null`.
+
 ## Services and defaults
 
 | JSON path | Type | Default / values |
@@ -56,7 +70,6 @@ valid shape for that service.
 | `sqs` | `serviceBus` | `namespace` | `sas` | `target.transport` (`Rest`/`Amqp`), `target.managementEndpoint`, `queues` |
 | `dynamodb` | `cosmos` | absolute `endpoint`, `databaseName` | `sharedKey`, all Entra modes | `target.preferredRegions` |
 | `sns` | `serviceBusTopics` | `namespace` | `sas`, all Entra modes | `topics`, optional Event Grid `eventGridFallback` |
-| `sns` | `eventGrid` | HTTPS `endpoint`, or `namespace` + `topicName` | `sharedKey`, all Entra modes | no `eventGridFallback` |
 | `kinesis` | `eventHubs` | `namespace` | `sas`, all Entra modes | `streams`, `shardIteratorSigningKey` |
 | `secretsmanager` | `keyVault` | HTTPS `vaultUrl` | Entra modes only | none |
 
@@ -77,6 +90,10 @@ either configure `eventGridFallback`, or give each Event Grid topic both
 `services.sns.defaultBackend` to `EventGrid` requires `eventGridFallback` on
 every `serviceBusTopics` binding.
 
+Event Grid is a routing fallback for a `serviceBusTopics` binding, not a
+standalone primary SNS backend. SNS control-plane operations require the
+Service Bus Topics backend even when Event Grid is selected for publication.
+
 ## Authentication shapes
 
 | `auth.mode` | Required fields | Applicability |
@@ -88,10 +105,13 @@ every `serviceBusTopics` binding.
 | `workloadIdentity` | none in JSON; uses `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_FEDERATED_TOKEN_FILE` | Entra-capable backends |
 | `reference` | `identity` | Entra-capable backends; name must exist in `azureIdentities` |
 
+A shared-key auth block may omit `mode`; it defaults to `sharedKey`. Other
+backend auth modes require an explicit discriminator.
+
 A named `azureIdentities` entry uses `authMode` rather than `mode`. A
 `clientSecret` identity requires all three inline fields, `managedIdentity`
 allows only optional `clientId`, and `workloadIdentity` carries no inline
-fields.
+fields. A named identity may omit `authMode`; it defaults to `clientSecret`.
 
 ## Environment overrides
 
@@ -112,6 +132,8 @@ AWS fields; backend `kind`; target fields; auth fields; Kinesis
 between `QUEUES` and `TRANSPORT`.
 
 `azureIdentities`, SNS `topics`/`eventGridFallback`, and Kinesis `streams` are
-currently JSON-file-only. Unknown or malformed override paths are ignored, so
-validate the resulting file against the schema and rely on startup validation
-before rollout.
+currently JSON-file-only. Unknown or malformed override paths are ignored
+without creating bindings, backends, services, queues, or region entries.
+This includes negative/non-decimal indices, unsupported leaves, invalid scalar
+values, and trailing path segments. Validate the resulting file against the
+schema and rely on startup validation before rollout.

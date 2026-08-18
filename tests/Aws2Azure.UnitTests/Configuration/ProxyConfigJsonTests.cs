@@ -60,14 +60,30 @@ public class ProxyConfigJsonTests
     }
 
     [Fact]
-    public void Property_names_are_case_insensitive()
+    public void Rejects_noncanonical_property_names()
     {
         const string json = """
         { "Bindings": [ { "AWS": { "AccessKeyId": "AKIA", "secretAccessKey": "s" }, "azure": {} } ] }
         """;
 
-        var config = Translate(json);
-        Assert.Equal("AKIA", Assert.Single(config.Credentials).AwsAccessKeyId);
+        Assert.Throws<JsonException>(() => Translate(json));
+    }
+
+    [Fact]
+    public void Rejects_unknown_properties()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "s", "unexpected": true },
+              "azure": {}
+            }
+          ]
+        }
+        """;
+
+        Assert.Throws<JsonException>(() => Translate(json));
     }
 
     [Fact]
@@ -230,7 +246,7 @@ public class ProxyConfigJsonTests
     }
 
     [Fact]
-    public void Rejects_event_grid_fallback_on_event_grid_kind_binding()
+    public void Rejects_event_grid_as_primary_sns_binding()
     {
         const string json = """
         {
@@ -241,12 +257,7 @@ public class ProxyConfigJsonTests
                 "sns": {
                   "kind": "eventGrid",
                   "target": { "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events" },
-                  "auth": { "mode": "sharedKey", "key": "eg1" },
-                  "eventGridFallback": {
-                    "kind": "eventGrid",
-                    "target": { "endpoint": "https://other.region-1.eventgrid.azure.net/api/events" },
-                    "auth": { "mode": "sharedKey", "key": "eg2" }
-                  }
+                  "auth": { "mode": "sharedKey", "key": "eg1" }
                 }
               }
             }
@@ -255,7 +266,7 @@ public class ProxyConfigJsonTests
         """;
 
         var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
-        Assert.Contains("bindings[0].azure.sns.eventGridFallback: not allowed when kind=eventGrid", ex.Message);
+        Assert.Contains("expected serviceBusTopics", ex.Message);
     }
 
     /// <summary>

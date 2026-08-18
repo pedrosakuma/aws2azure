@@ -37,11 +37,11 @@ public static class ConfigSchemaGenerator
                     ("type", "array"),
                     ("minItems", 1),
                     ("items", Ref("binding")))),
-                ("azureIdentities", Object(
+                ("azureIdentities", Nullable(Object(
                     ("type", "object"),
                     ("description", "Named Entra identities referenced by AAD-capable backend auth blocks."),
                     ("propertyNames", Object(("minLength", 1))),
-                    ("additionalProperties", Ref("azureIdentity")))))),
+                    ("additionalProperties", Ref("azureIdentity"))))))),
             ("required", Array("bindings")),
             ("$defs", Definitions()),
             ("allOf", Array(EventGridDefaultConstraint())),
@@ -69,7 +69,6 @@ public static class ConfigSchemaGenerator
         ("dynamoDbBackend", DynamoDbBackend()),
         ("snsBackend", SnsBackend()),
         ("snsServiceBusTopicsBackend", SnsServiceBusTopicsBackend()),
-        ("snsEventGridBackend", SnsEventGridBackend()),
         ("eventGridFallback", EventGridFallback()),
         ("kinesisBackend", KinesisBackend()),
         ("secretsManagerBackend", SecretsManagerBackend()),
@@ -89,12 +88,12 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject Services() => ClosedObject(
         Object(
-            ("s3", Ref("s3Service")),
-            ("sqs", Ref("serviceToggle")),
-            ("dynamodb", Ref("dynamoDbService")),
-            ("sns", Ref("snsService")),
-            ("kinesis", Ref("serviceToggle")),
-            ("secretsmanager", Ref("serviceToggle"))));
+            ("s3", Nullable(Ref("s3Service"))),
+            ("sqs", Nullable(Ref("serviceToggle"))),
+            ("dynamodb", Nullable(Ref("dynamoDbService"))),
+            ("sns", Nullable(Ref("snsService"))),
+            ("kinesis", Nullable(Ref("serviceToggle"))),
+            ("secretsmanager", Nullable(Ref("serviceToggle")))));
 
     private static JsonObject ServiceToggle() => ClosedObject(
         Object(("enabled", Boolean(defaultValue: false))));
@@ -102,14 +101,14 @@ public static class ConfigSchemaGenerator
     private static JsonObject S3Service() => ClosedObject(
         Object(
             ("enabled", Boolean(defaultValue: false)),
-            ("presignedTrustedSigningHosts", Object(
+            ("presignedTrustedSigningHosts", Nullable(Object(
                 ("type", "array"),
                 ("description", "Lowercase bare signing hosts; schemes, paths, and whitespace are not allowed."),
                 ("uniqueItems", true),
                 ("items", Object(
                     ("type", "string"),
                     ("minLength", 1),
-                    ("pattern", "^(?!.*://)[^A-Z/\\s]+$")))))));
+                    ("pattern", "^(?!.*://)[^A-Z/\\s]+(?![\\s\\S])"))))))));
 
     private static JsonObject SnsService() => ClosedObject(
         Object(
@@ -153,190 +152,207 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject AzureBindings() => ClosedObject(
         Object(
-            ("s3", Ref("s3Backend")),
-            ("sqs", Ref("sqsBackend")),
-            ("dynamodb", Ref("dynamoDbBackend")),
-            ("sns", Ref("snsBackend")),
-            ("kinesis", Ref("kinesisBackend")),
-            ("secretsmanager", Ref("secretsManagerBackend"))));
+            ("s3", Nullable(Ref("s3Backend"))),
+            ("sqs", Nullable(Ref("sqsBackend"))),
+            ("dynamodb", Nullable(Ref("dynamoDbBackend"))),
+            ("sns", Nullable(Ref("snsBackend"))),
+            ("kinesis", Nullable(Ref("kinesisBackend"))),
+            ("secretsmanager", Nullable(Ref("secretsManagerBackend")))));
 
     private static JsonObject AzureIdentity() => Object(
         ("description", "A reusable Entra identity. Workload identity fields come from AZURE_* environment variables."),
         ("oneOf", Array(
             ClosedObject(
-                Object(
-                    ("authMode", Const(Camel(nameof(AzureAuthMode.ClientSecret)))),
+                IdentityProperties(
+                    ("authMode", EnumLiteral(
+                        Camel(nameof(AzureAuthMode.ClientSecret)),
+                        isDefault: true)),
                     ("tenantId", Ref("nonEmptyString")),
                     ("clientId", Ref("nonEmptyString")),
                     ("clientSecret", Ref("nonEmptyString"))),
-                "authMode", "tenantId", "clientId", "clientSecret"),
+                "tenantId", "clientId", "clientSecret"),
             ClosedObject(
-                Object(
-                    ("authMode", Const(Camel(nameof(AzureAuthMode.ManagedIdentity)))),
-                    ("clientId", Ref("nonEmptyString"))),
+                IdentityProperties(
+                    ("authMode", EnumLiteral(
+                        Camel(nameof(AzureAuthMode.ManagedIdentity)))),
+                    ("clientId", Nullable(Ref("nonEmptyString")))),
                 "authMode"),
             ClosedObject(
-                Object(("authMode", Const(Camel(nameof(AzureAuthMode.WorkloadIdentity))))),
+                IdentityProperties(
+                    ("authMode", EnumLiteral(
+                        Camel(nameof(AzureAuthMode.WorkloadIdentity))))),
                 "authMode"))));
 
     private static JsonObject S3Backend() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("blob")),
             ("target", ClosedObject(
-                Object(
+                TargetProperties(
                     ("accountName", Ref("nonEmptyString")),
-                    ("endpoint", HttpUri())),
+                    ("endpoint", Nullable(HttpUri()))),
                 "accountName")),
             ("auth", Ref("sharedKeyAuth"))),
         "kind", "target", "auth");
 
     private static JsonObject SqsBackend() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("serviceBus")),
             ("target", ClosedObject(
-                Object(
+                TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("managementEndpoint", HttpUri()),
-                    ("transport", Enum(
+                    ("managementEndpoint", Nullable(HttpUri())),
+                    ("transport", Nullable(Enum(
                         nameof(SqsTransport.Rest),
                         nameof(SqsTransport.Rest),
-                        nameof(SqsTransport.Amqp)))),
+                        nameof(SqsTransport.Amqp))))),
                 "namespace")),
             ("auth", Ref("sasAuth")),
-            ("queues", NamedMap(Ref("queueSettings")))),
+            ("queues", Nullable(NamedMap(Ref("queueSettings"))))),
         "kind", "target", "auth");
 
     private static JsonObject DynamoDbBackend() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("cosmos")),
             ("target", ClosedObject(
-                Object(
+                TargetProperties(
                     ("endpoint", HttpUri()),
                     ("databaseName", Ref("nonEmptyString")),
-                    ("preferredRegions", Object(
+                    ("preferredRegions", Nullable(Object(
                         ("type", "array"),
                         ("minItems", 1),
-                        ("items", Ref("nonEmptyString"))))),
+                        ("items", Ref("nonEmptyString")))))),
                 "endpoint", "databaseName")),
             ("auth", Ref("keyOrAadAuth"))),
         "kind", "target", "auth");
 
-    private static JsonObject SnsBackend() => Object(
-        ("oneOf", Array(
-            Ref("snsServiceBusTopicsBackend"),
-            Ref("snsEventGridBackend"))));
+    private static JsonObject SnsBackend() => Ref("snsServiceBusTopicsBackend");
 
     private static JsonObject SnsServiceBusTopicsBackend()
     {
         var backend = ClosedObject(
-            Object(
+            BackendProperties(
             ("kind", Const("serviceBusTopics")),
             ("target", ClosedObject(
-                Object(
+                TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("endpoint", ServiceBusUri()),
-                    ("managementEndpoint", HttpUri())),
+                    ("endpoint", Nullable(ServiceBusUri())),
+                    ("managementEndpoint", Nullable(HttpUri()))),
                 "namespace")),
             ("auth", Ref("sasOrAadAuth")),
-            ("topics", NamedMap(Ref("topicSettings"))),
-            ("eventGridFallback", Ref("eventGridFallback"))),
+            ("topics", Nullable(NamedMap(Ref("topicSettings")))),
+            ("eventGridFallback", Nullable(Ref("eventGridFallback")))),
             "kind", "target", "auth");
+        var noFallback = Object(
+            ("anyOf", Array(
+                Object(("not", Object(("required", Array("eventGridFallback"))))),
+                Object(("properties", Object(
+                    ("eventGridFallback", Object(("type", "null")))))))));
+        var topicsConstraint = Object(
+            ("properties", Object(
+                ("topics", Nullable(NamedMap(Ref("topicSettingsWithoutFallback")))))));
         backend.Add("allOf", Array(
             Object(
-                ("if", Object(
-                    ("not", Object(("required", Array("eventGridFallback")))))),
-                ("then", Object(
-                    ("properties", Object(
-                        ("topics", NamedMap(Ref("topicSettingsWithoutFallback"))))))))));
+                ("if", noFallback),
+                ("then", topicsConstraint))));
         return backend;
     }
 
-    private static JsonObject SnsEventGridBackend() => ClosedObject(
-        Object(
-            ("kind", Const("eventGrid")),
-            ("target", EventGridTarget()),
-            ("auth", Ref("keyOrAadAuth"))),
-        "kind", "target", "auth");
-
     private static JsonObject EventGridFallback() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("eventGrid")),
             ("target", EventGridTarget()),
             ("auth", Ref("keyOrAadAuth"))),
         "kind", "target", "auth");
 
-    private static JsonObject EventGridTarget() => Object(
-        ("type", "object"),
-        ("additionalProperties", false),
-        ("properties", Object(
-            ("endpoint", HttpsUri()),
-            ("namespace", Ref("nonEmptyString")),
-            ("topicName", Ref("nonEmptyString")))),
-        ("anyOf", Array(
-            Object(("required", Array("endpoint"))),
-            Object(("required", Array("namespace", "topicName"))))));
+    private static JsonObject EventGridTarget()
+    {
+        var route = Array(
+            Object(
+                ("required", Array("endpoint")),
+                ("properties", Object(("endpoint", HttpsUri())))),
+            Object(
+                ("required", Array("namespace", "topicName")),
+                ("properties", Object(
+                    ("namespace", Ref("nonEmptyString")),
+                    ("topicName", Ref("nonEmptyString"))))));
+        return Object(
+            ("type", "object"),
+            ("additionalProperties", false),
+            ("properties", TargetProperties(
+                ("endpoint", Nullable(HttpsUri())),
+                ("namespace", Nullable(Ref("nonEmptyString"))),
+                ("topicName", Nullable(Ref("nonEmptyString"))))),
+            ("anyOf", route));
+    }
 
     private static JsonObject KinesisBackend() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("eventHubs")),
             ("target", ClosedObject(
-                Object(
+                TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("endpoint", ServiceBusUri())),
+                    ("endpoint", Nullable(ServiceBusUri()))),
                 "namespace")),
             ("auth", Ref("sasOrAadAuth")),
-            ("streams", NamedMap(Ref("streamSettings"))),
-            ("shardIteratorSigningKey", Object(
+            ("streams", Nullable(NamedMap(Ref("streamSettings")))),
+            ("shardIteratorSigningKey", Nullable(Object(
                 ("type", "string"),
                 ("description", "Base64-encoded HMAC key that decodes to at least 32 bytes."),
                 ("minLength", 44),
                 ("contentEncoding", "base64"),
-                ("pattern", "^(?![A-Za-z0-9+/]{42}==$)(?=.{44,}$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$")))),
+                ("pattern", "^(?![A-Za-z0-9+/]{42}==(?![\\s\\S]))(?=.{44,}(?![\\s\\S]))(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?(?![\\s\\S])"))))),
         "kind", "target", "auth");
 
     private static JsonObject SecretsManagerBackend() => ClosedObject(
-        Object(
+        BackendProperties(
             ("kind", Const("keyVault")),
             ("target", ClosedObject(
-                Object(("vaultUrl", HttpsUri())),
+                TargetProperties(("vaultUrl", HttpsUri())),
                 "vaultUrl")),
             ("auth", Ref("aadAuth"))),
         "kind", "target", "auth");
 
     private static JsonObject SharedKeyAuth() => ClosedObject(
-        Object(
-            ("mode", Const(Camel(nameof(AzureAuthKind.SharedKey)))),
+        AuthProperties(
+            ("mode", EnumLiteral(
+                Camel(nameof(AzureAuthKind.SharedKey)),
+                isDefault: true)),
             ("key", Ref("nonEmptyString"))),
-        "mode", "key");
+        "key");
 
     private static JsonObject SasAuth() => ClosedObject(
-        Object(
-            ("mode", Const(Camel(nameof(AzureAuthKind.Sas)))),
+        AuthProperties(
+            ("mode", EnumLiteral(Camel(nameof(AzureAuthKind.Sas)))),
             ("keyName", Ref("nonEmptyString")),
             ("key", Ref("nonEmptyString"))),
         "mode", "keyName", "key");
 
     private static JsonObject ManagedIdentityAuth() => ClosedObject(
-        Object(
-            ("mode", Const(Camel(nameof(AzureAuthKind.ManagedIdentity)))),
-            ("clientId", Ref("nonEmptyString"))),
+        AuthProperties(
+            ("mode", EnumLiteral(
+                Camel(nameof(AzureAuthKind.ManagedIdentity)))),
+            ("clientId", Nullable(Ref("nonEmptyString")))),
         "mode");
 
     private static JsonObject ClientSecretAuth() => ClosedObject(
-        Object(
-            ("mode", Const(Camel(nameof(AzureAuthKind.ClientSecret)))),
+        AuthProperties(
+            ("mode", EnumLiteral(
+                Camel(nameof(AzureAuthKind.ClientSecret)))),
             ("tenantId", Ref("nonEmptyString")),
             ("clientId", Ref("nonEmptyString")),
             ("clientSecret", Ref("nonEmptyString"))),
         "mode", "tenantId", "clientId", "clientSecret");
 
     private static JsonObject WorkloadIdentityAuth() => ClosedObject(
-        Object(("mode", Const(Camel(nameof(AzureAuthKind.WorkloadIdentity))))),
+        AuthProperties(
+            ("mode", EnumLiteral(
+                Camel(nameof(AzureAuthKind.WorkloadIdentity))))),
         "mode");
 
     private static JsonObject ReferenceAuth() => ClosedObject(
-        Object(
-            ("mode", Const(Camel(nameof(AzureAuthKind.Reference)))),
+        AuthProperties(
+            ("mode", EnumLiteral(
+                Camel(nameof(AzureAuthKind.Reference)))),
             ("identity", Ref("nonEmptyString"))),
         "mode", "identity");
 
@@ -365,69 +381,78 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject QueueSettings() => ClosedObject(
         Object(
-            ("transport", Object(
-                ("type", Array("string", "null")),
-                ("enum", Array(nameof(SqsTransport.Rest), nameof(SqsTransport.Amqp), null))))));
+            ("transport", Nullable(Enum(
+                null,
+                nameof(SqsTransport.Rest),
+                nameof(SqsTransport.Amqp))))));
 
-    private static JsonObject TopicSettings() => ClosedObject(
-        Object(
-            ("backend", Enum(
-                nameof(SnsTopicBackend.ServiceBusTopics),
-                nameof(SnsTopicBackend.ServiceBusTopics),
-                nameof(SnsTopicBackend.EventGrid))),
-            ("serviceBusTopicName", Ref("nonEmptyString")),
-            ("eventGridTopicEndpoint", HttpsUri()),
-            ("eventGridAccessKey", Ref("nonEmptyString"))));
+    private static JsonObject TopicSettings() => Object(
+        ("oneOf", Array(
+            ClosedObject(
+                TopicProperties(
+                    ("backend", EnumLiteral(
+                        nameof(SnsTopicBackend.ServiceBusTopics),
+                        isDefault: true)),
+                    ("serviceBusTopicName", Nullable(Ref("nonEmptyString"))))),
+            ClosedObject(
+                TopicProperties(
+                    ("backend", EnumLiteral(nameof(SnsTopicBackend.EventGrid))),
+                    ("eventGridTopicEndpoint", Nullable(HttpsUri())),
+                    ("eventGridAccessKey", Nullable(Ref("nonEmptyString")))),
+                "backend"))));
 
     private static JsonObject TopicSettingsWithoutFallback() => Object(
         ("oneOf", Array(
             ClosedObject(
-                Object(
-                    ("backend", Object(
-                        ("const", nameof(SnsTopicBackend.ServiceBusTopics)),
-                        ("default", nameof(SnsTopicBackend.ServiceBusTopics)))),
-                    ("serviceBusTopicName", Ref("nonEmptyString")))),
+                TopicProperties(
+                    ("backend", EnumLiteral(
+                        nameof(SnsTopicBackend.ServiceBusTopics),
+                        isDefault: true)),
+                    ("serviceBusTopicName", Nullable(Ref("nonEmptyString"))))),
             ClosedObject(
-                Object(
-                    ("backend", Const(nameof(SnsTopicBackend.EventGrid))),
+                TopicProperties(
+                    ("backend", EnumLiteral(
+                        nameof(SnsTopicBackend.EventGrid))),
                     ("eventGridTopicEndpoint", HttpsUri()),
                     ("eventGridAccessKey", Ref("nonEmptyString"))),
                 "backend", "eventGridTopicEndpoint", "eventGridAccessKey"))));
 
     private static JsonObject StreamSettings() => ClosedObject(
         Object(
-            ("eventHubName", Ref("nonEmptyString")),
-            ("consumerGroup", Ref("nonEmptyString")),
-            ("partitionCount", Object(("type", "integer"), ("minimum", 1)))));
+            ("eventHubName", Nullable(Ref("nonEmptyString"))),
+            ("consumerGroup", Nullable(Ref("nonEmptyString"))),
+            ("partitionCount", Nullable(Object(("type", "integer"), ("minimum", 1))))));
 
     private static JsonObject NamedMap(JsonNode valueSchema) => Object(
         ("type", "object"),
         ("propertyNames", Object(("minLength", 1), ("pattern", "\\S"))),
         ("additionalProperties", valueSchema));
 
-    private static JsonObject HttpUri() => SchemeUri("https?");
+    private static JsonObject HttpUri() => SchemeUri("http", "https");
 
     private static JsonObject HttpsUri() => SchemeUri("https");
 
-    private static JsonObject ServiceBusUri() => SchemeUri("(?:https?|amqps?)");
+    private static JsonObject ServiceBusUri() => SchemeUri("http", "https", "amqp", "amqps");
 
-    private static JsonObject SchemeUri(string schemes) => Object(
+    private static JsonObject SchemeUri(params string[] schemes) => Object(
         ("type", "string"),
         ("format", "uri"),
         ("pattern",
-            $"^{schemes}://" +
-            "(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*" +
-            "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)" +
+            $"^(?:{string.Join("|", schemes.Select(CaseInsensitiveText))})://" +
+            "(?:[^/?#@\\s]+@)?" +
+            "(?:\\[[^\\]\\s]+\\]|[^:/?#\\s]+)" +
             "(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|" +
             "65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?" +
-            "(?:[/?#][^\\s]*)?$"));
+            "(?:[/?#][^\\s]*)?(?![\\s\\S])"));
 
     private static JsonObject EventGridDefaultConstraint()
     {
+        var defaultBackend = Object(
+            ("defaultBackend", EnumLiteral(nameof(SnsTopicBackend.EventGrid))));
         var snsCondition = Object(
+            ("type", "object"),
             ("required", Array("defaultBackend")),
-            ("properties", Object(
-                ("defaultBackend", Const(nameof(SnsTopicBackend.EventGrid))))));
+            ("properties", defaultBackend));
         var servicesCondition = Object(
             ("required", Array("sns")),
             ("properties", Object(("sns", snsCondition))));
@@ -458,7 +483,9 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject ServiceBusTopicsFallbackRequirement()
     {
-        var snsRequirement = Object(("required", Array("eventGridFallback")));
+        var snsRequirement = Object(
+            ("required", Array("eventGridFallback")),
+            ("properties", Object(("eventGridFallback", Ref("eventGridFallback")))));
         var azureRequirement = Object(
             ("properties", Object(("sns", snsRequirement))));
         return Object(
@@ -469,12 +496,153 @@ public static class ConfigSchemaGenerator
         ("type", "boolean"),
         ("default", defaultValue));
 
-    private static JsonObject Enum(string defaultValue, params string[] values) => Object(
-        ("type", "string"),
-        ("enum", Array(values)),
-        ("default", defaultValue));
+    private static JsonObject Enum(string? defaultValue, params string[] values)
+    {
+        var variants = new JsonArray();
+        foreach (var value in values)
+        {
+            variants.Add(Object(
+                ("type", "string"),
+                ("pattern", CaseInsensitivePattern(value))));
+        }
+        var schema = Object(("oneOf", variants));
+        if (defaultValue is not null)
+        {
+            schema.Add("default", defaultValue);
+        }
+        return schema;
+    }
 
-    private static JsonObject Const(string value) => Object(("const", value));
+    private static JsonObject Const(string value) => Object(
+        ("type", "string"),
+        ("pattern", CaseInsensitivePattern(value)));
+
+    private static JsonObject EnumLiteral(string value, bool isDefault = false)
+    {
+        var schema = Object(
+            ("type", "string"),
+            ("pattern", CaseInsensitivePattern(value)));
+        if (isDefault)
+        {
+            schema.Add("default", value);
+        }
+        return schema;
+    }
+
+    private static JsonObject Nullable(JsonNode schema) => Object(
+        ("oneOf", Array(schema, Object(("type", "null")))));
+
+    private static JsonObject BackendProperties(
+        params (string Name, JsonNode Value)[] properties)
+    {
+        var result = Object(
+            ("kind", NullOnly()),
+            ("target", NullOnly()),
+            ("auth", NullOnly()),
+            ("queues", NullOnly()),
+            ("topics", NullOnly()),
+            ("streams", NullOnly()),
+            ("shardIteratorSigningKey", NullOnly()),
+            ("eventGridFallback", NullOnly()));
+        foreach (var (name, value) in properties)
+        {
+            result[name] = value;
+        }
+        return result;
+    }
+
+    private static JsonObject TargetProperties(
+        params (string Name, JsonNode Value)[] properties)
+    {
+        var result = Object(
+            ("endpoint", NullOnly()),
+            ("accountName", NullOnly()),
+            ("namespace", NullOnly()),
+            ("databaseName", NullOnly()),
+            ("managementEndpoint", NullOnly()),
+            ("preferredRegions", NullOnly()),
+            ("transport", NullOnly()),
+            ("vaultUrl", NullOnly()),
+            ("topicName", NullOnly()));
+        foreach (var (name, value) in properties)
+        {
+            result[name] = value;
+        }
+        return result;
+    }
+
+    private static JsonObject AuthProperties(
+        params (string Name, JsonNode Value)[] properties)
+    {
+        var result = Object(
+            ("mode", NullOnly()),
+            ("key", NullOnly()),
+            ("keyName", NullOnly()),
+            ("tenantId", NullOnly()),
+            ("clientId", NullOnly()),
+            ("clientSecret", NullOnly()),
+            ("identity", NullOnly()));
+        foreach (var (name, value) in properties)
+        {
+            result[name] = value;
+        }
+        return result;
+    }
+
+    private static JsonObject IdentityProperties(
+        params (string Name, JsonNode Value)[] properties)
+    {
+        var result = Object(
+            ("authMode", NullOnly()),
+            ("tenantId", NullOnly()),
+            ("clientId", NullOnly()),
+            ("clientSecret", NullOnly()));
+        foreach (var (name, value) in properties)
+        {
+            result[name] = value;
+        }
+        return result;
+    }
+
+    private static JsonObject TopicProperties(
+        params (string Name, JsonNode Value)[] properties)
+    {
+        var result = Object(
+            ("backend", NullOnly()),
+            ("serviceBusTopicName", NullOnly()),
+            ("eventGridTopicEndpoint", NullOnly()),
+            ("eventGridAccessKey", NullOnly()));
+        foreach (var (name, value) in properties)
+        {
+            result[name] = value;
+        }
+        return result;
+    }
+
+    private static JsonObject NullOnly() => Object(("type", "null"));
+
+    private static string CaseInsensitivePattern(string value) =>
+        $"^{CaseInsensitiveText(value)}(?![\\s\\S])";
+
+    private static string CaseInsensitiveText(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length * 4);
+        foreach (var character in value)
+        {
+            if (character is >= 'A' and <= 'Z' or >= 'a' and <= 'z')
+            {
+                builder.Append('[');
+                builder.Append(char.ToUpperInvariant(character));
+                builder.Append(char.ToLowerInvariant(character));
+                builder.Append(']');
+            }
+            else
+            {
+                builder.Append(character);
+            }
+        }
+        return builder.ToString();
+    }
 
     private static string Camel(string value) => JsonNamingPolicy.CamelCase.ConvertName(value);
 
@@ -526,7 +694,7 @@ public static class ConfigSchemaGenerator
             "services", "bindings", "azureIdentities");
         VerifyProperties(
             ConfigDocumentJsonContext.Default.ServicesConfig,
-            "s3", "sqs", "dynamoDb", "sns", "kinesis", "secretsManager");
+            "s3", "sqs", "dynamodb", "sns", "kinesis", "secretsmanager");
         VerifyProperties(ConfigDocumentJsonContext.Default.ServiceToggleConfig, "enabled");
         VerifyProperties(
             ConfigDocumentJsonContext.Default.S3ServiceConfig,
@@ -545,7 +713,7 @@ public static class ConfigSchemaGenerator
             "accessKeyId", "secretAccessKey");
         VerifyProperties(
             ConfigDocumentJsonContext.Default.AzureBindingSet,
-            "s3", "sqs", "dynamoDb", "sns", "kinesis", "secretsManager");
+            "s3", "sqs", "dynamodb", "sns", "kinesis", "secretsmanager");
         VerifyProperties(
             ConfigDocumentJsonContext.Default.AzureBackendConfig,
             "kind", "target", "auth", "queues", "topics", "streams",
@@ -757,7 +925,7 @@ public static class ConfigSchemaGenerator
               "target": { "namespace": "topic-ns" },
               "auth": { "mode": "sas", "keyName": "RootManageSharedAccessKey", "key": "replace-me" },
               "topics": {
-                "orders-*": { "backend": "EventGrid", "serviceBusTopicName": "orders" }
+                "orders-*": { "backend": "EventGrid" }
               },
               "eventGridFallback": {
                 "kind": "eventGrid",

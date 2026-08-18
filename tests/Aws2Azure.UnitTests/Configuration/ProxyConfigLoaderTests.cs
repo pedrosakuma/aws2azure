@@ -167,6 +167,60 @@ public class ProxyConfigLoaderTests : IDisposable
         Assert.False(config.DynamoDb.CosmosBinaryRequests);
     }
 
+    [Theory]
+    [InlineData("AWS2AZURE__BINDINGS__-1__AWS__ACCESSKEYID", "AKIA")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__UNKNOWN", "value")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__NAMESPACE", "not-blob")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__CLIENTSECRET", "not-shared-key")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", " blob ")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "1")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "unknown")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__UNKNOWN__KIND", "blob")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__-1", "West US")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__orders__UNKNOWN", "Rest")]
+    public void Malformed_or_unknown_binding_override_does_not_mutate_document(
+        string key,
+        string value)
+    {
+        var env = new Dictionary<string, string?> { [key] = value };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Empty(config.Credentials);
+    }
+
+    [Theory]
+    [InlineData("AWS2AZURE__SERVICES__S3__UNKNOWN", "true")]
+    [InlineData("AWS2AZURE__SERVICES__S3__ENABLED__EXTRA", "true")]
+    [InlineData("AWS2AZURE__SERVICES__S3__ENABLED", "not-a-boolean")]
+    [InlineData("AWS2AZURE__SERVICES__DYNAMODB__USESTOREDPROCEDURES", "1")]
+    [InlineData("AWS2AZURE__SERVICES__DYNAMODB__USESTOREDPROCEDURES", " Preferred ")]
+    public void Malformed_or_unknown_service_override_does_not_mutate_document(
+        string key,
+        string value)
+    {
+        var env = new Dictionary<string, string?> { [key] = value };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Empty(config.Services);
+    }
+
+    [Fact]
+    public void Override_targeting_null_binding_reports_configuration_error()
+    {
+        File.WriteAllText(_tempFile, """{ "bindings": [ null ] }""");
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+        };
+
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigLoader.Load(_tempFile, env));
+
+        Assert.Contains("bindings[0]", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Throws_on_malformed_json()
     {
