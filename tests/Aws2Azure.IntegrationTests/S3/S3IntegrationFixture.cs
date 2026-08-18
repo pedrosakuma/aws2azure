@@ -32,12 +32,11 @@ public sealed class S3IntegrationFixture : IAsyncLifetime
     {
         try
         {
-            _container = new ContainerBuilder()
-                .WithImage(ContainerImage)
+            _container = new ContainerBuilder(ContainerImage)
                 .WithName("aws2azure-s3-it-" + Guid.NewGuid().ToString("N")[..8])
                 .WithPortBinding(10000, true)
                 .WithCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10000))
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(10000))
                 .Build();
 
             await _container.StartAsync();

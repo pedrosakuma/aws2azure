@@ -69,20 +69,18 @@ public sealed class ServiceBusEmulatorFixture : IAsyncLifetime
                 .Build();
             await _network.CreateAsync().ConfigureAwait(false);
 
-            _sqlEdge = new ContainerBuilder()
-                .WithImage("mcr.microsoft.com/azure-sql-edge:latest")
+            _sqlEdge = new ContainerBuilder("mcr.microsoft.com/azure-sql-edge:latest")
                 .WithName("aws2azure-it-sqledge-" + Guid.NewGuid().ToString("N")[..8])
                 .WithNetwork(_network)
                 .WithNetworkAliases(SqlEdgeNetworkAlias)
                 .WithEnvironment("ACCEPT_EULA", "Y")
                 .WithEnvironment("MSSQL_SA_PASSWORD", SqlEdgePassword)
                 .WithPortBinding(SqlEdgePort, true)
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(SqlEdgePort))
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(SqlEdgePort))
                 .Build();
             await _sqlEdge.StartAsync().ConfigureAwait(false);
 
-            _emulator = new ContainerBuilder()
-                .WithImage(_emulatorImage)
+            _emulator = new ContainerBuilder(_emulatorImage)
                 .WithName("aws2azure-it-sbemu-" + Guid.NewGuid().ToString("N")[..8])
                 .WithNetwork(_network)
                 .WithEnvironment("ACCEPT_EULA", "Y")
@@ -111,6 +109,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncLifetime
     {
         for (var current = ex; current is not null; current = current.InnerException)
         {
+            if (current is DockerUnavailableException) return true;
+
             var typeName = current.GetType().FullName ?? string.Empty;
             if (typeName.StartsWith("Docker", StringComparison.Ordinal)) return true;
 
