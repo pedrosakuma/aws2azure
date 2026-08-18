@@ -92,8 +92,8 @@ public class ProxyConfigValidatorTests
         Assert.Contains("either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
         Assert.Contains("bindings[0].azure.kinesis.target.namespace: required", ex.Message);
         Assert.Contains("bindings[0].azure.kinesis: either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
-        Assert.Contains("bindings[0].azure.sns: either target.endpoint OR (target.namespace+target.topicName) is required", ex.Message);
-        Assert.Contains("bindings[0].azure.sns: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback: either target.endpoint OR (target.namespace+target.topicName) is required", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("azure.sns: auth.key and AAD fields are mutually exclusive", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback: auth.key and AAD fields are mutually exclusive", ex.Message);
     }
 
     [Fact]
@@ -300,7 +300,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("azure.sns.target.endpoint: must use https scheme.", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback.target.endpoint: must use https scheme.", ex.Message);
     }
 
     [Fact]
@@ -447,8 +447,12 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("azure.sns.topics.orders: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName)", ex.Message);
-        Assert.Contains("azure.sns.topics.orders: EventGrid backend requires either eventGridAccessKey or this binding's azure.sns to use kind=eventGrid with auth.key/(auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains(
+            "bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridTopicEndpoint or bindings[0].azure.sns.eventGridFallback.target.endpoint/(target.namespace+target.topicName).",
+            ex.Message);
+        Assert.Contains(
+            "bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).",
+            ex.Message);
     }
 
     [Fact]
@@ -477,7 +481,9 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("azure.sns: services.sns.defaultBackend=EventGrid: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName)", ex.Message);
+        Assert.Contains(
+            "bindings[0].azure.sns: services.sns.defaultBackend=EventGrid: EventGrid route requires either eventGridTopicEndpoint or bindings[0].azure.sns.eventGridFallback.target.endpoint/(target.namespace+target.topicName).",
+            ex.Message);
     }
 
     [Fact]
@@ -727,6 +733,23 @@ public class ProxyConfigValidatorTests
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
         Assert.Contains("azure.secretsmanager.auth: identity reference 'missing' was not found in azureIdentities.", ex.Message);
+    }
+
+    [Fact]
+    public void Event_grid_fallback_identity_error_uses_fallback_auth_path()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.EventGrid = new EventGridCredentials
+        {
+            Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
+            Identity = "missing",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Contains(
+            "bindings[0].azure.sns.eventGridFallback.auth: identity reference 'missing' was not found in azureIdentities.",
+            ex.Message);
     }
 
     [Fact]

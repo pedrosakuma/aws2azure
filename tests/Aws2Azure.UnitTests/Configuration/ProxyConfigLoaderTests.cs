@@ -199,6 +199,80 @@ public class ProxyConfigLoaderTests : IDisposable
         Assert.False(config.DynamoDb.CosmosBinaryRequests);
     }
 
+    public static TheoryData<string, string> UnsupportedAuthModes => new()
+    {
+        { "S3", "sas" },
+        { "S3", "managedIdentity" },
+        { "S3", "clientSecret" },
+        { "S3", "workloadIdentity" },
+        { "S3", "reference" },
+        { "SQS", "sharedKey" },
+        { "SQS", "managedIdentity" },
+        { "SQS", "clientSecret" },
+        { "SQS", "workloadIdentity" },
+        { "SQS", "reference" },
+        { "DYNAMODB", "sas" },
+        { "SNS", "sharedKey" },
+        { "KINESIS", "sharedKey" },
+        { "SECRETSMANAGER", "sharedKey" },
+        { "SECRETSMANAGER", "sas" },
+    };
+
+    public static TheoryData<string, string> SupportedAuthModes => new()
+    {
+        { "S3", "sharedKey" },
+        { "SQS", "sas" },
+        { "DYNAMODB", "sharedKey" },
+        { "DYNAMODB", "managedIdentity" },
+        { "DYNAMODB", "clientSecret" },
+        { "DYNAMODB", "workloadIdentity" },
+        { "DYNAMODB", "reference" },
+        { "SNS", "sas" },
+        { "SNS", "managedIdentity" },
+        { "SNS", "clientSecret" },
+        { "SNS", "workloadIdentity" },
+        { "SNS", "reference" },
+        { "KINESIS", "sas" },
+        { "KINESIS", "managedIdentity" },
+        { "KINESIS", "clientSecret" },
+        { "KINESIS", "workloadIdentity" },
+        { "KINESIS", "reference" },
+        { "SECRETSMANAGER", "managedIdentity" },
+        { "SECRETSMANAGER", "clientSecret" },
+        { "SECRETSMANAGER", "workloadIdentity" },
+        { "SECRETSMANAGER", "reference" },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsupportedAuthModes))]
+    public void Unsupported_service_auth_mode_override_does_not_mutate_document(
+        string service,
+        string mode)
+    {
+        var env = new Dictionary<string, string?>
+        {
+            [$"AWS2AZURE__BINDINGS__0__AZURE__{service}__AUTH__MODE"] = mode,
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Empty(config.Credentials);
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedAuthModes))]
+    public void Supported_service_auth_mode_override_is_applied(string service, string mode)
+    {
+        File.WriteAllText(
+            _tempFile,
+            """{"azureIdentities":{"identity":{"authMode":"managedIdentity"}},"bindings":[]}""");
+        var env = ValidBackendEnvironment(service, mode);
+
+        var config = ProxyConfigLoader.Load(_tempFile, env);
+
+        Assert.Single(config.Credentials);
+    }
+
     [Theory]
     [InlineData("AWS2AZURE__BINDINGS__-1__AWS__ACCESSKEYID", "AKIA")]
     [InlineData("AWS2AZURE__BINDINGS__100000000__AWS__ACCESSKEYID", "AKIA")]
@@ -257,11 +331,75 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
-    public void Throws_on_malformed_json()
+    public void Reports_malformed_json_as_controlled_configuration_error()
     {
         File.WriteAllText(_tempFile, "{ this is not valid json");
 
-        Assert.ThrowsAny<System.Text.Json.JsonException>(
+        var exception = Assert.Throws<ProxyConfigException>(
             () => ProxyConfigLoader.Load(_tempFile, envVars: new Dictionary<string, string?>()));
+
+        Assert.Contains(_tempFile, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("contains invalid JSON", exception.Message, StringComparison.Ordinal);
+        Assert.IsType<System.Text.Json.JsonException>(exception.InnerException);
+    }
+
+    private static Dictionary<string, string?> ValidBackendEnvironment(string service, string mode)
+    {
+        var prefix = $"AWS2AZURE__BINDINGS__0__AZURE__{service}";
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"] = "secret",
+            [$"{prefix}__KIND"] = service switch
+            {
+                "S3" => "blob",
+                "SQS" => "serviceBus",
+                "DYNAMODB" => "cosmos",
+                "SNS" => "serviceBusTopics",
+                "KINESIS" => "eventHubs",
+                "SECRETSMANAGER" => "keyVault",
+                _ => throw new ArgumentOutOfRangeException(nameof(service)),
+            },
+            [$"{prefix}__AUTH__MODE"] = mode,
+        };
+
+        if (service == "S3")
+        {
+            env[$"{prefix}__TARGET__ACCOUNTNAME"] = "account";
+        }
+        else if (service == "SECRETSMANAGER")
+        {
+            env[$"{prefix}__TARGET__VAULTURL"] = "https://vault.vault.azure.net/";
+        }
+        else if (service == "DYNAMODB")
+        {
+            env[$"{prefix}__TARGET__ENDPOINT"] = "https://account.documents.azure.com:443/";
+            env[$"{prefix}__TARGET__DATABASENAME"] = "database";
+        }
+        else
+        {
+            env[$"{prefix}__TARGET__NAMESPACE"] = "namespace";
+        }
+
+        switch (mode)
+        {
+            case "sharedKey":
+                env[$"{prefix}__AUTH__KEY"] = "key";
+                break;
+            case "sas":
+                env[$"{prefix}__AUTH__KEYNAME"] = "RootManageSharedAccessKey";
+                env[$"{prefix}__AUTH__KEY"] = "key";
+                break;
+            case "clientSecret":
+                env[$"{prefix}__AUTH__TENANTID"] = "tenant";
+                env[$"{prefix}__AUTH__CLIENTID"] = "client";
+                env[$"{prefix}__AUTH__CLIENTSECRET"] = "secret";
+                break;
+            case "reference":
+                env[$"{prefix}__AUTH__IDENTITY"] = "identity";
+                break;
+        }
+
+        return env;
     }
 }

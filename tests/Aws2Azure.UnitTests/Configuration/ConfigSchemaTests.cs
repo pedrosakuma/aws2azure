@@ -126,22 +126,42 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
-    public void Schema_and_runtime_reject_noncanonical_or_unknown_property_names()
+    public void Canonical_schema_rejects_legacy_names_while_runtime_preserves_meaning()
     {
-        var noncanonical = MinimalConfig().AsObject();
-        noncanonical["Bindings"] = noncanonical["bindings"]!.DeepClone();
-        noncanonical.Remove("bindings");
-        var unknown = MinimalConfig().AsObject();
-        unknown["unknown"] = true;
+        var legacy = JsonNode.Parse("""
+        {
+          "BINDINGS": [
+            {
+              "AWS": {
+                "AccessKeyId": "AKIA",
+                "SecretAccessKey": "secret",
+                "extension": true
+              },
+              "AZURE": {
+                "S3": {
+                  "Kind": "BLOB",
+                  "Target": { "AccountName": "account", "extension": 1 },
+                  "Auth": { "Key": "key" },
+                  "extension": "ignored"
+                }
+              },
+              "extension": {}
+            }
+          ],
+          "extension": true
+        }
+        """)!;
 
-        Assert.False(Evaluate(noncanonical).IsValid);
-        Assert.False(Evaluate(unknown).IsValid);
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(
-            noncanonical.ToJsonString(),
-            ConfigDocumentJsonContext.Default.ConfigDocument));
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(
-            unknown.ToJsonString(),
-            ConfigDocumentJsonContext.Default.ConfigDocument));
+        Assert.False(Evaluate(legacy).IsValid);
+        var document = JsonSerializer.Deserialize(
+            legacy.ToJsonString(),
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var config = ConfigDocumentTranslator.ToProxyConfig(document);
+        var credential = Assert.Single(config.Credentials);
+        Assert.Equal("AKIA", credential.AwsAccessKeyId);
+        Assert.Equal("secret", credential.AwsSecretAccessKey);
+        Assert.Equal("account", credential.Azure.Blob!.AccountName);
+        Assert.Equal("key", credential.Azure.Blob.AccountKey);
     }
 
     [Fact]
@@ -517,6 +537,36 @@ public sealed class ConfigSchemaTests
         };
 
         Assert.True(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        ValidateRuntime(instance);
+    }
+
+    [Theory]
+    [InlineData("HTTP://[fe80::1%eth0]:10000/path")]
+    [InlineData("HTTP://[fe80::1%25eth0]:10000/path")]
+    [InlineData("")]
+    public void Optional_uri_schema_accepts_runtime_compatible_values(string endpoint)
+    {
+        var instance = JsonNode.Parse($$"""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": "{{endpoint}}"
+                  },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+
+        AssertValid(instance);
         ValidateRuntime(instance);
     }
 

@@ -60,17 +60,21 @@ public class ProxyConfigJsonTests
     }
 
     [Fact]
-    public void Rejects_noncanonical_property_names()
+    public void Accepts_noncanonical_property_names_for_v1_read_compatibility()
     {
         const string json = """
         { "Bindings": [ { "AWS": { "AccessKeyId": "AKIA", "secretAccessKey": "s" }, "azure": {} } ] }
         """;
 
-        Assert.Throws<JsonException>(() => Translate(json));
+        var config = Translate(json);
+
+        var credential = Assert.Single(config.Credentials);
+        Assert.Equal("AKIA", credential.AwsAccessKeyId);
+        Assert.Equal("s", credential.AwsSecretAccessKey);
     }
 
     [Fact]
-    public void Rejects_unknown_properties()
+    public void Ignores_unknown_properties_for_v1_read_compatibility()
     {
         const string json = """
         {
@@ -83,7 +87,9 @@ public class ProxyConfigJsonTests
         }
         """;
 
-        Assert.Throws<JsonException>(() => Translate(json));
+        var config = Translate(json);
+
+        Assert.Equal("AKIA", Assert.Single(config.Credentials).AwsAccessKeyId);
     }
 
     [Fact]

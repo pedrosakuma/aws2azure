@@ -1,7 +1,7 @@
 # Operator configuration schema
 
-[`config.schema.json`](../config.schema.json) is the normative, machine-readable
-contract for the binding-centric JSON document selected by
+[`config.schema.json`](../config.schema.json) is the canonical, machine-readable
+authoring profile for the binding-centric JSON document selected by
 `AWS2AZURE_CONFIG_FILE`. It uses JSON Schema draft 2020-12 and is generated
 deterministically without reflection:
 
@@ -33,19 +33,20 @@ and workload-identity environment availability.
 | `services` | no | Module enablement and behavior. An omitted service is disabled. |
 | `azureIdentities` | no | Named Entra identity pool for backend `auth.mode: reference`. Names are case-sensitive. |
 
-Every binding requires `aws.accessKeyId`, `aws.secretAccessKey`, and an `azure`
-object. Unknown properties are rejected. The schema's top-level `examples`
+Every canonical binding requires `aws.accessKeyId`, `aws.secretAccessKey`, and
+an `azure` object. Unknown properties are rejected by the authoring profile.
+The schema's top-level `examples`
 array contains a complete valid document exercising all six services,
 `azureIdentities`, queue/topic/stream overrides, `eventGridFallback`,
 `shardIteratorSigningKey`, and every DynamoDB behavior flag.
 
-Property names are case-sensitive and must use the canonical spelling in the
-schema. In particular, the service keys are `dynamodb` and `secretsmanager`.
-Startup deserialization enforces both canonical property casing and rejection
-of unknown properties so runtime behavior matches `additionalProperties:
-false`. Before this contract became normative, the loader accepted
-case-insensitive and unknown property names; operators must update those files
-to the canonical names when adopting this schema.
+Property names in the authoring profile are case-sensitive and use canonical
+spellings, including `dynamodb` and `secretsmanager`. Serialization always emits
+those names. Runtime reads remain a compatibility superset of the profile:
+property matching is case-insensitive and unknown extension members are
+ignored, preserving configurations accepted by v1. New and edited
+configurations should validate against the canonical profile; compatibility
+acceptance does not make legacy spellings canonical.
 
 Enum values and backend `kind` discriminators remain case-insensitive for
 compatibility. The spellings shown in this document and the schema defaults are
@@ -134,16 +135,16 @@ AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__0=West US
 AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__orders__TRANSPORT=Amqp
 ```
 
-Supported override leaves are service enablement and behavior fields; binding
-AWS fields; backend `kind`; target fields; auth fields; Kinesis
-`shardIteratorSigningKey`; indexed Cosmos `preferredRegions`; and SQS queue
-`transport`. Queue names containing `__` are reconstructed from all segments
-between `QUEUES` and `TRANSPORT`.
+Supported override leaves are service enablement, SNS `defaultBackend`, and
+DynamoDB behavior fields; binding AWS fields; backend `kind`; target fields;
+auth fields; Kinesis `shardIteratorSigningKey`; indexed Cosmos
+`preferredRegions`; and SQS queue `transport`. Queue names containing `__` are
+reconstructed from all segments between `QUEUES` and `TRANSPORT`.
 
-`azureIdentities`, SNS `topics`/`eventGridFallback`, and Kinesis `streams` are
-currently JSON-file-only. Unknown or malformed override paths are ignored
-without creating bindings, backends, services, queues, or region entries.
-This includes negative/non-decimal indices, unsupported leaves, invalid scalar
-values, indices greater than 1023, and trailing path segments. Validate the
-resulting file against the schema and rely on startup validation before
-rollout.
+`azureIdentities`, S3 `presignedTrustedSigningHosts`, SNS
+`topics`/`eventGridFallback`, and Kinesis `streams` are currently
+JSON-file-only. Unknown or malformed override paths are ignored without
+creating bindings, backends, services, queues, or region entries. This includes
+negative/non-decimal indices, unsupported leaves, invalid scalar values,
+indices greater than 1023, and trailing path segments. Validate the resulting
+file against the schema and rely on startup validation before rollout.

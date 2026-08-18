@@ -6,8 +6,8 @@ using Aws2Azure.Core.Configuration;
 namespace Aws2Azure.ConfigSchema;
 
 /// <summary>
-/// Generates the normative operator schema from an explicit, compile-time mapping
-/// of the source-generated ConfigDocument contract. Backend-specific definitions
+/// Generates the canonical operator authoring profile from an explicit,
+/// compile-time mapping of the source-generated ConfigDocument contract. Backend-specific definitions
 /// intentionally mirror the translator and startup validator instead of exposing
 /// the wider generic AzureBackendConfig POCO shape.
 /// </summary>
@@ -28,7 +28,8 @@ public static class ConfigSchemaGenerator
             ("$schema", "https://json-schema.org/draft/2020-12/schema"),
             ("$id", "https://github.com/pedrosakuma/aws2azure/config.schema.json"),
             ("title", "aws2azure operator configuration"),
-            ("description", "Normative binding-centric ConfigDocument selected by AWS2AZURE_CONFIG_FILE."),
+            ("description",
+                "Canonical authoring profile for the binding-centric ConfigDocument selected by AWS2AZURE_CONFIG_FILE. Runtime reads additionally preserve v1 case-insensitive property and unknown-extension compatibility."),
             ("type", "object"),
             ("additionalProperties", false),
             ("properties", Object(
@@ -189,7 +190,7 @@ public static class ConfigSchemaGenerator
             ("target", ClosedObject(
                 TargetProperties(
                     ("accountName", Ref("nonEmptyString")),
-                    ("endpoint", Nullable(HttpUri()))),
+                    ("endpoint", OptionalUri(HttpUri()))),
                 "accountName")),
             ("auth", Ref("sharedKeyAuth"))),
         "kind", "target", "auth");
@@ -200,7 +201,7 @@ public static class ConfigSchemaGenerator
             ("target", ClosedObject(
                 TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("managementEndpoint", Nullable(HttpUri())),
+                    ("managementEndpoint", OptionalUri(HttpUri())),
                     ("transport", Nullable(Enum(
                         nameof(SqsTransport.Rest),
                         nameof(SqsTransport.Rest),
@@ -235,8 +236,8 @@ public static class ConfigSchemaGenerator
             ("target", ClosedObject(
                 TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("endpoint", Nullable(ServiceBusUri())),
-                    ("managementEndpoint", Nullable(HttpUri()))),
+                    ("endpoint", OptionalUri(ServiceBusUri())),
+                    ("managementEndpoint", OptionalUri(HttpUri()))),
                 "namespace")),
             ("auth", Ref("sasOrAadAuth")),
             ("topics", Nullable(NamedMap(Ref("topicSettings")))),
@@ -279,7 +280,7 @@ public static class ConfigSchemaGenerator
             ("type", "object"),
             ("additionalProperties", false),
             ("properties", TargetProperties(
-                ("endpoint", Nullable(HttpsUri())),
+                ("endpoint", OptionalUri(HttpsUri())),
                 ("namespace", Nullable(Ref("nonEmptyString"))),
                 ("topicName", Nullable(Ref("nonEmptyString"))))),
             ("anyOf", route));
@@ -291,7 +292,7 @@ public static class ConfigSchemaGenerator
             ("target", ClosedObject(
                 TargetProperties(
                     ("namespace", Ref("nonEmptyString")),
-                    ("endpoint", Nullable(ServiceBusUri()))),
+                    ("endpoint", OptionalUri(ServiceBusUri()))),
                 "namespace")),
             ("auth", Ref("sasOrAadAuth")),
             ("streams", Nullable(NamedMap(Ref("streamSettings")))),
@@ -397,7 +398,7 @@ public static class ConfigSchemaGenerator
             ClosedObject(
                 TopicProperties(
                     ("backend", EnumLiteral(nameof(SnsTopicBackend.EventGrid))),
-                    ("eventGridTopicEndpoint", Nullable(HttpsUri())),
+                    ("eventGridTopicEndpoint", OptionalUri(HttpsUri())),
                     ("eventGridAccessKey", Nullable(Ref("nonEmptyString")))),
                 "backend"))));
 
@@ -434,9 +435,11 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject ServiceBusUri() => SchemeUri("http", "https", "amqp", "amqps");
 
+    private static JsonObject OptionalUri(JsonObject uriSchema) => Object(
+        ("anyOf", Array(uriSchema, Const(string.Empty), Object(("type", "null")))));
+
     private static JsonObject SchemeUri(params string[] schemes) => Object(
         ("type", "string"),
-        ("format", "uri"),
         ("pattern",
             $"^(?:{string.Join("|", schemes.Select(CaseInsensitiveText))})://" +
             "(?:[^/?#@\\s]+@)?" +
@@ -471,7 +474,7 @@ public static class ConfigSchemaGenerator
         const string regNameLabel = "[A-Za-z0-9_\\u0080-\\uFFFF-]+";
         const string regName = $"{regNameLabel}(?:\\.{regNameLabel})*\\.?";
 
-        return $"(?:\\[(?:{ipv6})(?:%25[A-Za-z0-9._~-]+)?\\]|{regName})";
+        return $"(?:\\[(?:{ipv6})(?:%(?:25)?[A-Za-z0-9._~-]+)?\\]|{regName})";
     }
 
     private static JsonObject EventGridDefaultConstraint()

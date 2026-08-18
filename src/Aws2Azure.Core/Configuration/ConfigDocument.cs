@@ -347,10 +347,10 @@ internal static class ConfigEnumParser
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    PropertyNameCaseInsensitive = false,
+    PropertyNameCaseInsensitive = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     RespectNullableAnnotations = true,
-    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Skip,
     AllowTrailingCommas = true)]
 [JsonSerializable(typeof(ConfigDocument))]
 public sealed partial class ConfigDocumentJsonContext : JsonSerializerContext

@@ -279,7 +279,7 @@ public static class ProxyConfigValidator
 
         if (azure.EventGrid is { } eventGrid)
         {
-            ValidateEventGrid(eventGrid, prefix + ".sns", errors);
+            ValidateEventGrid(eventGrid, prefix + ".sns.eventGridFallback", errors);
         }
 
         if (azure.KeyVault is { } keyVault)
@@ -348,7 +348,13 @@ public static class ProxyConfigValidator
 
         if (snsSettings.DefaultBackend == SnsTopicBackend.EventGrid)
         {
-            ValidateSnsEventGridRoute(prefix + ": services.sns.defaultBackend=EventGrid", eventGrid, endpointOverride: null, accessKeyOverride: null, errors);
+            ValidateSnsEventGridRoute(
+                prefix + ": services.sns.defaultBackend=EventGrid",
+                prefix + ".eventGridFallback",
+                eventGrid,
+                endpointOverride: null,
+                accessKeyOverride: null,
+                errors);
         }
 
         if (credentials.Topics is { } topics)
@@ -401,7 +407,13 @@ public static class ProxyConfigValidator
                         errors.Add(
                             $"{prefix}.topics.{name}.serviceBusTopicName: not valid when backend=EventGrid.");
                     }
-                    ValidateSnsEventGridRoute($"{prefix}.topics.{name}", eventGrid, settings.EventGridTopicEndpoint, settings.EventGridAccessKey, errors);
+                    ValidateSnsEventGridRoute(
+                        $"{prefix}.topics.{name}",
+                        prefix + ".eventGridFallback",
+                        eventGrid,
+                        settings.EventGridTopicEndpoint,
+                        settings.EventGridAccessKey,
+                        errors);
                 }
             }
         }
@@ -409,6 +421,7 @@ public static class ProxyConfigValidator
 
     private static void ValidateSnsEventGridRoute(
         string prefix,
+        string fallbackPrefix,
         EventGridCredentials? credentials,
         string? endpointOverride,
         string? accessKeyOverride,
@@ -418,7 +431,9 @@ public static class ProxyConfigValidator
             || HasEventGridEndpoint(credentials);
         if (!hasEndpoint)
         {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName) set.");
+            errors.Add(
+                $"{prefix}: EventGrid route requires either eventGridTopicEndpoint or " +
+                $"{fallbackPrefix}.target.endpoint/(target.namespace+target.topicName).");
         }
 
         var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
@@ -437,7 +452,9 @@ public static class ProxyConfigValidator
         };
         if (!hasAccessKey && !hasCompleteAad)
         {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or this binding's azure.sns to use kind=eventGrid with auth.key/(auth.tenantId+auth.clientId+auth.clientSecret) set.");
+            errors.Add(
+                $"{prefix}: EventGrid route requires either eventGridAccessKey or " +
+                $"{fallbackPrefix}.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).");
         }
 
         // A per-topic eventGridAccessKey override is pure key-auth at runtime
@@ -721,7 +738,11 @@ public static class ProxyConfigValidator
             ResolveBlockIdentity(identities, azure.Cosmos, prefix + ".dynamodb", errors);
             ResolveBlockIdentity(identities, azure.EventHubs, prefix + ".kinesis", errors);
             ResolveBlockIdentity(identities, azure.ServiceBusTopics, prefix + ".sns", errors);
-            ResolveBlockIdentity(identities, azure.EventGrid, prefix + ".sns", errors);
+            ResolveBlockIdentity(
+                identities,
+                azure.EventGrid,
+                prefix + ".sns.eventGridFallback",
+                errors);
             ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".secretsmanager", errors);
         }
     }

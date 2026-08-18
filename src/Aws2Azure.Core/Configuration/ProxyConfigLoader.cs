@@ -55,9 +55,19 @@ public static class ProxyConfigLoader
 
         if (!string.IsNullOrEmpty(jsonFilePath) && File.Exists(jsonFilePath))
         {
-            using var stream = File.OpenRead(jsonFilePath);
-            document = JsonSerializer.Deserialize(stream, ConfigDocumentJsonContext.Default.ConfigDocument)
-                ?? new ConfigDocument();
+            try
+            {
+                using var stream = File.OpenRead(jsonFilePath);
+                document = JsonSerializer.Deserialize(stream, ConfigDocumentJsonContext.Default.ConfigDocument)
+                    ?? new ConfigDocument();
+            }
+            catch (JsonException exception)
+            {
+                var path = string.IsNullOrEmpty(exception.Path) ? "$" : exception.Path;
+                throw new ProxyConfigException(
+                    $"Configuration file '{jsonFilePath}' contains invalid JSON at '{path}'.",
+                    exception);
+            }
         }
         else
         {
@@ -260,7 +270,8 @@ public static class ProxyConfigLoader
     {
         if (field == "MODE")
         {
-            return TryParseEnum<AzureAuthKind>(value, out _);
+            return TryParseEnum<AzureAuthKind>(value, out var mode)
+                && IsSupportedAuthMode(service, mode);
         }
 
         return service switch
@@ -274,6 +285,17 @@ public static class ProxyConfigLoader
             _ => false,
         };
     }
+
+    private static bool IsSupportedAuthMode(string service, AzureAuthKind mode)
+        => service switch
+        {
+            "S3" => mode == AzureAuthKind.SharedKey,
+            "SQS" => mode == AzureAuthKind.Sas,
+            "DYNAMODB" => mode is not AzureAuthKind.Sas,
+            "SNS" or "KINESIS" => mode is not AzureAuthKind.SharedKey,
+            "SECRETSMANAGER" => mode is not (AzureAuthKind.SharedKey or AzureAuthKind.Sas),
+            _ => false,
+        };
 
     private static bool IsSupportedTargetOverride(
         string service,
