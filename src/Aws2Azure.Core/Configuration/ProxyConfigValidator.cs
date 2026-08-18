@@ -457,21 +457,9 @@ public static class ProxyConfigValidator
                 $"{fallbackPrefix}.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).");
         }
 
-        // A per-topic eventGridAccessKey override is pure key-auth at runtime
-        // (SnsTopicRouting prefers it and EventGridPublisher short-circuits before AAD),
-        // so it is independent of the global azure.sns authMode/AAD shape.
-        if (hasOverrideKey)
-        {
-            return;
-        }
-        if (!hasAccessKey)
-        {
-            ValidateAadShape(prefix, mode, hasTenant, hasClientId, hasClientSecret, errors);
-        }
-        else
-        {
-            ValidateKeyShape(prefix, errors, "auth.key", mode, hasTenant || hasClientId || hasClientSecret, "auth.key");
-        }
+        // Route validation only reports missing route dependencies. A configured
+        // fallback's auth shape is validated once by ValidateEventGrid under the
+        // canonical eventGridFallback path; absent fallbacks have no auth block.
     }
 
     private static void ValidateEventGrid(EventGridCredentials credentials, string prefix, List<string> errors)

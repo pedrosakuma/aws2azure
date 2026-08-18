@@ -21,6 +21,23 @@ public class ProxyConfigValidatorTests
         },
     };
 
+    private static ProxyConfig EventGridTopicConfig(EventGridCredentials? fallback = null)
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.ServiceBusTopics = new ServiceBusTopicsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            Topics = new Dictionary<string, SnsTopicSettings>
+            {
+                ["orders"] = new() { Backend = SnsTopicBackend.EventGrid },
+            },
+        };
+        config.Credentials[0].Azure.EventGrid = fallback;
+        return config;
+    }
+
     [Fact]
     public void Accepts_minimal_valid_config()
     {
@@ -418,40 +435,51 @@ public class ProxyConfigValidatorTests
     [Fact]
     public void Throws_when_event_grid_topic_backend_has_no_destination_or_auth()
     {
-        var config = new ProxyConfig
-        {
-            Credentials =
-            {
-                new CredentialEntry
-                {
-                    AwsAccessKeyId = "AKIA1",
-                    AwsSecretAccessKey = "secret",
-                    Azure = new AzureCredentials
-                    {
-                        ServiceBusTopics = new ServiceBusTopicsCredentials
-                        {
-                            Namespace = "myns",
-                            SasKeyName = "Root",
-                            SasKey = "key",
-                            Topics = new Dictionary<string, SnsTopicSettings>
-                            {
-                                ["orders"] = new()
-                                {
-                                    Backend = SnsTopicBackend.EventGrid,
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        };
+        var config = EventGridTopicConfig();
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains(
-            "bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridTopicEndpoint or bindings[0].azure.sns.eventGridFallback.target.endpoint/(target.namespace+target.topicName).",
+        Assert.Equal(
+            "Configuration is invalid:\n" +
+            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridTopicEndpoint or bindings[0].azure.sns.eventGridFallback.target.endpoint/(target.namespace+target.topicName).\n" +
+            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).",
             ex.Message);
-        Assert.Contains(
-            "bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).",
+        Assert.DoesNotContain("AAD requires", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Event_grid_topic_invalid_fallback_auth_uses_fallback_path()
+    {
+        var config = EventGridTopicConfig(new EventGridCredentials
+        {
+            Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
+            TenantId = "tenant",
+            ClientId = "client",
+        });
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Equal(
+            "Configuration is invalid:\n" +
+            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).\n" +
+            "  - bindings[0].azure.sns.eventGridFallback: AAD requires auth.tenantId, auth.clientId, and auth.clientSecret together.",
+            ex.Message);
+    }
+
+    [Fact]
+    public void Event_grid_topic_invalid_fallback_key_auth_uses_fallback_path()
+    {
+        var config = EventGridTopicConfig(new EventGridCredentials
+        {
+            Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
+            AccessKey = "key",
+            AuthMode = AzureAuthMode.ManagedIdentity,
+        });
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+
+        Assert.Equal(
+            "Configuration is invalid:\n" +
+            "  - bindings[0].azure.sns.eventGridFallback: auth.mode 'ManagedIdentity' cannot be combined with auth.key auth — managed/workload identity replaces the secret, not the key.",
             ex.Message);
     }
 
@@ -738,17 +766,19 @@ public class ProxyConfigValidatorTests
     [Fact]
     public void Event_grid_fallback_identity_error_uses_fallback_auth_path()
     {
-        var config = ValidBase();
-        config.Credentials[0].Azure.EventGrid = new EventGridCredentials
+        var config = EventGridTopicConfig(new EventGridCredentials
         {
             Endpoint = "https://example.westus2-1.eventgrid.azure.net/api/events",
             Identity = "missing",
-        };
+        });
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
 
-        Assert.Contains(
-            "bindings[0].azure.sns.eventGridFallback.auth: identity reference 'missing' was not found in azureIdentities.",
+        Assert.Equal(
+            "Configuration is invalid:\n" +
+            "  - bindings[0].azure.sns.eventGridFallback.auth: identity reference 'missing' was not found in azureIdentities.\n" +
+            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).\n" +
+            "  - bindings[0].azure.sns.eventGridFallback: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
             ex.Message);
     }
 
