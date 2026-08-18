@@ -456,6 +456,9 @@ public sealed class WorkloadGaCertificationTests
                 "--configuration",
                 "Release",
                 "--nologo",
+                "-p:Description=https://example.com/a%3Bb/[module]/normal-sdk-description",
+                "-p:Copyright=normal-sdk-copyright",
+                "-p:Trademark=normal-sdk-trademark",
                 "-p:IntermediateOutputPath=identity-witness-one/",
                 $"-p:OutputPath={outputPath}",
             };
@@ -549,6 +552,9 @@ public sealed class WorkloadGaCertificationTests
             File.WriteAllText(
                 Path.Combine(intermediateDirectory, sourceFileName),
                 "[assembly: System.Reflection.AssemblyMetadata(\"k\",\"v\")] " +
+                "[assembly: System.Reflection.AssemblyMetadata(\"k2\",\"v2\")] " +
+                "[assembly: System.Reflection.AssemblyTitleAttribute(\"x\"), " +
+                "System.Reflection.AssemblyMetadataAttribute(\"k3\",\"v3\")] " +
                 "internal static class InjectedAssemblyInfo " +
                 "{ [global::System.Runtime.CompilerServices.ModuleInitializer] " +
                 "internal static void Init() {} } // )]\u2028");

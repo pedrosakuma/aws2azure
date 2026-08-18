@@ -124,7 +124,9 @@ or remove sibling sources from compilation or identity hashing. A custom active
 `IntermediateOutputPath` that contains any compile item other than the exact
 SDK-generated sources and embedded identity is rejected, preventing compiled
 evaluator code from bypassing the implementation digest. Those generated files
-must match both their resolved SDK paths and restricted generated-source shapes;
+must have been added to `Compile` by a trusted .NET SDK target while the
+corresponding generation setting is enabled, and must match both their resolved
+SDK paths and restricted generated-source shapes;
 all non-generated `Compile` items must remain under the evaluator source root
 and are included in the digest. SDK-generated intermediates are excluded
 consistently at build time and runtime.

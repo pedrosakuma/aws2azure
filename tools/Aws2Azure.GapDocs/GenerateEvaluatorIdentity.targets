@@ -13,6 +13,7 @@
       <OutputFile ParameterType="System.String" Required="true" />
       <IntermediateRootMarkerFile ParameterType="System.String" Required="true" />
       <ToolRoot ParameterType="System.String" Required="true" />
+      <TrustedSdkRoot ParameterType="System.String" Required="true" />
       <Revision ParameterType="System.String" Output="true" />
       <GeneratedIntermediateFiles
         ParameterType="Microsoft.Build.Framework.ITaskItem[]"
@@ -27,6 +28,7 @@
       <Using Namespace="System.Text" />
       <Code Type="Fragment" Language="cs"><![CDATA[
         var root = Path.GetFullPath(RepositoryRoot);
+        var trustedSdkRoot = Path.GetFullPath(TrustedSdkRoot);
         Func<string, string> relative = path =>
             Path.GetFullPath(path)
                 .Substring(root.TrimEnd('\\', '/').Length)
@@ -91,13 +93,21 @@
         var activeIntermediateRoot = Path.GetDirectoryName(
             Path.GetFullPath(OutputFile));
         var outputFile = Path.GetFullPath(OutputFile);
-        var allowedActiveGeneratedFiles = new HashSet<string>(
-            AllowedActiveGeneratedFiles
-                .Select(file => Path.GetFullPath(file.ItemSpec))
-                .Concat(new[] { outputFile }),
-            pathComparison == StringComparison.OrdinalIgnoreCase
-                ? StringComparer.OrdinalIgnoreCase
-                : StringComparer.Ordinal);
+        Func<string, bool> isEnabled = value =>
+            value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("enable", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("enabled", StringComparison.OrdinalIgnoreCase);
+        Func<string, bool> hasTrustedSdkCompileProvenance = path =>
+            CompileFiles.Any(file =>
+            {
+                if (!Path.GetFullPath(file.ItemSpec).Equals(path, pathComparison))
+                {
+                    return false;
+                }
+                var definingProject = file.GetMetadata("DefiningProjectFullPath");
+                return !string.IsNullOrWhiteSpace(definingProject)
+                    && isWithin(trustedSdkRoot, Path.GetFullPath(definingProject));
+            });
         Func<string, bool> hasGeneratedSourceShape = path =>
         {
             if (path.Equals(outputFile, pathComparison))
@@ -116,12 +126,92 @@
                 .Replace("\r", "\n")
                 .Split('\n');
             Func<string, string, bool> isSafeAssemblyAttribute =
-                (line, prefix) => line.StartsWith(prefix, StringComparison.Ordinal)
-                    && line.EndsWith(")]", StringComparison.Ordinal)
-                    && line.IndexOfAny(new[] { '{', '}', ';' }) < 0
-                    && line.IndexOf("//", StringComparison.Ordinal) < 0
-                    && line.IndexOf("/*", StringComparison.Ordinal) < 0
-                    && line.IndexOf("*/", StringComparison.Ordinal) < 0;
+                (line, prefix) =>
+                {
+                    if (!line.StartsWith(prefix, StringComparison.Ordinal)
+                        || !line.EndsWith(")]", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    var depth = 0;
+                    var quoted = false;
+                    var escaped = false;
+                    var openBrackets = 0;
+                    var closeBrackets = 0;
+                    for (var index = 0; index < line.Length; index++)
+                    {
+                        var character = line[index];
+                        if (escaped)
+                        {
+                            escaped = false;
+                            continue;
+                        }
+                        if (quoted && character == '\\')
+                        {
+                            escaped = true;
+                            continue;
+                        }
+                        if (character == '"')
+                        {
+                            quoted = !quoted;
+                            continue;
+                        }
+                        if (quoted)
+                        {
+                            continue;
+                        }
+                        if (character == '{'
+                            || character == '}'
+                            || character == ';')
+                        {
+                            return false;
+                        }
+                        if (character == '[')
+                        {
+                            openBrackets++;
+                            if (index + 7 <= line.Length
+                                && line.Substring(index, 7).Equals(
+                                    "[module",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                return false;
+                            }
+                        }
+                        else if (character == ']')
+                        {
+                            closeBrackets++;
+                        }
+                        if (index + 1 < line.Length
+                            && ((character == '/'
+                                    && (line[index + 1] == '/'
+                                        || line[index + 1] == '*'))
+                                || (character == '*'
+                                    && line[index + 1] == '/')))
+                        {
+                            return false;
+                        }
+                        if (character == '(')
+                        {
+                            depth++;
+                        }
+                        else if (character == ')')
+                        {
+                            depth--;
+                        }
+                        else if (character == ',' && depth == 0)
+                        {
+                            return false;
+                        }
+                        if (depth < 0)
+                        {
+                            return false;
+                        }
+                    }
+                    return !quoted
+                        && depth == 0
+                        && openBrackets == 1
+                        && closeBrackets == 1;
+                };
             var fileName = Path.GetFileName(path);
             if (fileName.EndsWith(
                     ".AssemblyInfo.cs",
@@ -138,7 +228,34 @@
                             StringComparison.Ordinal)
                         || isSafeAssemblyAttribute(
                             trimmed,
-                            "[assembly: System.Reflection.Assembly");
+                            "[assembly: System.Reflection.AssemblyCompanyAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyConfigurationAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyCopyrightAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyDescriptionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyFileVersionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyInformationalVersionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyProductAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyTitleAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyTrademarkAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyVersionAttribute(");
                 });
             }
             if (fileName.EndsWith(
@@ -187,7 +304,17 @@
         };
         Func<string, bool> isKnownGeneratedSource = path =>
         {
-            if (!allowedActiveGeneratedFiles.Contains(path)
+            if (path.Equals(outputFile, pathComparison))
+            {
+                return true;
+            }
+            var contract = AllowedActiveGeneratedFiles.FirstOrDefault(
+                file => Path.GetFullPath(file.ItemSpec).Equals(
+                    path,
+                    pathComparison));
+            if (contract is null
+                || !isEnabled(contract.GetMetadata("GenerationEnabled"))
+                || !hasTrustedSdkCompileProvenance(path)
                 || !Path.GetDirectoryName(path).Equals(
                     activeIntermediateRoot,
                     pathComparison))
@@ -215,7 +342,16 @@
                     && !isKnownGeneratedSource(compilePath)
                     && !belongsToStaleDescendant;
             })
-            .Select(relative)
+            .Select(path => relative(path) + " [" + string.Join(
+                ", ",
+                CompileFiles
+                    .Where(file => Path.GetFullPath(file.ItemSpec).Equals(
+                        path,
+                        pathComparison))
+                    .Select(file =>
+                        "AutoGen=" + file.GetMetadata("AutoGen") +
+                        ";DefiningProject=" +
+                        file.GetMetadata("DefiningProjectFullPath"))) + "]")
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
         if (unexpectedActiveCompileFiles.Count > 0)
@@ -321,7 +457,17 @@
       <_WorkloadGaEvaluatorIdentityInput
         Include="$(MSBuildProjectFullPath);$(MSBuildProjectDirectory)/GenerateEvaluatorIdentity.targets;$(MSBuildProjectDirectory)/../../Directory.Build.props;$(MSBuildProjectDirectory)/../../global.json" />
       <_WorkloadGaAllowedActiveGeneratedCompile
-        Include="$([System.IO.Path]::GetFullPath('$(GeneratedAssemblyInfoFile)', '$(MSBuildProjectDirectory)'));$([System.IO.Path]::GetFullPath('$(GeneratedGlobalUsingsFile)', '$(MSBuildProjectDirectory)'));$([System.IO.Path]::GetFullPath('$(TargetFrameworkMonikerAssemblyAttributesPath)', '$(MSBuildProjectDirectory)'))" />
+        Include="$([System.IO.Path]::GetFullPath('$(GeneratedAssemblyInfoFile)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(GenerateAssemblyInfo)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
+      <_WorkloadGaAllowedActiveGeneratedCompile
+        Include="$([System.IO.Path]::GetFullPath('$(GeneratedGlobalUsingsFile)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(ImplicitUsings)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
+      <_WorkloadGaAllowedActiveGeneratedCompile
+        Include="$([System.IO.Path]::GetFullPath('$(TargetFrameworkMonikerAssemblyAttributesPath)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(GenerateTargetFrameworkAttribute)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
     </ItemGroup>
     <GenerateWorkloadGaEvaluatorIdentity
       Files="@(_WorkloadGaEvaluatorIdentityInput)"
@@ -330,7 +476,8 @@
       RepositoryRoot="$(MSBuildProjectDirectory)/../.."
       OutputFile="$(_WorkloadGaEvaluatorIdentityFile)"
       IntermediateRootMarkerFile="$(_WorkloadGaEvaluatorIdentityMarkerFile)"
-      ToolRoot="$(MSBuildProjectDirectory)">
+      ToolRoot="$(MSBuildProjectDirectory)"
+      TrustedSdkRoot="$(MSBuildToolsPath)">
       <Output TaskParameter="Revision" PropertyName="WorkloadGaEvaluatorImplementationRevision" />
       <Output
         TaskParameter="GeneratedIntermediateFiles"
