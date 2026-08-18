@@ -235,6 +235,8 @@ public static class WorkloadGaEvaluationContractValidator
 public static class WorkloadGaEvaluationMetadataBuilder
 {
     public const string ContractPath = "docs/workloads/certification/authority.yaml";
+    public const string GeneratedEvaluatorIdentityFileName =
+        "WorkloadGaEvaluatorIdentity.g.cs";
     public const int CurrentEvaluatorSchemaVersion = 3;
     public static string EmbeddedEvaluatorImplementationRevision =>
         WorkloadGaEmbeddedEvaluatorIdentity.Revision;
@@ -370,13 +372,23 @@ public static class WorkloadGaEvaluationMetadataBuilder
                 $"GapDocs evaluator source directory not found: {toolRoot}");
         }
 
+        var generatedIntermediateRoots = Directory
+            .EnumerateFiles(
+                toolRoot,
+                GeneratedEvaluatorIdentityFileName,
+                SearchOption.AllDirectories)
+            .Select(path => Path.GetDirectoryName(Path.GetFullPath(path))!)
+            .Distinct(PathComparer)
+            .ToList();
         var files = Directory.EnumerateFiles(toolRoot, "*.cs", SearchOption.AllDirectories)
+            .Select(Path.GetFullPath)
             .Where(path => !path.Contains(
                     $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
                     StringComparison.Ordinal)
                 && !path.Contains(
                     $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal)
+                && !generatedIntermediateRoots.Any(root => IsWithin(root, path)))
             .ToList();
         foreach (var relativePath in new[]
                  {
@@ -403,6 +415,21 @@ public static class WorkloadGaEvaluationMetadataBuilder
                 path => Path.GetRelativePath(repoRoot, path).Replace('\\', '/'),
                 StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static bool IsWithin(string root, string path)
+    {
+        var relativePath = Path.GetRelativePath(root, path);
+        return !relativePath.Equals("..", StringComparison.Ordinal)
+            && !relativePath.StartsWith(
+                $"..{Path.DirectorySeparatorChar}",
+                StringComparison.Ordinal)
+            && !Path.IsPathRooted(relativePath);
     }
 
     private static void Append(IncrementalHash hash, string value) =>

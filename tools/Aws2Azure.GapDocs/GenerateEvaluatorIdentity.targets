@@ -5,9 +5,13 @@
     AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
       <Files ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <CompileFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
       <RepositoryRoot ParameterType="System.String" Required="true" />
       <OutputFile ParameterType="System.String" Required="true" />
       <Revision ParameterType="System.String" Output="true" />
+      <GeneratedIntermediateFiles
+        ParameterType="Microsoft.Build.Framework.ITaskItem[]"
+        Output="true" />
     </ParameterGroup>
     <Task>
       <Using Namespace="System" />
@@ -22,9 +26,43 @@
                 .Substring(root.TrimEnd('\\', '/').Length)
                 .TrimStart('\\', '/')
                 .Replace('\\', '/');
+        var pathComparison = Path.DirectorySeparatorChar == '\\'
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var inputFiles = Files
+            .Select(file => Path.GetFullPath(file.ItemSpec))
+            .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal)
+            .ToList();
+        var generatedIntermediateRoots = inputFiles
+            .Where(path => Path.GetFileName(path).Equals(
+                "WorkloadGaEvaluatorIdentity.g.cs",
+                StringComparison.Ordinal))
+            .Select(path => Path.GetDirectoryName(path))
+            .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal)
+            .ToList();
+        Func<string, string, bool> isWithin = (directory, path) =>
+            path.Equals(directory, pathComparison)
+            || path.StartsWith(
+                directory.TrimEnd('\\', '/') + Path.DirectorySeparatorChar,
+                pathComparison);
+        GeneratedIntermediateFiles = CompileFiles
+            .Where(file => generatedIntermediateRoots.Any(
+                directory => isWithin(
+                    directory,
+                    Path.GetFullPath(file.ItemSpec))))
+            .ToArray();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var item in Files
-                     .Select(file => Path.GetFullPath(file.ItemSpec))
+        var outputFile = Path.GetFullPath(OutputFile);
+        foreach (var item in inputFiles
+                     .Where(path => !path.Equals(
+                         outputFile,
+                         pathComparison)
+                         && !generatedIntermediateRoots.Any(
+                             directory => isWithin(directory, path)))
                      .OrderBy(
                          path => relative(path),
                          StringComparer.Ordinal))
@@ -61,25 +99,34 @@
 
   <Target Name="GenerateWorkloadGaEvaluatorIdentity" BeforeTargets="CoreCompile">
     <PropertyGroup>
-      <_WorkloadGaEvaluatorIdentityFile>$(IntermediateOutputPath)WorkloadGaEvaluatorIdentity.g.cs</_WorkloadGaEvaluatorIdentityFile>
+      <_WorkloadGaEvaluatorIdentityDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)', '$(MSBuildProjectDirectory)'))</_WorkloadGaEvaluatorIdentityDirectory>
+      <_WorkloadGaEvaluatorIdentityFile>$(_WorkloadGaEvaluatorIdentityDirectory)/WorkloadGaEvaluatorIdentity.g.cs</_WorkloadGaEvaluatorIdentityFile>
     </PropertyGroup>
     <ItemGroup>
-      <Compile
-        Include="$(_WorkloadGaEvaluatorIdentityFile)"
-        AutoGen="true"
-        DesignTime="true"
-        Visible="false" />
       <_WorkloadGaEvaluatorIdentityInput
         Include="$(MSBuildProjectDirectory)/**/*.cs"
-        Exclude="$(MSBuildProjectDirectory)/bin/**;$(MSBuildProjectDirectory)/obj/**" />
+        Exclude="$(MSBuildProjectDirectory)/bin/**;$(MSBuildProjectDirectory)/obj/**;$(_WorkloadGaEvaluatorIdentityDirectory)/**;$(_WorkloadGaEvaluatorIdentityFile)" />
       <_WorkloadGaEvaluatorIdentityInput
         Include="$(MSBuildProjectFullPath);$(MSBuildProjectDirectory)/GenerateEvaluatorIdentity.targets;$(MSBuildProjectDirectory)/../../Directory.Build.props;$(MSBuildProjectDirectory)/../../global.json" />
     </ItemGroup>
     <GenerateWorkloadGaEvaluatorIdentity
       Files="@(_WorkloadGaEvaluatorIdentityInput)"
+      CompileFiles="@(Compile)"
       RepositoryRoot="$(MSBuildProjectDirectory)/../.."
       OutputFile="$(_WorkloadGaEvaluatorIdentityFile)">
       <Output TaskParameter="Revision" PropertyName="WorkloadGaEvaluatorImplementationRevision" />
+      <Output
+        TaskParameter="GeneratedIntermediateFiles"
+        ItemName="_WorkloadGaGeneratedIntermediateCompile" />
     </GenerateWorkloadGaEvaluatorIdentity>
+    <ItemGroup>
+      <Compile Remove="@(_WorkloadGaGeneratedIntermediateCompile)" />
+      <Compile Remove="$(_WorkloadGaEvaluatorIdentityFile)" />
+      <Compile
+        Include="$(_WorkloadGaEvaluatorIdentityFile)"
+        AutoGen="true"
+        DesignTime="true"
+        Visible="false" />
+    </ItemGroup>
   </Target>
 </Project>

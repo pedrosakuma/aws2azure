@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -404,6 +405,72 @@ public sealed class WorkloadGaCertificationTests
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.EmbeddedEvaluatorImplementationRevision);
+    }
+
+    [Fact]
+    public void Custom_intermediate_output_preserves_runtime_identity_and_stale_source_guard()
+    {
+        var fixtureRoot = Path.Combine(
+            Path.GetTempPath(),
+            "aws2azure-gapdocs-identity-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            CopyIdentityBuildFixture(RepoRoot, fixtureRoot);
+            var projectPath = Path.Combine(
+                fixtureRoot,
+                "tools",
+                "Aws2Azure.GapDocs",
+                "Aws2Azure.GapDocs.csproj");
+            var outputPath = Path.Combine(fixtureRoot, "artifacts");
+            var firstBuildArguments = new[]
+            {
+                "build",
+                projectPath,
+                "--configuration",
+                "Release",
+                "--nologo",
+                "-p:IntermediateOutputPath=identity-witness-one/",
+                $"-p:OutputPath={outputPath}",
+            };
+            var secondBuildArguments = firstBuildArguments
+                .Select(argument => argument.Replace(
+                    "identity-witness-one/",
+                    "identity-witness-two/",
+                    StringComparison.Ordinal))
+                .ToArray();
+
+            var firstBuild = RunDotnet(fixtureRoot, firstBuildArguments);
+            AssertProcessSucceeded(firstBuild, "first custom-intermediate build");
+            var secondBuild = RunDotnet(fixtureRoot, secondBuildArguments);
+            AssertProcessSucceeded(
+                secondBuild,
+                "second custom-intermediate build after changing paths");
+
+            var evaluator = Path.Combine(outputPath, "Aws2Azure.GapDocs.dll");
+            var freshValidation = RunDotnet(fixtureRoot, evaluator, "--validate");
+            AssertProcessSucceeded(freshValidation, "fresh evaluator validation");
+
+            File.AppendAllText(
+                Path.Combine(
+                    fixtureRoot,
+                    "tools",
+                    "Aws2Azure.GapDocs",
+                    "Program.cs"),
+                Environment.NewLine + "// stale-source witness" + Environment.NewLine);
+            var staleValidation = RunDotnet(fixtureRoot, evaluator, "--validate");
+            Assert.NotEqual(0, staleValidation.ExitCode);
+            Assert.Contains(
+                "does not match executing assembly revision",
+                staleValidation.StandardError,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(fixtureRoot))
+            {
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1735,6 +1802,109 @@ public sealed class WorkloadGaCertificationTests
         File.WriteAllText(Path.Combine(root, "global.json"), "{}\n");
     }
 
+    private static void CopyIdentityBuildFixture(string sourceRoot, string destinationRoot)
+    {
+        Directory.CreateDirectory(destinationRoot);
+        foreach (var relativePath in new[]
+                 {
+                     "aws2azure.slnx",
+                     "Directory.Build.props",
+                     "global.json",
+                 })
+        {
+            File.Copy(
+                Path.Combine(sourceRoot, relativePath),
+                Path.Combine(destinationRoot, relativePath));
+        }
+
+        CopyDirectory(
+            Path.Combine(sourceRoot, "docs", "gaps"),
+            Path.Combine(destinationRoot, "docs", "gaps"));
+        CopyDirectory(
+            Path.Combine(sourceRoot, "docs", "workloads"),
+            Path.Combine(destinationRoot, "docs", "workloads"));
+        var sourceMatrix = Path.Combine(
+            sourceRoot,
+            "docs",
+            "testing",
+            "real-azure-conformance.yaml");
+        var destinationMatrix = Path.Combine(
+            destinationRoot,
+            "docs",
+            "testing",
+            "real-azure-conformance.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationMatrix)!);
+        File.Copy(sourceMatrix, destinationMatrix);
+
+        var sourceToolRoot = Path.Combine(sourceRoot, "tools", "Aws2Azure.GapDocs");
+        var destinationToolRoot =
+            Path.Combine(destinationRoot, "tools", "Aws2Azure.GapDocs");
+        Directory.CreateDirectory(destinationToolRoot);
+        foreach (var sourcePath in Directory.EnumerateFiles(
+                     sourceToolRoot,
+                     "*",
+                     SearchOption.TopDirectoryOnly)
+                 .Where(path => Path.GetExtension(path) is ".cs" or ".csproj" or ".targets"))
+        {
+            File.Copy(
+                sourcePath,
+                Path.Combine(destinationToolRoot, Path.GetFileName(sourcePath)));
+        }
+    }
+
+    private static void CopyDirectory(string sourceRoot, string destinationRoot)
+    {
+        foreach (var sourcePath in Directory.EnumerateFiles(
+                     sourceRoot,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceRoot, sourcePath);
+            var destinationPath = Path.Combine(destinationRoot, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(sourcePath, destinationPath);
+        }
+    }
+
+    private static ProcessResult RunDotnet(
+        string workingDirectory,
+        params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start dotnet.");
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(120_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException(
+                $"dotnet {string.Join(' ', arguments)} exceeded two minutes.");
+        }
+
+        return new ProcessResult(
+            process.ExitCode,
+            standardOutput.GetAwaiter().GetResult(),
+            standardError.GetAwaiter().GetResult());
+    }
+
+    private static void AssertProcessSucceeded(ProcessResult result, string operation) =>
+        Assert.True(
+            result.ExitCode == 0,
+            $"{operation} failed ({result.ExitCode}).{Environment.NewLine}" +
+            result.StandardOutput + Environment.NewLine + result.StandardError);
+
     private static WorkloadGaEvaluationMetadata LoadEvaluationMetadata()
     {
         using var snapshot = WorkloadGaInputSnapshot.Capture(RepoRoot);
@@ -1761,6 +1931,11 @@ public sealed class WorkloadGaCertificationTests
         [JsonPropertyName("code")]
         public string Code { get; set; } = string.Empty;
     }
+
+    private sealed record ProcessResult(
+        int ExitCode,
+        string StandardOutput,
+        string StandardError);
 
     private static WorkloadGaManifest LoadManifest(string fileName) =>
         WorkloadGaManifestLoader.Load(Path.Combine(RepoRoot, "docs", "workloads", fileName));

@@ -112,7 +112,9 @@ generated constant in the executing GapDocs assembly. Generation and
 certification require the captured source digest, authority contract digest,
 and embedded executing-assembly digest to match, so running a stale `--no-build`
 binary fails closed. The generated identity source is excluded from its own
-inputs to avoid a circular digest.
+inputs to avoid a circular digest. This exclusion follows the resolved
+`IntermediateOutputPath`, so custom in-project intermediate directories cannot
+feed generated C# back into either the build-time or runtime source identity.
 
 `expected_evaluator_schema_version` describes the authority evaluator format
 only; it is not presented as implementation identity. Canonical or
