@@ -435,7 +435,7 @@ public sealed class WorkloadGaCertificationTests
             var secondBuildArguments = firstBuildArguments
                 .Select(argument => argument.Replace(
                     "identity-witness-one/",
-                    "identity-witness-two/",
+                    "identity-witness-one/nested-witness-two/",
                     StringComparison.Ordinal))
                 .ToArray();
 
@@ -445,6 +445,31 @@ public sealed class WorkloadGaCertificationTests
             AssertProcessSucceeded(
                 secondBuild,
                 "second custom-intermediate build after changing paths");
+            var thirdBuild = RunDotnet(fixtureRoot, firstBuildArguments);
+            AssertProcessSucceeded(
+                thirdBuild,
+                "third custom-intermediate build after returning to parent path");
+            foreach (var intermediatePath in new[]
+                     {
+                         new[] { "identity-witness-one" },
+                         new[]
+                         {
+                             "identity-witness-one",
+                             "nested-witness-two",
+                         },
+                     })
+            {
+                Assert.Equal(
+                    "aws2azure-gapdocs-evaluator-identity-root:v1\n",
+                    File.ReadAllText(Path.Combine(
+                        [
+                            fixtureRoot,
+                            "tools",
+                            "Aws2Azure.GapDocs",
+                            .. intermediatePath,
+                            ".workload-ga-evaluator-intermediate-root",
+                        ])));
+            }
 
             var evaluator = Path.Combine(outputPath, "Aws2Azure.GapDocs.dll");
             var freshValidation = RunDotnet(fixtureRoot, evaluator, "--validate");
@@ -462,6 +487,72 @@ public sealed class WorkloadGaCertificationTests
             Assert.Contains(
                 "does not match executing assembly revision",
                 staleValidation.StandardError,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(fixtureRoot))
+            {
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Generated_identity_basename_without_valid_marker_does_not_hide_sources()
+    {
+        var fixtureRoot = Path.Combine(
+            Path.GetTempPath(),
+            "aws2azure-gapdocs-legitimate-identity-name-" +
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            CopyIdentityBuildFixture(RepoRoot, fixtureRoot);
+            var initialRevision =
+                WorkloadGaEvaluationMetadataBuilder
+                    .ComputeEvaluatorImplementationRevision(fixtureRoot);
+            var sourceDirectory = Path.Combine(
+                fixtureRoot,
+                "tools",
+                "Aws2Azure.GapDocs",
+                "legitimate-source");
+            Directory.CreateDirectory(sourceDirectory);
+            File.WriteAllText(
+                Path.Combine(
+                    sourceDirectory,
+                    WorkloadGaEvaluationMetadataBuilder
+                        .GeneratedEvaluatorIdentityFileName),
+                "namespace LegitimateSource; internal static class SameFileName {}\n");
+            File.WriteAllText(
+                Path.Combine(sourceDirectory, "MustCompile.cs"),
+                "#error LEGITIMATE_SOURCE_DIRECTORY_MUST_COMPILE\n");
+            File.WriteAllText(
+                Path.Combine(
+                    sourceDirectory,
+                    ".workload-ga-evaluator-intermediate-root"),
+                "not-the-reserved-marker-contract\n");
+
+            var revisionWithLegitimateSources =
+                WorkloadGaEvaluationMetadataBuilder
+                    .ComputeEvaluatorImplementationRevision(fixtureRoot);
+            Assert.NotEqual(initialRevision, revisionWithLegitimateSources);
+
+            var build = RunDotnet(
+                fixtureRoot,
+                "build",
+                Path.Combine(
+                    fixtureRoot,
+                    "tools",
+                    "Aws2Azure.GapDocs",
+                    "Aws2Azure.GapDocs.csproj"),
+                "--configuration",
+                "Release",
+                "--nologo");
+
+            Assert.NotEqual(0, build.ExitCode);
+            Assert.Contains(
+                "LEGITIMATE_SOURCE_DIRECTORY_MUST_COMPILE",
+                build.StandardOutput + build.StandardError,
                 StringComparison.Ordinal);
         }
         finally

@@ -115,6 +115,11 @@ binary fails closed. The generated identity source is excluded from its own
 inputs to avoid a circular digest. This exclusion follows the resolved
 `IntermediateOutputPath`, so custom in-project intermediate directories cannot
 feed generated C# back into either the build-time or runtime source identity.
+Current and stale intermediate roots are recognized only by a separate
+`.workload-ga-evaluator-intermediate-root` marker with the evaluator's exact
+reserved content. A source file merely named `WorkloadGaEvaluatorIdentity.g.cs`
+does not classify its directory as generated or remove sibling sources from
+compilation or identity hashing.
 
 `expected_evaluator_schema_version` describes the authority evaluator format
 only; it is not presented as implementation identity. Canonical or

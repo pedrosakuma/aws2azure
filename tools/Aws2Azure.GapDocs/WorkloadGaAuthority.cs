@@ -237,6 +237,10 @@ public static class WorkloadGaEvaluationMetadataBuilder
     public const string ContractPath = "docs/workloads/certification/authority.yaml";
     public const string GeneratedEvaluatorIdentityFileName =
         "WorkloadGaEvaluatorIdentity.g.cs";
+    internal const string EvaluatorIntermediateRootMarkerFileName =
+        ".workload-ga-evaluator-intermediate-root";
+    internal const string EvaluatorIntermediateRootMarkerContent =
+        "aws2azure-gapdocs-evaluator-identity-root:v1\n";
     public const int CurrentEvaluatorSchemaVersion = 3;
     public static string EmbeddedEvaluatorImplementationRevision =>
         WorkloadGaEmbeddedEvaluatorIdentity.Revision;
@@ -375,8 +379,11 @@ public static class WorkloadGaEvaluationMetadataBuilder
         var generatedIntermediateRoots = Directory
             .EnumerateFiles(
                 toolRoot,
-                GeneratedEvaluatorIdentityFileName,
+                EvaluatorIntermediateRootMarkerFileName,
                 SearchOption.AllDirectories)
+            .Where(path => File.ReadAllText(path).Equals(
+                EvaluatorIntermediateRootMarkerContent,
+                StringComparison.Ordinal))
             .Select(path => Path.GetDirectoryName(Path.GetFullPath(path))!)
             .Distinct(PathComparer)
             .ToList();

@@ -8,6 +8,8 @@
       <CompileFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
       <RepositoryRoot ParameterType="System.String" Required="true" />
       <OutputFile ParameterType="System.String" Required="true" />
+      <IntermediateRootMarkerFile ParameterType="System.String" Required="true" />
+      <ToolRoot ParameterType="System.String" Required="true" />
       <Revision ParameterType="System.String" Output="true" />
       <GeneratedIntermediateFiles
         ParameterType="Microsoft.Build.Framework.ITaskItem[]"
@@ -29,17 +31,39 @@
         var pathComparison = Path.DirectorySeparatorChar == '\\'
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+        const string markerFileName =
+            ".workload-ga-evaluator-intermediate-root";
+        const string markerContent =
+            "aws2azure-gapdocs-evaluator-identity-root:v1\n";
+        var markerFile = Path.GetFullPath(IntermediateRootMarkerFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(markerFile));
+        if (!File.Exists(markerFile)
+            || !File.ReadAllText(markerFile).Equals(
+                markerContent,
+                StringComparison.Ordinal))
+        {
+            File.WriteAllText(
+                markerFile,
+                markerContent,
+                new UTF8Encoding(false));
+        }
         var inputFiles = Files
             .Select(file => Path.GetFullPath(file.ItemSpec))
             .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal)
             .ToList();
-        var generatedIntermediateRoots = inputFiles
-            .Where(path => Path.GetFileName(path).Equals(
-                "WorkloadGaEvaluatorIdentity.g.cs",
+        var generatedIntermediateRoots = Directory
+            .EnumerateFiles(
+                Path.GetFullPath(ToolRoot),
+                markerFileName,
+                SearchOption.AllDirectories)
+            .Where(path => File.ReadAllText(path).Equals(
+                markerContent,
                 StringComparison.Ordinal))
             .Select(path => Path.GetDirectoryName(path))
+            .Where(path => path is not null)
+            .Select(path => Path.GetFullPath(path))
             .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
                 ? StringComparer.OrdinalIgnoreCase
                 : StringComparer.Ordinal)
@@ -49,11 +73,20 @@
             || path.StartsWith(
                 directory.TrimEnd('\\', '/') + Path.DirectorySeparatorChar,
                 pathComparison);
+        var activeIntermediateRoot = Path.GetDirectoryName(
+            Path.GetFullPath(OutputFile));
         GeneratedIntermediateFiles = CompileFiles
-            .Where(file => generatedIntermediateRoots.Any(
-                directory => isWithin(
-                    directory,
-                    Path.GetFullPath(file.ItemSpec))))
+            .Where(file =>
+            {
+                var compilePath = Path.GetFullPath(file.ItemSpec);
+                return generatedIntermediateRoots.Any(
+                    directory => !directory.Equals(
+                        activeIntermediateRoot,
+                        pathComparison)
+                        && isWithin(directory, compilePath)
+                        && !(isWithin(directory, activeIntermediateRoot)
+                            && isWithin(activeIntermediateRoot, compilePath)));
+            })
             .ToArray();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var outputFile = Path.GetFullPath(OutputFile);
@@ -101,6 +134,7 @@
     <PropertyGroup>
       <_WorkloadGaEvaluatorIdentityDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)', '$(MSBuildProjectDirectory)'))</_WorkloadGaEvaluatorIdentityDirectory>
       <_WorkloadGaEvaluatorIdentityFile>$(_WorkloadGaEvaluatorIdentityDirectory)/WorkloadGaEvaluatorIdentity.g.cs</_WorkloadGaEvaluatorIdentityFile>
+      <_WorkloadGaEvaluatorIdentityMarkerFile>$(_WorkloadGaEvaluatorIdentityDirectory)/.workload-ga-evaluator-intermediate-root</_WorkloadGaEvaluatorIdentityMarkerFile>
     </PropertyGroup>
     <ItemGroup>
       <_WorkloadGaEvaluatorIdentityInput
@@ -113,7 +147,9 @@
       Files="@(_WorkloadGaEvaluatorIdentityInput)"
       CompileFiles="@(Compile)"
       RepositoryRoot="$(MSBuildProjectDirectory)/../.."
-      OutputFile="$(_WorkloadGaEvaluatorIdentityFile)">
+      OutputFile="$(_WorkloadGaEvaluatorIdentityFile)"
+      IntermediateRootMarkerFile="$(_WorkloadGaEvaluatorIdentityMarkerFile)"
+      ToolRoot="$(MSBuildProjectDirectory)">
       <Output TaskParameter="Revision" PropertyName="WorkloadGaEvaluatorImplementationRevision" />
       <Output
         TaskParameter="GeneratedIntermediateFiles"
