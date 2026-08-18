@@ -5,11 +5,16 @@
     "contract": "docs/workloads/certification/authority.yaml",
     "source": {
       "repository": "pedrosakuma/aws2azure",
-      "revision_type": "canonical_input_sha256",
-      "revision": "sha256:06f62f0213cefbe0bb1c404236bf78298e1ad53d5be5ff89f35a697f74ceeda9",
+      "canonical_inputs_revision_type": "normalized_yaml_sha256",
+      "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+      "evaluator_revision_type": "workload_ga_evaluator_schema_version",
+      "evaluator_revision": 2,
       "canonical_input_roots": [
         "docs/gaps/**/*.yaml",
         "docs/workloads/**/*.yaml"
+      ],
+      "excluded_canonical_inputs": [
+        "docs/workloads/certification/authority.yaml"
       ]
     }
   },

@@ -98,8 +98,13 @@ static int RunGapDocs(
         var options = CommandLineOptions.Parse(args);
         var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
             Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
+        var canonicalInputsRevision =
+            WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(repoRoot);
         var evaluationContractErrors =
-            WorkloadGaEvaluationContractValidator.Validate(evaluationContract);
+            WorkloadGaEvaluationContractValidator.Validate(
+                evaluationContract,
+                DateOnly.FromDateTime(DateTime.UtcNow),
+                canonicalInputsRevision);
         if (evaluationContractErrors.Count > 0)
         {
             WriteErrors("workload GA evaluation contract", evaluationContractErrors);
@@ -212,9 +217,9 @@ static int RunGapDocs(
             return 0;
         }
 
-        MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
-        Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
-        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(evaluationContract, repoRoot);
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.BuildFromRevision(
+            evaluationContract,
+            canonicalInputsRevision);
         var workloadReports = workloadManifests
             .Select(manifest => WorkloadGaEvaluator.Evaluate(
                 manifest,
@@ -223,6 +228,18 @@ static int RunGapDocs(
                 repoRoot,
                 evaluatedAsOf))
             .ToList();
+        var snapshotErrors =
+            WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
+                repoRoot,
+                canonicalInputsRevision);
+        if (snapshotErrors.Count > 0)
+        {
+            WriteErrors("workload GA canonical snapshot", snapshotErrors);
+            return 1;
+        }
+
+        MarkdownRenderer.Render(docs, designDocs, migration, siteRoot);
+        Console.WriteLine($"[gap-docs] markdown written under {siteRoot}");
         WorkloadGaRenderer.RenderIndex(
             workloadReports,
             evaluation,
@@ -291,8 +308,13 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
     {
         var evaluationContract = WorkloadGaEvaluationContractLoader.Load(
             Path.Combine(repoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
+        var canonicalInputsRevision =
+            WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(repoRoot);
         var evaluationContractErrors =
-            WorkloadGaEvaluationContractValidator.Validate(evaluationContract);
+            WorkloadGaEvaluationContractValidator.Validate(
+                evaluationContract,
+                DateOnly.FromDateTime(DateTime.UtcNow),
+                canonicalInputsRevision);
         if (evaluationContractErrors.Count > 0)
         {
             WriteErrors("workload GA evaluation contract", evaluationContractErrors);
@@ -319,7 +341,18 @@ static int CertifyWorkload(string[] args, string repoRoot, string gapsRoot)
             designDocs,
             repoRoot,
             evaluatedAsOf);
-        var evaluation = WorkloadGaEvaluationMetadataBuilder.Build(evaluationContract, repoRoot);
+        var evaluation = WorkloadGaEvaluationMetadataBuilder.BuildFromRevision(
+            evaluationContract,
+            canonicalInputsRevision);
+        var snapshotErrors =
+            WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
+                repoRoot,
+                canonicalInputsRevision);
+        if (snapshotErrors.Count > 0)
+        {
+            WriteErrors("workload GA canonical snapshot", snapshotErrors);
+            return 1;
+        }
         var content = format == "json"
             ? WorkloadGaRenderer.RenderJson(report, evaluation) + Environment.NewLine
             : WorkloadGaRenderer.RenderMarkdown(report, evaluation);

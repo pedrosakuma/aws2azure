@@ -221,7 +221,20 @@ public sealed class WorkloadGaCertificationTests
             root.GetProperty("evaluation").GetProperty("source").GetProperty("repository").GetString());
         Assert.Matches(
             "^sha256:[0-9a-f]{64}$",
-            root.GetProperty("evaluation").GetProperty("source").GetProperty("revision").GetString());
+            root.GetProperty("evaluation").GetProperty("source")
+                .GetProperty("canonical_inputs_revision").GetString());
+        Assert.Equal(
+            "normalized_yaml_sha256",
+            root.GetProperty("evaluation").GetProperty("source")
+                .GetProperty("canonical_inputs_revision_type").GetString());
+        Assert.Equal(
+            WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision,
+            root.GetProperty("evaluation").GetProperty("source")
+                .GetProperty("evaluator_revision").GetInt32());
+        Assert.Equal(
+            "workload_ga_evaluator_schema_version",
+            root.GetProperty("evaluation").GetProperty("source")
+                .GetProperty("evaluator_revision_type").GetString());
         Assert.Equal(
             "live_workload_certification",
             root.GetProperty("authority").GetProperty("highest_precedence_source").GetString());
@@ -235,7 +248,10 @@ public sealed class WorkloadGaCertificationTests
     [Fact]
     public void Evaluation_contract_is_valid_and_uses_an_explicit_point_in_time()
     {
-        Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(EvaluationContract));
+        Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
+            EvaluationContract,
+            new DateOnly(2026, 8, 18),
+            WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot)));
         Assert.Equal(
             new DateOnly(2026, 8, 18),
             WorkloadGaEvaluationMetadataBuilder.ParseAsOf(EvaluationContract));
@@ -246,16 +262,80 @@ public sealed class WorkloadGaCertificationTests
     {
         var contract = new WorkloadGaEvaluationContract
         {
-            SchemaVersion = 2,
+            SchemaVersion = 3,
             AsOf = "now",
             SourceRepository = "missing-repository",
         };
 
-        var errors = WorkloadGaEvaluationContractValidator.Validate(contract);
+        var errors = WorkloadGaEvaluationContractValidator.Validate(
+            contract,
+            new DateOnly(2026, 8, 18));
 
         Assert.Contains(errors, error => error.Contains("unsupported schema_version", StringComparison.Ordinal));
         Assert.Contains(errors, error => error.Contains("as_of must be", StringComparison.Ordinal));
         Assert.Contains(errors, error => error.Contains("owner/repository", StringComparison.Ordinal));
+        Assert.Contains(
+            errors,
+            error => error.Contains("expected_canonical_inputs_revision", StringComparison.Ordinal));
+        Assert.Contains(
+            errors,
+            error => error.Contains("expected_evaluator_revision", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(2026, 8, 17, false)]
+    [InlineData(2026, 8, 18, false)]
+    [InlineData(2026, 8, 19, true)]
+    public void Evaluation_contract_rejects_only_dates_after_trusted_utc_today(
+        int year,
+        int month,
+        int day,
+        bool rejected)
+    {
+        var contract = new WorkloadGaEvaluationContract
+        {
+            SchemaVersion = WorkloadGaEvaluationContractValidator.CurrentSchemaVersion,
+            AsOf = new DateOnly(year, month, day).ToString("yyyy-MM-dd"),
+            SourceRepository = "pedrosakuma/aws2azure",
+            ExpectedCanonicalInputsRevision = Digest('a'),
+            ExpectedEvaluatorRevision =
+                WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision,
+        };
+
+        var errors = WorkloadGaEvaluationContractValidator.Validate(
+            contract,
+            new DateOnly(2026, 8, 18));
+
+        Assert.Equal(
+            rejected,
+            errors.Any(error => error.Contains("trusted UTC date", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Evaluation_contract_rejects_revision_mismatch()
+    {
+        var contract = new WorkloadGaEvaluationContract
+        {
+            SchemaVersion = WorkloadGaEvaluationContractValidator.CurrentSchemaVersion,
+            AsOf = "2026-08-18",
+            SourceRepository = "pedrosakuma/aws2azure",
+            ExpectedCanonicalInputsRevision = Digest('a'),
+            ExpectedEvaluatorRevision = 1,
+        };
+
+        var errors = WorkloadGaEvaluationContractValidator.Validate(
+            contract,
+            new DateOnly(2026, 8, 18),
+            Digest('c'));
+
+        Assert.Contains(
+            errors,
+            error => error.Contains(
+                "expected_canonical_inputs_revision",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            errors,
+            error => error.Contains("expected_evaluator_revision", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -342,10 +422,17 @@ public sealed class WorkloadGaCertificationTests
         {
             File.WriteAllText(gapPath, "status: implemented\r\n");
             File.WriteAllText(Path.Combine(workloadsRoot, "profile.yaml"), "version: 1\r\n");
+            Directory.CreateDirectory(Path.Combine(workloadsRoot, "certification"));
+            File.WriteAllText(
+                Path.Combine(workloadsRoot, "certification", "authority.yaml"),
+                "expected_canonical_inputs_revision: ignored\r\n");
             var windowsRevision =
                 WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
 
             File.WriteAllText(gapPath, "status: implemented\n");
+            File.WriteAllText(
+                Path.Combine(workloadsRoot, "certification", "authority.yaml"),
+                "expected_canonical_inputs_revision: changed-but-still-ignored\n");
             File.WriteAllText(Path.Combine(tempRoot, "README.md"), "not a canonical input");
             var normalizedRevision =
                 WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
@@ -356,6 +443,41 @@ public sealed class WorkloadGaCertificationTests
 
             Assert.Equal(windowsRevision, normalizedRevision);
             Assert.NotEqual(normalizedRevision, changedRevision);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Canonical_snapshot_validation_rejects_changes_after_initial_hash()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"aws2azure-ga-snapshot-{Guid.NewGuid():N}");
+        var gapsRoot = Path.Combine(tempRoot, "docs", "gaps");
+        var workloadsRoot = Path.Combine(tempRoot, "docs", "workloads");
+        Directory.CreateDirectory(gapsRoot);
+        Directory.CreateDirectory(workloadsRoot);
+        try
+        {
+            var sourcePath = Path.Combine(gapsRoot, "PutObject.yaml");
+            File.WriteAllText(sourcePath, "status: implemented\n");
+            var initialRevision =
+                WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot);
+
+            Assert.Empty(
+                WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
+                    tempRoot,
+                    initialRevision));
+
+            File.WriteAllText(sourcePath, "status: partial\n");
+            var errors = WorkloadGaEvaluationMetadataBuilder.ValidateCanonicalInputSnapshot(
+                tempRoot,
+                initialRevision);
+
+            Assert.Contains(
+                errors,
+                error => error.Contains("changed during evaluation", StringComparison.Ordinal));
         }
         finally
         {

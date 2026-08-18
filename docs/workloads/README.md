@@ -90,11 +90,19 @@ The default gap-doc generation writes the same aggregate verdicts to
 manifest independently and rejects stale generated output.
 
 `certification/authority.yaml` is the explicit, versioned evaluation contract.
-Its `as_of` date is advanced deliberately when the canonical certification
-inputs are reviewed; generation never inserts a wall-clock timestamp. The JSON
-and Markdown outputs identify that date and a deterministic SHA-256 revision of
-all YAML below `docs/gaps/` and `docs/workloads/`, with line endings normalized
-before hashing.
+Its `as_of` date cannot be later than the trusted UTC date used by validation.
+Generation never inserts that wall-clock date into output. The contract binds
+the evaluation to both `expected_canonical_inputs_revision` (normalized YAML
+below `docs/gaps/` and `docs/workloads/`, excluding the authority contract
+itself) and `expected_evaluator_revision` (the explicit workload-GA evaluator
+behavior schema). A canonical input change fails validation until the expected
+hash is deliberately reviewed and updated; a behavior change must increment the
+evaluator revision in code and in the contract. The generator also re-hashes
+canonical inputs after loading and evaluation, before writing output, and
+aborts if the filesystem snapshot changed while it built the in-memory reports.
+Rendering then uses those validated in-memory objects. Paths and line endings
+are normalized before hashing, so the input identity is checkout-independent
+and reproducible.
 
 For current workload adoption, the generated workload certification has the
 highest precedence. Profile manifests and gap docs are normative inputs,
@@ -102,8 +110,8 @@ release notes are immutable historical records of what was promoted at that
 time, and guides are explanatory only. A historical GA release claim never
 overrides a later `candidate`, `conditional`, or `blocked` certification
 verdict. Because the certification is point-in-time, consumers must also check
-`evaluated_as_of` and the source revision rather than treating any verdict as
-permanent.
+`evaluated_as_of`, the canonical-input revision, and the evaluator revision
+rather than treating any verdict as permanent.
 
 Profile-specific adoption guidance:
 

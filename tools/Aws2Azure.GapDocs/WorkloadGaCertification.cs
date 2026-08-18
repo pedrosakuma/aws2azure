@@ -945,9 +945,12 @@ public static class WorkloadGaRenderer
             "`candidate`, `conditional`, or `blocked` verdict.");
         builder.AppendLine(">");
         builder.AppendLine(
-            $"> Source: `{evaluation.Source.Repository}` at " +
-            $"`{evaluation.Source.RevisionType}:{evaluation.Source.Revision["sha256:".Length..]}`; " +
-            $"evaluation contract: `{evaluation.Contract}`.");
+            $"> Source repository: `{evaluation.Source.Repository}`; canonical inputs: " +
+            $"`{evaluation.Source.CanonicalInputsRevisionType}:" +
+            $"{evaluation.Source.CanonicalInputsRevision["sha256:".Length..]}`; evaluator: " +
+            $"`{evaluation.Source.EvaluatorRevisionType}:" +
+            $"{evaluation.Source.EvaluatorRevision}`; " +
+            $"contract: `{evaluation.Contract}`.");
         builder.AppendLine();
         builder.AppendLine("## Authority precedence");
         builder.AppendLine();

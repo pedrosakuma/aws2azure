@@ -12,6 +12,8 @@ public sealed class WorkloadGaEvaluationContract
     public int SchemaVersion { get; set; }
     public string AsOf { get; set; } = string.Empty;
     public string SourceRepository { get; set; } = string.Empty;
+    public string ExpectedCanonicalInputsRevision { get; set; } = string.Empty;
+    public int ExpectedEvaluatorRevision { get; set; }
 
     [YamlIgnore]
     public string SourceFile { get; set; } = string.Empty;
@@ -27,12 +29,18 @@ public sealed class WorkloadGaEvaluationMetadata
 public sealed class WorkloadGaSourceIdentity
 {
     public string Repository { get; set; } = string.Empty;
-    public string RevisionType { get; set; } = "canonical_input_sha256";
-    public string Revision { get; set; } = string.Empty;
+    public string CanonicalInputsRevisionType { get; set; } = "normalized_yaml_sha256";
+    public string CanonicalInputsRevision { get; set; } = string.Empty;
+    public string EvaluatorRevisionType { get; set; } = "workload_ga_evaluator_schema_version";
+    public int EvaluatorRevision { get; set; }
     public List<string> CanonicalInputRoots { get; set; } =
     [
         "docs/gaps/**/*.yaml",
         "docs/workloads/**/*.yaml",
+    ];
+    public List<string> ExcludedCanonicalInputs { get; set; } =
+    [
+        WorkloadGaEvaluationMetadataBuilder.ContractPath,
     ];
 }
 
@@ -107,9 +115,12 @@ public static class WorkloadGaEvaluationContractLoader
 
 public static class WorkloadGaEvaluationContractValidator
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
-    public static IReadOnlyList<string> Validate(WorkloadGaEvaluationContract contract)
+    public static IReadOnlyList<string> Validate(
+        WorkloadGaEvaluationContract contract,
+        DateOnly trustedCurrentDate,
+        string? canonicalInputsRevision = null)
     {
         var errors = new List<string>();
         var source = string.IsNullOrWhiteSpace(contract.SourceFile)
@@ -128,9 +139,15 @@ public static class WorkloadGaEvaluationContractValidator
                 "yyyy-MM-dd",
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.None,
-                out _))
+                out var asOf))
         {
             Err("as_of must be a calendar date in yyyy-MM-dd format");
+        }
+        else if (asOf > trustedCurrentDate)
+        {
+            Err(
+                $"as_of '{contract.AsOf}' must not be later than trusted UTC date " +
+                $"'{trustedCurrentDate:yyyy-MM-dd}'");
         }
         if (string.IsNullOrWhiteSpace(contract.SourceRepository)
             || contract.SourceRepository.Count(character => character == '/') != 1
@@ -139,20 +156,64 @@ public static class WorkloadGaEvaluationContractValidator
         {
             Err("source_repository must use the owner/repository form");
         }
+        ValidateSha256Revision(
+            contract.ExpectedCanonicalInputsRevision,
+            canonicalInputsRevision,
+            "expected_canonical_inputs_revision",
+            Err);
+        if (contract.ExpectedEvaluatorRevision
+            != WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision)
+        {
+            Err(
+                $"expected_evaluator_revision '{contract.ExpectedEvaluatorRevision}' " +
+                $"does not match evaluator schema revision " +
+                $"'{WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorRevision}'");
+        }
 
         return errors;
     }
+
+    private static void ValidateSha256Revision(
+        string expected,
+        string? actual,
+        string field,
+        Action<string> err)
+    {
+        if (!IsSha256(expected))
+        {
+            err($"{field} must use 'sha256:<64 lowercase hex>'");
+            return;
+        }
+        if (actual is not null && !expected.Equals(actual, StringComparison.Ordinal))
+        {
+            err($"{field} '{expected}' does not match computed revision '{actual}'");
+        }
+    }
+
+    private static bool IsSha256(string value) =>
+        value.Length == 71
+        && value.StartsWith("sha256:", StringComparison.Ordinal)
+        && value.AsSpan(7).IndexOfAnyExcept("0123456789abcdef") < 0;
 }
 
 public static class WorkloadGaEvaluationMetadataBuilder
 {
     public const string ContractPath = "docs/workloads/certification/authority.yaml";
+    public const int CurrentEvaluatorRevision = 2;
 
     public static WorkloadGaEvaluationMetadata Build(
         WorkloadGaEvaluationContract contract,
         string repoRoot)
     {
-        var revision = ComputeCanonicalInputRevision(repoRoot);
+        return BuildFromRevision(
+            contract,
+            ComputeCanonicalInputRevision(repoRoot));
+    }
+
+    public static WorkloadGaEvaluationMetadata BuildFromRevision(
+        WorkloadGaEvaluationContract contract,
+        string canonicalInputsRevision)
+    {
         return new WorkloadGaEvaluationMetadata
         {
             EvaluatedAsOf = contract.AsOf,
@@ -160,7 +221,8 @@ public static class WorkloadGaEvaluationMetadataBuilder
             Source = new WorkloadGaSourceIdentity
             {
                 Repository = contract.SourceRepository,
-                Revision = revision,
+                CanonicalInputsRevision = canonicalInputsRevision,
+                EvaluatorRevision = CurrentEvaluatorRevision,
             },
         };
     }
@@ -175,8 +237,32 @@ public static class WorkloadGaEvaluationMetadataBuilder
     public static string ComputeCanonicalInputRevision(string repoRoot)
     {
         var canonicalFiles = EnumerateCanonicalFiles(repoRoot);
+        return ComputeNormalizedTextRevision(repoRoot, canonicalFiles);
+    }
+
+    public static IReadOnlyList<string> ValidateCanonicalInputSnapshot(
+        string repoRoot,
+        string initialRevision)
+    {
+        var currentRevision = ComputeCanonicalInputRevision(repoRoot);
+        if (currentRevision.Equals(initialRevision, StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        return
+        [
+            $"canonical inputs changed during evaluation: started at '{initialRevision}', " +
+            $"now '{currentRevision}'",
+        ];
+    }
+
+    private static string ComputeNormalizedTextRevision(
+        string repoRoot,
+        IReadOnlyList<string> files)
+    {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var path in canonicalFiles)
+        foreach (var path in files)
         {
             var relativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
             Append(hash, relativePath);
@@ -206,7 +292,11 @@ public static class WorkloadGaEvaluationMetadataBuilder
                 throw new DirectoryNotFoundException(
                     $"Workload GA canonical input directory not found: {root}");
             }
-            files.AddRange(Directory.EnumerateFiles(root, "*.yaml", SearchOption.AllDirectories));
+            files.AddRange(
+                Directory.EnumerateFiles(root, "*.yaml", SearchOption.AllDirectories)
+                    .Where(path => !Path.GetRelativePath(repoRoot, path)
+                        .Replace('\\', '/')
+                        .Equals(ContractPath, StringComparison.Ordinal)));
         }
 
         return files
