@@ -554,6 +554,6 @@ export/import proof.
 - Remove old credentials only after drain and validation.
 - Update the relevant gap YAML when real Azure exposes a new divergence. Add a
   real-Azure seal only when the operation was actually exercised, following the
-  [nightly real-Azure guide](../testing/real-azure-nightly.md#divergence-report--real-azure-seal-theme-c-467).
+  [nightly real-Azure guide](../testing/real-azure-nightly.md#divergence-report-real-azure-seal-theme-c-467).
 - Re-run this decision whenever operations, payloads, concurrency, topology,
   identity mode, Azure SKU/region, or proxy version changes materially.

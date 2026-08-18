@@ -68,6 +68,11 @@ Architecture decisions that explain the project constraints are recorded in
 
 ## Documentation
 
+The canonical documentation portal is
+**[https://pedrosakuma.github.io/aws2azure/](https://pedrosakuma.github.io/aws2azure/)**.
+It combines the hand-authored guides and generated operation-gap reference in
+one searchable surface.
+
 Start broad, then drill down — the map below is layered so you only open what you
 need:
 
@@ -92,9 +97,11 @@ need:
   [nightly real-Azure tests](./docs/testing/real-azure-nightly.md) ·
   [real-AWS capture plan](./docs/testing/real-aws-capture.md)
 
-The gap docs render into a browsable site via `mkdocs serve` (config in
-[`mkdocs.yml`](./mkdocs.yml)); they are the single source of truth, validated and
-regenerated in CI.
+Preview the complete portal locally with `mkdocs serve` (config in
+[`mkdocs.yml`](./mkdocs.yml)); the exact setup and strict validation commands are
+in the [documentation portal guide](./docs/contributing/documentation.md). The
+operation pages under `docs/site/` remain generated from gap YAML, the capability
+single source of truth, and are never hand-maintained.
 
 ## Configuration
 

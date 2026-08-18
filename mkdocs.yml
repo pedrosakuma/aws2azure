@@ -1,18 +1,153 @@
-site_name: aws2azure — gap docs
-site_description: AWS → Azure proxy operation coverage & behavioural gaps
-docs_dir: docs/site
+site_name: aws2azure documentation
+site_description: Evaluate, integrate, deploy, and operate the aws2azure AWS-to-Azure protocol proxy
+site_url: https://pedrosakuma.github.io/aws2azure/
+repo_url: https://github.com/pedrosakuma/aws2azure
+repo_name: pedrosakuma/aws2azure
+docs_dir: docs
+site_dir: site
+strict: true
+use_directory_urls: true
+
 theme:
-  name: readthedocs
+  name: material
+  language: en
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-night
+        name: Use dark theme
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Use light theme
+
+plugins:
+  - search:
+      lang: en
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+hooks:
+  - .github/scripts/mkdocs_hooks.py
+
+extra_css:
+  - assets/stylesheets/portal.css
+
+exclude_docs: |
+  **/*.csv
+  **/*.json
+  **/*.yaml
+  **/*.yml
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
+
 nav:
-  - Overview: index.md
-  - Workload compatibility: workload-compatibility.md
-  - Coverage matrix: coverage.md
-  - Design gaps: design-gaps.md
-  - Real-Azure divergences: divergences.md
-  - Services:
-      - S3: s3.md
-      - SQS: sqs.md
-      - DynamoDB: dynamodb.md
-      - Kinesis: kinesis.md
-      - SNS: sns.md
-      - Secrets Manager: secretsmanager.md
+  - Home: index.md
+  - Evaluate:
+      - Project maturity: project-maturity.md
+      - Workload compatibility: site/workload-compatibility.md
+      - Workload GA certification: site/workload-ga.md
+      - Operation coverage: site/coverage.md
+      - Maximum-viable completeness: site/completeness.md
+      - Design gaps: site/design-gaps.md
+      - Real-Azure evidence: site/divergences.md
+  - "Build & integrate":
+      - Getting started: getting-started.md
+      - Azure authentication: azure-authentication.md
+      - Presigned URLs: presigned-urls.md
+      - Workload profiles:
+          - Profile overview: workloads/README.md
+          - DynamoDB basic CRUD: workloads/dynamodb-basic-crud.md
+          - DynamoDB Query and Scan: workloads/dynamodb-query-scan-indexes.md
+          - DynamoDB transactions: workloads/dynamodb-single-partition-transactions.md
+          - Kinesis record ingestion: workloads/kinesis-basic-record-ingestion.md
+          - Kinesis shard consumer: workloads/kinesis-single-consumer-per-shard.md
+          - S3 object CRUD: workloads/s3-basic-object-crud.md
+          - S3 metadata compatibility: workloads/s3-metadata-compatibility.md
+          - Secrets Manager lifecycle: workloads/secretsmanager-basic-lifecycle.md
+          - SNS publish to Event Grid: workloads/sns-standard-publish-event-grid.md
+          - SNS publish to Service Bus: workloads/sns-standard-publish-service-bus.md
+          - SNS subscription management: workloads/sns-subscription-management-service-bus.md
+          - SQS dead-letter redrive: workloads/sqs-dlq-redrive.md
+          - SQS FIFO over AMQP: workloads/sqs-fifo-amqp.md
+          - SQS standard messaging: workloads/sqs-standard-messaging.md
+  - "Deploy & operate":
+      - Sidecar deployment: deployment/sidecar.md
+      - Build-time module selection: deployment/module-selection.md
+      - Production runbook: deployment/production-runbook.md
+      - Release-candidate canary: testing/rc-staging-canary.md
+      - Operational qualification: testing/operational-qualification.md
+      - SLO qualification: testing/slo-qualification.md
+      - Real-Azure validation: testing/real-azure-nightly.md
+      - Real-AWS differential capture: testing/real-aws-capture.md
+      - Performance and footprint:
+          - Baseline guide: perf/README.md
+          - Latest performance baseline: perf/baseline-latest.md
+          - Latest footprint baseline: perf/footprint-latest.md
+          - CosmosBinary decode investigation: perf/cosmos-binary-decode.md
+          - CosmosBinary encode investigation: perf/cosmos-binary-encode-spike.md
+          - Fused CosmosBinary decode: perf/cosmos-binary-fused-decode-spike.md
+          - Cosmos query-body encoding: perf/cosmos-query-body-encode.md
+          - Stored-procedure parameter encoding: perf/cosmos-sproc-params-encode.md
+      - Versioning policy: versioning-and-compatibility.md
+      - Release notes:
+          - v1.0.0: releases/v1.0.0.md
+  - Operation reference:
+      - Reference overview: site/index.md
+      - S3: site/s3.md
+      - SQS: site/sqs.md
+      - DynamoDB: site/dynamodb.md
+      - Kinesis: site/kinesis.md
+      - SNS: site/sns.md
+      - Secrets Manager: site/secretsmanager.md
+  - Architecture:
+      - Decision record index: adr/README.md
+      - "0001: Service Bus REST baseline": adr/0001-sb-rest-runtime-protocol.md
+      - "0002: AMQP client library": adr/0002-amqp-client-library.md
+      - "0003: AWS-to-Azure only": adr/0003-aws-to-azure-only.md
+      - "0004: Wire-protocol sidecar": adr/0004-wire-protocol-sidecar-translator.md
+      - "0005: Sidecar resource budget": adr/0005-sidecar-resource-budget.md
+      - "0006: .NET Native AOT": adr/0006-dotnet-native-aot-runtime.md
+      - "0007: Single-binary multiplexing": adr/0007-single-binary-service-multiplexing.md
+      - "0008: Direct Azure REST": adr/0008-direct-azure-rest-integration.md
+      - "0009: AWS protocol without SDKs": adr/0009-aws-wire-protocol-without-aws-sdk.md
+      - "0010: Credential mapping": adr/0010-static-credential-mapping.md
+      - "0011: Gap docs as source of truth": adr/0011-gap-docs-as-source-of-truth.md
+      - "0012: Greenfield implementation": adr/0012-greenfield-implementation.md
+      - "0013: AOT-safe composition": adr/0013-manual-composition-and-aot-safe-di.md
+      - "0014: Source-generated JSON": adr/0014-system-text-json-source-generation.md
+      - "0015: Streaming XML": adr/0015-streaming-xml-reader-writer.md
+      - "0016: Source-generated logging": adr/0016-loggermessage-source-generated-logging.md
+      - "0017: Manual resilience": adr/0017-manual-resilience-policies.md
+      - "0018: Service Bus transport evolution": adr/0018-service-bus-transport-and-emulator-evolution.md
+  - Contribute:
+      - Documentation portal: contributing/documentation.md
+      - Gap-doc authoring: gaps/README.md
+      - Qualification policy authoring: workloads/qualification/README.md
