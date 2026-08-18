@@ -18,6 +18,7 @@ class MkDocsHooksTests(unittest.TestCase):
         self.source.write_text("# Guide\n", encoding="utf-8")
         (self.docs_root / "reference.md").write_text("# Reference\n", encoding="utf-8")
         (self.repo_root / "source.json").write_text("{}\n", encoding="utf-8")
+        (self.repo_root / "config.schema.json").write_text("{}\n", encoding="utf-8")
         (self.repo_root / "diagram.png").write_bytes(b"not-a-real-png")
 
         self.page = SimpleNamespace(
@@ -71,6 +72,16 @@ class MkDocsHooksTests(unittest.TestCase):
         self.assertIn("`[inline](../source.json)`", rewritten)
         self.assertIn("[fenced](../source.json)", rewritten)
         self.assertEqual(1, rewritten.count("/blob/main/source.json"))
+
+    def test_rewrites_operator_schema_to_canonical_repository_link(self) -> None:
+        rewritten = self.rewrite(
+            "[`config.schema.json`](../config.schema.json)\n"
+        )
+
+        self.assertIn(
+            "https://github.com/example/project/blob/main/config.schema.json",
+            rewritten,
+        )
 
     def test_rewrites_raw_html_markdown_links_for_published_site(self) -> None:
         html = (

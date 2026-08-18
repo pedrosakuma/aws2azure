@@ -80,6 +80,7 @@ nav:
       - Real-Azure evidence: site/divergences.md
   - "Build & integrate":
       - Getting started: getting-started.md
+      - Operator configuration: configuration-schema.md
       - Azure authentication: azure-authentication.md
       - Presigned URLs: presigned-urls.md
       - Workload profiles:

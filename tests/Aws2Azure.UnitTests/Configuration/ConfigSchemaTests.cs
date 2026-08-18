@@ -403,6 +403,8 @@ public sealed class ConfigSchemaTests
         Assert.Contains("\"useStoredProcedures\":\"Preferred\"", serialized, StringComparison.Ordinal);
         Assert.Contains("\"consistencyCheck\":\"Warn\"", serialized, StringComparison.Ordinal);
         Assert.Contains("\"mode\":\"sharedKey\"", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"kind\":\"blob\"", serialized, StringComparison.Ordinal);
+        AssertValid(JsonNode.Parse(serialized)!);
     }
 
     [Theory]

@@ -144,6 +144,7 @@ public sealed class AzureBackendConfig
     /// <c>serviceBusTopics</c>, <c>cosmos</c>, <c>eventHubs</c>, <c>eventGrid</c>,
     /// or <c>keyVault</c>. Must be valid for the AWS service it sits under.
     /// </summary>
+    [JsonConverter(typeof(AzureBackendKindConverter))]
     public string Kind { get; set; } = string.Empty;
 
     public AzureTargetConfig Target { get; set; } = new();
@@ -275,6 +276,47 @@ public enum AzureAuthKind
 
     /// <summary>Reference a shared <see cref="ConfigDocument.AzureIdentities"/> entry via <c>identity</c>.</summary>
     Reference = 5,
+}
+
+/// <summary>
+/// Preserves v1-compatible case-insensitive, whitespace-tolerant backend-kind
+/// reads while emitting the canonical authoring spelling.
+/// </summary>
+public sealed class AzureBackendKindConverter : JsonConverter<string>
+{
+    public override string Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException("Backend kind must be a string.");
+        }
+
+        return reader.GetString()!;
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        string value,
+        JsonSerializerOptions options)
+    {
+        var kind = value.AsSpan().Trim();
+        var canonical = kind switch
+        {
+            _ when kind.Equals("blob", StringComparison.OrdinalIgnoreCase) => "blob",
+            _ when kind.Equals("serviceBus", StringComparison.OrdinalIgnoreCase) => "serviceBus",
+            _ when kind.Equals("serviceBusTopics", StringComparison.OrdinalIgnoreCase) => "serviceBusTopics",
+            _ when kind.Equals("cosmos", StringComparison.OrdinalIgnoreCase) => "cosmos",
+            _ when kind.Equals("eventHubs", StringComparison.OrdinalIgnoreCase) => "eventHubs",
+            _ when kind.Equals("eventGrid", StringComparison.OrdinalIgnoreCase) => "eventGrid",
+            _ when kind.Equals("keyVault", StringComparison.OrdinalIgnoreCase) => "keyVault",
+            _ => throw new JsonException($"'{value}' is not a recognized backend kind."),
+        };
+
+        writer.WriteStringValue(canonical);
+    }
 }
 
 /// <summary>
