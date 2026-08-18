@@ -68,8 +68,7 @@ public sealed class DynamoDbSprocFixture : IAsyncLifetime
 
         try
         {
-            _container = new ContainerBuilder()
-                .WithImage(ContainerImage)
+            _container = new ContainerBuilder(ContainerImage)
                 .WithName("aws2azure-sproc-it-" + Guid.NewGuid().ToString("N")[..8])
                 .WithPortBinding(8081, true)
                 .WithWaitStrategy(Wait.ForUnixContainer()

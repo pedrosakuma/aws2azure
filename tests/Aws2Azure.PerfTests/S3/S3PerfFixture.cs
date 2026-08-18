@@ -48,12 +48,11 @@ public sealed class S3PerfFixture : IAsyncLifetime
 
         try
         {
-            _container = new ContainerBuilder()
-                .WithImage("mcr.microsoft.com/azure-storage/azurite:latest")
+            _container = new ContainerBuilder("mcr.microsoft.com/azure-storage/azurite:latest")
                 .WithName("aws2azure-perf-azurite-" + Guid.NewGuid().ToString("N")[..8])
                 .WithPortBinding(10000, true)
                 .WithCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10000))
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(10000))
                 .Build();
             await _container.StartAsync().ConfigureAwait(false);
             var blobPort = _container.GetMappedPublicPort(10000);

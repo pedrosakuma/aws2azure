@@ -85,16 +85,14 @@ public sealed class S3BackendDifferentialFixture : IAsyncLifetime
             return;
         }
 
-        _azurite = new ContainerBuilder()
-            .WithImage(AzuriteImage)
+        _azurite = new ContainerBuilder(AzuriteImage)
             .WithName("aws2azure-conf-azurite-" + Guid.NewGuid().ToString("N")[..8])
             .WithPortBinding(10000, true)
             .WithCommand("azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10000))
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(10000))
             .Build();
 
-        _localStack = new ContainerBuilder()
-            .WithImage(LocalStackImage)
+        _localStack = new ContainerBuilder(LocalStackImage)
             .WithName("aws2azure-conf-localstack-" + Guid.NewGuid().ToString("N")[..8])
             .WithEnvironment("SERVICES", "s3")
             .WithEnvironment("EAGER_SERVICE_LOADING", "1")
