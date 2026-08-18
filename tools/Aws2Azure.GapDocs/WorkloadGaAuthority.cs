@@ -239,8 +239,6 @@ public static class WorkloadGaEvaluationMetadataBuilder
         "WorkloadGaEvaluatorIdentity.g.cs";
     internal const string EvaluatorIntermediateRootMarkerFileName =
         ".workload-ga-evaluator-intermediate-root";
-    internal const string EvaluatorIntermediateRootMarkerContent =
-        "aws2azure-gapdocs-evaluator-identity-root:v1\n";
     public const int CurrentEvaluatorSchemaVersion = 3;
     public static string EmbeddedEvaluatorImplementationRevision =>
         WorkloadGaEmbeddedEvaluatorIdentity.Revision;
@@ -379,11 +377,9 @@ public static class WorkloadGaEvaluationMetadataBuilder
         var generatedIntermediateRoots = Directory
             .EnumerateFiles(
                 toolRoot,
-                EvaluatorIntermediateRootMarkerFileName,
+                "*",
                 SearchOption.AllDirectories)
-            .Where(path => File.ReadAllText(path).Equals(
-                EvaluatorIntermediateRootMarkerContent,
-                StringComparison.Ordinal))
+            .Where(IsExactEvaluatorIntermediateRootMarker)
             .Select(path => Path.GetDirectoryName(Path.GetFullPath(path))!)
             .Distinct(PathComparer)
             .ToList();
@@ -424,10 +420,22 @@ public static class WorkloadGaEvaluationMetadataBuilder
             .ToList();
     }
 
+    private static bool IsExactEvaluatorIntermediateRootMarker(string path) =>
+        Path.GetFileName(path).Equals(
+            EvaluatorIntermediateRootMarkerFileName,
+            StringComparison.Ordinal)
+        && File.ReadAllBytes(path).AsSpan().SequenceEqual(
+            "aws2azure-gapdocs-evaluator-identity-root:v1\n"u8);
+
     private static StringComparer PathComparer =>
         OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private static bool IsWithin(string root, string path)
     {

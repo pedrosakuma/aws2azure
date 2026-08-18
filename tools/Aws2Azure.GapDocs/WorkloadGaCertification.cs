@@ -688,7 +688,39 @@ public static class WorkloadGaEvaluator
                     "Qualification scenario must be backed by real-Azure evidence.");
             }
         }
-        if (manifest.Evidence.RequiredScenarios.Contains("rollback", StringComparer.Ordinal))
+
+        var candidateRuntimeValid = true;
+        try
+        {
+            if (qualification.Candidate.Runtime is null)
+            {
+                throw new InvalidDataException(
+                    "Qualified workload evidence lacks a sealed candidate runtime.");
+            }
+            SealedRuntimeEvidenceValidator.ValidateCandidate(
+                qualification.Candidate.Runtime,
+                manifest.Id,
+                manifest.Version,
+                qualification.Candidate.GitSha,
+                qualification.Candidate.ArtifactDigest,
+                evaluatedAsOfUtc);
+        }
+        catch (InvalidDataException exception)
+        {
+            matches = false;
+            candidateRuntimeValid = false;
+            Add(
+                report,
+                "candidate_runtime_mismatch",
+                "blocking",
+                qualification.SourceFile,
+                exception.Message);
+        }
+
+        if (candidateRuntimeValid
+            && manifest.Evidence.RequiredScenarios.Contains(
+                "rollback",
+                StringComparer.Ordinal))
         {
             var ledgerPath = Path.Combine(
                 repoRoot,
@@ -717,22 +749,10 @@ public static class WorkloadGaEvaluator
                 {
                     throw new InvalidDataException(string.Join("; ", ledgerErrors));
                 }
-                if (qualification.Candidate.Runtime is null)
-                {
-                    throw new InvalidDataException(
-                        "Rollback qualification lacks a sealed candidate runtime.");
-                }
-                SealedRuntimeEvidenceValidator.ValidateCandidate(
-                    qualification.Candidate.Runtime,
-                    manifest.Id,
-                    manifest.Version,
-                    qualification.Candidate.GitSha,
-                    qualification.Candidate.ArtifactDigest,
-                    evaluatedAsOfUtc);
                 if (ledger.Status == "approved")
                 {
                     SealedRuntimeEvidenceValidator.ValidateApprovedCandidate(
-                        qualification.Candidate.Runtime,
+                        qualification.Candidate.Runtime!,
                         ledger,
                         evaluatedAsOfUtc);
                     ValidateApprovedQualification(manifest, qualification, ledger, repoRoot);
@@ -782,8 +802,8 @@ public static class WorkloadGaEvaluator
         var decision = ledger.Qualification
             ?? throw new InvalidDataException(
                 "Approved profile ledger lacks qualification metadata.");
-        var artifactDigest = "sha256:" + Convert.ToHexStringLower(
-            SHA256.HashData(File.ReadAllBytes(Path.GetFullPath(qualification.SourceFile, repoRoot))));
+        var artifactDigest = ComputeQualificationArtifactDigest(
+            Path.GetFullPath(qualification.SourceFile, repoRoot));
         if (decision.Artifact != manifest.Evidence.QualificationArtifact
             || decision.Digest != artifactDigest
             || decision.Verdict != qualification.Verdict
@@ -795,6 +815,15 @@ public static class WorkloadGaEvaluator
             throw new InvalidDataException(
                 "Approved profile ledger does not exactly match the committed qualification.");
         }
+    }
+
+    public static string ComputeQualificationArtifactDigest(string path)
+    {
+        var canonicalText = File.ReadAllText(path)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
+        return "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(canonicalText)));
     }
 
     private static string GetSealState(

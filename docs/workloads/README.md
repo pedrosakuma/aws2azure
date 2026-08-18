@@ -116,16 +116,32 @@ inputs to avoid a circular digest. This exclusion follows the resolved
 `IntermediateOutputPath`, so custom in-project intermediate directories cannot
 feed generated C# back into either the build-time or runtime source identity.
 Current and stale intermediate roots are recognized only by a separate
-`.workload-ga-evaluator-intermediate-root` marker with the evaluator's exact
-reserved content. A source file merely named `WorkloadGaEvaluatorIdentity.g.cs`
-does not classify its directory as generated or remove sibling sources from
-compilation or identity hashing.
+`.workload-ga-evaluator-intermediate-root` marker with the exact ordinal
+filename and exact BOM-less UTF-8 reserved bytes. BOM-prefixed, UTF-16/UTF-32,
+or case-variant markers do not classify a root. A source file merely named
+`WorkloadGaEvaluatorIdentity.g.cs` does not classify its directory as generated
+or remove sibling sources from compilation or identity hashing. A custom active
+`IntermediateOutputPath` that contains any compile item other than the exact
+SDK-generated sources and embedded identity is rejected, preventing compiled
+evaluator code from bypassing the implementation digest. Those generated files
+must match both their resolved SDK paths and restricted generated-source shapes;
+all non-generated `Compile` items must remain under the evaluator source root
+and are included in the digest. SDK-generated intermediates are excluded
+consistently at build time and runtime.
+
+Every qualified workload's sealed candidate runtime is validated at the exact
+`evaluated_as_of_utc`, whether or not rollback is a required scenario. Artifact
+expiry is exclusive: `expires_at` must be later than the authority instant;
+equality and later evaluation instants produce a candidate verdict.
 
 `expected_evaluator_schema_version` describes the authority evaluator format
 only; it is not presented as implementation identity. Canonical or
 implementation changes fail validation until their expected digests are
 deliberately reviewed and updated. Paths and line endings are normalized before
 hashing, so both identities are checkout-independent and reproducible.
+Committed qualification-artifact digests likewise normalize text line endings
+to LF before hashing, so checkout `core.autocrlf` settings cannot change a live
+authority verdict.
 
 `certify-workload` only issues authoritative output for regular, non-symlink
 `.yaml` manifests under `docs/workloads`; those bytes are therefore part of the

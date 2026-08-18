@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Aws2Azure.GapDocs;
@@ -266,6 +267,32 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Fact]
+    public void Qualification_artifact_digest_is_line_ending_independent()
+    {
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "aws2azure-qualification-digest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            var lfPath = Path.Combine(tempRoot, "lf.yaml");
+            var crlfPath = Path.Combine(tempRoot, "crlf.yaml");
+            File.WriteAllText(lfPath, "schema_version: 1\nverdict: qualified\n");
+            File.WriteAllText(
+                crlfPath,
+                "schema_version: 1\r\nverdict: qualified\r\n");
+
+            Assert.Equal(
+                WorkloadGaEvaluator.ComputeQualificationArtifactDigest(lfPath),
+                WorkloadGaEvaluator.ComputeQualificationArtifactDigest(crlfPath));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Evaluation_contract_is_valid_and_uses_an_explicit_point_in_time()
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
@@ -499,61 +526,194 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Fact]
-    public void Generated_identity_basename_without_valid_marker_does_not_hide_sources()
+    public void Active_custom_intermediate_rejects_non_generated_compile_source()
     {
         var fixtureRoot = Path.Combine(
             Path.GetTempPath(),
-            "aws2azure-gapdocs-legitimate-identity-name-" +
+            "aws2azure-gapdocs-active-intermediate-source-" +
             Guid.NewGuid().ToString("N"));
         try
         {
             CopyIdentityBuildFixture(RepoRoot, fixtureRoot);
-            var initialRevision =
-                WorkloadGaEvaluationMetadataBuilder
-                    .ComputeEvaluatorImplementationRevision(fixtureRoot);
-            var sourceDirectory = Path.Combine(
+            var projectRoot = Path.Combine(
                 fixtureRoot,
                 "tools",
-                "Aws2Azure.GapDocs",
-                "legitimate-source");
-            Directory.CreateDirectory(sourceDirectory);
+                "Aws2Azure.GapDocs");
+            var intermediateDirectory = Path.Combine(
+                projectRoot,
+                "identity-active-source");
+            Directory.CreateDirectory(intermediateDirectory);
+            const string sourceFileName = "Aws2Azure.GapDocs.AssemblyInfo.cs";
+            const string globalUsingsFileName =
+                "Aws2Azure.GapDocs.GlobalUsings.g.cs";
             File.WriteAllText(
-                Path.Combine(
-                    sourceDirectory,
-                    WorkloadGaEvaluationMetadataBuilder
-                        .GeneratedEvaluatorIdentityFileName),
-                "namespace LegitimateSource; internal static class SameFileName {}\n");
+                Path.Combine(intermediateDirectory, sourceFileName),
+                "[assembly: System.Reflection.AssemblyMetadata(\"k\",\"v\")] " +
+                "internal static class InjectedAssemblyInfo " +
+                "{ [global::System.Runtime.CompilerServices.ModuleInitializer] " +
+                "internal static void Init() {} } // )]\u2028");
             File.WriteAllText(
-                Path.Combine(sourceDirectory, "MustCompile.cs"),
-                "#error LEGITIMATE_SOURCE_DIRECTORY_MUST_COMPILE\n");
+                Path.Combine(intermediateDirectory, globalUsingsFileName),
+                "global using X = System; internal static class Injected " +
+                "{ [global::System.Runtime.CompilerServices.ModuleInitializer] " +
+                "internal static void Init() {} } internal delegate void Tail();\n");
+            var projectPath = Path.Combine(
+                projectRoot,
+                "Aws2Azure.GapDocs.csproj");
             File.WriteAllText(
-                Path.Combine(
-                    sourceDirectory,
-                    ".workload-ga-evaluator-intermediate-root"),
-                "not-the-reserved-marker-contract\n");
+                projectPath,
+                File.ReadAllText(projectPath).Replace(
+                    "</Project>",
+                    """
+                      <ItemGroup>
+                        <Compile Include="identity-active-source/Aws2Azure.GapDocs.AssemblyInfo.cs" />
+                        <Compile Include="identity-active-source/Aws2Azure.GapDocs.GlobalUsings.g.cs" />
+                      </ItemGroup>
+                    </Project>
+                    """,
+                    StringComparison.Ordinal));
 
-            var revisionWithLegitimateSources =
+            var build = RunDotnet(
+                fixtureRoot,
+                "build",
+                projectPath,
+                "--configuration",
+                "Release",
+                "--nologo",
+                "-p:IntermediateOutputPath=identity-active-source/",
+                "-p:GenerateAssemblyInfo=false",
+                "-p:GeneratedAssemblyInfoFile=identity-active-source/Aws2Azure.GapDocs.AssemblyInfo.cs",
+                "-p:ImplicitUsings=false",
+                "-p:GeneratedGlobalUsingsFile=identity-active-source/Aws2Azure.GapDocs.GlobalUsings.g.cs");
+
+            Assert.NotEqual(0, build.ExitCode);
+            Assert.Contains(
+                "IntermediateOutputPath contains non-generated evaluator Compile item(s)",
+                build.StandardOutput + build.StandardError,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                sourceFileName,
+                build.StandardOutput + build.StandardError,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                globalUsingsFileName,
+                build.StandardOutput + build.StandardError,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(fixtureRoot))
+            {
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Generated_identity_basename_and_non_exact_markers_do_not_hide_sources()
+    {
+        const string markerContent =
+            "aws2azure-gapdocs-evaluator-identity-root:v1\n";
+        var fixtureRoot = Path.Combine(
+            Path.GetTempPath(),
+            "aws2azure-gapdocs-non-exact-markers-" +
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            CopyIdentityBuildFixture(RepoRoot, fixtureRoot);
+            var projectRoot = Path.Combine(
+                fixtureRoot,
+                "tools",
+                "Aws2Azure.GapDocs");
+            var previousRevision =
                 WorkloadGaEvaluationMetadataBuilder
                     .ComputeEvaluatorImplementationRevision(fixtureRoot);
-            Assert.NotEqual(initialRevision, revisionWithLegitimateSources);
+            var cases = new[]
+            {
+                (
+                    Directory: "utf8-bom-marker",
+                    MarkerName: ".workload-ga-evaluator-intermediate-root",
+                    MarkerBytes: Encoding.UTF8.GetPreamble()
+                        .Concat(Encoding.UTF8.GetBytes(markerContent))
+                        .ToArray(),
+                    Error: "UTF8_BOM_MARKER_SOURCE_MUST_COMPILE"),
+                (
+                    Directory: "utf16-marker",
+                    MarkerName: ".workload-ga-evaluator-intermediate-root",
+                    MarkerBytes: new UnicodeEncoding(
+                            bigEndian: false,
+                            byteOrderMark: true)
+                        .GetPreamble()
+                        .Concat(new UnicodeEncoding(
+                                bigEndian: false,
+                                byteOrderMark: true)
+                            .GetBytes(markerContent))
+                        .ToArray(),
+                    Error: "UTF16_MARKER_SOURCE_MUST_COMPILE"),
+                (
+                    Directory: "utf32-marker",
+                    MarkerName: ".workload-ga-evaluator-intermediate-root",
+                    MarkerBytes: new UTF32Encoding(
+                            bigEndian: false,
+                            byteOrderMark: true)
+                        .GetPreamble()
+                        .Concat(new UTF32Encoding(
+                                bigEndian: false,
+                                byteOrderMark: true)
+                            .GetBytes(markerContent))
+                        .ToArray(),
+                    Error: "UTF32_MARKER_SOURCE_MUST_COMPILE"),
+                (
+                    Directory: "case-variant-marker",
+                    MarkerName: ".WORKLOAD-GA-EVALUATOR-INTERMEDIATE-ROOT",
+                    MarkerBytes: Encoding.UTF8.GetBytes(markerContent),
+                    Error: "CASE_VARIANT_MARKER_SOURCE_MUST_COMPILE"),
+            };
+            foreach (var markerCase in cases)
+            {
+                var sourceDirectory = Path.Combine(
+                    projectRoot,
+                    markerCase.Directory);
+                Directory.CreateDirectory(sourceDirectory);
+                File.WriteAllText(
+                    Path.Combine(
+                        sourceDirectory,
+                        WorkloadGaEvaluationMetadataBuilder
+                            .GeneratedEvaluatorIdentityFileName),
+                    $"namespace LegitimateSource; internal static class " +
+                    $"{markerCase.Directory.Replace("-", string.Empty)} {{}}\n");
+                File.WriteAllText(
+                    Path.Combine(sourceDirectory, "MustCompile.cs"),
+                    $"#error {markerCase.Error}\n");
+                File.WriteAllBytes(
+                    Path.Combine(sourceDirectory, markerCase.MarkerName),
+                    markerCase.MarkerBytes);
+
+                var currentRevision =
+                    WorkloadGaEvaluationMetadataBuilder
+                        .ComputeEvaluatorImplementationRevision(fixtureRoot);
+                Assert.NotEqual(previousRevision, currentRevision);
+                previousRevision = currentRevision;
+            }
 
             var build = RunDotnet(
                 fixtureRoot,
                 "build",
                 Path.Combine(
-                    fixtureRoot,
-                    "tools",
-                    "Aws2Azure.GapDocs",
+                    projectRoot,
                     "Aws2Azure.GapDocs.csproj"),
                 "--configuration",
                 "Release",
                 "--nologo");
 
             Assert.NotEqual(0, build.ExitCode);
-            Assert.Contains(
-                "LEGITIMATE_SOURCE_DIRECTORY_MUST_COMPILE",
-                build.StandardOutput + build.StandardError,
-                StringComparison.Ordinal);
+            foreach (var markerCase in cases)
+            {
+                Assert.Contains(
+                    markerCase.Error,
+                    build.StandardOutput + build.StandardError,
+                    StringComparison.Ordinal);
+            }
         }
         finally
         {
@@ -580,6 +740,72 @@ public sealed class WorkloadGaCertificationTests
             error => error.StartsWith(
                 "provenance.generated_at_utc postdates evaluated_as_of_utc",
                 StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(-1, "ga")]
+    [InlineData(0, "candidate")]
+    [InlineData(1, "candidate")]
+    public void Non_rollback_candidate_runtime_expiry_is_enforced_at_exact_cutoff(
+        int evaluationOffsetSeconds,
+        string expectedVerdict)
+    {
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "aws2azure-gapdocs-candidate-expiry-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var evidencePath = Path.Combine(
+                tempRoot,
+                "docs",
+                "workloads",
+                "evidence",
+                "qualification.yaml");
+            Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+            var manifest = MinimalManifest();
+            manifest.Evidence.RequiredScenarios = ["real-load"];
+            var qualification = QualifiedDocument();
+            var expiresAt = UtcInstant(2026, 7, 18, 12, 0, 0);
+            qualification.Candidate.Runtime!.Artifact.ExpiresAt = expiresAt;
+            qualification.Provenance.CorrectnessRun!.EvidenceArtifact!.Artifact.ExpiresAt =
+                expiresAt.AddDays(1);
+            foreach (var sourceRun in qualification.Provenance.SourceRuns)
+            {
+                sourceRun.EvidenceArtifact!.Artifact.ExpiresAt = expiresAt.AddDays(1);
+            }
+            SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+            var report = WorkloadGaEvaluator.Evaluate(
+                manifest,
+                MinimalOperations(),
+                [],
+                tempRoot,
+                expiresAt.AddSeconds(evaluationOffsetSeconds));
+
+            Assert.Equal(expectedVerdict, report.Verdict);
+            if (expectedVerdict == "ga")
+            {
+                Assert.DoesNotContain(
+                    report.Findings,
+                    finding => finding.Code == "candidate_runtime_mismatch");
+            }
+            else
+            {
+                Assert.Contains(
+                    report.Findings,
+                    finding => finding.Code == "candidate_runtime_mismatch"
+                        && finding.Message.Contains(
+                            "stale",
+                            StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
