@@ -419,6 +419,107 @@ public sealed class ConfigSchemaTests
         ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
     }
 
+    [Theory]
+    [InlineData("https://[foo]")]
+    [InlineData("https://.")]
+    [InlineData("https://foo@")]
+    [InlineData("https://user@@host")]
+    [InlineData("https://[::::]")]
+    [InlineData("https://a..b")]
+    [InlineData("https://a%")]
+    public void Uri_pattern_rejects_malformed_authorities_without_format_assertion(
+        string endpoint)
+    {
+        var instance = JsonNode.Parse($$"""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": "{{endpoint}}"
+                  },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+        var annotationOnlyOptions = new EvaluationOptions
+        {
+            RequireFormatValidation = false,
+        };
+
+        Assert.False(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        Assert.Throws<ProxyConfigException>(() => ValidateRuntime(instance));
+    }
+
+    [Fact]
+    public void Uri_pattern_accepts_runtime_valid_leading_zero_port_without_format_assertion()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": "https://host:00080"
+                  },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+        var annotationOnlyOptions = new EvaluationOptions
+        {
+            RequireFormatValidation = false,
+        };
+
+        Assert.True(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        ValidateRuntime(instance);
+    }
+
+    [Fact]
+    public void Uri_pattern_accepts_runtime_valid_empty_port_without_format_assertion()
+    {
+        var instance = JsonNode.Parse("""
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+              "azure": {
+                "s3": {
+                  "kind": "blob",
+                  "target": {
+                    "accountName": "account",
+                    "endpoint": "https://host:"
+                  },
+                  "auth": { "key": "key" }
+                }
+              }
+            }
+          ]
+        }
+        """)!;
+        var annotationOnlyOptions = new EvaluationOptions
+        {
+            RequireFormatValidation = false,
+        };
+
+        Assert.True(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        ValidateRuntime(instance);
+    }
+
     [Fact]
     public void Complete_all_services_example_is_valid()
     {
@@ -436,6 +537,8 @@ public sealed class ConfigSchemaTests
     [Fact]
     public void Committed_operator_examples_are_valid()
     {
+        AssertValid(JsonNode.Parse(File.ReadAllText(
+            Path.Combine(RepoRoot, "src", "Aws2Azure.Proxy", "config.json")))!);
         AssertValid(JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot, "docker", "config.json")))!);
         AssertValid(ReadHelmConfigContent(
             Path.Combine(RepoRoot, "deploy", "helm", "aws2azure", "values.yaml")));
@@ -443,6 +546,28 @@ public sealed class ConfigSchemaTests
             Path.Combine(RepoRoot, "deploy", "sidecar", "secret.yaml")));
         AssertValid(ReadKubernetesConfigJson(
             Path.Combine(RepoRoot, "deploy", "sidecar", "demo-azurite.yaml")));
+    }
+
+    [Fact]
+    public void Bundled_operator_config_is_separate_from_host_settings_and_runtime_loadable()
+    {
+        var operatorConfigPath = Path.Combine(
+            RepoRoot, "src", "Aws2Azure.Proxy", "config.json");
+        var hostSettings = JsonNode.Parse(File.ReadAllText(
+            Path.Combine(RepoRoot, "src", "Aws2Azure.Proxy", "appsettings.json")))!.AsObject();
+        var dockerfile = File.ReadAllText(Path.Combine(RepoRoot, "Dockerfile"));
+
+        Assert.False(hostSettings.ContainsKey("services"));
+        Assert.False(hostSettings.ContainsKey("bindings"));
+        Assert.Contains("COPY --from=build /app/config.json .", dockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build /app/appsettings.json .", dockerfile, StringComparison.Ordinal);
+
+        var config = ProxyConfigLoader.Load(
+            operatorConfigPath,
+            envVars: new Dictionary<string, string?>());
+
+        Assert.True(config.Services["s3"].Enabled);
+        Assert.Single(config.Credentials);
     }
 
     [Theory]

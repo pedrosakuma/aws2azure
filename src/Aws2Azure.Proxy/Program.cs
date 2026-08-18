@@ -86,8 +86,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, ProxyJsonContext.Default);
 });
 
-var configFile = Environment.GetEnvironmentVariable("AWS2AZURE_CONFIG_FILE")
-    ?? Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+var configFile = ProxyConfigLoader.ResolveConfigFilePath(
+    AppContext.BaseDirectory,
+    Environment.GetEnvironmentVariable("AWS2AZURE_CONFIG_FILE"));
 
 ProxyConfig proxyConfig;
 try

@@ -5,6 +5,15 @@ contract for the binding-centric JSON document selected by
 `AWS2AZURE_CONFIG_FILE`. It uses JSON Schema draft 2020-12 and is generated
 deterministically without reflection:
 
+When `AWS2AZURE_CONFIG_FILE` is unset, the proxy loads the bundled
+`config.json`, or `config.example.json` in release archives that use that
+filename. ASP.NET host settings remain separate in `appsettings.json` and are
+not part of this operator contract.
+
+Schema validation proves the document's structure and startup semantics; it
+cannot prove that placeholder credentials, Azure resources, or endpoints are
+live. Replace example credentials before deployment.
+
 ```powershell
 dotnet run --project tools/Aws2Azure.ConfigSchema
 dotnet run --project tools/Aws2Azure.ConfigSchema -- --check
@@ -135,5 +144,6 @@ between `QUEUES` and `TRANSPORT`.
 currently JSON-file-only. Unknown or malformed override paths are ignored
 without creating bindings, backends, services, queues, or region entries.
 This includes negative/non-decimal indices, unsupported leaves, invalid scalar
-values, and trailing path segments. Validate the resulting file against the
-schema and rely on startup validation before rollout.
+values, indices greater than 1023, and trailing path segments. Validate the
+resulting file against the schema and rely on startup validation before
+rollout.

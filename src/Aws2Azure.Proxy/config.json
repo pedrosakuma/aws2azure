@@ -1,0 +1,27 @@
+{
+  "services": {
+    "s3":       { "enabled": true },
+    "sqs":      { "enabled": false },
+    "dynamodb": { "enabled": false },
+    "kinesis":  { "enabled": false },
+    "sns":      { "enabled": false }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIA-LOCAL-DEV-EXAMPLE",
+        "secretAccessKey": "local-dev-secret-replace-me"
+      },
+      "azure": {
+        "s3": {
+          "kind": "blob",
+          "target": { "accountName": "devstoreaccount1" },
+          "auth": {
+            "mode": "sharedKey",
+            "key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+          }
+        }
+      }
+    }
+  ]
+}

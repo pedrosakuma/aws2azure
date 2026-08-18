@@ -91,4 +91,10 @@
     <ProjectReference Include="..\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" Condition="'$(_HasSecretsManager)' == 'true'" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="config.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

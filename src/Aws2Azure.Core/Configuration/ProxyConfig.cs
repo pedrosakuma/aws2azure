@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Aws2Azure.Core.Configuration;
 
 /// <summary>
-/// Root configuration POCO. Mirrors <c>appsettings.json</c> and the
+/// Resolved runtime configuration projected from the operator document and
 /// <c>AWS2AZURE__*</c> env-var hierarchy.
 /// </summary>
 public sealed class ProxyConfig

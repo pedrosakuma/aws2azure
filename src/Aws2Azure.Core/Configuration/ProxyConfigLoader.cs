@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace Aws2Azure.Core.Configuration;
@@ -25,6 +26,26 @@ namespace Aws2Azure.Core.Configuration;
 public static class ProxyConfigLoader
 {
     public const string EnvPrefix = "AWS2AZURE__";
+    private const int MaxOverrideIndex = 1023;
+
+    public static string? ResolveConfigFilePath(
+        string baseDirectory,
+        string? configuredPath)
+    {
+        if (!string.IsNullOrEmpty(configuredPath))
+        {
+            return configuredPath;
+        }
+
+        var bundledPath = Path.Combine(baseDirectory, "config.json");
+        if (File.Exists(bundledPath))
+        {
+            return bundledPath;
+        }
+
+        var releaseExamplePath = Path.Combine(baseDirectory, "config.example.json");
+        return File.Exists(releaseExamplePath) ? releaseExamplePath : null;
+    }
 
     public static ProxyConfig Load(
         string? jsonFilePath,
@@ -137,8 +158,12 @@ public static class ProxyConfigLoader
     private static bool CanApplyBindingOverride(string[] path, string? value)
     {
         if (path.Length < 4
-            || !int.TryParse(path[1], out var index)
-            || index < 0)
+            || !int.TryParse(
+                path[1],
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var index)
+            || index > MaxOverrideIndex)
         {
             return false;
         }
@@ -190,8 +215,12 @@ public static class ProxyConfigLoader
             return service == "DYNAMODB"
                 && path.Length == 7
                 && path[5].Equals("PREFERREDREGIONS", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(path[6], out var regionIndex)
-                && regionIndex >= 0;
+                && int.TryParse(
+                    path[6],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var regionIndex)
+                && regionIndex <= MaxOverrideIndex;
         }
         if (group == "QUEUES")
         {
@@ -256,7 +285,7 @@ public static class ProxyConfigLoader
             "SQS" => field is "NAMESPACE" or "MANAGEMENTENDPOINT"
                 || field == "TRANSPORT" && TryParseEnum<SqsTransport>(value, out _),
             "DYNAMODB" => field is "ENDPOINT" or "DATABASENAME",
-            "SNS" => field is "ENDPOINT" or "NAMESPACE" or "MANAGEMENTENDPOINT" or "TOPICNAME",
+            "SNS" => field is "ENDPOINT" or "NAMESPACE" or "MANAGEMENTENDPOINT",
             "KINESIS" => field is "NAMESPACE" or "ENDPOINT",
             "SECRETSMANAGER" => field == "VAULTURL",
             _ => false,
@@ -442,7 +471,6 @@ public static class ProxyConfigLoader
             case "DATABASENAME": target.DatabaseName = value; return;
             case "MANAGEMENTENDPOINT": target.ManagementEndpoint = value; return;
             case "VAULTURL": target.VaultUrl = value; return;
-            case "TOPICNAME": target.TopicName = value; return;
             case "TRANSPORT":
                 if (TryParseEnum<SqsTransport>(value, out var transport)) target.Transport = transport;
                 return;

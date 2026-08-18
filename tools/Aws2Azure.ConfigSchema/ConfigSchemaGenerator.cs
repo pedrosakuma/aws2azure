@@ -440,10 +440,39 @@ public static class ConfigSchemaGenerator
         ("pattern",
             $"^(?:{string.Join("|", schemes.Select(CaseInsensitiveText))})://" +
             "(?:[^/?#@\\s]+@)?" +
-            "(?:\\[[^\\]\\s]+\\]|[^:/?#\\s]+)" +
-            "(?::(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|" +
-            "65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?" +
+            AuthorityHostPattern() +
+            "(?::(?:0*(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|" +
+            "65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?)?" +
             "(?:[/?#][^\\s]*)?(?![\\s\\S])"));
+
+    private static string AuthorityHostPattern()
+    {
+        const string hex = "[0-9A-Fa-f]{1,4}";
+        const string octet = "(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])";
+        const string ipv4 = $"(?:{octet}\\.){{3}}{octet}";
+
+        var ipv6 = string.Join("|",
+            $"(?:{hex}:){{7}}{hex}",
+            $"(?:{hex}:){{1,7}}:",
+            $"(?:{hex}:){{1,6}}:{hex}",
+            $"(?:{hex}:){{1,5}}(?::{hex}){{1,2}}",
+            $"(?:{hex}:){{1,4}}(?::{hex}){{1,3}}",
+            $"(?:{hex}:){{1,3}}(?::{hex}){{1,4}}",
+            $"(?:{hex}:){{1,2}}(?::{hex}){{1,5}}",
+            $"{hex}:(?:(?::{hex}){{1,6}})",
+            $":(?:(?::{hex}){{1,7}}|:)",
+            $"(?:{hex}:){{6}}{ipv4}",
+            $"::(?:{hex}:){{0,5}}{ipv4}",
+            $"(?:{hex}:){{1}}:(?:{hex}:){{0,4}}{ipv4}",
+            $"(?:{hex}:){{2}}:(?:{hex}:){{0,3}}{ipv4}",
+            $"(?:{hex}:){{3}}:(?:{hex}:){{0,2}}{ipv4}",
+            $"(?:{hex}:){{4}}:(?:{hex}:){{0,1}}{ipv4}",
+            $"(?:{hex}:){{5}}:{ipv4}");
+        const string regNameLabel = "[A-Za-z0-9_\\u0080-\\uFFFF-]+";
+        const string regName = $"{regNameLabel}(?:\\.{regNameLabel})*\\.?";
+
+        return $"(?:\\[(?:{ipv6})(?:%25[A-Za-z0-9._~-]+)?\\]|{regName})";
+    }
 
     private static JsonObject EventGridDefaultConstraint()
     {

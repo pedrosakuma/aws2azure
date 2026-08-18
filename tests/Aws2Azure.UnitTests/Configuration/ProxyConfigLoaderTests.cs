@@ -50,6 +50,38 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Resolves_bundled_and_release_archive_config_paths()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            $"aws2azure-config-path-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var releaseExample = Path.Combine(directory, "config.example.json");
+            File.WriteAllText(releaseExample, "{}");
+            Assert.Equal(
+                releaseExample,
+                ProxyConfigLoader.ResolveConfigFilePath(directory, configuredPath: null));
+
+            var bundled = Path.Combine(directory, "config.json");
+            File.WriteAllText(bundled, "{}");
+            Assert.Equal(
+                bundled,
+                ProxyConfigLoader.ResolveConfigFilePath(directory, configuredPath: null));
+
+            var explicitPath = Path.Combine(directory, "operator.json");
+            Assert.Equal(
+                explicitPath,
+                ProxyConfigLoader.ResolveConfigFilePath(directory, explicitPath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Env_vars_override_json_scalars()
     {
         File.WriteAllText(_tempFile, """
@@ -169,14 +201,17 @@ public class ProxyConfigLoaderTests : IDisposable
 
     [Theory]
     [InlineData("AWS2AZURE__BINDINGS__-1__AWS__ACCESSKEYID", "AKIA")]
+    [InlineData("AWS2AZURE__BINDINGS__100000000__AWS__ACCESSKEYID", "AKIA")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__UNKNOWN", "value")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__NAMESPACE", "not-blob")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__CLIENTSECRET", "not-shared-key")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SNS__TARGET__TOPICNAME", "obsolete-primary-event-grid")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", " blob ")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "1")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "unknown")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__UNKNOWN__KIND", "blob")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__-1", "West US")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__100000000", "West US")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__orders__UNKNOWN", "Rest")]
     public void Malformed_or_unknown_binding_override_does_not_mutate_document(
         string key,
