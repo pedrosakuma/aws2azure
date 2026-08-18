@@ -427,39 +427,24 @@ public static class ProxyConfigValidator
         string? accessKeyOverride,
         List<string> errors)
     {
-        var hasEndpoint = !string.IsNullOrWhiteSpace(endpointOverride)
-            || HasEventGridEndpoint(credentials);
-        if (!hasEndpoint)
+        if (credentials is not null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(endpointOverride))
         {
             errors.Add(
                 $"{prefix}: EventGrid route requires either eventGridTopicEndpoint or " +
                 $"{fallbackPrefix}.target.endpoint/(target.namespace+target.topicName).");
         }
 
-        var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
-        var hasAccessKey = hasOverrideKey
-            || !string.IsNullOrWhiteSpace(credentials?.AccessKey);
-        var mode = credentials?.AuthMode ?? AzureAuthMode.ClientSecret;
-        var hasTenant = !string.IsNullOrWhiteSpace(credentials?.TenantId);
-        var hasClientId = !string.IsNullOrWhiteSpace(credentials?.ClientId);
-        var hasClientSecret = !string.IsNullOrWhiteSpace(credentials?.ClientSecret);
-        var hasCompleteAad = mode switch
-        {
-            AzureAuthMode.ClientSecret => hasTenant && hasClientId && hasClientSecret,
-            AzureAuthMode.ManagedIdentity => !hasTenant && !hasClientSecret,
-            AzureAuthMode.WorkloadIdentity => !hasTenant && !hasClientId && !hasClientSecret && HasWorkloadIdentityEnvironment(),
-            _ => false,
-        };
-        if (!hasAccessKey && !hasCompleteAad)
+        if (string.IsNullOrWhiteSpace(accessKeyOverride))
         {
             errors.Add(
                 $"{prefix}: EventGrid route requires either eventGridAccessKey or " +
                 $"{fallbackPrefix}.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).");
         }
-
-        // Route validation only reports missing route dependencies. A configured
-        // fallback's auth shape is validated once by ValidateEventGrid under the
-        // canonical eventGridFallback path; absent fallbacks have no auth block.
     }
 
     private static void ValidateEventGrid(EventGridCredentials credentials, string prefix, List<string> errors)
@@ -482,19 +467,59 @@ public static class ProxyConfigValidator
             errors.Add($"{prefix}.target.topicName: must be non-empty when set.");
         }
 
-        ValidateDualAuth(
+        ValidateEventGridAuth(credentials, prefix + ".auth", errors);
+    }
+
+    private static void ValidateEventGridAuth(
+        EventGridCredentials credentials,
+        string prefix,
+        List<string> errors)
+    {
+        // Identity resolution reports dangling or ambiguous references at this
+        // exact auth path. Do not add synthetic inline-credential errors after it.
+        if (!string.IsNullOrWhiteSpace(credentials.Identity))
+        {
+            return;
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(credentials.AccessKey);
+        var hasTenant = !string.IsNullOrWhiteSpace(credentials.TenantId);
+        var hasClientId = !string.IsNullOrWhiteSpace(credentials.ClientId);
+        var hasClientSecret = !string.IsNullOrWhiteSpace(credentials.ClientSecret);
+        var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
+
+        if (hasKey)
+        {
+            if (!Enum.IsDefined(typeof(AzureAuthMode), credentials.AuthMode))
+            {
+                errors.Add($"{prefix}.mode: unknown value '{(int)credentials.AuthMode}'.");
+                return;
+            }
+            if (credentials.AuthMode != AzureAuthMode.ClientSecret)
+            {
+                errors.Add(
+                    $"{prefix}.mode: '{credentials.AuthMode}' cannot be combined with key auth — " +
+                    "managed/workload identity replaces the secret, not the key.");
+            }
+            if (hasAnyAad)
+            {
+                errors.Add(
+                    $"{prefix}: key and tenantId/clientId/clientSecret are mutually exclusive — supply one shape.");
+            }
+            return;
+        }
+
+        ValidateAadShape(
             prefix,
+            credentials.AuthMode,
+            hasTenant,
+            hasClientId,
+            hasClientSecret,
             errors,
-            sasLabel: "auth.key",
-            authShapeLabel: "auth.key",
-            hasSasPart1: !string.IsNullOrWhiteSpace(credentials.AccessKey),
-            hasSasPart2: !string.IsNullOrWhiteSpace(credentials.AccessKey),
-            sasRequirementMessage: "either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
-            sasPairRequirementMessage: null,
-            hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
-            hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
-            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret),
-            mode: credentials.AuthMode);
+            modeField: "mode",
+            tenantField: "tenantId",
+            clientIdField: "clientId",
+            clientSecretField: "clientSecret");
     }
 
     private static bool HasEventGridEndpoint(EventGridCredentials? credentials)

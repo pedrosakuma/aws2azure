@@ -110,7 +110,7 @@ public class ProxyConfigValidatorTests
         Assert.Contains("bindings[0].azure.kinesis.target.namespace: required", ex.Message);
         Assert.Contains("bindings[0].azure.kinesis: either (auth.keyName+auth.key) OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
         Assert.Contains("bindings[0].azure.sns.eventGridFallback: either target.endpoint OR (target.namespace+target.topicName) is required", ex.Message);
-        Assert.Contains("bindings[0].azure.sns.eventGridFallback: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret)", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback.auth: AAD requires tenantId, clientId, and clientSecret together", ex.Message);
     }
 
     [Fact]
@@ -290,7 +290,7 @@ public class ProxyConfigValidatorTests
         };
 
         var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
-        Assert.Contains("bindings[0].azure.sns.eventGridFallback: auth.key and AAD fields are mutually exclusive", ex.Message);
+        Assert.Contains("bindings[0].azure.sns.eventGridFallback.auth: key and tenantId/clientId/clientSecret are mutually exclusive", ex.Message);
     }
 
     [Fact]
@@ -460,8 +460,7 @@ public class ProxyConfigValidatorTests
 
         Assert.Equal(
             "Configuration is invalid:\n" +
-            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).\n" +
-            "  - bindings[0].azure.sns.eventGridFallback: AAD requires auth.tenantId, auth.clientId, and auth.clientSecret together.",
+            "  - bindings[0].azure.sns.eventGridFallback.auth: AAD requires tenantId, clientId, and clientSecret together.",
             ex.Message);
     }
 
@@ -479,7 +478,7 @@ public class ProxyConfigValidatorTests
 
         Assert.Equal(
             "Configuration is invalid:\n" +
-            "  - bindings[0].azure.sns.eventGridFallback: auth.mode 'ManagedIdentity' cannot be combined with auth.key auth — managed/workload identity replaces the secret, not the key.",
+            "  - bindings[0].azure.sns.eventGridFallback.auth.mode: 'ManagedIdentity' cannot be combined with key auth — managed/workload identity replaces the secret, not the key.",
             ex.Message);
     }
 
@@ -776,9 +775,7 @@ public class ProxyConfigValidatorTests
 
         Assert.Equal(
             "Configuration is invalid:\n" +
-            "  - bindings[0].azure.sns.eventGridFallback.auth: identity reference 'missing' was not found in azureIdentities.\n" +
-            "  - bindings[0].azure.sns.topics.orders: EventGrid route requires either eventGridAccessKey or bindings[0].azure.sns.eventGridFallback.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).\n" +
-            "  - bindings[0].azure.sns.eventGridFallback: either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
+            "  - bindings[0].azure.sns.eventGridFallback.auth: identity reference 'missing' was not found in azureIdentities.",
             ex.Message);
     }
 
