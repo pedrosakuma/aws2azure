@@ -1020,7 +1020,7 @@ public static class DocumentationDiscoveryGenerator
                 if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(
                         pattern,
                         Path.GetFileName(entry),
-                        ignoreCase: OperatingSystem.IsWindows()))
+                        ignoreCase: false))
                 {
                     results.Add(relativePath);
                 }
@@ -1145,21 +1145,27 @@ public static class DocumentationDiscoveryGenerator
         DocumentationIoHooks? hooks)
     {
         var expectedPath = ResolveRepositoryPath(repoRoot, relativePath);
+        using var rootHandle = OpenRepositoryDirectory(repoRoot);
         hooks?.AfterPathValidationBeforeIo?.Invoke(
             new DocumentationIoEvent(relativePath, DocumentationIoOperation.Read));
 
-        using var handle = File.OpenHandle(
-            expectedPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Write | FileShare.Delete,
-            FileOptions.SequentialScan);
-        ValidateOpenedHandle(
-            repoRoot,
-            canonicalRepoRoot,
-            relativePath,
-            expectedPath,
-            handle);
+        using var handle = OperatingSystem.IsWindows()
+            ? File.OpenHandle(
+                expectedPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read | FileShare.Write | FileShare.Delete,
+                FileOptions.SequentialScan)
+            : OpenRelativeFile(rootHandle, relativePath);
+        if (OperatingSystem.IsWindows())
+        {
+            ValidateOpenedHandle(
+                repoRoot,
+                canonicalRepoRoot,
+                relativePath,
+                expectedPath,
+                handle);
+        }
 
         using var stream = new FileStream(handle, FileAccess.Read);
         if (stream.Length > int.MaxValue)
@@ -1202,31 +1208,465 @@ public static class DocumentationDiscoveryGenerator
             repoRoot,
             relativePath,
             allowMissingLeaf: true);
-        var mode = File.Exists(destination) ? FileMode.Open : FileMode.CreateNew;
+        using var rootHandle = OpenRepositoryDirectory(repoRoot);
+        ValidatePublicationRoot(repoRoot, canonicalRepoRoot, rootHandle);
+
+        using var temporary = CreatePrivateTemporaryFile(
+            rootHandle,
+            repoRoot);
+        ValidatePrivateTemporaryFile(
+            rootHandle,
+            repoRoot,
+            canonicalRepoRoot,
+            temporary);
+        if (GetHandleLinkCount(temporary.Handle) != 1)
+        {
+            throw new InvalidDataException(
+                $"Private documentation output '{temporary.Name}' has multiple hard links");
+        }
+
+        RandomAccess.Write(temporary.Handle, content, fileOffset: 0);
+        RandomAccess.FlushToDisk(temporary.Handle);
+        ValidatePrivateTemporaryFile(
+            rootHandle,
+            repoRoot,
+            canonicalRepoRoot,
+            temporary);
+
+        hooks?.BeforeAtomicPublish?.Invoke(
+            new DocumentationPublishEvent(relativePath, temporary.Path));
+
+        ValidatePublicationRoot(repoRoot, canonicalRepoRoot, rootHandle);
+        ValidatePrivateTemporaryFile(
+            rootHandle,
+            repoRoot,
+            canonicalRepoRoot,
+            temporary);
+        if (GetHandleLinkCount(temporary.Handle) != 1)
+        {
+            throw new InvalidDataException(
+                $"Private documentation output '{temporary.Name}' has multiple hard links");
+        }
+        ValidateDestinationEntry(
+            rootHandle,
+            repoRoot,
+            canonicalRepoRoot,
+            relativePath,
+            destination);
+        AtomicPublish(
+            rootHandle,
+            temporary.Handle,
+            temporary.Name,
+            relativePath);
+        temporary.Published = true;
+    }
+
+    private static SafeFileHandle OpenRepositoryDirectory(string repoRoot)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var handle = CreateFile(
+                Path.GetFullPath(repoRoot),
+                FileListDirectory | Synchronize,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics | FileFlagOpenReparsePoint,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw LastIoException("Could not open the repository directory safely");
+            }
+            return handle;
+        }
+
+        var descriptor = Open(
+            Path.GetFullPath(repoRoot),
+            UnixOpenReadOnly | UnixOpenDirectory | UnixOpenCloseOnExec | UnixOpenNoFollow);
+        if (descriptor < 0)
+        {
+            throw LastIoException("Could not open the repository directory safely");
+        }
+        return new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+    }
+
+    private static PrivateTemporaryFile CreatePrivateTemporaryFile(
+        SafeFileHandle rootHandle,
+        string repoRoot)
+    {
+        var temporaryName = $".documentation-{Guid.NewGuid():N}.tmp";
+        var temporaryPath = Path.Combine(repoRoot, temporaryName);
+        if (OperatingSystem.IsWindows())
+        {
+            var handle = CreateFile(
+                temporaryPath,
+                GenericRead | GenericWrite | DeleteAccess,
+                FileShareRead | FileShareDelete,
+                IntPtr.Zero,
+                CreateNew,
+                FileFlagOpenReparsePoint | FileFlagWriteThrough,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw LastIoException(
+                    $"Could not create private documentation output '{temporaryName}'");
+            }
+            return new PrivateTemporaryFile(
+                rootHandle,
+                handle,
+                temporaryName,
+                temporaryPath);
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var template = Encoding.UTF8.GetBytes(
+                Path.Combine(
+                    repoRoot,
+                    $".documentation-{Guid.NewGuid():N}-XXXXXX")
+                + "\0");
+            var descriptor = MakeTemporaryFile(template);
+            if (descriptor < 0)
+            {
+                throw LastIoException(
+                    "Could not create a private documentation output on macOS");
+            }
+            var terminator = Array.IndexOf(template, (byte)0);
+            temporaryPath = Encoding.UTF8.GetString(template, 0, terminator);
+            temporaryName = Path.GetFileName(temporaryPath);
+            return new PrivateTemporaryFile(
+                rootHandle,
+                new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true),
+                temporaryName,
+                temporaryPath);
+        }
+
+        var linuxDescriptor = OpenAtCreate(
+            rootHandle.DangerousGetHandle().ToInt32(),
+            temporaryName,
+            UnixOpenReadWrite
+            | UnixOpenCreate
+            | UnixOpenExclusive
+            | UnixOpenCloseOnExec
+            | UnixOpenNoFollow,
+            Convert.ToUInt32("600", 8));
+        if (linuxDescriptor < 0)
+        {
+            throw LastIoException(
+                $"Could not create private documentation output '{temporaryName}'");
+        }
+        return new PrivateTemporaryFile(
+            rootHandle,
+            new SafeFileHandle(new IntPtr(linuxDescriptor), ownsHandle: true),
+            temporaryName,
+            temporaryPath);
+    }
+
+    private static SafeFileHandle OpenRelativeFile(
+        SafeFileHandle rootHandle,
+        string relativePath)
+    {
+        var segments = relativePath.Replace('\\', '/').Split('/');
+        SafeFileHandle? currentDirectory = null;
+        try
+        {
+            var directoryDescriptor = rootHandle.DangerousGetHandle().ToInt32();
+            for (var index = 0; index < segments.Length - 1; index++)
+            {
+                var descriptor = OpenAtNoMode(
+                    directoryDescriptor,
+                    segments[index],
+                    UnixOpenReadOnly
+                    | UnixOpenDirectory
+                    | UnixOpenCloseOnExec
+                    | UnixOpenNoFollow);
+                if (descriptor < 0)
+                {
+                    throw new InvalidDataException(
+                        $"Documentation path '{relativePath}' contains an unsafe directory "
+                        + $"component '{segments[index]}'",
+                        LastIoException("Handle-relative directory open failed"));
+                }
+                currentDirectory?.Dispose();
+                currentDirectory = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+                directoryDescriptor = descriptor;
+            }
+
+            var fileDescriptor = OpenAtNoMode(
+                directoryDescriptor,
+                segments[^1],
+                UnixOpenReadOnly | UnixOpenCloseOnExec | UnixOpenNoFollow);
+            if (fileDescriptor < 0)
+            {
+                throw new InvalidDataException(
+                    $"Documentation path '{relativePath}' could not be opened without following links",
+                    LastIoException("Handle-relative file open failed"));
+            }
+            return new SafeFileHandle(new IntPtr(fileDescriptor), ownsHandle: true);
+        }
+        finally
+        {
+            currentDirectory?.Dispose();
+        }
+    }
+
+    private static void ValidatePrivateTemporaryFile(
+        SafeFileHandle rootHandle,
+        string repoRoot,
+        string canonicalRepoRoot,
+        PrivateTemporaryFile temporary)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ValidateOpenedHandle(
+                repoRoot,
+                canonicalRepoRoot,
+                temporary.Name,
+                temporary.Path,
+                temporary.Handle);
+            return;
+        }
+
+        using var currentEntry = OpenRelativeFile(rootHandle, temporary.Name);
+        if (GetHandleIdentity(currentEntry) != GetHandleIdentity(temporary.Handle))
+        {
+            throw new InvalidDataException(
+                $"Private documentation output '{temporary.Name}' changed before publication");
+        }
+    }
+
+    private static void ValidatePublicationRoot(
+        string repoRoot,
+        string canonicalRepoRoot,
+        SafeFileHandle rootHandle)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            using var currentRoot = OpenRepositoryDirectory(repoRoot);
+            if (GetHandleIdentity(currentRoot) != GetHandleIdentity(rootHandle))
+            {
+                throw new InvalidDataException(
+                    "The repository directory changed during documentation publication");
+            }
+            return;
+        }
+
+        var resolvedRoot = Path.GetFullPath(ResolveOpenedHandlePath(rootHandle))
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!resolvedRoot.Equals(canonicalRepoRoot, comparison)
+            || !ResolveCanonicalRepositoryRoot(repoRoot).Equals(
+                canonicalRepoRoot,
+                comparison))
+        {
+            throw new InvalidDataException(
+                "The repository directory changed during documentation publication");
+        }
+    }
+
+    private static void ValidateDestinationEntry(
+        SafeFileHandle rootHandle,
+        string repoRoot,
+        string canonicalRepoRoot,
+        string relativePath,
+        string destination)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            var descriptor = OpenAtNoMode(
+                rootHandle.DangerousGetHandle().ToInt32(),
+                relativePath,
+                UnixOpenReadOnly | UnixOpenCloseOnExec | UnixOpenNoFollow);
+            if (descriptor < 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (error == 2)
+                {
+                    return;
+                }
+                throw new InvalidDataException(
+                    $"Documentation output '{relativePath}' is an unsafe existing entry "
+                    + $"(errno {error})");
+            }
+            using var unixHandle = new SafeFileHandle(
+                new IntPtr(descriptor),
+                ownsHandle: true);
+            if (GetHandleLinkCount(unixHandle) != 1)
+            {
+                throw new InvalidDataException(
+                    $"Documentation output '{relativePath}' must not be a hard link");
+            }
+            return;
+        }
+
+        if (!File.Exists(destination))
+        {
+            return;
+        }
+
         using var handle = File.OpenHandle(
             destination,
-            mode,
-            FileAccess.ReadWrite,
-            FileShare.Read | FileShare.Delete,
-            FileOptions.WriteThrough);
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Write | FileShare.Delete);
         ValidateOpenedHandle(
             repoRoot,
             canonicalRepoRoot,
             relativePath,
             destination,
             handle);
-
-        hooks?.AfterPathValidationBeforeIo?.Invoke(
-            new DocumentationIoEvent(relativePath, DocumentationIoOperation.Write));
-        using (var stream = new FileStream(handle, FileAccess.Write))
+        if (GetHandleLinkCount(handle) != 1)
         {
-            stream.SetLength(0);
-            stream.Write(content);
-            stream.Flush(flushToDisk: true);
+            throw new InvalidDataException(
+                $"Documentation output '{relativePath}' must not be a hard link");
+        }
+    }
+
+    private static void AtomicPublish(
+        SafeFileHandle rootHandle,
+        SafeFileHandle temporaryHandle,
+        string temporaryName,
+        string relativePath)
+    {
+        if (relativePath.Contains('/', StringComparison.Ordinal)
+            || relativePath.Contains('\\', StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Documentation output '{relativePath}' must be in the repository root");
         }
 
-        _ = ResolveRepositoryPath(repoRoot, relativePath);
+        if (OperatingSystem.IsWindows())
+        {
+            RenameFileByHandle(
+                temporaryHandle,
+                rootHandle,
+                relativePath);
+            return;
+        }
+
+        var rootDescriptor = rootHandle.DangerousGetHandle().ToInt32();
+        if (RenameAt(
+                rootDescriptor,
+                temporaryName,
+                rootDescriptor,
+                relativePath) != 0)
+        {
+            throw LastIoException(
+                $"Could not publish documentation output '{relativePath}' atomically");
+        }
     }
+
+    private static void RenameFileByHandle(
+        SafeFileHandle fileHandle,
+        SafeFileHandle rootHandle,
+        string destinationName)
+    {
+        var destinationBytes = Encoding.Unicode.GetBytes(destinationName);
+        var rootOffset = IntPtr.Size == 8 ? 8 : 4;
+        var lengthOffset = rootOffset + IntPtr.Size;
+        var nameOffset = lengthOffset + sizeof(uint);
+        var bufferSize = checked(nameOffset + destinationBytes.Length);
+        var buffer = Marshal.AllocHGlobal(bufferSize);
+        var ioStatusBlock = Marshal.AllocHGlobal(IntPtr.Size * 2);
+        try
+        {
+            for (var index = 0; index < bufferSize; index++)
+            {
+                Marshal.WriteByte(buffer, index, 0);
+            }
+            Marshal.WriteByte(buffer, 0, 1);
+            Marshal.WriteIntPtr(buffer, rootOffset, rootHandle.DangerousGetHandle());
+            Marshal.WriteInt32(buffer, lengthOffset, destinationBytes.Length);
+            Marshal.Copy(destinationBytes, 0, IntPtr.Add(buffer, nameOffset), destinationBytes.Length);
+            Marshal.WriteIntPtr(ioStatusBlock, 0, IntPtr.Zero);
+            Marshal.WriteIntPtr(ioStatusBlock, IntPtr.Size, IntPtr.Zero);
+
+            var status = NtSetInformationFile(
+                    fileHandle,
+                    ioStatusBlock,
+                    buffer,
+                    (uint)bufferSize,
+                    FileRenameInformation);
+            if (status < 0)
+            {
+                throw new IOException(
+                    $"Could not publish documentation output '{destinationName}' atomically "
+                    + $"(NTSTATUS 0x{status:x8})");
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ioStatusBlock);
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static uint GetHandleLinkCount(SafeFileHandle handle)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!GetFileInformationByHandle(handle, out var information))
+            {
+                throw LastIoException("Could not inspect documentation output link count");
+            }
+            return information.NumberOfLinks;
+        }
+
+        var buffer = Marshal.AllocHGlobal(256);
+        try
+        {
+            if (CallFStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
+            {
+                throw LastIoException("Could not inspect documentation output link count");
+            }
+            if (OperatingSystem.IsMacOS())
+            {
+                return unchecked((ushort)Marshal.ReadInt16(buffer, 6));
+            }
+            return RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => checked((uint)Marshal.ReadInt64(buffer, 16)),
+                Architecture.Arm64 => unchecked((uint)Marshal.ReadInt32(buffer, 20)),
+                _ => throw new PlatformNotSupportedException(
+                    "Documentation publication supports Linux x64 and arm64"),
+            };
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static FileIdentity GetHandleIdentity(SafeFileHandle handle)
+    {
+        var buffer = Marshal.AllocHGlobal(256);
+        try
+        {
+            if (CallFStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
+            {
+                throw LastIoException("Could not inspect a documentation file identity");
+            }
+            return OperatingSystem.IsMacOS()
+                ? new FileIdentity(
+                    unchecked((uint)Marshal.ReadInt32(buffer, 0)),
+                    unchecked((ulong)Marshal.ReadInt64(buffer, 8)))
+                : new FileIdentity(
+                    unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
+                    unchecked((ulong)Marshal.ReadInt64(buffer, 8)));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static int CallFStat(int descriptor, IntPtr buffer) =>
+        OperatingSystem.IsMacOS()
+        && RuntimeInformation.ProcessArchitecture == Architecture.X64
+            ? FStatInode64(descriptor, buffer)
+            : FStat(descriptor, buffer);
 
     private static void ValidateOpenedHandle(
         string repoRoot,
@@ -1264,6 +1704,12 @@ public static class DocumentationDiscoveryGenerator
 
     private static string ResolveCanonicalRepositoryRoot(string repoRoot)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return Path.GetFullPath(repoRoot)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
         var markerPath = Path.Combine(Path.GetFullPath(repoRoot), "aws2azure.slnx");
         using var handle = File.OpenHandle(
             markerPath,
@@ -1309,25 +1755,58 @@ public static class DocumentationDiscoveryGenerator
             }
         }
 
-        var descriptor = handle.DangerousGetHandle().ToInt64();
-        foreach (var prefix in new[] { "/proc/self/fd", "/dev/fd" })
-        {
-            var descriptorPath = Path.Combine(prefix, descriptor.ToString(
+        var descriptor = handle.DangerousGetHandle().ToInt32();
+        var descriptorPath = Path.Combine(
+            "/proc/self/fd",
+            descriptor.ToString(
                 System.Globalization.CultureInfo.InvariantCulture));
-            if (!File.Exists(descriptorPath))
-            {
-                continue;
-            }
-            var target = File.ResolveLinkTarget(descriptorPath, returnFinalTarget: true);
-            if (target is not null)
-            {
-                return Path.GetFullPath(target.FullName);
-            }
+        var target = File.ResolveLinkTarget(descriptorPath, returnFinalTarget: true);
+        if (target is not null)
+        {
+            return Path.GetFullPath(target.FullName);
         }
 
         throw new PlatformNotSupportedException(
             "The platform cannot resolve opened documentation file handles safely");
     }
+
+    private static IOException LastIoException(string message) =>
+        new(
+            message,
+            Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
+
+    private static int UnixOpenCreate =>
+        OperatingSystem.IsMacOS() ? 0x0200 : 0x0040;
+
+    private static int UnixOpenExclusive =>
+        OperatingSystem.IsMacOS() ? 0x0800 : 0x0080;
+
+    private static int UnixOpenNoFollow =>
+        OperatingSystem.IsMacOS() ? 0x0100 : 0x20000;
+
+    private static int UnixOpenDirectory =>
+        OperatingSystem.IsMacOS() ? 0x100000 : 0x10000;
+
+    private static int UnixOpenCloseOnExec =>
+        OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
+
+    private const int UnixOpenReadOnly = 0;
+    private const int UnixOpenReadWrite = 2;
+    private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
+    private const uint DeleteAccess = 0x00010000;
+    private const uint Synchronize = 0x00100000;
+    private const uint FileListDirectory = 0x00000001;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint FileShareDelete = 0x00000004;
+    private const uint CreateNew = 1;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagWriteThrough = 0x80000000;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint FileFlagOpenReparsePoint = 0x00200000;
+    private const int FileRenameInformation = 10;
+    private const int FileDispositionInformation = 13;
 
     [DllImport(
         "kernel32.dll",
@@ -1341,19 +1820,184 @@ public static class DocumentationDiscoveryGenerator
         uint filePathLength,
         uint flags);
 
+    [DllImport(
+        "kernel32.dll",
+        EntryPoint = "CreateFileW",
+        CharSet = CharSet.Unicode,
+        SetLastError = true,
+        ExactSpelling = true)]
+    private static extern SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationFile(
+        SafeFileHandle file,
+        IntPtr ioStatusBlock,
+        IntPtr fileInformation,
+        uint length,
+        int fileInformationClass);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle file,
+        out ByHandleFileInformation information);
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int Open(string path, int flags);
+
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAtNoMode(int directory, string path, int flags);
+
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAtCreate(int directory, string path, int flags, uint mode);
+
+    [DllImport("libc", EntryPoint = "mkstemp", SetLastError = true)]
+    private static extern int MakeTemporaryFile([In, Out] byte[] template);
+
+    [DllImport("libc", EntryPoint = "renameat", SetLastError = true)]
+    private static extern int RenameAt(
+        int oldDirectory,
+        string oldPath,
+        int newDirectory,
+        string newPath);
+
+    [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)]
+    private static extern int UnlinkAt(int directory, string path, int flags);
+
+    [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
+    private static extern int FStat(int descriptor, IntPtr buffer);
+
+    [DllImport("libc", EntryPoint = "fstat$INODE64", SetLastError = true)]
+    private static extern int FStatInode64(int descriptor, IntPtr buffer);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileTime
+    {
+        internal uint Low;
+        internal uint High;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        internal uint FileAttributes;
+        internal FileTime CreationTime;
+        internal FileTime LastAccessTime;
+        internal FileTime LastWriteTime;
+        internal uint VolumeSerialNumber;
+        internal uint FileSizeHigh;
+        internal uint FileSizeLow;
+        internal uint NumberOfLinks;
+        internal uint FileIndexHigh;
+        internal uint FileIndexLow;
+    }
+
     internal sealed class DocumentationIoHooks
     {
         internal Action<DocumentationIoEvent>? AfterPathValidationBeforeIo { get; init; }
+        internal Action<DocumentationPublishEvent>? BeforeAtomicPublish { get; init; }
     }
 
     internal readonly record struct DocumentationIoEvent(
         string RelativePath,
         DocumentationIoOperation Operation);
 
+    internal readonly record struct DocumentationPublishEvent(
+        string RelativePath,
+        string TemporaryPath);
+
     internal enum DocumentationIoOperation
     {
         Read,
         Write,
+    }
+
+    private readonly record struct FileIdentity(ulong Device, ulong Inode);
+
+    private sealed class PrivateTemporaryFile : IDisposable
+    {
+        internal PrivateTemporaryFile(
+            SafeFileHandle rootHandle,
+            SafeFileHandle handle,
+            string name,
+            string path)
+        {
+            RootHandle = rootHandle;
+            Handle = handle;
+            Name = name;
+            Path = path;
+        }
+
+        private SafeFileHandle RootHandle { get; }
+        internal SafeFileHandle Handle { get; }
+        internal string Name { get; }
+        internal string Path { get; }
+        internal bool Published { get; set; }
+
+        public void Dispose()
+        {
+            try
+            {
+                if (!Published)
+                {
+                    DeletePrivateFile();
+                }
+            }
+            finally
+            {
+                Handle.Dispose();
+            }
+        }
+
+        private void DeletePrivateFile()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var disposition = Marshal.AllocHGlobal(1);
+                var ioStatusBlock = Marshal.AllocHGlobal(IntPtr.Size * 2);
+                try
+                {
+                    Marshal.WriteByte(disposition, 0, 1);
+                    Marshal.WriteIntPtr(ioStatusBlock, 0, IntPtr.Zero);
+                    Marshal.WriteIntPtr(ioStatusBlock, IntPtr.Size, IntPtr.Zero);
+                    var status = NtSetInformationFile(
+                        Handle,
+                        ioStatusBlock,
+                        disposition,
+                        1,
+                        FileDispositionInformation);
+                    if (status < 0)
+                    {
+                        throw new IOException(
+                            $"Could not remove private documentation output '{Name}' "
+                            + $"(NTSTATUS 0x{status:x8})");
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(ioStatusBlock);
+                    Marshal.FreeHGlobal(disposition);
+                }
+                return;
+            }
+
+            var result = UnlinkAt(
+                RootHandle.DangerousGetHandle().ToInt32(),
+                Name,
+                flags: 0);
+            if (result != 0 && Marshal.GetLastPInvokeError() != 2)
+            {
+                throw LastIoException(
+                    $"Could not remove private documentation output '{Name}'");
+            }
+        }
     }
 
     private sealed class DocumentationRepositorySnapshot : IDisposable

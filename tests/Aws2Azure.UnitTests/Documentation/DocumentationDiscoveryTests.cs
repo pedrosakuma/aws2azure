@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Aws2Azure.Documentation;
 using Aws2Azure.GapDocs;
 
@@ -345,7 +346,7 @@ public sealed class DocumentationDiscoveryTests
                 DocumentationDiscoveryGenerator.Build(isolatedRepo, hooks));
 
             Assert.True(swapped);
-            Assert.Contains("resolves outside the repository root", exception.Message);
+            AssertContainmentFailure(exception);
             Assert.DoesNotContain(externalContent, exception.Message);
         }
         finally
@@ -404,7 +405,7 @@ public sealed class DocumentationDiscoveryTests
                 DocumentationDiscoveryGenerator.Build(isolatedRepo, hooks));
 
             Assert.True(swapped);
-            Assert.Contains("resolves outside the repository root", exception.Message);
+            AssertContainmentFailure(exception);
         }
         finally
         {
@@ -416,7 +417,7 @@ public sealed class DocumentationDiscoveryTests
     }
 
     [Fact]
-    public void Output_handle_does_not_follow_leaf_swapped_after_validation()
+    public void Atomic_publish_rejects_destination_symlink_replacement()
     {
         var isolatedRepo = CreateIsolatedRepository();
         var externalRoot = CreateTempDirectory("aws2azure-documentation-race-output");
@@ -438,12 +439,10 @@ public sealed class DocumentationDiscoveryTests
             var swapped = false;
             var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
             {
-                AfterPathValidationBeforeIo = ioEvent =>
+                BeforeAtomicPublish = publish =>
                 {
                     if (swapped
-                        || ioEvent.Operation
-                        != DocumentationDiscoveryGenerator.DocumentationIoOperation.Write
-                        || ioEvent.RelativePath != DocumentationDiscoveryGenerator.LlmsRelativePath)
+                        || publish.RelativePath != DocumentationDiscoveryGenerator.LlmsRelativePath)
                     {
                         return;
                     }
@@ -462,10 +461,17 @@ public sealed class DocumentationDiscoveryTests
                     hooks));
 
             Assert.True(swapped);
-            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.True(
+                exception.Message.Contains(
+                    "resolves outside the repository root",
+                    StringComparison.Ordinal)
+                || exception.Message.Contains(
+                    "unsafe existing entry",
+                    StringComparison.Ordinal));
             Assert.Equal(externalContent, File.ReadAllText(externalTarget));
             Assert.Equal(externalContent, File.ReadAllText(output));
             Assert.NotNull(new FileInfo(output).LinkTarget);
+            AssertNoPrivateOutputs(isolatedRepo);
         }
         finally
         {
@@ -473,6 +479,188 @@ public sealed class DocumentationDiscoveryTests
             File.Delete(output);
             DeleteDirectory(isolatedRepo);
             DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Atomic_publish_rejects_temporary_file_renamed_outside_repository()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-temp-rename");
+        var externalSentinel = Path.Combine(externalRoot, "sentinel.txt");
+        string? movedTemporary = null;
+        try
+        {
+            const string sentinelContent = "external sentinel must remain unchanged";
+            File.WriteAllText(externalSentinel, sentinelContent);
+            var moved = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                BeforeAtomicPublish = publish =>
+                {
+                    movedTemporary = Path.Combine(
+                        externalRoot,
+                        Path.GetFileName(publish.TemporaryPath));
+                    File.Move(publish.TemporaryPath, movedTemporary);
+                    moved = true;
+                },
+            };
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.WriteRepositoryFile(
+                    isolatedRepo,
+                    DocumentationDiscoveryGenerator.LlmsRelativePath,
+                    System.Text.Encoding.UTF8.GetBytes("generated content\n"),
+                    hooks));
+
+            Assert.True(moved);
+            AssertContainmentFailure(exception);
+            Assert.Equal(sentinelContent, File.ReadAllText(externalSentinel));
+        }
+        finally
+        {
+            if (movedTemporary is not null)
+            {
+                File.Delete(movedTemporary);
+            }
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Atomic_publish_replaces_path_entry_without_writing_replacement_inode()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var output = Path.Combine(isolatedRepo, DocumentationDiscoveryGenerator.LlmsRelativePath);
+        var displacedOutput = output + ".displaced";
+        try
+        {
+            const string replacementContent = "replacement inode content";
+            const string generatedContent = "generated content\n";
+            var originalContent = File.ReadAllText(
+                Path.Combine(RepoRoot, DocumentationDiscoveryGenerator.LlmsRelativePath));
+            File.WriteAllText(output, originalContent);
+            var replaced = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                BeforeAtomicPublish = publish =>
+                {
+                    File.Move(output, displacedOutput);
+                    File.WriteAllText(output, replacementContent);
+                    replaced = true;
+                },
+            };
+
+            DocumentationDiscoveryGenerator.WriteRepositoryFile(
+                isolatedRepo,
+                DocumentationDiscoveryGenerator.LlmsRelativePath,
+                System.Text.Encoding.UTF8.GetBytes(generatedContent),
+                hooks);
+
+            Assert.True(replaced);
+            Assert.Equal(generatedContent, File.ReadAllText(output));
+            Assert.Equal(originalContent, File.ReadAllText(displacedOutput));
+        }
+        finally
+        {
+            DeleteDirectory(isolatedRepo);
+        }
+    }
+
+    [Fact]
+    public void Atomic_publish_rejects_existing_hard_link_destination()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-hardlink");
+        var externalTarget = Path.Combine(externalRoot, "external-llms.txt");
+        var output = Path.Combine(isolatedRepo, DocumentationDiscoveryGenerator.LlmsRelativePath);
+        try
+        {
+            const string externalContent = "external hard-link target must remain unchanged";
+            File.WriteAllText(externalTarget, externalContent);
+            File.Delete(output);
+            if (!TryCreateHardLink(output, externalTarget))
+            {
+                return;
+            }
+
+            var validationException = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.WriteRepositoryFile(
+                    isolatedRepo,
+                    DocumentationDiscoveryGenerator.LlmsRelativePath,
+                    System.Text.Encoding.UTF8.GetBytes("generated content\n"),
+                    hooks: null));
+
+            Assert.Contains("must not be a hard link", validationException.Message);
+            Assert.Equal(externalContent, File.ReadAllText(externalTarget));
+            AssertNoPrivateOutputs(isolatedRepo);
+        }
+        finally
+        {
+            File.Delete(output);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Atomic_publish_rejects_repository_parent_swap()
+    {
+        var container = CreateTempDirectory("aws2azure-documentation-parent-swap");
+        var isolatedRepo = CreateIsolatedRepository();
+        var realParent = Path.Combine(container, "real");
+        var replacementParent = Path.Combine(container, "replacement");
+        var aliasParent = Path.Combine(container, "alias");
+        var realRepo = Path.Combine(realParent, "repo");
+        Directory.CreateDirectory(realParent);
+        Directory.Move(isolatedRepo, realRepo);
+        isolatedRepo = realRepo;
+        try
+        {
+            const string replacementMarker = "replacement repository marker";
+            Directory.CreateDirectory(Path.Combine(replacementParent, "repo"));
+            File.WriteAllText(
+                Path.Combine(replacementParent, "repo", "aws2azure.slnx"),
+                replacementMarker);
+            if (!TryCreateDirectorySymbolicLink(aliasParent, realParent))
+            {
+                return;
+            }
+            var aliasedRepo = Path.Combine(aliasParent, "repo");
+            var swapped = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                BeforeAtomicPublish = _ =>
+                {
+                    DeleteDirectoryLink(aliasParent);
+                    Directory.CreateSymbolicLink(aliasParent, replacementParent);
+                    swapped = true;
+                },
+            };
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.WriteRepositoryFile(
+                    aliasedRepo,
+                    DocumentationDiscoveryGenerator.LlmsRelativePath,
+                    System.Text.Encoding.UTF8.GetBytes("generated content\n"),
+                    hooks));
+
+            Assert.True(swapped);
+            Assert.Contains("repository directory changed", exception.Message);
+            Assert.False(File.Exists(Path.Combine(
+                replacementParent,
+                "repo",
+                DocumentationDiscoveryGenerator.LlmsRelativePath)));
+            Assert.False(File.Exists(Path.Combine(
+                realRepo,
+                DocumentationDiscoveryGenerator.LlmsRelativePath)));
+        }
+        finally
+        {
+            DeleteDirectoryLink(aliasParent);
+            DeleteDirectory(container);
+            DeleteDirectory(isolatedRepo);
         }
     }
 
@@ -532,6 +720,22 @@ public sealed class DocumentationDiscoveryTests
         return isolatedRepo;
     }
 
+    private static void AssertNoPrivateOutputs(string repoRoot) =>
+        Assert.Empty(Directory.EnumerateFiles(repoRoot, ".documentation-*"));
+
+    private static void AssertContainmentFailure(InvalidDataException exception) =>
+        Assert.True(
+            exception.Message.Contains(
+                "resolves outside the repository root",
+                StringComparison.Ordinal)
+            || exception.Message.Contains(
+                "could not be opened without following links",
+                StringComparison.Ordinal)
+            || exception.Message.Contains(
+                "contains an unsafe directory component",
+                StringComparison.Ordinal),
+            exception.Message);
+
     private static string CreateTempDirectory(string prefix)
     {
         var path = Path.Combine(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}");
@@ -569,6 +773,26 @@ public sealed class DocumentationDiscoveryTests
         exception is UnauthorizedAccessException
             or PlatformNotSupportedException
         || OperatingSystem.IsWindows() && exception is IOException;
+
+    private static bool TryCreateHardLink(string link, string target) =>
+        OperatingSystem.IsWindows()
+            ? CreateHardLink(link, target, IntPtr.Zero)
+            : Link(target, link) == 0;
+
+    [DllImport(
+        "kernel32.dll",
+        EntryPoint = "CreateHardLinkW",
+        CharSet = CharSet.Unicode,
+        SetLastError = true,
+        ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(
+        string fileName,
+        string existingFileName,
+        IntPtr securityAttributes);
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link(string existingPath, string newPath);
 
     private static void DeleteDirectoryLink(string path)
     {
