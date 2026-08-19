@@ -117,6 +117,7 @@ nav:
       - SLO qualification: testing/slo-qualification.md
       - Real-Azure validation: testing/real-azure-nightly.md
       - Real-AWS differential capture: testing/real-aws-capture.md
+      - Documentation retrieval evaluation: testing/retrieval-eval.md
       - Performance and footprint:
           - Baseline guide: perf/README.md
           - Latest performance baseline: perf/baseline-latest.md

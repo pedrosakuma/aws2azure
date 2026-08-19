@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:ae8cdca440cf2e7fb66906847967da30acab839b1908ce36a52ae45fae1ad806",
+  "manifest_revision": "sha256:917bb9b72906111aaad97d8ad6fec116bf4e16a7537628e02c79101cb1f50af3",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1319,6 +1319,18 @@
       "authority": "explanatory",
       "provenance": "source",
       "revision": "sha256:022affa9cd25fa9a347a2da2648fed773b422158f6ad232aa95b70c92484c3ce",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-retrieval-eval",
+      "path": "docs/testing/retrieval-eval.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a6611cc26ace6a2569d5c76dedc79aba5116d4fcd45166a07657eaf5fc597d50",
       "freshness": {
         "mode": "current"
       }
@@ -6400,7 +6412,7 @@
       "authority": "explanatory",
       "provenance": "source",
       "profile": "sqs-dlq-redrive",
-      "revision": "sha256:d14a9253c767577ea35645b89a89c9fae4163c5d9f90ffd0c9bc0d8cd927da36",
+      "revision": "sha256:cf7d16764648578754165e889c16dcaa6c16db01d92adc75e7ac11824a9b709c",
       "freshness": {
         "mode": "current"
       }
@@ -6429,7 +6441,7 @@
       "authority": "explanatory",
       "provenance": "source",
       "profile": "sqs-fifo-amqp",
-      "revision": "sha256:c3cbeada326ed2747c78b6f98225cf1b281135af3a4b3272bf98f7b447dbb05a",
+      "revision": "sha256:3bb26eb46af69b3bf113979b91cebb4ddf39bcb3e6609a5a2f595bebb832982b",
       "freshness": {
         "mode": "current"
       }
