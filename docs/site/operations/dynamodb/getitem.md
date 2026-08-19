@@ -1,0 +1,80 @@
+# dynamodb / GetItem {#operation-dynamodb-getitem}
+
+[← dynamodb operation index](../../dynamodb.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:dynamodb:getitem`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### HASH-only key tables {#sub-feature-hash-only-key-tables}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:hash-only-key-tables`
+- **Status:** ✅ implemented
+
+### HASH+RANGE composite key tables {#sub-feature-hashrange-composite-key-tables}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:hashrange-composite-key-tables`
+- **Status:** ✅ implemented
+
+### Full wire-form round-trip on response Item {#sub-feature-full-wire-form-round-trip-on-response-item}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:full-wire-form-round-trip-on-response-item`
+- **Status:** ✅ implemented
+
+### ConsistentRead {#sub-feature-consistentread}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:consistentread`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+
+Mapped to Cosmos `x-ms-consistency-level: Strong` request header. Honoured only when the account's max consistency permits Strong; Session/weaker accounts silently downgrade. Opt-in startup probe (`DynamoDb.ConsistencyCheck` = Warn/Required, #204) detects such accounts at boot and warns or fails startup.
+
+### ProjectionExpression {#sub-feature-projectionexpression}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:projectionexpression`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-02 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/28590964134) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/28590964134)
+
+Top-level attributes, `#alias` references, and nested document paths (`a.b` map members, `a[0]` list indices, and combinations like `a.b[1]`) are honoured. A projected map keeps only the referenced members; a projected list is compacted to the referenced indices in ascending order (positions are not preserved, matching DynamoDB); paths that do not exist or whose type does not match are silently omitted. Overlapping paths (e.g. `a` and `a.b`, or a duplicate) are rejected with ValidationException. A ProjectionExpression forces the materialized read path (extract → prune → buffered write); a plain GetItem keeps the fused stream-splice fast path.
+
+### AttributesToGet {#sub-feature-attributestoget}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:attributestoget`
+- **Status:** ⛔ unsupported
+- **Disposition:** ⚫ non-goal
+
+Legacy AttributesToGet is rejected with ValidationException (matching Query/Scan/BatchGetItem); use ProjectionExpression.
+
+### ExpressionAttributeNames {#sub-feature-expressionattributenames}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:expressionattributenames`
+- **Status:** ✅ implemented
+
+Honoured as `#alias` substitution within ProjectionExpression. Supplying ExpressionAttributeNames without a ProjectionExpression is rejected with ValidationException.
+
+### ReturnConsumedCapacity {#sub-feature-returnconsumedcapacity}
+
+- **Capability ID:** `sub-feature:dynamodb:getitem:returnconsumedcapacity`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
+
+## Behaviour differences
+
+- Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing.
+- Missing item yields 200 with no `Item` field (matches DynamoDB).
+- Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException.
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), so Cosmos-forbidden characters (`/`, `\`, `?`, `#`) are accepted. The encoding is order- and prefix-preserving and invisible to clients. Effective raw key limit is ~127 bytes (hex doubles length against Cosmos' 255-char id cap); over-limit keys are rejected with ValidationException. **On-disk-format breaking change** — items written by earlier builds route under a different id.
+- ConsistentRead effectiveness is account-dependent; document divergence per deployment.
+- Multi-region Cosmos accounts honor configured `cosmos.preferredRegions` for read locality and client-side failover: GetItem routes to the first available readable preferred region, then remaining readable regions, then the configured account endpoint. Failover is implemented for regional 503/408 and transport failures; emulator coverage is unavailable because the Cosmos emulator is single-region.
+- Cosmos binary JSON response bodies are supported only when explicitly enabled with `DynamoDb.CosmosBinaryResponses=true`; the proxy sends `x-ms-cosmos-supported-serialization-formats: CosmosBinary`, decodes `0x80` CosmosBinary bodies back to JSON before the normal DynamoDB response transform, and falls back to the unchanged text path whenever Cosmos returns text. For GetItem the binary body is streamed straight into the response envelope via `CosmosBinaryReader` (a forward-only `ITokenReader` over the binary format), skipping the intermediate decode-to-text materialization; output is byte-identical to the decode-then-text path (pinned by a full-marker-surface differential corpus and randomized fuzz tests), and any marker the streaming reader does not fast-path falls back to the proven decode-to-text path before any byte is emitted. The decode path taken per request is observable via the `aws2azure_dynamodb_getitem_decode_path_total{path="fused|fallback|text"}` Prometheus counter, so an operator can confirm the fast path is active in their topology. Emulator-unverified: the Cosmos DB Linux emulator used by CI does not emit CosmosBinary bodies, so the fused path is exercised only against real Azure (the `run-real-azure` integration job asserts the `path="fused"` counter increments on a binary GetItem round-trip).
+- Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException).
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the CosmosBinary fused path is additionally validated against real Azure Cosmos DB by the `run-real-azure` integration job (decode-path counter assertion). The text/fallback decode-path tagging is covered by unit tests.
+
+## References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_GetItem.html>
+

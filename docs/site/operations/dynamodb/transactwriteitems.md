@@ -1,0 +1,134 @@
+# dynamodb / TransactWriteItems {#operation-dynamodb-transactwriteitems}
+
+[← dynamodb operation index](../../dynamodb.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:dynamodb:transactwriteitems`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction`
+- **Real-Azure verified:** ✅ 2026-07-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540)
+
+## Sub-features
+
+### Atomic Put / Delete / ConditionCheck {#sub-feature-atomic-put---delete---conditioncheck}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:atomic-put---delete---conditioncheck`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540)
+
+`atomicTransactWrite_v5` reads and validates every target before issuing writes. All writes execute inside one Cosmos logical-partition ACID transaction; a condition or write failure commits nothing. `atomicTransactWrite_v2` remains in the persisted-format inventory, but its runtime is not compatible with the complete transaction workload profile and is not an approved rollback baseline.
+
+### ConditionExpression transaction subset {#sub-feature-conditionexpression-transaction-subset}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:conditionexpression-transaction-subset`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540)
+
+Conditions are prevalidated before stored-procedure invocation. Supported: AND/OR/NOT, scalar comparisons with one path and one literal in either operand order, string BETWEEN, IN, attribute_exists, attribute_not_exists, begins_with, and attribute_type for S/BOOL/NULL. Paths must be one non-reserved top-level attribute and cannot name Cosmos system fields such as `_etag` or `_ts`. Values must be S, BOOL, NULL, or an N whose canonical form the persisted codec stores as a bare JSON number. Numbers are limited to equality/not-equal and IN; any number stored in an `_a2a:N` envelope is rejected before execution. Ordered string comparisons use DynamoDB's exact UTF-8 byte lexicographic order, including supplementary Unicode code points. Missing attributes never satisfy `<>`; differing DynamoDB types do. Runtime type errors for ordered operators, BETWEEN, and begins_with are returned as a structured script validation result and mapped to ValidationException; NOT never turns such an error into success. Unknown AST nodes fail closed.
+
+### Unsupported condition forms fail closed {#sub-feature-unsupported-condition-forms-fail-closed}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:unsupported-condition-forms-fail-closed`
+- **Status:** ✅ implemented
+
+Maps/lists, sets, binary, enveloped numbers, nested or list-index paths, dotted attribute names, path-to-path comparisons, contains(), size(), and unsupported attribute_type tags are rejected with ValidationException. Legacy Expected/ConditionalOperator are rejected instead of ignored.
+
+### AttributeValue and placeholder preflight {#sub-feature-attributevalue-and-placeholder-preflight}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:attributevalue-and-placeholder-preflight`
+- **Status:** ✅ implemented
+
+Every Put item, Delete/ConditionCheck key, and condition value is validated before table metadata or stored-procedure I/O. Empty sets, malformed base64, invalid/out-of-range Number values and Number-set members, duplicate set members, and malformed typed shapes are rejected. Non-empty string sets may contain an empty string, matching current DynamoDB policy. Every declared ExpressionAttributeNames and ExpressionAttributeValues placeholder must be consumed. IN lists are capped at DynamoDB's 100 operands before any metadata or script I/O.
+
+### Positional CancellationReasons {#sub-feature-positional-cancellationreasons}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:positional-cancellationreasons`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540)
+
+A failed condition returns exactly one aligned reason per TransactItem. Only None and ConditionalCheckFailed are accepted from the versioned script. Missing, extra, unknown, or unjustified reasons fail closed as an internal protocol error.
+
+### Update {#sub-feature-update}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:update`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
+
+Atomic transactional UpdateExpression is rejected with ValidationException. Use Put to replace the complete item.
+
+### 100-item-per-call cap {#sub-feature-100-item-per-call-cap}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:100-item-per-call-cap`
+- **Status:** ✅ implemented
+
+Requests over 100 items are rejected with ValidationException.
+
+### 400 KiB Put and local-index aggregate cap {#sub-feature-400-kib-put-and-local-index-aggregate-cap}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:400-kib-put-and-local-index-aggregate-cap`
+- **Status:** ✅ implemented
+
+Every transactional Put first enforces the base-item limit, then after table metadata is loaded enforces base item plus every corresponding local secondary-index entry at the same 409600-byte boundary. KEYS_ONLY, INCLUDE, and ALL projections use DynamoDB attribute-name/value sizing; base/index key names are included once per index entry, sparse LSIs add no entry, and an attribute projected into multiple physical entries is counted in each. Oversize requests fail with ValidationException before stored-procedure I/O.
+
+### Serialized transaction body limit {#sub-feature-serialized-transaction-body-limit}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:serialized-transaction-body-limit`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+
+The exact UTF-8 stored-procedure parameter body is assembled in a 2 MiB-bounded pooled IBufferWriter. Serialization stops as soon as the limit is crossed, so an oversized body is never fully materialized. Oversize requests are rejected deterministically with ValidationException before stored-procedure provisioning or execution. DynamoDB permits an aggregate 4 MiB transaction, so the proxy's accepted aggregate is lower.
+
+### ClientRequestToken (idempotency) {#sub-feature-clientrequesttoken--idempotency}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:clientrequesttoken--idempotency`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30242339540)
+
+Tokens are validated at 1–36 characters. `atomicTransactWrite_v5` writes a collision-proof reserved record in the same Cosmos logical partition and transaction as the user writes. Its stable SHA-256 fingerprint is based on normalized transaction semantics: resolved condition ASTs, canonical DynamoDB numbers/base64, sorted map properties and set members, and the ordered operation list, so JSON property order and equivalent numeric/set encodings do not cause false mismatches. Canonical bytes feed SHA-256 incrementally through a fixed pooled UTF-8 scratch buffer; the handler does not retain a second full transaction representation. Equivalent retries replay the original success or positional condition-cancellation outcome without applying writes again; a different fingerprint within the active window returns IdempotentParameterMismatchException. The script samples Cosmos server time immediately before the atomic token upsert/completion, so validation reads and condition work do not consume any of the advertised 10-minute post-completion window. It records created/expiry timestamps, assigns a 660-second native ttl, and performs a bounded partition-local sweep when container TTL is not armed. Expired records are safely replaced. Preflight and script validation errors are not cached. The contract is scoped to this operation's supported single-table/single-partition boundary; callers must not reuse one token for a transaction in another partition.
+
+### Deployment-stable Cosmos transaction authority {#sub-feature-deployment-stable-cosmos-transaction-authority}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:deployment-stable-cosmos-transaction-authority`
+- **Status:** ✅ implemented
+
+Account topology is resolved before transaction stored-procedure provisioning/execution. Single-write accounts use their explicit writable regional endpoint. Multi-write accounts require target.preferredRegions[0], which remains authoritative across process restarts regardless of which other writable regions are currently discoverable. If that first region is absent, unavailable, timed out, or rejects writes, the operation fails retryably without replaying its writes or durable idempotency record in a later region.
+
+### ReturnValuesOnConditionCheckFailure {#sub-feature-returnvaluesonconditioncheckfailure}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:returnvaluesonconditioncheckfailure`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
+
+Any use is rejected with ValidationException. The certified `atomicTransactWrite_v5` payload returns only positional cancellation codes; faithfully returning ALL_OLD images would require a new stored-procedure identity that persists those pre-write snapshots atomically with the cancellation outcome. The proxy intentionally does not race a post-failure GET to fabricate potentially newer items.
+
+### ReturnConsumedCapacity / ReturnItemCollectionMetrics {#sub-feature-returnconsumedcapacity---returnitemcollectionmetrics}
+
+- **Capability ID:** `sub-feature:dynamodb:transactwriteitems:returnconsumedcapacity---returnitemcollectionmetrics`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
+
+Omitted or NONE is accepted. Other values are rejected with ValidationException rather than silently dropping response fields.
+
+## Behaviour differences
+
+- **Single table + single partition key only.** Cross-table and cross-partition operations are rejected before item data is read or a transaction stored procedure is invoked.
+- Duplicate operations on the same table/key are rejected with ValidationException before execution.
+- Stored procedures must be enabled (Preferred or Required). There is no non-atomic fallback.
+- Stored-procedure provisioning treats an HTTP 409 as success only after reading the existing resource and verifying the exact versioned id and body; an id/body conflict fails closed.
+- Transaction provisioning and execution use one configured authority. For a multi-write account, target.preferredRegions[0] is a deployment contract: every replica and binding targeting the same data must configure the same first region. A fresh process that discovers only a later writable region fails retryably and never executes the snapshot/write/idempotency operation there or through the dynamically routed global account endpoint. Changing the first entry is an explicit operational migration, not failover. Ordinary non-transactional region routing can still use later available preferences.
+- Transaction execution POSTs retain the no-automatic-retry transport option. Token-bearing requests explicitly retry only Cosmos write-conflict statuses once on the same pinned endpoint; any caller retry after an ambiguous/lost response is safe because the token outcome is committed atomically with the writes. Tokenless requests remain non-retried. Stored-procedure availability is cached per Cosmos account/database/container, invalidated on table lifecycle, and evicted/reprovisioned once after an execution 404.
+- `atomicWrite_v2`, `atomicTransactWrite_v2`, `atomicTransactWrite_v3`, and `atomicTransactWrite_v4` remain frozen in the additive persisted-format identity set. The current durable idempotency contract uses `atomicTransactWrite_v5`; TransactGet uses `atomicTransactGet_v1`.
+- The Cosmos Linux emulator cannot execute these scripts. V5 write/idempotency semantics, v1 snapshots, contention, restart, and exact-body conflict handling remain real-Azure-only test surfaces.
+- The approved runtime passed exact candidate-to-bootstrap rollback correctness, three production-shaped zero-failure load runs, and final qualification. The known v2 runtime remains ineligible because it uses independent reads and lacks the durable ClientRequestToken contract.
+- The exact serialized stored-procedure parameter body is limited to 2 MiB, below DynamoDB's 4 MiB aggregate TransactWriteItems limit. A bounded pooled writer stops on overflow, and token fingerprints are hashed incrementally instead of retaining a second canonical body. Oversize requests fail with ValidationException before stored-procedure I/O.
+- Each Put first obeys the base 400 KiB item boundary; after metadata load, the base item plus all corresponding KEYS_ONLY/INCLUDE/ALL local-secondary-index entries must also fit within 400 KiB.
+
+## References
+
+- <https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html>
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency>
+- <https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs>
+- <https://learn.microsoft.com/azure/cosmos-db/concepts-limits>
+

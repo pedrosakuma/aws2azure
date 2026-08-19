@@ -1,0 +1,37 @@
+# secretsmanager / UpdateSecret {#operation-secretsmanager-updatesecret}
+
+[← secretsmanager operation index](../../secretsmanager.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:secretsmanager:updatesecret`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}/versions`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### Version durability and ClientRequestToken replay {#sub-feature-version-durability-and-clientrequesttoken-replay}
+
+- **Capability ID:** `sub-feature:secretsmanager:updatesecret:version-durability-and-clientrequesttoken-replay`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+
+UpdateSecret uses the same empty-stage creation, paginated inventory, deterministic token resolution, loser-first stage publication, fresh tag merge, and bounded verification path as PutSecretValue.
+
+**Gap.** The Key Vault-only reconciliation cannot make version creation plus multi-version label patches atomic across proxy instances. A bounded conflict is returned when the invariant cannot be observed.
+
+**Workaround.** Retry ResourceExistsException after propagation settles, or use a single writer when stronger ordering is required.
+
+## Behaviour differences
+
+- Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
+- Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
+- Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
+- Because Key Vault PUT is an upsert, UpdateSecret first checks existence and returns ResourceNotFoundException for a missing secret to match AWS semantics.
+- ClientRequestToken is persisted and replayed through the shared version coordinator. ResourceExistsException uses the AWS HTTP 400 JSON shape.
+- The operation remains partial because strict cross-instance version/stage atomicity is impossible without an external coordinator, which this Key Vault-only design intentionally avoids.
+
+## References
+
+- <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html>
+- <https://learn.microsoft.com/rest/api/keyvault/secrets/set-secret>
+

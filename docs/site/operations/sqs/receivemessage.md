@@ -1,0 +1,93 @@
+# sqs / ReceiveMessage {#operation-sqs-receivemessage}
+
+[← sqs operation index](../../sqs.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:sqs:receivemessage`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)`
+- **Real-Azure verified:** ✅ 2026-07-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29769257977)
+
+## Sub-features
+
+### Short polling (WaitTimeSeconds = 0) {#sub-feature-short-polling--waittimeseconds--0}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:short-polling--waittimeseconds--0`
+- **Status:** ✅ implemented
+
+### Long polling (WaitTimeSeconds 1..20) {#sub-feature-long-polling--waittimeseconds-120}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:long-polling--waittimeseconds-120`
+- **Status:** ✅ implemented
+
+Uses SB's native server-side wait on the first peek-lock call (timeout query parameter); subsequent calls inside the same batch fall back to timeout=0 to drain quickly, matching the SQS 'return as soon as one message is available or WaitTimeSeconds elapses' contract.
+
+### MaxNumberOfMessages 1..10 {#sub-feature-maxnumberofmessages-110}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:maxnumberofmessages-110`
+- **Status:** ✅ implemented
+
+SB REST is single-message peek-lock; the proxy loops until count or queue empty. The first call blocks up to WaitTimeSeconds (long-poll); follow-up calls share a 5s aggregate budget added on top of WaitTimeSeconds.
+
+### VisibilityTimeout parameter {#sub-feature-visibilitytimeout-parameter}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:visibilitytimeout-parameter`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+
+Accepted and validated (0..43200) but ignored at SB level — see behavior_differences.
+
+### AttributeNames / MessageAttributeNames filters {#sub-feature-attributenames---messageattributenames-filters}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:attributenames---messageattributenames-filters`
+- **Status:** ✅ implemented
+
+Includes 'All' shorthand. Accepts both the deprecated AttributeNames and the current AWS-SDK MessageSystemAttributeNames JSON property as equivalent system-attribute filters (issue #626); MessageAttributeNames is unchanged. Returned system attributes: SentTimestamp, ApproximateReceiveCount, SequenceNumber, MessageGroupId (FIFO, from BrokerProperties.SessionId), MessageDeduplicationId (FIFO, from BrokerProperties.MessageId), DeadLetterQueueSourceArn (AMQP path only, when the message came from a /$DeadLetterQueue subqueue), and the proxy-prefixed Aws2Azure-DeadLetterReason / Aws2Azure-DeadLetterErrorDescription (AMQP path only, read from the dead-lettered message's application-properties).
+
+### Receipt handle round-trip {#sub-feature-receipt-handle-round-trip}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:receipt-handle-round-trip`
+- **Status:** ✅ implemented
+
+Opaque length-prefixed base64 of (MessageId, LockToken, SequenceNumber, LockedUntilUtc) — self-contained for DeleteMessage / ChangeMessageVisibility, safe against caller-controlled metacharacters in MessageDeduplicationId.
+
+### MessageAttributes (String/Number/Binary) round-trip {#sub-feature-messageattributes--string-number-binary--round-trip}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:messageattributes--string-number-binary--round-trip`
+- **Status:** ✅ implemented
+
+Reconstructed from Aws2Azure-AttrTypes side-channel header emitted by SendMessage.
+
+### MD5OfBody / MD5OfMessageAttributes {#sub-feature-md5ofbody---md5ofmessageattributes}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:md5ofbody---md5ofmessageattributes`
+- **Status:** ✅ implemented
+
+### FIFO MessageGroupId session receive {#sub-feature-fifo-messagegroupid-session-receive}
+
+- **Capability ID:** `sub-feature:sqs:receivemessage:fifo-messagegroupid-session-receive`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-28 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/30333267557) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/30333267557)
+
+Reviewed real-Azure evidence now covers the sqs-fifo-amqp fifo-amqp-boundaries scenario end to end: broker-assigned AMQP session receive preserves per-MessageGroupId ordering, ChangeMessageVisibility keeps later same-group deliveries blocked while the session lock is held, stale pre-restart settle handles are rejected instead of silently settling on a fresh receiver, and a fresh receive redelivers the message after lock expiry. The attach shape remains aligned with the official Azure .NET/Java session receiver contract (bare string/null session-filter value, receiver settle mode second, local target terminus, uint com.microsoft:timeout).
+
+## Behaviour differences
+
+- VisibilityTimeout on ReceiveMessage cannot be set per-call — SB locks the message for the queue's configured LockDuration. The proxy validates the parameter but does not enforce it; clients needing custom per-message visibility must use ChangeMessageVisibility after receive.
+- MaxNumberOfMessages > 1 is emulated by looping POST /messages/head, capped by ReceiveLoopBudget (5s) added on top of WaitTimeSeconds — the proxy may return fewer messages than requested even when the queue has more if the budget elapses.
+- ApproximateFirstReceiveTimestamp and SenderId are not surfaced (SB does not provide them).
+- Long polling uses SB's native server-side wait; if the first call returns empty after the wait the receive returns immediately with an empty list (no second wait). This matches SQS semantics.
+- FIFO ordering — AMQP vs REST: SQS FIFO guarantees strict per-MessageGroupId order on receive (one in-flight message per group at a time, others stay invisible until the in-flight one is deleted). This is implemented only on the AMQP transport (`transport: Amqp`): the receive path acquires a broker-assigned session receiver and holds the session lock. The attach uses the official Azure .NET/Java session shape (bare string/null session-filter, receiver settle mode second, local target, and uint server timeout); decoding remains tolerant of the described filter value emitted by the Azure Go SDK. The session-id is carried in the v3 receipt handle so DeleteMessage / ChangeMessageVisibility route back to the same live session link. The REST transport cannot express session receive and therefore remains structurally unsupported for strict FIFO ordering. FIFO settle is connection-affine: after restart or session-link eviction, DeleteMessage/CMV=0 retries with the old handle fail as `ReceiptHandleIsInvalid`, positive ChangeMessageVisibility retries fail as `MessageNotInflight`, and the group becomes redeliverable after lock expiry on a fresh receive. Idle links are swept opportunistically on FIFO requests (no background thread), and cached session links are hard-capped per connection to bound sidecar state.
+- MessageGroupId is surfaced from BrokerProperties.SessionId; MessageDeduplicationId from BrokerProperties.MessageId. Both only appear in the response when the AttributeNames filter requests them (or 'All').
+- The standard-queue long-poll and receipt-handle path is validated against real Azure Service Bus through the message-lifecycle scenario.
+- AMQP transport (Phase 2.5 slice 8b.4c, MessageAttributes round-trip in Phase 6 / #99): when a queue is configured with `transport: Amqp` (see ServiceBusCredentials.Queues), ReceiveMessage uses the in-process Service Bus AMQP 1.0 client via a shared connection pool. The receipt handle minted on the AMQP path is a distinct opaque format (version `2`, base64 of `{queueName, lockToken-GUID, lockedUntilUtc}`) carrying the SB lock-token directly rather than the REST messageId/lockToken pair. Long polling (WaitTimeSeconds) is honoured on the first receive; the polling-loop emulation that the REST path uses to batch up to 10 messages is replaced by a single `ReceiveBatchAsync` call against the cached AMQP link, which is more efficient. MessageAttributes (String/Number/Binary DataType round-trip) are now reconstructed from the `Aws2Azure-AttrTypes` application-property registry written by the AMQP send path; MD5OfMessageAttributes is computed via the shared `SqsMessageMd5.OfAttributes` helper so both transports produce the same hash. FIFO MessageGroupId is surfaced from `properties.group-id` (with the receiver's session-id as a fallback).
+- Dead-letter attribution (AMQP path, Phase 2.5): when SB delivers a message from a `<queue>/$DeadLetterQueue` subqueue, the proxy surfaces three system attributes — `DeadLetterQueueSourceArn` (synthesised as `arn:aws:sqs:us-east-1:000000000000:<sourceQueueName>` from the SB `x-opt-deadletter-source` annotation; us-east-1 is a placeholder since the proxy doesn't model AWS regions, and the account id is `QueueUrlBuilder.PlaceholderAccountId`), `Aws2Azure-DeadLetterReason`, and `Aws2Azure-DeadLetterErrorDescription` (the latter two read from the dead-lettered message's application-properties, prefixed `Aws2Azure-` because SQS has no AWS-standard counterpart). All three respect the AttributeNames filter, are omitted entirely for non-DLQ messages, and are only emitted on the AMQP path (the REST path does not subscribe to DLQ subqueues yet).
+- AMQP redrive boundary: Service Bus may transfer a message whose delivery count has already exceeded MaxDeliveryCount. Before returning an AMQP delivery to the AWS client, the proxy reads the queue's management metadata on redelivery; when the current receive count exceeds RedrivePolicy.maxReceiveCount, it sends a copy to the configured target with synthetic dead-letter attribution and then completes the source. Service Bus manual dead-letter settlement is not used because it bypasses ForwardDeadLetteredMessagesTo. Send-before-complete avoids message loss and permits an SQS-compatible duplicate if source completion fails. First deliveries and queues without redelivery do not incur the management lookup. The legacy REST receive transport retains the native Service Bus boundary.
+- Session lock sentinel: real Service Bus encodes an unbounded x-opt-locked-until value as Unix milliseconds 253402300800000, one millisecond beyond DateTimeOffset.MaxValue. The AMQP decoder clamps out-of-range timestamps to the nearest DateTimeOffset boundary so valid FIFO messages are not rejected.
+- Emulator divergence: the Azure Service Bus emulator does not reliably echo the broker-assigned session-id for AcceptNextSession. FIFO end-to-end acceptance therefore comes from the separate real-Azure sqs-fifo-amqp source scenario.
+- Emulator divergence (Phase 2.7 Slice 7): the SB emulator's TTL-expiry sweeper does not reliably dead-letter messages once their `DefaultMessageTimeToLive` elapses and/or does not honour `ForwardDeadLetteredMessagesTo` on the resulting DLQ message within an integration-test budget — observed: forwarded message never arrives on the target queue within 45s. Real Service Bus's expiry pipeline runs every ~5s and performs the forward synchronously. DLQ-forward IT coverage lives in the real-Azure nightly smoke; the slice-7 emulator-backed DLQ test is gated with `Skip.If` documenting the divergence.
+
+## References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/peek-lock-message-non-destructive-read>
+

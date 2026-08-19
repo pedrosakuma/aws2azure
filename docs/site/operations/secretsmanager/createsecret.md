@@ -1,0 +1,22 @@
+# secretsmanager / CreateSecret {#operation-secretsmanager-createsecret}
+
+[← secretsmanager operation index](../../secretsmanager.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:secretsmanager:createsecret`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `PUT https://{vault}.vault.azure.net/secrets/{name}`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Behaviour differences
+
+- Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
+- Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
+- Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
+- Input Tags are accepted in the AWS Key/Value array shape (as sent by the AWS SDK) and mapped to the Key Vault tags map; an existing-name conflict (including Key Vault 409) maps to ResourceExistsException.
+- The aws2azure- tag prefix is reserved for proxy-owned version metadata and is stripped from caller-supplied tags before writing to Key Vault.
+
+## References
+
+- <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html>
+- <https://learn.microsoft.com/rest/api/keyvault/secrets/set-secret>
+

@@ -1,0 +1,40 @@
+# kinesis / GetShardIterator {#operation-kinesis-getsharditerator}
+
+[← kinesis operation index](../../kinesis.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:kinesis:getsharditerator`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### Stateless HMAC-signed iterator tokens {#sub-feature-stateless-hmac-signed-iterator-tokens}
+
+- **Capability ID:** `sub-feature:kinesis:getsharditerator:stateless-hmac-signed-iterator-tokens`
+- **Status:** ✅ implemented
+
+The proxy issues opaque shard iterators signed with the configured shard-iterator signing key (or the process-local fallback), rejects expired or future-issued tokens, and enforces a 5-minute TTL.
+
+### Core iterator types {#sub-feature-core-iterator-types}
+
+- **Capability ID:** `sub-feature:kinesis:getsharditerator:core-iterator-types`
+- **Status:** ✅ implemented
+
+Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER request shapes.
+
+## Behaviour differences
+
+- Iterators are proxy-issued opaque tokens rather than broker cursors; they remain valid for 5 minutes and require the proxy's configured shard-iterator signing key (or the process-local fallback key after restartless reuse). [conformance:field-value:ShardIterator]
+- AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy interprets aws2azure's synthetic PutRecord sequence number as (unixMs << 20) | counter and derives an Event Hubs enqueue-time position from unixMs. If parsing fails the follow-up read falls back to the start of the shard.
+- AT_TIMESTAMP positions are stored as ISO-8601 UTC in the opaque token; Timestamp values outside DateTimeOffset's supported Unix-millisecond range are rejected with ValidationException instead of surfacing an internal error.
+- LATEST is translated to the AMQP filter `amqp.annotation.x-opt-offset > '@latest'` when the iterator's dedicated receiver link is first opened by GetRecords, not when GetShardIterator issues the token. A record published between those calls can be skipped; callers that need an explicit boundary can prime the iterator with GetRecords before publishing.
+- Every GetShardIterator response carries a distinct iterator identity. GetRecords pools one AMQP receiver link per identity, so separate iterator chains progress independently while live; this profile still certifies only one consumer loop per partition and consumer group.
+- AT_TIMESTAMP on the emulator is sensitive to host/container clock skew: the host-captured boundary timestamp can drift past the container-side x-opt-enqueued-time of records produced shortly after, hiding them from the receiver. Production Azure issues a single authoritative timestamp, so the divergence is emulator-only — tracked at #119, covered by real-Azure smoke.
+- Verified against Event Hubs emulator (except the AT_TIMESTAMP scenario called out above); production Azure Event Hubs coverage is exercised by the real-Azure conformance workflow.
+
+## References
+
+- <https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetShardIterator.html>
+

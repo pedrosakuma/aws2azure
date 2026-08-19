@@ -13,11 +13,18 @@ class PageParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.identifiers: set[str] = set()
+        self.ids: set[str] = set()
+        self.duplicate_identifiers: set[str] = set()
         self.references: list[tuple[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
-        identifier = values.get("id") or values.get("name")
+        html_id = values.get("id")
+        if html_id:
+            if html_id in self.ids:
+                self.duplicate_identifiers.add(html_id)
+            self.ids.add(html_id)
+        identifier = html_id or values.get("name")
         if identifier:
             self.identifiers.add(identifier)
 
@@ -103,6 +110,14 @@ def validate_internal_links(
     return errors
 
 
+def validate_unique_identifiers(pages: dict[Path, PageParser]) -> list[str]:
+    return [
+        f"{path}: duplicate identifier: {identifier}"
+        for path, parser in pages.items()
+        for identifier in sorted(parser.duplicate_identifiers)
+    ]
+
+
 def validate_search(site_dir: Path) -> list[str]:
     search_index_path = site_dir / "search" / "search_index.json"
     if not search_index_path.exists():
@@ -111,7 +126,16 @@ def validate_search(site_dir: Path) -> list[str]:
     index = json.loads(search_index_path.read_text(encoding="utf-8"))
     documents = index.get("docs", [])
     witnesses = {
-        "service operation": ("CreateBucket", "site/s3/"),
+        "service identity": ("service:s3", "site/s3/"),
+        "operation identity": ("operation:s3:putobject", "site/operations/s3/putobject/"),
+        "sub-feature identity": (
+            "sub-feature:s3:putobject:user-metadata--x-amz-meta",
+            "site/operations/s3/putobject/",
+        ),
+        "design-gap identity": (
+            "design-gap:s3:no-iam---acl---bucket-policy-authorization-model",
+            "site/design-gaps/s3/no-iam---acl---bucket-policy-authorization-model/",
+        ),
         "configuration concept": ("azureIdentities", "getting-started/"),
         "operator schema": ("config.schema.json", "configuration-schema/"),
         "workload verdict": ("conditional", "site/workload-compatibility/"),
@@ -130,6 +154,50 @@ def validate_search(site_dir: Path) -> list[str]:
             errors.append(
                 f"Search index lacks {label} witness {term!r} under {location_prefix!r}"
             )
+    return errors
+
+
+def validate_capability_pages(
+    site_dir: Path, pages: dict[Path, PageParser]
+) -> list[str]:
+    witnesses = {
+        "service": (
+            site_dir / "site" / "s3" / "index.html",
+            {"service-s3", "putobject"},
+        ),
+        "operation": (
+            site_dir / "site" / "operations" / "s3" / "putobject" / "index.html",
+            {
+                "operation-s3-putobject",
+                "sub-feature-user-metadata--x-amz-meta",
+            },
+        ),
+        "design-gap index": (
+            site_dir / "site" / "design-gaps" / "index.html",
+            {"s3-no-iam---acl---bucket-policy-authorization-model"},
+        ),
+        "design gap": (
+            site_dir
+            / "site"
+            / "design-gaps"
+            / "s3"
+            / "no-iam---acl---bucket-policy-authorization-model"
+            / "index.html",
+            {"design-gap-s3-no-iam---acl---bucket-policy-authorization-model"},
+        ),
+    }
+    errors: list[str] = []
+    for label, (path, identifiers) in witnesses.items():
+        page = pages.get(path.resolve())
+        if page is None:
+            errors.append(f"Generated {label} page is missing: {path}")
+            continue
+        for identifier in identifiers:
+            if identifier not in page.identifiers:
+                errors.append(
+                    f"Generated {label} page lacks stable identifier "
+                    f"{identifier!r}: {path}"
+                )
     return errors
 
 
@@ -206,7 +274,9 @@ def main() -> int:
         return 1
 
     errors = validate_internal_links(site_dir, pages, base_path)
+    errors.extend(validate_unique_identifiers(pages))
     errors.extend(validate_search(site_dir))
+    errors.extend(validate_capability_pages(site_dir, pages))
     errors.extend(validate_operator_schema_link(site_dir, pages))
     errors.extend(validate_persona_links(site_dir, base_path))
     if errors:
