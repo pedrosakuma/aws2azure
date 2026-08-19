@@ -980,7 +980,7 @@ public static class ConfigSchemaGenerator
               "kind": "eventHubs",
               "target": { "namespace": "events-ns" },
               "auth": { "mode": "reference", "identity": "operator-mi" },
-              "shardIteratorSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+              "shardIteratorSigningKey": "cmVwbGFjZS13aXRoLXVuaXF1ZS1yYW5kb20ta2V5ISE=",
               "streams": {
                 "orders": {
                   "eventHubName": "orders-v1",
