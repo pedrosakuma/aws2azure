@@ -81,6 +81,7 @@ Becomes SB SessionId. Reviewed real-Azure evidence covers both direct FIFO send 
 - Payloads larger than 1 MiB must use the AWS Extended Client Library, which stores the body in S3 and embeds a JSON pointer in the SQS message. That pointer flows through this proxy unchanged: the receive side returns the same pointer, and the embedded S3 reference resolves against the proxy's S3 → Blob translation, so end-to-end large-message support works as long as the client uses the Extended Client and the same proxy fronts both S3 and SQS.
 - ScheduledEnqueueTimeUtc has millisecond resolution in SB; SQS DelaySeconds is integer seconds, so no loss occurs.
 - The standard-queue send path is validated against real Azure Service Bus through the message-lifecycle scenario; FIFO session delivery is separately sealed by the sqs-fifo-amqp fifo-amqp-boundaries scenario.
+- SendMessage against a just-deleted queue: Azure Service Bus's management-plane GetQueue can briefly answer a 2xx whose body isn't a well-formed Atom entry immediately after the delete completes, before the read view settles into a clean 404. The proxy polls through that short window (bounded 3s / 300ms) and surfaces AWS.SimpleQueueService.NonExistentQueue rather than an internal error, matching SQS's own eventual-consistency behaviour for a recently deleted queue. Confirmed against real Azure by SqsRealAzureConformanceTests.SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error.
 
 ## References
 

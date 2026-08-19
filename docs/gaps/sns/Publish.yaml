@@ -40,6 +40,7 @@ behavior_differences:
 - FIFO topics are unsupported on the Event Grid backend. Publish rejects .fifo topics and FIFO-only request parameters there with InvalidParameter instead of dropping them.
 - aws2azure sets Service Bus SessionId on published FIFO messages, but the current SNS subscription-management APIs still create regular Service Bus subscriptions. Guaranteed ordered processing therefore requires consumers to use Service Bus-native session-aware subscriptions provisioned outside the SNS compatibility APIs.
 - Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event and 1 MB per HTTP batch.
+- 'Publish to a nonexistent Service Bus-backed topic: attaching an AMQP sender link to a missing topic answers on the wire with amqp:unauthorized-access rather than amqp:not-found. Since this deployment always authenticates AMQP sends with a namespace-scoped, full-rights credential, a link-level (post-CBS) unauthorized-access rejection can only mean the topic is missing, so the proxy renders SNS''s native NotFoundException instead of an authorization error. Confirmed against real Azure by SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error.'
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_Publish.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide

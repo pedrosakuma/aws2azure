@@ -46,6 +46,19 @@ internal enum SnsAmqpFailureKind
     ClientFatal,
     ServerFatal,
     Redirect,
+    // Azure Service Bus Topics rejects a sender link attach to a
+    // nonexistent topic with the AMQP condition amqp:unauthorized-access
+    // rather than amqp:not-found (confirmed against real Azure — see
+    // SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error).
+    // This deployment always authenticates the AMQP sender with a
+    // namespace-scoped, full-rights credential (the RootManageSharedAccessKey
+    // connection string or an equivalent namespace-level AAD role), so a
+    // link-level (post-CBS) unauthorized-access rejection can only mean the
+    // target topic doesn't exist, not a genuine claims shortfall. Only the
+    // link/transfer-level rejection is reclassified this way — a failure
+    // during CBS token acquisition itself (CbsAuthenticationException,
+    // EntraIdTokenException) still surfaces as Auth/Forbidden.
+    EntityUnavailable,
 }
 
 internal sealed class SnsAmqpException : Exception
@@ -306,6 +319,11 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 "InvalidParameter",
                 "Azure Service Bus Topics rejected the publish request as invalid.",
                 SenderFault: true),
+            SnsAmqpFailureKind.EntityUnavailable => new SnsBatchSendOutcome(
+                false,
+                "NotFound",
+                "Topic does not exist.",
+                SenderFault: true),
             _ => new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false),
         };
 
@@ -345,7 +363,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 wrapped = new SnsAmqpException(
                     linkException.Message,
                     linkException,
-                    MapKind(linkException.Kind),
+                    MapLinkOrTransferKind(linkException.Kind),
                     linkException.PeerCondition,
                     linkException.PeerDescription);
                 return true;
@@ -380,6 +398,18 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         _ => SnsAmqpFailureKind.Unknown,
     };
 
+    // Same mapping as MapKind, but for link/transfer-level rejections only
+    // (sender link attach or message transfer, both already past CBS token
+    // acquisition). Azure Service Bus Topics answers a sender link attach to
+    // a nonexistent topic with amqp:unauthorized-access rather than
+    // amqp:not-found — see the SnsAmqpFailureKind.EntityUnavailable doc
+    // comment for why that's safe to treat as "topic missing" here.
+    private static SnsAmqpFailureKind MapLinkOrTransferKind(AmqpErrorKind kind)
+    {
+        var mapped = MapKind(kind);
+        return mapped == SnsAmqpFailureKind.Auth ? SnsAmqpFailureKind.EntityUnavailable : mapped;
+    }
+
     private static SnsAmqpFailureKind MapTokenStatus(HttpStatusCode backendStatus) => backendStatus switch
     {
         HttpStatusCode.TooManyRequests => SnsAmqpFailureKind.Throttled,
@@ -396,7 +426,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
 
     private static SnsAmqpFailureKind MapSendFailure(ServiceBusSendException exception)
     {
-        var classified = MapKind(AmqpErrorClassifier.Classify(exception.ErrorCondition));
+        var classified = MapLinkOrTransferKind(AmqpErrorClassifier.Classify(exception.ErrorCondition));
         return classified == SnsAmqpFailureKind.Unknown
             ? MapOutcome(exception.Outcome)
             : classified;

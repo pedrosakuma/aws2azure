@@ -20,6 +20,15 @@ internal static class SnsPublishErrorMapper
                 errorMessage: "Access denied when sending to Azure Service Bus Topics over AMQP.");
         }
 
+        if (exception.Kind == SnsAmqpFailureKind.EntityUnavailable)
+        {
+            return SnsPublishOutcome.Failure(
+                StatusCodes.Status404NotFound,
+                errorType: "Sender",
+                errorCode: "NotFound",
+                errorMessage: "Topic does not exist.");
+        }
+
         if (exception.Kind == SnsAmqpFailureKind.Throttled)
         {
             // Mirror the SNS REST/Event Grid throttle shape (HTTP 429 / "Throttled"
@@ -81,6 +90,15 @@ internal static class SnsPublishErrorMapper
                 "AuthorizationError",
                 "Access denied when sending to Azure Service Bus Topics over AMQP.",
                 SenderFault: false);
+        }
+
+        if (exception.Kind == SnsAmqpFailureKind.EntityUnavailable)
+        {
+            return new SnsBatchSendOutcome(
+                false,
+                "NotFound",
+                "Topic does not exist.",
+                SenderFault: true);
         }
 
         if (exception.Kind == SnsAmqpFailureKind.Throttled)

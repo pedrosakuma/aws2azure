@@ -81,6 +81,37 @@ public sealed class QueueMetadataHandlersTests
     }
 
     [Fact]
+    public async Task GetAsync_retries_unparseable_2xx_body_then_reports_queue_does_not_exist()
+    {
+        // Regression test for a real-Azure finding (PR #762): Azure Service
+        // Bus's management-plane GetQueue can briefly answer a just-deleted
+        // queue with a 2xx whose body isn't a well-formed Atom <entry> before
+        // it settles into a clean 404. SqsQueueMetadataCache.GetAsync should
+        // poll through that window and surface QueueDoesNotExist rather than
+        // an InternalError, matching what AWS SQS itself does for a recently
+        // deleted queue.
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "<feed xmlns=\"" + AtomNs + "\"></feed>",
+                Encoding.UTF8,
+                "application/atom+xml"),
+        });
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+
+        var result = await SqsQueueMetadataCache.GetAsync(sb, "gone-queue", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Equal("AWS.SimpleQueueService.NonExistentQueue", result.Error!.Value.Code);
+        Assert.Equal(2, handler.Calls.Count);
+    }
+
+    [Fact]
     public async Task GetQueueAttributes_returns_defaults_from_user_metadata()
     {
         var metadata = new SqsQueueTagStore.QueueMetadata
@@ -97,9 +128,7 @@ public sealed class QueueMetadataHandlersTests
         var sb = new ServiceBusClient(http, Creds);
         var ctx = NewCtx();
 
-        await QueueLifecycleHandlers.HandleAsync(ctx, QueryParsed(SqsOperation.GetQueueAttributes,
-            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/meta-q"),
-            ("AttributeName.1", "DelaySeconds"),
+        await QueueLifecycleHandlers.HandleAsync(ctx, QueryParsed(SqsOperation.GetQueueAttributes,            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/meta-q"),            ("AttributeName.1", "DelaySeconds"),
             ("AttributeName.2", "ReceiveMessageWaitTimeSeconds")), sb, CancellationToken.None);
 
         var body = ReadBody(ctx);
