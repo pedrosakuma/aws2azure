@@ -118,6 +118,7 @@ nav:
       - Real-Azure validation: testing/real-azure-nightly.md
       - Real-AWS differential capture: testing/real-aws-capture.md
       - Documentation retrieval evaluation: testing/retrieval-eval.md
+      - Documentation quality suite: testing/documentation-quality.md
       - Performance and footprint:
           - Baseline guide: perf/README.md
           - Latest performance baseline: perf/baseline-latest.md
@@ -160,5 +161,7 @@ nav:
       - "0018: Service Bus transport evolution": adr/0018-service-bus-transport-and-emulator-evolution.md
   - Contribute:
       - Documentation portal: contributing/documentation.md
+      - Documentation ownership and freshness: contributing/documentation-ownership.md
+      - Documentation review checklist: contributing/documentation-review-checklist.md
       - Gap-doc authoring: gaps/README.md
       - Qualification policy authoring: workloads/qualification/README.md

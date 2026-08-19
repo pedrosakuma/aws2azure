@@ -151,7 +151,9 @@ candidate or promoted itself.
    rerun as resolution.
 7. After review, commit the immutable YAML below `docs/workloads/evidence/` and
    reference it from the matching workload manifest. The GA evaluator verifies
-   profile/operation/scenario/source coherence and freshness.
+   profile/operation/scenario/source coherence and freshness; the resulting
+   verdict is published to `docs/site/workload-ga.json`, which remains the
+   live record of record.
 
 The bootstrap record currently held for SQS remains profile-owned. Every load
 proof records the prior ledger file digest/status and

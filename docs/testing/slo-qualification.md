@@ -1,7 +1,9 @@
 # Workload SLO qualification artifacts
 
 Workload GA uses a versioned qualification artifact rather than treating every
-performance result as the same kind of evidence. The contract has three
+performance result as the same kind of evidence; the live GA verdict this
+feeds is published to [`docs/site/workload-ga.json`](../site/workload-ga.json).
+The contract has three
 artifact kinds:
 
 | Artifact kind | Purpose | Permitted claim |
@@ -201,7 +203,9 @@ id/name/upload digest, and unexpired artifact. Those selection identities are
 preserved in final provenance with the profile id. A committed `qualified`
 artifact is valid only when correctness and every load source run carry this
 non-null `evidence_artifact` metadata and it still matches all of those immutable
-constraints; hand-edited or missing trust metadata blocks GA certification.
+constraints; hand-edited or missing trust metadata blocks GA certification —
+see [`docs/site/workload-ga.json`](../site/workload-ga.json) for the live
+verdict this gate protects.
 
 ## Version 1 shape
 

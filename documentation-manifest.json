@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:917bb9b72906111aaad97d8ad6fec116bf4e16a7537628e02c79101cb1f50af3",
+  "manifest_revision": "sha256:bdb4aa316a0ec615cb267a3fa2e71f0d0595f146e559742786dd66c8bf672e77",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -940,6 +940,30 @@
       }
     },
     {
+      "id": "documentation:docs-contributing-documentation-ownership",
+      "path": "docs/contributing/documentation-ownership.md",
+      "type": "documentation-guide",
+      "scope": "contributing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:d6dc8964b7a32e37b53a38289726e65c690ab435602bd8fcedb6e93f3ec24cb7",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-contributing-documentation-review-checklist",
+      "path": "docs/contributing/documentation-review-checklist.md",
+      "type": "documentation-guide",
+      "scope": "contributing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:6c98a2269e8dad4978951076e37e9501835c202d9ecfa54ce885aa65296e2aed",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-deployment-module-selection",
       "path": "docs/deployment/module-selection.md",
       "type": "documentation-guide",
@@ -1276,13 +1300,25 @@
       }
     },
     {
+      "id": "documentation:docs-testing-documentation-quality",
+      "path": "docs/testing/documentation-quality.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:689ab292c18d27a588eba2ff33453044d44557d5efe31207c2af3bac36310340",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-testing-operational-qualification",
       "path": "docs/testing/operational-qualification.md",
       "type": "documentation-guide",
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:e2a80d797786a8490757d509feb13e4675ea3a784eb54856cb7b0a5cf3716f95",
+      "revision": "sha256:60c5e41ca91f4248def10b3b4621e5659c484925e088ad5d0fe3cb82d7c1b3e6",
       "freshness": {
         "mode": "current"
       }
@@ -1342,7 +1378,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:f4daf2406fb25a961eb8c849a9cd915b7aeefb4e5626228da3bb05a6ebf14db0",
+      "revision": "sha256:48d65090985c3dcac89ebae47c5921b68a965ce6e1442882e4cd55af16f98ef8",
       "freshness": {
         "mode": "current"
       }
