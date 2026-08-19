@@ -113,6 +113,7 @@ def validate_search(site_dir: Path) -> list[str]:
     witnesses = {
         "service operation": ("CreateBucket", "site/s3/"),
         "configuration concept": ("azureIdentities", "getting-started/"),
+        "operator schema": ("config.schema.json", "configuration-schema/"),
         "workload verdict": ("conditional", "site/workload-compatibility/"),
         "production procedure": ("rollback", "deployment/production-runbook/"),
     }
@@ -130,6 +131,27 @@ def validate_search(site_dir: Path) -> list[str]:
                 f"Search index lacks {label} witness {term!r} under {location_prefix!r}"
             )
     return errors
+
+
+def validate_operator_schema_link(
+    site_dir: Path, pages: dict[Path, PageParser]
+) -> list[str]:
+    page_path = (site_dir / "configuration-schema" / "index.html").resolve()
+    page = pages.get(page_path)
+    if page is None:
+        return [f"Operator configuration page is missing: {page_path}"]
+
+    expected = (
+        "https://github.com/pedrosakuma/aws2azure/"
+        "blob/main/config.schema.json"
+    )
+    if any(reference == expected for _, reference in page.references):
+        return []
+
+    return [
+        "Operator configuration page lacks canonical schema link "
+        f"{expected!r}"
+    ]
 
 
 def validate_persona_links(site_dir: Path, base_path: str) -> list[str]:
@@ -185,6 +207,7 @@ def main() -> int:
 
     errors = validate_internal_links(site_dir, pages, base_path)
     errors.extend(validate_search(site_dir))
+    errors.extend(validate_operator_schema_link(site_dir, pages))
     errors.extend(validate_persona_links(site_dir, base_path))
     if errors:
         for error in errors:

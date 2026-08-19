@@ -45,10 +45,10 @@ config:
           s3:
             kind: blob
             target:
-              accountName: ""
+              accountName: REPLACE_WITH_STORAGE_ACCOUNT
             auth:
               mode: sharedKey
-              key: ""
+              key: REPLACE_WITH_STORAGE_ACCOUNT_KEY
 
 # -- Extra environment variables for the proxy container.
 extraEnv: []

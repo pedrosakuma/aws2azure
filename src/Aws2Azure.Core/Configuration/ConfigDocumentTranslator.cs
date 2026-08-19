@@ -29,7 +29,12 @@ public static class ConfigDocumentTranslator
 
         for (var i = 0; i < document.Bindings.Count; i++)
         {
-            config.Credentials.Add(TranslateBinding(document.Bindings[i], i));
+            var binding = document.Bindings[i];
+            if (binding is null)
+            {
+                throw new ProxyConfigException($"bindings[{i}]: entry must not be null.");
+            }
+            config.Credentials.Add(TranslateBinding(binding, i));
         }
 
         return config;
@@ -220,14 +225,21 @@ public static class ConfigDocumentTranslator
                     throw new ProxyConfigException(
                         $"{path}.eventGridFallback: not allowed when kind=eventGrid; this binding is already Event Grid.");
                 }
+
+                // v1 accepted Event Grid as the primary SNS backend and ignored
+                // fields that did not apply to Event Grid. Keep that read contract;
+                // the canonical authoring profile uses serviceBusTopics plus a fallback.
                 azure.EventGrid = TranslateEventGridBackend(backend, path);
+                azure.EventGridIsStandalone = true;
                 return;
             default:
                 throw Invalid(path, backend.Kind, "serviceBusTopics", "eventGrid");
         }
     }
 
-    private static EventGridCredentials TranslateEventGridBackend(AzureBackendConfig backend, string path)
+    private static EventGridCredentials TranslateEventGridBackend(
+        AzureBackendConfig backend,
+        string path)
     {
         RequireMode(backend.Auth, path, KeyOrAad);
         var grid = new EventGridCredentials

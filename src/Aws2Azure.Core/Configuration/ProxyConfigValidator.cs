@@ -164,6 +164,15 @@ public static class ProxyConfigValidator
             {
                 errors.Add($"{dynamoDbPrefix}.target.endpoint: required.");
             }
+            else
+            {
+                ValidateAbsoluteUri(
+                    cosmos.Endpoint,
+                    $"{dynamoDbPrefix}.target.endpoint",
+                    errors,
+                    Uri.UriSchemeHttp,
+                    Uri.UriSchemeHttps);
+            }
             if (string.IsNullOrWhiteSpace(cosmos.DatabaseName))
             {
                 errors.Add($"{dynamoDbPrefix}.target.databaseName: required.");
@@ -228,6 +237,23 @@ public static class ProxyConfigValidator
                 hasClientSecret: !string.IsNullOrWhiteSpace(eh.ClientSecret),
                 mode: eh.AuthMode);
 
+            if (eh.ShardIteratorSigningKey is { } signingKey)
+            {
+                try
+                {
+                    if (Convert.FromBase64String(signingKey).Length < 32)
+                    {
+                        errors.Add(
+                            $"{kinesisPrefix}.shardIteratorSigningKey: must decode to at least 32 bytes.");
+                    }
+                }
+                catch (FormatException)
+                {
+                    errors.Add(
+                        $"{kinesisPrefix}.shardIteratorSigningKey: must be valid base64.");
+                }
+            }
+
             if (eh.Streams is { } streams)
             {
                 foreach (var (name, settings) in streams)
@@ -253,7 +279,10 @@ public static class ProxyConfigValidator
 
         if (azure.EventGrid is { } eventGrid)
         {
-            ValidateEventGrid(eventGrid, prefix + ".sns", errors);
+            var eventGridPrefix = azure.EventGridIsStandalone
+                ? prefix + ".sns"
+                : prefix + ".sns.eventGridFallback";
+            ValidateEventGrid(eventGrid, eventGridPrefix, errors);
         }
 
         if (azure.KeyVault is { } keyVault)
@@ -322,7 +351,13 @@ public static class ProxyConfigValidator
 
         if (snsSettings.DefaultBackend == SnsTopicBackend.EventGrid)
         {
-            ValidateSnsEventGridRoute(prefix + ": services.sns.defaultBackend=EventGrid", eventGrid, endpointOverride: null, accessKeyOverride: null, errors);
+            ValidateSnsEventGridRoute(
+                prefix + ": services.sns.defaultBackend=EventGrid",
+                prefix + ".eventGridFallback",
+                eventGrid,
+                endpointOverride: null,
+                accessKeyOverride: null,
+                errors);
         }
 
         if (credentials.Topics is { } topics)
@@ -355,9 +390,33 @@ public static class ProxyConfigValidator
                 {
                     errors.Add($"{prefix}.topics.{name}.eventGridAccessKey: must be non-empty when set.");
                 }
-                if (settings.Backend == SnsTopicBackend.EventGrid)
+                if (settings.Backend == SnsTopicBackend.ServiceBusTopics)
                 {
-                    ValidateSnsEventGridRoute($"{prefix}.topics.{name}", eventGrid, settings.EventGridTopicEndpoint, settings.EventGridAccessKey, errors);
+                    if (settings.EventGridTopicEndpoint is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.eventGridTopicEndpoint: not valid when backend=ServiceBusTopics.");
+                    }
+                    if (settings.EventGridAccessKey is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.eventGridAccessKey: not valid when backend=ServiceBusTopics.");
+                    }
+                }
+                else if (settings.Backend == SnsTopicBackend.EventGrid)
+                {
+                    if (settings.ServiceBusTopicName is not null)
+                    {
+                        errors.Add(
+                            $"{prefix}.topics.{name}.serviceBusTopicName: not valid when backend=EventGrid.");
+                    }
+                    ValidateSnsEventGridRoute(
+                        $"{prefix}.topics.{name}",
+                        prefix + ".eventGridFallback",
+                        eventGrid,
+                        settings.EventGridTopicEndpoint,
+                        settings.EventGridAccessKey,
+                        errors);
                 }
             }
         }
@@ -365,51 +424,29 @@ public static class ProxyConfigValidator
 
     private static void ValidateSnsEventGridRoute(
         string prefix,
+        string fallbackPrefix,
         EventGridCredentials? credentials,
         string? endpointOverride,
         string? accessKeyOverride,
         List<string> errors)
     {
-        var hasEndpoint = !string.IsNullOrWhiteSpace(endpointOverride)
-            || HasEventGridEndpoint(credentials);
-        if (!hasEndpoint)
-        {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridTopicEndpoint or this binding's azure.sns to use kind=eventGrid with target.endpoint/(target.namespace+target.topicName) set.");
-        }
-
-        var hasOverrideKey = !string.IsNullOrWhiteSpace(accessKeyOverride);
-        var hasAccessKey = hasOverrideKey
-            || !string.IsNullOrWhiteSpace(credentials?.AccessKey);
-        var mode = credentials?.AuthMode ?? AzureAuthMode.ClientSecret;
-        var hasTenant = !string.IsNullOrWhiteSpace(credentials?.TenantId);
-        var hasClientId = !string.IsNullOrWhiteSpace(credentials?.ClientId);
-        var hasClientSecret = !string.IsNullOrWhiteSpace(credentials?.ClientSecret);
-        var hasCompleteAad = mode switch
-        {
-            AzureAuthMode.ClientSecret => hasTenant && hasClientId && hasClientSecret,
-            AzureAuthMode.ManagedIdentity => !hasTenant && !hasClientSecret,
-            AzureAuthMode.WorkloadIdentity => !hasTenant && !hasClientId && !hasClientSecret && HasWorkloadIdentityEnvironment(),
-            _ => false,
-        };
-        if (!hasAccessKey && !hasCompleteAad)
-        {
-            errors.Add($"{prefix}: EventGrid backend requires either eventGridAccessKey or this binding's azure.sns to use kind=eventGrid with auth.key/(auth.tenantId+auth.clientId+auth.clientSecret) set.");
-        }
-
-        // A per-topic eventGridAccessKey override is pure key-auth at runtime
-        // (SnsTopicRouting prefers it and EventGridPublisher short-circuits before AAD),
-        // so it is independent of the global azure.sns authMode/AAD shape.
-        if (hasOverrideKey)
+        if (credentials is not null)
         {
             return;
         }
-        if (!hasAccessKey)
+
+        if (string.IsNullOrWhiteSpace(endpointOverride))
         {
-            ValidateAadShape(prefix, mode, hasTenant, hasClientId, hasClientSecret, errors);
+            errors.Add(
+                $"{prefix}: EventGrid route requires either eventGridTopicEndpoint or " +
+                $"{fallbackPrefix}.target.endpoint/(target.namespace+target.topicName).");
         }
-        else
+
+        if (string.IsNullOrWhiteSpace(accessKeyOverride))
         {
-            ValidateKeyShape(prefix, errors, "auth.key", mode, hasTenant || hasClientId || hasClientSecret, "auth.key");
+            errors.Add(
+                $"{prefix}: EventGrid route requires either eventGridAccessKey or " +
+                $"{fallbackPrefix}.auth.key/(auth.tenantId+auth.clientId+auth.clientSecret).");
         }
     }
 
@@ -433,19 +470,59 @@ public static class ProxyConfigValidator
             errors.Add($"{prefix}.target.topicName: must be non-empty when set.");
         }
 
-        ValidateDualAuth(
+        ValidateEventGridAuth(credentials, prefix + ".auth", errors);
+    }
+
+    private static void ValidateEventGridAuth(
+        EventGridCredentials credentials,
+        string prefix,
+        List<string> errors)
+    {
+        // Identity resolution reports dangling or ambiguous references at this
+        // exact auth path. Do not add synthetic inline-credential errors after it.
+        if (!string.IsNullOrWhiteSpace(credentials.Identity))
+        {
+            return;
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(credentials.AccessKey);
+        var hasTenant = !string.IsNullOrWhiteSpace(credentials.TenantId);
+        var hasClientId = !string.IsNullOrWhiteSpace(credentials.ClientId);
+        var hasClientSecret = !string.IsNullOrWhiteSpace(credentials.ClientSecret);
+        var hasAnyAad = hasTenant || hasClientId || hasClientSecret;
+
+        if (hasKey)
+        {
+            if (!Enum.IsDefined(typeof(AzureAuthMode), credentials.AuthMode))
+            {
+                errors.Add($"{prefix}.mode: unknown value '{(int)credentials.AuthMode}'.");
+                return;
+            }
+            if (credentials.AuthMode != AzureAuthMode.ClientSecret)
+            {
+                errors.Add(
+                    $"{prefix}.mode: '{credentials.AuthMode}' cannot be combined with key auth — " +
+                    "managed/workload identity replaces the secret, not the key.");
+            }
+            if (hasAnyAad)
+            {
+                errors.Add(
+                    $"{prefix}: key and tenantId/clientId/clientSecret are mutually exclusive — supply one shape.");
+            }
+            return;
+        }
+
+        ValidateAadShape(
             prefix,
+            credentials.AuthMode,
+            hasTenant,
+            hasClientId,
+            hasClientSecret,
             errors,
-            sasLabel: "auth.key",
-            authShapeLabel: "auth.key",
-            hasSasPart1: !string.IsNullOrWhiteSpace(credentials.AccessKey),
-            hasSasPart2: !string.IsNullOrWhiteSpace(credentials.AccessKey),
-            sasRequirementMessage: "either auth.key OR (auth.tenantId+auth.clientId+auth.clientSecret) is required.",
-            sasPairRequirementMessage: null,
-            hasTenant: !string.IsNullOrWhiteSpace(credentials.TenantId),
-            hasClientId: !string.IsNullOrWhiteSpace(credentials.ClientId),
-            hasClientSecret: !string.IsNullOrWhiteSpace(credentials.ClientSecret),
-            mode: credentials.AuthMode);
+            modeField: "mode",
+            tenantField: "tenantId",
+            clientIdField: "clientId",
+            clientSecretField: "clientSecret");
     }
 
     private static bool HasEventGridEndpoint(EventGridCredentials? credentials)
@@ -677,7 +754,13 @@ public static class ProxyConfigValidator
             ResolveBlockIdentity(identities, azure.Cosmos, prefix + ".dynamodb", errors);
             ResolveBlockIdentity(identities, azure.EventHubs, prefix + ".kinesis", errors);
             ResolveBlockIdentity(identities, azure.ServiceBusTopics, prefix + ".sns", errors);
-            ResolveBlockIdentity(identities, azure.EventGrid, prefix + ".sns", errors);
+            ResolveBlockIdentity(
+                identities,
+                azure.EventGrid,
+                azure.EventGridIsStandalone
+                    ? prefix + ".sns"
+                    : prefix + ".sns.eventGridFallback",
+                errors);
             ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".secretsmanager", errors);
         }
     }
@@ -742,6 +825,15 @@ public static class ProxyConfigValidator
 
     private static void ValidateAbsoluteUri(string value, string field, List<string> errors, params string[] allowedSchemes)
     {
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                errors.Add($"{field}: must not contain whitespace.");
+                return;
+            }
+        }
+
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
         {
             errors.Add($"{field}: must be an absolute URI when set.");

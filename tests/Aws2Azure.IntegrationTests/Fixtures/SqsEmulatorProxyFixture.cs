@@ -85,7 +85,6 @@ public sealed class SqsEmulatorProxyFixture : IAsyncLifetime
         var managementUrl = $"http://{_emulator.AmqpHost}:{_emulator.HttpPort}/";
         File.WriteAllText(_configFile, $$"""
             {
-              "listen": "http://127.0.0.1:0",
               "services": {
                 "s3":  { "enabled": false },
                 "sqs": { "enabled": true }

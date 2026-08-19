@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Aws2Azure.Core.Configuration;
@@ -46,9 +48,11 @@ public sealed class ServicesConfig
 {
     public S3ServiceConfig? S3 { get; set; }
     public ServiceToggleConfig? Sqs { get; set; }
+    [JsonPropertyName("dynamodb")]
     public DynamoDbServiceConfig? DynamoDb { get; set; }
     public SnsServiceConfig? Sns { get; set; }
     public ServiceToggleConfig? Kinesis { get; set; }
+    [JsonPropertyName("secretsmanager")]
     public ServiceToggleConfig? SecretsManager { get; set; }
 }
 
@@ -119,9 +123,11 @@ public sealed class AzureBindingSet
 {
     public AzureBackendConfig? S3 { get; set; }
     public AzureBackendConfig? Sqs { get; set; }
+    [JsonPropertyName("dynamodb")]
     public AzureBackendConfig? DynamoDb { get; set; }
     public AzureBackendConfig? Sns { get; set; }
     public AzureBackendConfig? Kinesis { get; set; }
+    [JsonPropertyName("secretsmanager")]
     public AzureBackendConfig? SecretsManager { get; set; }
 }
 
@@ -139,6 +145,7 @@ public sealed class AzureBackendConfig
     /// <c>serviceBusTopics</c>, <c>cosmos</c>, <c>eventHubs</c>, <c>eventGrid</c>,
     /// or <c>keyVault</c>. Must be valid for the AWS service it sits under.
     /// </summary>
+    [JsonConverter(typeof(AzureBackendKindConverter))]
     public string Kind { get; set; } = string.Empty;
 
     public AzureTargetConfig Target { get; set; } = new();
@@ -250,7 +257,7 @@ public sealed class AzureAuthConfig
 /// Unified auth shape selector for Azure backends. Replaces the per-backend
 /// "is the key field empty?" heuristic with an explicit discriminator.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<AzureAuthKind>))]
+[JsonConverter(typeof(CaseInsensitiveStringEnumConverter<AzureAuthKind>))]
 public enum AzureAuthKind
 {
     /// <summary>Account/master/access key HMAC (blob, cosmos, eventGrid).</summary>
@@ -273,11 +280,149 @@ public enum AzureAuthKind
 }
 
 /// <summary>
+/// Preserves v1-compatible case-insensitive, whitespace-tolerant backend-kind
+/// reads while emitting the canonical authoring spelling.
+/// </summary>
+public sealed class AzureBackendKindConverter : JsonConverter<string>
+{
+    public override string Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException("Backend kind must be a string.");
+        }
+
+        return reader.GetString()!;
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        string value,
+        JsonSerializerOptions options)
+    {
+        var kind = value.AsSpan().Trim();
+        var canonical = kind switch
+        {
+            _ when kind.Equals("blob", StringComparison.OrdinalIgnoreCase) => "blob",
+            _ when kind.Equals("serviceBus", StringComparison.OrdinalIgnoreCase) => "serviceBus",
+            _ when kind.Equals("serviceBusTopics", StringComparison.OrdinalIgnoreCase) => "serviceBusTopics",
+            _ when kind.Equals("cosmos", StringComparison.OrdinalIgnoreCase) => "cosmos",
+            _ when kind.Equals("eventHubs", StringComparison.OrdinalIgnoreCase) => "eventHubs",
+            _ when kind.Equals("eventGrid", StringComparison.OrdinalIgnoreCase) => "eventGrid",
+            _ when kind.Equals("keyVault", StringComparison.OrdinalIgnoreCase) => "keyVault",
+            _ => throw new JsonException($"'{value}' is not a recognized backend kind."),
+        };
+
+        writer.WriteStringValue(canonical);
+    }
+}
+
+/// <summary>
+/// Reads defined enum names case-insensitively and preserves v1 compatibility
+/// for defined numeric values. Serialization always writes canonical names.
+/// </summary>
+public sealed class CaseInsensitiveStringEnumConverter<TEnum> : JsonConverter<TEnum>
+    where TEnum : struct, Enum
+{
+    public override TEnum Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            if (reader.TryGetInt32(out var numeric))
+            {
+                var parsedNumeric = (TEnum)Enum.ToObject(typeof(TEnum), numeric);
+                if (Enum.IsDefined(parsedNumeric))
+                {
+                    return parsedNumeric;
+                }
+            }
+
+            throw new JsonException(
+                $"Numeric value for {typeof(TEnum).Name} must name a defined member.");
+        }
+
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException($"{typeof(TEnum).Name} must be a string or defined numeric value.");
+        }
+
+        var value = reader.GetString();
+        if (!ConfigEnumParser.TryParse(value, out TEnum parsed))
+        {
+            throw new JsonException($"'{value}' is not a valid {typeof(TEnum).Name}.");
+        }
+        return parsed;
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        TEnum value,
+        JsonSerializerOptions options)
+        => writer.WriteStringValue(ConfigEnumParser.GetCanonicalName(value));
+}
+
+internal static class ConfigEnumParser
+{
+    public static string GetCanonicalName<TEnum>(TEnum value)
+        where TEnum : struct, Enum
+    {
+        var name = value.ToString();
+        return typeof(TEnum) == typeof(AzureAuthKind)
+            || typeof(TEnum) == typeof(AzureAuthMode)
+            ? JsonNamingPolicy.CamelCase.ConvertName(name)
+            : name;
+    }
+
+    public static bool TryParse<TEnum>(string? value, out TEnum result)
+        where TEnum : struct, Enum
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var trimmed = value.Trim();
+            foreach (var candidate in Enum.GetValues<TEnum>())
+            {
+                if (trimmed.Equals(candidate.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    result = candidate;
+                    return true;
+                }
+            }
+
+            if (long.TryParse(
+                    trimmed,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var numeric))
+            {
+                var candidate = (TEnum)Enum.ToObject(typeof(TEnum), numeric);
+                if (Enum.IsDefined(candidate))
+                {
+                    result = candidate;
+                    return true;
+                }
+            }
+        }
+
+        result = default;
+        return false;
+    }
+}
+
+/// <summary>
 /// System.Text.Json source-generated context for <see cref="ConfigDocument"/>.
 /// </summary>
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     PropertyNameCaseInsensitive = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    RespectNullableAnnotations = true,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Skip,
     AllowTrailingCommas = true)]
 [JsonSerializable(typeof(ConfigDocument))]
 public sealed partial class ConfigDocumentJsonContext : JsonSerializerContext

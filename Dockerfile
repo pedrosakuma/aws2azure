@@ -64,8 +64,10 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# Copy the published AOT binary.
+# Copy the published AOT binary, bundled operator configuration, and host settings.
 COPY --from=build /app/Aws2Azure.Proxy .
+COPY --from=build /app/config.json .
+COPY --from=build /app/appsettings.json .
 
 # Run as non-root (chiseled images define $APP_UID=1654).
 USER $APP_UID

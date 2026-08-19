@@ -30,6 +30,18 @@ class PersonaLinkParser(HTMLParser):
 
 
 class DocumentationSourceTests(unittest.TestCase):
+    def test_operator_configuration_links_to_root_schema(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        page_path = repo_root / "docs" / "configuration-schema.md"
+        target = "../config.schema.json"
+
+        self.assertIn(f"]({target})", page_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            repo_root / "config.schema.json",
+            (page_path.parent / target).resolve(),
+        )
+        self.assertTrue((page_path.parent / target).is_file())
+
     def test_persona_links_are_github_browsable_markdown_targets(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         index_path = repo_root / "docs" / "index.md"

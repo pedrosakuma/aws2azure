@@ -60,13 +60,35 @@ public class ProxyConfigJsonTests
     }
 
     [Fact]
-    public void Property_names_are_case_insensitive()
+    public void Accepts_noncanonical_property_names_for_v1_read_compatibility()
     {
         const string json = """
         { "Bindings": [ { "AWS": { "AccessKeyId": "AKIA", "secretAccessKey": "s" }, "azure": {} } ] }
         """;
 
         var config = Translate(json);
+
+        var credential = Assert.Single(config.Credentials);
+        Assert.Equal("AKIA", credential.AwsAccessKeyId);
+        Assert.Equal("s", credential.AwsSecretAccessKey);
+    }
+
+    [Fact]
+    public void Ignores_unknown_properties_for_v1_read_compatibility()
+    {
+        const string json = """
+        {
+          "bindings": [
+            {
+              "aws": { "accessKeyId": "AKIA", "secretAccessKey": "s", "unexpected": true },
+              "azure": {}
+            }
+          ]
+        }
+        """;
+
+        var config = Translate(json);
+
         Assert.Equal("AKIA", Assert.Single(config.Credentials).AwsAccessKeyId);
     }
 
@@ -230,7 +252,7 @@ public class ProxyConfigJsonTests
     }
 
     [Fact]
-    public void Rejects_event_grid_fallback_on_event_grid_kind_binding()
+    public void Accepts_legacy_event_grid_as_primary_sns_binding()
     {
         const string json = """
         {
@@ -240,13 +262,19 @@ public class ProxyConfigJsonTests
               "azure": {
                 "sns": {
                   "kind": "eventGrid",
-                  "target": { "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events" },
-                  "auth": { "mode": "sharedKey", "key": "eg1" },
-                  "eventGridFallback": {
-                    "kind": "eventGrid",
-                    "target": { "endpoint": "https://other.region-1.eventgrid.azure.net/api/events" },
-                    "auth": { "mode": "sharedKey", "key": "eg2" }
-                  }
+                  "target": {
+                    "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events",
+                    "managementEndpoint": "ignored"
+                  },
+                  "auth": {
+                    "mode": "sharedKey",
+                    "key": "eg1",
+                    "keyName": "ignored"
+                  },
+                  "topics": {
+                    "ignored": { "backend": "ServiceBusTopics" }
+                  },
+                  "extension": true
                 }
               }
             }
@@ -254,8 +282,40 @@ public class ProxyConfigJsonTests
         }
         """;
 
-        var ex = Assert.Throws<ProxyConfigException>(() => Translate(json));
-        Assert.Contains("bindings[0].azure.sns.eventGridFallback: not allowed when kind=eventGrid", ex.Message);
+        var config = Translate(json);
+        ProxyConfigValidator.Validate(config);
+        var azure = Assert.Single(config.Credentials).Azure;
+        Assert.Null(azure.ServiceBusTopics);
+        var eventGrid = Assert.IsType<EventGridCredentials>(azure.EventGrid);
+        Assert.Equal(
+            "https://topic.region-1.eventgrid.azure.net/api/events",
+            eventGrid.Endpoint);
+        Assert.Equal("eg1", eventGrid.AccessKey);
+    }
+
+    [Fact]
+    public void Legacy_standalone_event_grid_validation_uses_primary_sns_path()
+    {
+        const string json = """
+        {
+          "bindings": [{
+            "aws": { "accessKeyId": "AKIA1", "secretAccessKey": "secret1" },
+            "azure": {
+              "sns": {
+                "kind": "eventGrid",
+                "target": { "endpoint": "https://topic.region-1.eventgrid.azure.net/api/events" },
+                "auth": { "mode": "sharedKey" }
+              }
+            }
+          }]
+        }
+        """;
+
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigValidator.Validate(Translate(json)));
+
+        Assert.Contains("bindings[0].azure.sns.auth", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("eventGridFallback", exception.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

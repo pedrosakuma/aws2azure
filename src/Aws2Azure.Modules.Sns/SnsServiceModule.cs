@@ -126,9 +126,42 @@ public sealed class SnsServiceModule : IServiceModule
 
         var serviceBusTopicsCredentials = _credentials.GetAzureCredentialsFor(accessKey, AzureService.ServiceBusTopics) as ServiceBusTopicsCredentials;
         var eventGridCredentials = _credentials.GetAzureCredentialsFor(accessKey, AzureService.EventGrid) as EventGridCredentials;
+        var isPublish = parsed.Operation is SnsOperation.Publish or SnsOperation.PublishBatch;
         if (serviceBusTopicsCredentials is null)
         {
-            await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+            if (!isPublish || eventGridCredentials is null)
+            {
+                await WriteServiceBusTopicsCredentialErrorAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (parsed.Operation == SnsOperation.Publish)
+            {
+                await PublishHandler.HandleAsync(
+                        context,
+                        parsed,
+                        credentials: null,
+                        eventGridCredentials,
+                        _settings,
+                        _serviceBusTopicsManagementClient,
+                        _amqpSender,
+                        _eventGridPublisher,
+                        context.RequestAborted)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            await PublishBatchHandler.HandleAsync(
+                    context,
+                    parsed,
+                    credentials: null,
+                    eventGridCredentials,
+                    _settings,
+                    _serviceBusTopicsManagementClient,
+                    _amqpSender,
+                    _eventGridPublisher,
+                    context.RequestAborted)
+                .ConfigureAwait(false);
             return;
         }
 

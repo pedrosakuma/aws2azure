@@ -55,7 +55,6 @@ public sealed class SnsServiceBusProxyFixture : IAsyncLifetime
         var managementUrl = $"http://{_emulator.AmqpHost}:{_emulator.HttpPort}/";
         await File.WriteAllTextAsync(_configFile, $$"""
             {
-              "listen": "http://127.0.0.1:0",
               "services": {
                 "s3": { "enabled": false },
                 "sqs": { "enabled": false },

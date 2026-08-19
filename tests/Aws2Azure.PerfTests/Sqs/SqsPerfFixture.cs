@@ -61,7 +61,6 @@ public sealed class SqsPerfFixture : IAsyncLifetime
             var managementUrl = $"http://{_emulator.AmqpHost}:{_emulator.HttpPort}/";
             var config = $$"""
                 {
-                  "listen": "http://127.0.0.1:0",
                   "services": {
                     "s3":  { "enabled": false },
                     "sqs": { "enabled": true }
