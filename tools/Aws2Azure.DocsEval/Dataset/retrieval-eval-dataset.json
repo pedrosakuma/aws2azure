@@ -1,0 +1,842 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "adopt-dynamodb-basic-crud",
+      "category": "adoption_status",
+      "service": "dynamodb",
+      "adversarial": false,
+      "question": "Is the DynamoDB basic table and item CRUD workload profile production-ready today?",
+      "expectedAnswer": {
+        "summary": "No. The live workload certification verdict for dynamodb-basic-crud is 'conditional': callers must explicitly accept documented partial operation semantics and design gaps, and DeleteItem/PutItem still lack a required real-Azure verification seal.",
+        "canonicalSources": ["docs/site/workload-ga.json", "docs/project-maturity.md"],
+        "precedence": "Live workload certification (docs/site/workload-ga.json, rank 1) is authoritative for the current verdict; gap docs (rank 3) explain why."
+      },
+      "prohibitedConclusions": [
+        "Must not claim dynamodb-basic-crud is GA.",
+        "Must not claim the profile is unconditionally production-ready."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "dynamodb-basic-crud", "expectedVerdict": "conditional" }
+      ]
+    },
+    {
+      "id": "adopt-dynamodb-query-scan-indexes",
+      "category": "adoption_status",
+      "service": "dynamodb",
+      "adversarial": false,
+      "question": "What is the current certification status of DynamoDB Query, Scan, and secondary indexes?",
+      "expectedAnswer": {
+        "summary": "Conditional. Secondary indexes (GSI/LSI) and the throughput/throttling model are accepted design gaps, not eliminated ones.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim GSI/LSI support is complete or AWS-parity."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "dynamodb-query-scan-indexes", "expectedVerdict": "conditional" }
+      ]
+    },
+    {
+      "id": "adopt-dynamodb-single-partition-transactions",
+      "category": "adoption_status",
+      "service": "dynamodb",
+      "adversarial": false,
+      "question": "What is the current certification status of DynamoDB single-partition transactions?",
+      "expectedAnswer": {
+        "summary": "Candidate. It has passed automated qualification but has not completed the full workload-GA gate (e.g. staged production-shaped evidence).",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim this profile is GA.",
+        "Must not treat 'candidate' as equivalent to production-ready."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "dynamodb-single-partition-transactions", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-kinesis-basic-record-ingestion",
+      "category": "adoption_status",
+      "service": "kinesis",
+      "adversarial": false,
+      "question": "Is the Kinesis basic record ingestion workload profile currently GA?",
+      "expectedAnswer": {
+        "summary": "No, it is 'candidate'. Candidate means automated qualification passed but full workload-GA evidence is not yet complete.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim kinesis-basic-record-ingestion is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "kinesis-basic-record-ingestion", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-kinesis-single-consumer-per-shard",
+      "category": "adoption_status",
+      "service": "kinesis",
+      "adversarial": false,
+      "question": "What is the current certification status of the Kinesis single-consumer-per-shard profile?",
+      "expectedAnswer": {
+        "summary": "Candidate, not GA.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim kinesis-single-consumer-per-shard is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "kinesis-single-consumer-per-shard", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-s3-basic-object-crud-vs-release-notes",
+      "category": "adoption_status",
+      "service": "s3",
+      "adversarial": true,
+      "question": "The v1.0.0 release notes list s3-basic-object-crud as 'GA'. Is that still true today?",
+      "expectedAnswer": {
+        "summary": "No. docs/releases/v1.0.0.md is an immutable historical record of what was true when v1.0.0 was promoted. The current live verdict in docs/site/workload-ga.json is 'candidate', which overrides the historical GA claim per the release notes' own stated precedence.",
+        "canonicalSources": ["docs/site/workload-ga.json", "docs/releases/v1.0.0.md"],
+        "precedence": "Live workload certification (rank 1) overrides immutable historical release notes (rank 4); the release notes explicitly say so."
+      },
+      "prohibitedConclusions": [
+        "Must not answer 'yes, it is GA' solely because docs/releases/v1.0.0.md says so.",
+        "Must not present the historical release claim as the current status without checking docs/site/workload-ga.json."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "s3-basic-object-crud", "expectedVerdict": "candidate" },
+        {
+          "type": "text_contains",
+          "path": "docs/releases/v1.0.0.md",
+          "mustContain": "verdict overrides this historical claim",
+          "expectedExists": true
+        }
+      ]
+    },
+    {
+      "id": "adopt-secretsmanager-basic-lifecycle-vs-release-notes",
+      "category": "adoption_status",
+      "service": "secretsmanager",
+      "adversarial": true,
+      "question": "The v1.0.0 release notes list secretsmanager-basic-lifecycle as 'GA'. Can a new deployment rely on that today?",
+      "expectedAnswer": {
+        "summary": "No. The current live verdict in docs/site/workload-ga.json is 'candidate', which is not GA and overrides the historical v1.0.0 claim.",
+        "canonicalSources": ["docs/site/workload-ga.json", "docs/releases/v1.0.0.md"],
+        "precedence": "Live workload certification (rank 1) overrides immutable historical release notes (rank 4)."
+      },
+      "prohibitedConclusions": [
+        "Must not claim secretsmanager-basic-lifecycle is currently GA.",
+        "Must not conflate 'was GA at v1.0.0 promotion time' with 'is GA now'."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "secretsmanager-basic-lifecycle", "expectedVerdict": "candidate" },
+        {
+          "type": "text_contains",
+          "path": "docs/releases/v1.0.0.md",
+          "mustContain": "verdict overrides this historical claim",
+          "expectedExists": true
+        }
+      ]
+    },
+    {
+      "id": "adopt-sns-standard-publish-event-grid",
+      "category": "adoption_status",
+      "service": "sns",
+      "adversarial": false,
+      "question": "What is the current certification status of SNS standard publish over Event Grid?",
+      "expectedAnswer": {
+        "summary": "Candidate, not GA.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sns-standard-publish-event-grid is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sns-standard-publish-event-grid", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-sns-standard-publish-service-bus",
+      "category": "adoption_status",
+      "service": "sns",
+      "adversarial": false,
+      "question": "What is the current certification status of SNS standard publish over Service Bus topics?",
+      "expectedAnswer": {
+        "summary": "Candidate, not GA.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sns-standard-publish-service-bus is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sns-standard-publish-service-bus", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-sns-subscription-management-service-bus",
+      "category": "adoption_status",
+      "service": "sns",
+      "adversarial": false,
+      "question": "What is the current certification status of SNS subscription management over Service Bus?",
+      "expectedAnswer": {
+        "summary": "Candidate, not GA.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sns-subscription-management-service-bus is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sns-subscription-management-service-bus", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "adopt-sqs-dlq-redrive",
+      "category": "adoption_status",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "Is SQS dead-letter-queue redrive currently certified for adoption?",
+      "expectedAnswer": {
+        "summary": "No. The live verdict is 'blocked': at least one blocking finding prevents this workload profile from being adopted as-is.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sqs-dlq-redrive is candidate, conditional, or GA.",
+        "Must not omit that 'blocked' means adoption is not currently recommended."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sqs-dlq-redrive", "expectedVerdict": "blocked" }
+      ]
+    },
+    {
+      "id": "adopt-sqs-fifo-amqp",
+      "category": "adoption_status",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "Is SQS FIFO over AMQP currently certified for adoption?",
+      "expectedAnswer": {
+        "summary": "No, the live verdict is 'blocked'.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sqs-fifo-amqp is candidate, conditional, or GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sqs-fifo-amqp", "expectedVerdict": "blocked" }
+      ]
+    },
+    {
+      "id": "adopt-sqs-standard-messaging",
+      "category": "adoption_status",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "What is the current certification status of SQS standard messaging?",
+      "expectedAnswer": {
+        "summary": "Candidate, not GA.",
+        "canonicalSources": ["docs/site/workload-ga.json"],
+        "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
+      },
+      "prohibitedConclusions": [
+        "Must not claim sqs-standard-messaging is GA."
+      ],
+      "checks": [
+        { "type": "profile_verdict", "profileId": "sqs-standard-messaging", "expectedVerdict": "candidate" }
+      ]
+    },
+    {
+      "id": "config-s3-enabled",
+      "category": "configuration",
+      "service": "s3",
+      "adversarial": false,
+      "question": "How does an operator enable the S3 module?",
+      "expectedAnswer": {
+        "summary": "Set services.s3.enabled to true (in addition to a bindings[].azure.s3 backend).",
+        "canonicalSources": ["config.schema.json", "docs/configuration-schema.md"],
+        "precedence": "config.schema.json is the normative field authority; docs/configuration-reference.md is generated from it and must not be hand-edited to disagree."
+      },
+      "prohibitedConclusions": [
+        "Must not invent an enablement field name that is not services.<service>.enabled."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "services.s3.enabled", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "config-bindings-aws-identity",
+      "category": "configuration",
+      "service": "",
+      "adversarial": false,
+      "question": "Which fields identify the incoming AWS signing identity for a binding?",
+      "expectedAnswer": {
+        "summary": "bindings[].aws.accessKeyId and bindings[].aws.secretAccessKey.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority."
+      },
+      "prohibitedConclusions": [
+        "Must not invent an AWS identity field not present under bindings[].aws."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.aws.accessKeyId", "expectedExists": true },
+        { "type": "schema_path_exists", "schemaPath": "bindings.aws.secretAccessKey", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "config-bindings-sqs-namespace",
+      "category": "configuration",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "How does a binding's SQS backend identify its Azure Service Bus namespace?",
+      "expectedAnswer": {
+        "summary": "bindings[].azure.sqs.target.namespace.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority."
+      },
+      "prohibitedConclusions": [
+        "Must not invent a connectionString field for the Service Bus target."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.azure.sqs.target.namespace", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "config-bindings-s3-kind",
+      "category": "configuration",
+      "service": "s3",
+      "adversarial": false,
+      "question": "What backend 'kind' does an S3 binding declare?",
+      "expectedAnswer": {
+        "summary": "bindings[].azure.s3.kind, with canonical value 'blob' (Azure Blob Storage).",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority."
+      },
+      "prohibitedConclusions": [
+        "Must not claim any 'kind' value other than 'blob' is valid for the S3 backend."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.azure.s3.kind", "expectedExists": true },
+        { "type": "schema_canonical_value_exists", "canonicalValue": "blob", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "config-bindings-dynamodb-auth",
+      "category": "configuration",
+      "service": "dynamodb",
+      "adversarial": false,
+      "question": "Where does a DynamoDB backend configure Azure authentication?",
+      "expectedAnswer": {
+        "summary": "bindings[].azure.dynamodb.auth, an object with a 'mode' discriminator.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority."
+      },
+      "prohibitedConclusions": [
+        "Must not invent an auth field outside bindings[].azure.<service>.auth."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.azure.dynamodb.auth", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "config-fabricated-retry-policy",
+      "category": "configuration",
+      "service": "s3",
+      "adversarial": true,
+      "question": "Can an operator tune S3 request retries with services.s3.retryPolicy?",
+      "expectedAnswer": {
+        "summary": "No such field exists. services.s3 only declares 'enabled' and 'presignedTrustedSigningHosts'; there is no retryPolicy field in the canonical schema.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority; a field not present there does not exist."
+      },
+      "prohibitedConclusions": [
+        "Must not affirm that services.s3.retryPolicy exists or is a supported field."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "services.s3.retryPolicy", "expectedExists": false }
+      ]
+    },
+    {
+      "id": "config-fabricated-connection-string",
+      "category": "configuration",
+      "service": "sqs",
+      "adversarial": true,
+      "question": "Does bindings[].azure.sqs.target.connectionString configure the Service Bus connection string directly?",
+      "expectedAnswer": {
+        "summary": "No such field exists on the SQS backend target; the canonical schema uses 'namespace' plus an 'auth' block, not a raw connection string field.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority; a field not present there does not exist."
+      },
+      "prohibitedConclusions": [
+        "Must not affirm that target.connectionString exists on the SQS backend."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.azure.sqs.target.connectionString", "expectedExists": false }
+      ]
+    },
+    {
+      "id": "config-fabricated-kinesis-rate-limit",
+      "category": "configuration",
+      "service": "kinesis",
+      "adversarial": true,
+      "question": "Does bindings[].azure.kinesis.rateLimitPerSecond throttle Kinesis PutRecord calls?",
+      "expectedAnswer": {
+        "summary": "No such field exists on the Kinesis backend in the canonical schema.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field authority; a field not present there does not exist."
+      },
+      "prohibitedConclusions": [
+        "Must not affirm that rateLimitPerSecond exists on the Kinesis backend."
+      ],
+      "checks": [
+        { "type": "schema_path_exists", "schemaPath": "bindings.azure.kinesis.rateLimitPerSecond", "expectedExists": false }
+      ]
+    },
+    {
+      "id": "auth-shared-key-supported",
+      "category": "authentication",
+      "service": "",
+      "adversarial": false,
+      "question": "Is 'sharedKey' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "Yes, auth.mode: sharedKey is a canonical value across backend auth schemas.",
+        "canonicalSources": ["config.schema.json", "docs/azure-authentication.md"],
+        "precedence": "config.schema.json is the normative field/value authority."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "sharedKey", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "auth-sas-supported",
+      "category": "authentication",
+      "service": "",
+      "adversarial": false,
+      "question": "Is 'sas' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "Yes.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "sas", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "auth-managed-identity-supported",
+      "category": "authentication",
+      "service": "",
+      "adversarial": false,
+      "question": "Is 'managedIdentity' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "Yes.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "managedIdentity", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "auth-client-secret-supported",
+      "category": "authentication",
+      "service": "",
+      "adversarial": false,
+      "question": "Is 'clientSecret' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "Yes.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "clientSecret", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "auth-workload-identity-supported",
+      "category": "authentication",
+      "service": "",
+      "adversarial": false,
+      "question": "Is 'workloadIdentity' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "Yes.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "workloadIdentity", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "auth-fabricated-api-key",
+      "category": "authentication",
+      "service": "",
+      "adversarial": true,
+      "question": "Is 'apiKey' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "No. The canonical auth modes are sharedKey, sas, managedIdentity, clientSecret, workloadIdentity, and reference; 'apiKey' is not one of them.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority; a value absent from it is not supported."
+      },
+      "prohibitedConclusions": [
+        "Must not affirm that auth.mode: apiKey is supported."
+      ],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "apiKey", "expectedExists": false }
+      ]
+    },
+    {
+      "id": "auth-fabricated-oauth2",
+      "category": "authentication",
+      "service": "",
+      "adversarial": true,
+      "question": "Is 'oauth2' a supported Azure backend auth mode?",
+      "expectedAnswer": {
+        "summary": "No, it is not one of the canonical auth mode values.",
+        "canonicalSources": ["config.schema.json"],
+        "precedence": "config.schema.json is the normative field/value authority; a value absent from it is not supported."
+      },
+      "prohibitedConclusions": [
+        "Must not affirm that auth.mode: oauth2 is supported."
+      ],
+      "checks": [
+        { "type": "schema_canonical_value_exists", "canonicalValue": "oauth2", "expectedExists": false }
+      ]
+    },
+    {
+      "id": "gap-s3-putobject-implemented",
+      "category": "operation_gaps",
+      "service": "s3",
+      "adversarial": false,
+      "question": "Is S3 PutObject implemented by the proxy?",
+      "expectedAnswer": {
+        "summary": "Yes, status: implemented in the operation gap doc.",
+        "canonicalSources": ["docs/gaps/s3/PutObject.yaml", "docs/site/operations/s3/putobject.md"],
+        "precedence": "The gap YAML is the single source of truth; the generated page under docs/site/ must not be hand-edited to disagree."
+      },
+      "prohibitedConclusions": [
+        "Must not conflate 'operation implemented' with a real-Azure seal or workload-GA claim for any profile using it."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "s3", "operation": "PutObject", "expectedStatus": "implemented" },
+        { "type": "operation_reference_exists", "service": "s3", "operation": "PutObject" }
+      ]
+    },
+    {
+      "id": "gap-s3-getbucketcors-unsupported",
+      "category": "operation_gaps",
+      "service": "s3",
+      "adversarial": false,
+      "question": "Is S3 GetBucketCors supported?",
+      "expectedAnswer": {
+        "summary": "No, status: unsupported in the operation gap doc.",
+        "canonicalSources": ["docs/gaps/s3/GetBucketCors.yaml", "docs/site/operations/s3/getbucketcors.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim GetBucketCors is implemented or partially implemented."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "s3", "operation": "GetBucketCors", "expectedStatus": "unsupported" },
+        { "type": "operation_reference_exists", "service": "s3", "operation": "GetBucketCors" }
+      ]
+    },
+    {
+      "id": "gap-sqs-sendmessage-implemented",
+      "category": "operation_gaps",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "Is SQS SendMessage implemented?",
+      "expectedAnswer": {
+        "summary": "Yes, status: implemented.",
+        "canonicalSources": ["docs/gaps/sqs/SendMessage.yaml", "docs/site/operations/sqs/sendmessage.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "operation_status", "service": "sqs", "operation": "SendMessage", "expectedStatus": "implemented" },
+        { "type": "operation_reference_exists", "service": "sqs", "operation": "SendMessage" }
+      ]
+    },
+    {
+      "id": "gap-sqs-changemessagevisibility-partial",
+      "category": "operation_gaps",
+      "service": "sqs",
+      "adversarial": false,
+      "question": "Is SQS ChangeMessageVisibility fully implemented, matching AWS semantics exactly?",
+      "expectedAnswer": {
+        "summary": "No, status: partial. Review the sub_features and behavior_differences in the gap doc for the exact divergence before relying on it.",
+        "canonicalSources": ["docs/gaps/sqs/ChangeMessageVisibility.yaml", "docs/site/operations/sqs/changemessagevisibility.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim ChangeMessageVisibility has full AWS parity."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "sqs", "operation": "ChangeMessageVisibility", "expectedStatus": "partial" },
+        { "type": "operation_reference_exists", "service": "sqs", "operation": "ChangeMessageVisibility" }
+      ]
+    },
+    {
+      "id": "gap-sns-publish-partial",
+      "category": "operation_gaps",
+      "service": "sns",
+      "adversarial": false,
+      "question": "Is SNS Publish fully implemented?",
+      "expectedAnswer": {
+        "summary": "No, status: partial.",
+        "canonicalSources": ["docs/gaps/sns/Publish.yaml", "docs/site/operations/sns/publish.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim SNS Publish has full AWS parity."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "sns", "operation": "Publish", "expectedStatus": "partial" },
+        { "type": "operation_reference_exists", "service": "sns", "operation": "Publish" }
+      ]
+    },
+    {
+      "id": "gap-sns-subscribe-partial",
+      "category": "operation_gaps",
+      "service": "sns",
+      "adversarial": false,
+      "question": "Is SNS Subscribe fully implemented?",
+      "expectedAnswer": {
+        "summary": "No, status: partial.",
+        "canonicalSources": ["docs/gaps/sns/Subscribe.yaml", "docs/site/operations/sns/subscribe.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim SNS Subscribe has full AWS parity."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "sns", "operation": "Subscribe", "expectedStatus": "partial" },
+        { "type": "operation_reference_exists", "service": "sns", "operation": "Subscribe" }
+      ]
+    },
+    {
+      "id": "gap-dynamodb-putitem-emulator-only",
+      "category": "operation_gaps",
+      "service": "dynamodb",
+      "adversarial": true,
+      "question": "DynamoDB PutItem passes in the emulator-backed conformance suite. Is it production-qualified against real Azure for the dynamodb-basic-crud profile?",
+      "expectedAnswer": {
+        "summary": "No. The dynamodb-basic-crud workload profile has a blocking finding 'real_azure_seal_missing' for dynamodb:PutItem: emulator success is necessary regression evidence but cannot create a real-Azure seal or a workload-GA claim (per docs/project-maturity.md).",
+        "canonicalSources": ["docs/site/workload-ga.json", "docs/project-maturity.md", "docs/gaps/dynamodb/PutItem.yaml"],
+        "precedence": "Live workload certification findings (rank 1) govern production qualification; emulator conformance results are not a substitute and are never authoritative for a real-Azure seal."
+      },
+      "prohibitedConclusions": [
+        "Must not treat emulator-only conformance passing as proof of production qualification.",
+        "Must not claim PutItem has a real-Azure seal for this profile."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "dynamodb", "operation": "PutItem", "expectedStatus": "partial" },
+        {
+          "type": "finding_disposition",
+          "profileId": "dynamodb-basic-crud",
+          "code": "real_azure_seal_missing",
+          "subject": "dynamodb:PutItem",
+          "expectedDisposition": "blocking"
+        }
+      ]
+    },
+    {
+      "id": "gap-dynamodb-deleteitem-emulator-only",
+      "category": "operation_gaps",
+      "service": "dynamodb",
+      "adversarial": true,
+      "question": "Can DeleteItem be considered production-qualified for dynamodb-basic-crud based only on passing emulator tests?",
+      "expectedAnswer": {
+        "summary": "No. dynamodb-basic-crud records a blocking 'real_azure_seal_missing' finding for dynamodb:DeleteItem. Emulator evidence alone never satisfies this requirement.",
+        "canonicalSources": ["docs/site/workload-ga.json", "docs/gaps/dynamodb/DeleteItem.yaml"],
+        "precedence": "Live workload certification findings (rank 1) are authoritative for production-qualification claims."
+      },
+      "prohibitedConclusions": [
+        "Must not treat emulator-only conformance passing as proof of production qualification for DeleteItem."
+      ],
+      "checks": [
+        {
+          "type": "finding_disposition",
+          "profileId": "dynamodb-basic-crud",
+          "code": "real_azure_seal_missing",
+          "subject": "dynamodb:DeleteItem",
+          "expectedDisposition": "blocking"
+        }
+      ]
+    },
+    {
+      "id": "gap-kinesis-putrecord-partial",
+      "category": "operation_gaps",
+      "service": "kinesis",
+      "adversarial": false,
+      "question": "Is Kinesis PutRecord fully implemented?",
+      "expectedAnswer": {
+        "summary": "No, status: partial.",
+        "canonicalSources": ["docs/gaps/kinesis/PutRecord.yaml", "docs/site/operations/kinesis/putrecord.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim Kinesis PutRecord has full AWS parity."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "kinesis", "operation": "PutRecord", "expectedStatus": "partial" },
+        { "type": "operation_reference_exists", "service": "kinesis", "operation": "PutRecord" }
+      ]
+    },
+    {
+      "id": "gap-kinesis-getrecords-partial",
+      "category": "operation_gaps",
+      "service": "kinesis",
+      "adversarial": false,
+      "question": "Is Kinesis GetRecords fully implemented?",
+      "expectedAnswer": {
+        "summary": "No, status: partial.",
+        "canonicalSources": ["docs/gaps/kinesis/GetRecords.yaml", "docs/site/operations/kinesis/getrecords.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim Kinesis GetRecords has full AWS parity."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "kinesis", "operation": "GetRecords", "expectedStatus": "partial" },
+        { "type": "operation_reference_exists", "service": "kinesis", "operation": "GetRecords" }
+      ]
+    },
+    {
+      "id": "gap-secretsmanager-getsecretvalue-implemented",
+      "category": "operation_gaps",
+      "service": "secretsmanager",
+      "adversarial": false,
+      "question": "Is Secrets Manager GetSecretValue implemented?",
+      "expectedAnswer": {
+        "summary": "Yes, status: implemented.",
+        "canonicalSources": ["docs/gaps/secretsmanager/GetSecretValue.yaml", "docs/site/operations/secretsmanager/getsecretvalue.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [],
+      "checks": [
+        { "type": "operation_status", "service": "secretsmanager", "operation": "GetSecretValue", "expectedStatus": "implemented" },
+        { "type": "operation_reference_exists", "service": "secretsmanager", "operation": "GetSecretValue" }
+      ]
+    },
+    {
+      "id": "gap-secretsmanager-rotatesecret-unsupported",
+      "category": "operation_gaps",
+      "service": "secretsmanager",
+      "adversarial": false,
+      "question": "Is Secrets Manager RotateSecret supported?",
+      "expectedAnswer": {
+        "summary": "No, status: unsupported.",
+        "canonicalSources": ["docs/gaps/secretsmanager/RotateSecret.yaml", "docs/site/operations/secretsmanager/rotatesecret.md"],
+        "precedence": "The gap YAML is the single source of truth."
+      },
+      "prohibitedConclusions": [
+        "Must not claim RotateSecret is implemented or partially implemented."
+      ],
+      "checks": [
+        { "type": "operation_status", "service": "secretsmanager", "operation": "RotateSecret", "expectedStatus": "unsupported" },
+        { "type": "operation_reference_exists", "service": "secretsmanager", "operation": "RotateSecret" }
+      ]
+    },
+    {
+      "id": "deployment-production-runbook-exists",
+      "category": "deployment",
+      "service": "",
+      "adversarial": false,
+      "question": "Where is the canonical production deployment procedure documented?",
+      "expectedAnswer": {
+        "summary": "docs/deployment/production-runbook.md.",
+        "canonicalSources": ["docs/deployment/production-runbook.md"],
+        "precedence": "This is an explanatory guide (rank 5): it documents procedure, not current certification; it does not override docs/site/workload-ga.json for adoption decisions."
+      },
+      "prohibitedConclusions": [
+        "Must not treat the runbook's existence as a workload-GA claim."
+      ],
+      "checks": [
+        { "type": "source_exists", "path": "docs/deployment/production-runbook.md", "expectedExists": true }
+      ]
+    },
+    {
+      "id": "deployment-container-image-digest-pinning",
+      "category": "deployment",
+      "service": "",
+      "adversarial": false,
+      "question": "Should an operator pull the aws2azure v1.0.0 container by mutable tag or by immutable digest?",
+      "expectedAnswer": {
+        "summary": "By immutable digest (sha256:...); the v1.0.0 release notes explicitly instruct using the digest, not a mutable convenience tag.",
+        "canonicalSources": ["docs/releases/v1.0.0.md"],
+        "precedence": "Release notes are the immutable historical record of the artifact that was promoted; they do not describe current live certification."
+      },
+      "prohibitedConclusions": [
+        "Must not recommend pulling by a mutable tag as equivalent to pinning the digest."
+      ],
+      "checks": [
+        {
+          "type": "text_contains",
+          "path": "docs/releases/v1.0.0.md",
+          "mustContain": "Use the digest, not a mutable convenience tag",
+          "expectedExists": true
+        }
+      ]
+    },
+    {
+      "id": "rollback-does-not-undo-azure-writes",
+      "category": "rollback",
+      "service": "",
+      "adversarial": true,
+      "question": "If an operator rolls back from v1.0.0 to the pre-v1 baseline, does that undo any Azure writes or credential changes the new version made?",
+      "expectedAnswer": {
+        "summary": "No. The v1.0.0 release notes state explicitly that rollback restores code and configuration; it does not undo Azure writes or credential changes.",
+        "canonicalSources": ["docs/releases/v1.0.0.md", "docs/deployment/production-runbook.md"],
+        "precedence": "Release notes document the specific qualified rollback baseline; the production runbook documents the general rollback procedure. Neither claims rollback is transactionally complete against Azure state."
+      },
+      "prohibitedConclusions": [
+        "Must not claim rollback reverses Azure data-plane writes.",
+        "Must not claim rollback reverses credential/secret changes made while the new version was running."
+      ],
+      "checks": [
+        {
+          "type": "text_contains",
+          "path": "docs/releases/v1.0.0.md",
+          "mustContain": "does not undo Azure writes",
+          "expectedExists": true
+        }
+      ]
+    },
+    {
+      "id": "rollback-baseline-is-retained-not-a-release",
+      "category": "rollback",
+      "service": "",
+      "adversarial": true,
+      "question": "Is the pre-v1 rollback baseline referenced in the v1.0.0 release notes itself a supported stable release?",
+      "expectedAnswer": {
+        "summary": "No. It is a retained workflow artifact, not a supported stable release; operators must preserve it themselves before the first rollout.",
+        "canonicalSources": ["docs/releases/v1.0.0.md"],
+        "precedence": "Release notes are the canonical record of the exact qualified rollback baseline for this release."
+      },
+      "prohibitedConclusions": [
+        "Must not describe the pre-v1 rollback artifact as a supported release the project will maintain going forward."
+      ],
+      "checks": [
+        {
+          "type": "text_contains",
+          "path": "docs/releases/v1.0.0.md",
+          "mustContain": "not a supported stable release",
+          "expectedExists": true
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,8 @@
 This profile covers `RedrivePolicy`, broker redrive to a target queue,
 dead-letter source attribution, and stateless
 `ListDeadLetterSourceQueues` pagination. It is independent of the
-`sqs-standard-messaging` GA profile.
+`sqs-standard-messaging` profile, whose own current live verdict is
+`candidate` (see [`workload-ga.json`](../site/workload-ga.json)), not GA.
 
 `RedrivePolicy` maps to Service Bus `ForwardDeadLetteredMessagesTo` and
 `MaxDeliveryCount`. `GetQueueAttributes` returns an AWS-shaped synthetic ARN

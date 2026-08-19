@@ -23,6 +23,7 @@
     <Project Path="tools/Aws2Azure.ChangeAwareValidation/Aws2Azure.ChangeAwareValidation.csproj" />
     <Project Path="tools/Aws2Azure.ConfigSchema/Aws2Azure.ConfigSchema.csproj" />
     <Project Path="tools/Aws2Azure.Documentation/Aws2Azure.Documentation.csproj" />
+    <Project Path="tools/Aws2Azure.DocsEval/Aws2Azure.DocsEval.csproj" />
     <Project Path="tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj" />
   </Folder>
 </Solution>
