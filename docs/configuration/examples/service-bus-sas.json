@@ -1,0 +1,34 @@
+{
+  "services": {
+    "sqs": {
+      "enabled": true
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPRODQUEUE",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "sqs": {
+          "kind": "serviceBus",
+          "target": {
+            "namespace": "prod-queues",
+            "transport": "Amqp"
+          },
+          "auth": {
+            "mode": "sas",
+            "keyName": "aws2azure-send-receive",
+            "key": "replace-with-service-bus-sas-key"
+          },
+          "queues": {
+            "audit": {
+              "transport": "Rest"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

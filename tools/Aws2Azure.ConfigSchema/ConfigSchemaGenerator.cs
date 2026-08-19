@@ -253,6 +253,8 @@ public static class ConfigSchemaGenerator
                 ("topics", Nullable(NamedMap(Ref("topicSettingsWithoutFallback")))))));
         backend.Add("allOf", Array(
             Object(
+                ("x-constraint-description",
+                    "When an SNS serviceBusTopics binding omits eventGridFallback, every topic whose backend is EventGrid requires both eventGridTopicEndpoint and eventGridAccessKey."),
                 ("if", noFallback),
                 ("then", topicsConstraint))));
         return backend;
@@ -440,6 +442,7 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject SchemeUri(params string[] schemes) => Object(
         ("type", "string"),
+        ("x-uri-schemes", Array(schemes)),
         ("pattern",
             $"^(?:{string.Join("|", schemes.Select(CaseInsensitiveText))})://" +
             "(?:[^/?#@\\s]+@)?" +
@@ -497,7 +500,11 @@ public static class ConfigSchemaGenerator
         var rootRequirement = Object(
             ("properties", Object(
                 ("bindings", Object(("items", bindingConstraint))))));
-        return Object(("if", rootCondition), ("then", rootRequirement));
+        return Object(
+            ("x-constraint-description",
+                "When services.sns.defaultBackend is EventGrid, every serviceBusTopics SNS binding requires eventGridFallback."),
+            ("if", rootCondition),
+            ("then", rootRequirement));
     }
 
     private static JsonObject ServiceBusTopicsBindingCondition()
@@ -537,7 +544,9 @@ public static class ConfigSchemaGenerator
                 ("type", "string"),
                 ("pattern", CaseInsensitivePattern(value))));
         }
-        var schema = Object(("oneOf", variants));
+        var schema = Object(
+            ("oneOf", variants),
+            ("x-canonical-values", Array(values)));
         if (defaultValue is not null)
         {
             schema.Add("default", defaultValue);
@@ -547,12 +556,14 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject Const(string value) => Object(
         ("type", "string"),
+        ("x-canonical-value", value),
         ("pattern", CaseInsensitivePattern(value)));
 
     private static JsonObject EnumLiteral(string value, bool isDefault = false)
     {
         var schema = Object(
             ("type", "string"),
+            ("x-canonical-value", value),
             ("pattern", CaseInsensitivePattern(value)));
         if (isDefault)
         {
@@ -969,7 +980,7 @@ public static class ConfigSchemaGenerator
               "kind": "eventHubs",
               "target": { "namespace": "events-ns" },
               "auth": { "mode": "reference", "identity": "operator-mi" },
-              "shardIteratorSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+              "shardIteratorSigningKey": "cmVwbGFjZS13aXRoLXVuaXF1ZS1yYW5kb20ta2V5ISE=",
               "streams": {
                 "orders": {
                   "eventHubName": "orders-v1",

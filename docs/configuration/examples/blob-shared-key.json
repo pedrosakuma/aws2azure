@@ -1,0 +1,27 @@
+{
+  "services": {
+    "s3": {
+      "enabled": true
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPRODBLOB",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "s3": {
+          "kind": "blob",
+          "target": {
+            "accountName": "prodstorageaccount"
+          },
+          "auth": {
+            "mode": "sharedKey",
+            "key": "replace-with-storage-account-key"
+          }
+        }
+      }
+    }
+  ]
+}

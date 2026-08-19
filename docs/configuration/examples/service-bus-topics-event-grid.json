@@ -1,0 +1,47 @@
+{
+  "services": {
+    "sns": {
+      "enabled": true,
+      "defaultBackend": "ServiceBusTopics"
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPRODTOPICS",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "sns": {
+          "kind": "serviceBusTopics",
+          "target": {
+            "namespace": "prod-topics"
+          },
+          "auth": {
+            "mode": "managedIdentity",
+            "clientId": "22222222-2222-2222-2222-222222222222"
+          },
+          "topics": {
+            "orders-*": {
+              "backend": "EventGrid"
+            },
+            "audit": {
+              "backend": "ServiceBusTopics",
+              "serviceBusTopicName": "audit-v2"
+            }
+          },
+          "eventGridFallback": {
+            "kind": "eventGrid",
+            "target": {
+              "endpoint": "https://prod-orders.eastus-1.eventgrid.azure.net/api/events"
+            },
+            "auth": {
+              "mode": "sharedKey",
+              "key": "replace-with-event-grid-access-key"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

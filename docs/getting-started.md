@@ -16,14 +16,17 @@ minutes, then shows how to enable the other services and point at real Azure.
 An available service module does not provide full AWS service parity. Before
 staging or production:
 
-1. Find the closest pattern in the generated
+1. Follow the
+   [shortest-path adoption checklist](./adoption.md): manifest, compatibility,
+   production-shaped staging, then a recorded go/no-go.
+2. Find the closest pattern in the generated
    [workload compatibility guide](./site/workload-compatibility.md).
-2. Inventory the AWS operations and semantic requirements your application
+3. Inventory the AWS operations and semantic requirements your application
    actually uses.
-3. Confirm every operation in the [coverage matrix](./site/coverage.md).
-4. Read the linked [design gaps](./site/design-gaps.md), especially for
+4. Confirm every operation in the [coverage matrix](./site/coverage.md).
+5. Read the linked [design gaps](./site/design-gaps.md), especially for
    transactions, consistency, ordering, authorization, and lifecycle behavior.
-5. Treat an absent [real-Azure seal](./site/divergences.md) as validation work
+6. Treat an absent [real-Azure seal](./site/divergences.md) as validation work
    required in your own staging environment.
 
 Do not proceed unchanged when a required pattern is marked **blocked**.
@@ -225,6 +228,9 @@ Key points:
 - Settings can be overridden with environment variables, mirroring the JSON
   shape (e.g. `AWS2AZURE__SERVICES__S3__ENABLED=true`,
   `AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__KEY=...`).
+- Use the [complete field reference](./configuration-reference.md),
+  [environment/override reference](./configuration-environment.md), and
+  [production examples](./configuration-examples.md) before staging.
 
 ---
 
