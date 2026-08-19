@@ -1,10 +1,8 @@
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Aws2Azure.GapDocs;
-using Microsoft.Win32.SafeHandles;
 
 namespace Aws2Azure.Documentation;
 
@@ -16,6 +14,7 @@ public sealed class DocumentationManifest
     public string PublicationBaseUrl { get; set; } = string.Empty;
     public string ManifestRevision { get; set; } = string.Empty;
     public DocumentationRevisionSemantics RevisionSemantics { get; set; } = new();
+    public DocumentationCoverage Coverage { get; set; } = new();
     public DocumentationWorkloadAuthority WorkloadAuthority { get; set; } = new();
     public List<DocumentationAuthorityPrecedence> AuthorityPrecedence { get; set; } = new();
     public List<DocumentationEntry> Documents { get; set; } = new();
@@ -27,6 +26,18 @@ public sealed class DocumentationRevisionSemantics
     public string DocumentRevisionNormalization { get; set; } =
         "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF";
     public string ManifestRevisionType { get; set; } = "ordered_document_index_sha256";
+}
+
+public sealed class DocumentationCoverage
+{
+    public List<string> IncludedMarkdownRoots { get; set; } = new();
+    public List<DocumentationExclusion> ExcludedMarkdownPaths { get; set; } = new();
+}
+
+public sealed class DocumentationExclusion
+{
+    public string Path { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed class DocumentationWorkloadAuthority
@@ -115,10 +126,10 @@ public static class DocumentationDiscoveryGenerator
             if (check)
             {
                 var stale = outputs
-                    .Where(output => !RepositoryFileMatches(
-                        repoRoot,
-                        Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'),
-                        Encoding.UTF8.GetBytes(output.Content)))
+                    .Where(output => !File.Exists(output.Path)
+                                     || !File.ReadAllBytes(output.Path)
+                                         .AsSpan()
+                                         .SequenceEqual(Encoding.UTF8.GetBytes(output.Content)))
                     .Select(output => Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'))
                     .ToList();
                 if (stale.Count > 0)
@@ -137,11 +148,7 @@ public static class DocumentationDiscoveryGenerator
 
             foreach (var output in outputs)
             {
-                WriteRepositoryFile(
-                    repoRoot,
-                    Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'),
-                    Encoding.UTF8.GetBytes(output.Content),
-                    hooks: null);
+                PublishOutput(output.Path, output.Content);
                 Console.WriteLine(
                     $"[documentation] wrote {Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/')}");
             }
@@ -152,6 +159,7 @@ public static class DocumentationDiscoveryGenerator
                                           or DirectoryNotFoundException
                                           or FileNotFoundException
                                           or InvalidDataException
+                                          or IOException
                                           or JsonException
                                           or UnauthorizedAccessException)
         {
@@ -160,18 +168,7 @@ public static class DocumentationDiscoveryGenerator
         }
     }
 
-    public static DocumentationManifest Build(string repoRoot) =>
-        Build(repoRoot, hooks: null);
-
-    internal static DocumentationManifest Build(
-        string repoRoot,
-        DocumentationIoHooks? hooks)
-    {
-        using var snapshot = DocumentationRepositorySnapshot.Capture(repoRoot, hooks);
-        return BuildFromSnapshot(snapshot.Root);
-    }
-
-    private static DocumentationManifest BuildFromSnapshot(string repoRoot)
+    public static DocumentationManifest Build(string repoRoot)
     {
         var fullRepoRoot = Path.GetFullPath(repoRoot);
         if (!File.Exists(Path.Combine(fullRepoRoot, "aws2azure.slnx")))
@@ -310,6 +307,12 @@ public static class DocumentationDiscoveryGenerator
                 var workloadManifest = WorkloadGaManifestLoader.Load(Path.Combine(
                     fullRepoRoot,
                     path.Replace('/', Path.DirectorySeparatorChar)));
+                if (!workloadManifest.Id.Equals(profile, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Workload profile id '{workloadManifest.Id}' must match filename "
+                        + $"'{profile}' in {path}");
+                }
                 Add(
                     $"profile:{workloadManifest.Id}:manifest",
                     path,
@@ -522,6 +525,28 @@ public static class DocumentationDiscoveryGenerator
                 Immutable(version));
         }
 
+        var indexedPaths = documents
+            .Select(document => document.Path)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var path in EnumerateStableMarkdown(fullRepoRoot))
+        {
+            if (!indexedPaths.Add(path))
+            {
+                continue;
+            }
+
+            var generated = path.StartsWith("docs/site/", StringComparison.Ordinal);
+            Add(
+                $"documentation:{DocumentationLinks.Anchor(
+                    Path.ChangeExtension(path, null)!.Replace('/', ' '))}",
+                path,
+                generated ? "generated-documentation" : "documentation-guide",
+                DocumentationScope(path),
+                generated ? "normative-capability" : "explanatory",
+                generated ? "generated" : "source",
+                generated ? DerivedCurrent() : Current());
+        }
+
         documents.Sort((left, right) => StringComparer.Ordinal.Compare(left.Id, right.Id));
         var manifest = new DocumentationManifest
         {
@@ -529,13 +554,14 @@ public static class DocumentationDiscoveryGenerator
             SourceBaseUrl =
                 "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
             PublicationBaseUrl = "https://pedrosakuma.github.io/aws2azure/",
+            Coverage = CreateMarkdownCoverage(),
             WorkloadAuthority = authority,
             AuthorityPrecedence = ReadAuthorityPrecedence(fullRepoRoot),
             Documents = documents,
         };
         manifest.ManifestRevision = ComputeManifestRevision(manifest);
 
-        var errors = ValidateSnapshot(fullRepoRoot, manifest);
+        var errors = Validate(fullRepoRoot, manifest);
         if (errors.Count > 0)
         {
             throw new InvalidDataException(
@@ -548,14 +574,6 @@ public static class DocumentationDiscoveryGenerator
     }
 
     public static IReadOnlyList<string> Validate(
-        string repoRoot,
-        DocumentationManifest manifest)
-    {
-        using var snapshot = DocumentationRepositorySnapshot.Capture(repoRoot, hooks: null);
-        return ValidateSnapshot(snapshot.Root, manifest);
-    }
-
-    private static IReadOnlyList<string> ValidateSnapshot(
         string repoRoot,
         DocumentationManifest manifest)
     {
@@ -637,6 +655,16 @@ public static class DocumentationDiscoveryGenerator
         if (!IsSha256(manifest.ManifestRevision))
         {
             errors.Add($"manifest revision '{manifest.ManifestRevision}' is invalid");
+        }
+        var expectedCoverage = CreateMarkdownCoverage();
+        if (!manifest.Coverage.IncludedMarkdownRoots.SequenceEqual(
+                expectedCoverage.IncludedMarkdownRoots,
+                StringComparer.Ordinal)
+            || !manifest.Coverage.ExcludedMarkdownPaths.Select(entry => entry.Path).SequenceEqual(
+                expectedCoverage.ExcludedMarkdownPaths.Select(entry => entry.Path),
+                StringComparer.Ordinal))
+        {
+            errors.Add("Markdown coverage roots or explicit exclusions differ from policy");
         }
         if (!manifest.WorkloadAuthority.CurrentVerdictPath.Equals(
                 "docs/site/workload-ga.json",
@@ -832,17 +860,6 @@ public static class DocumentationDiscoveryGenerator
                 requiredPaths.Add(path);
             }
         }
-        foreach (var path in new[]
-                 {
-                     "docs/configuration-schema.md",
-                     "docs/configuration-reference.md",
-                     "docs/configuration-environment.md",
-                     "docs/configuration-examples.md",
-                     "docs/workloads/README.md",
-                 })
-        {
-            requiredPaths.Add(path);
-        }
         foreach (var path in EnumerateRelativeFiles(
                      repoRoot,
                      "docs/configuration/examples",
@@ -850,7 +867,7 @@ public static class DocumentationDiscoveryGenerator
         {
             requiredPaths.Add(path);
         }
-        foreach (var path in EnumerateRelativeFiles(repoRoot, "docs/workloads", "*.md"))
+        foreach (var path in EnumerateStableMarkdown(repoRoot))
         {
             requiredPaths.Add(path);
         }
@@ -887,6 +904,15 @@ public static class DocumentationDiscoveryGenerator
             .Append(manifest.WorkloadAuthority.EvaluatedAsOfUtc).Append('\n')
             .Append(manifest.WorkloadAuthority.CanonicalInputsRevision).Append('\n')
             .Append(manifest.WorkloadAuthority.EvaluatorImplementationRevision).Append('\n');
+        foreach (var root in manifest.Coverage.IncludedMarkdownRoots)
+        {
+            builder.Append("include\t").Append(root).Append('\n');
+        }
+        foreach (var exclusion in manifest.Coverage.ExcludedMarkdownPaths)
+        {
+            builder.Append("exclude\t").Append(exclusion.Path).Append('\t')
+                .Append(exclusion.Reason).Append('\n');
+        }
         foreach (var precedence in manifest.AuthorityPrecedence.OrderBy(entry => entry.Rank))
         {
             builder.Append(precedence.Rank).Append('\t')
@@ -956,6 +982,87 @@ public static class DocumentationDiscoveryGenerator
                   && !normalized.Contains("/docs/site/", StringComparison.Ordinal);
     }
 
+    private static string DocumentationScope(string path)
+    {
+        var relative = path.StartsWith("docs/", StringComparison.Ordinal)
+            ? path["docs/".Length..]
+            : path;
+        var separator = relative.IndexOf('/');
+        return separator < 0
+            ? "project"
+            : DocumentationLinks.Anchor(relative[..separator]);
+    }
+
+    private static IReadOnlyList<string> EnumerateStableMarkdown(string repoRoot)
+    {
+        var paths = new List<string> { "README.md" };
+        foreach (var root in new[] { "docs", "deploy", "tests" })
+        {
+            paths.AddRange(EnumerateRelativeFiles(repoRoot, root, "*.md", recursive: true));
+        }
+
+        var exclusions = CreateMarkdownCoverage().ExcludedMarkdownPaths
+            .Select(entry => entry.Path)
+            .ToHashSet(StringComparer.Ordinal);
+        paths.RemoveAll(path => exclusions.Contains(path) || IsTransientPath(path));
+        paths.Sort(StringComparer.Ordinal);
+        return paths;
+    }
+
+    private static DocumentationCoverage CreateMarkdownCoverage() =>
+        new()
+        {
+            IncludedMarkdownRoots = ["README.md", "docs", "deploy", "tests"],
+            ExcludedMarkdownPaths =
+            [
+                new()
+                {
+                    Path = ".github/copilot-instructions.md",
+                    Reason = "agent-specific repository instructions, not product documentation",
+                },
+                new()
+                {
+                    Path = ".github/RELEASE_TEMPLATE.md",
+                    Reason = "maintainer workflow template, not a documentation artifact",
+                },
+                new()
+                {
+                    Path = "AGENTS.md",
+                    Reason = "agent-specific repository instructions, not product documentation",
+                },
+            ],
+        };
+
+    internal static void PublishOutput(string destinationPath, string content)
+    {
+        var directory = Path.GetDirectoryName(destinationPath)
+            ?? throw new InvalidDataException(
+                $"Documentation output has no parent directory: {destinationPath}");
+        var temporaryPath = Path.Combine(
+            directory,
+            $".documentation-{Path.GetFileName(destinationPath)}-{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            File.WriteAllText(temporaryPath, content, new UTF8Encoding(false));
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception exception) when (exception is IOException
+                                              or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine(
+                    $"[documentation] unable to remove temporary output '{temporaryPath}': "
+                    + exception.Message);
+            }
+        }
+    }
+
     private static string RelativePath(string repoRoot, string path)
     {
         var relativePath = Path.GetRelativePath(
@@ -1006,7 +1113,7 @@ public static class DocumentationDiscoveryGenerator
 
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    if (recursive)
+                    if (recursive && !IsTransientPath(relativePath))
                     {
                         pending.Push(ResolveRepositoryPath(
                             repoRoot,
@@ -1020,7 +1127,7 @@ public static class DocumentationDiscoveryGenerator
                 if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(
                         pattern,
                         Path.GetFileName(entry),
-                        ignoreCase: false))
+                        ignoreCase: OperatingSystem.IsWindows()))
                 {
                     results.Add(relativePath);
                 }
@@ -1127,936 +1234,6 @@ public static class DocumentationDiscoveryGenerator
         new(
             $"Documentation path '{documentPath}' contains a symbolic link or reparse point "
             + $"at '{componentPath}'");
-
-    private static byte[] ReadRepositoryFile(
-        string repoRoot,
-        string relativePath,
-        DocumentationIoHooks? hooks) =>
-        ReadRepositoryFile(
-            repoRoot,
-            ResolveCanonicalRepositoryRoot(repoRoot),
-            relativePath,
-            hooks);
-
-    private static byte[] ReadRepositoryFile(
-        string repoRoot,
-        string canonicalRepoRoot,
-        string relativePath,
-        DocumentationIoHooks? hooks)
-    {
-        var expectedPath = ResolveRepositoryPath(repoRoot, relativePath);
-        using var rootHandle = OpenRepositoryDirectory(repoRoot);
-        hooks?.AfterPathValidationBeforeIo?.Invoke(
-            new DocumentationIoEvent(relativePath, DocumentationIoOperation.Read));
-
-        using var handle = OperatingSystem.IsWindows()
-            ? File.OpenHandle(
-                expectedPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read | FileShare.Write | FileShare.Delete,
-                FileOptions.SequentialScan)
-            : OpenRelativeFile(rootHandle, relativePath);
-        if (OperatingSystem.IsWindows())
-        {
-            ValidateOpenedHandle(
-                repoRoot,
-                canonicalRepoRoot,
-                relativePath,
-                expectedPath,
-                handle);
-        }
-
-        using var stream = new FileStream(handle, FileAccess.Read);
-        if (stream.Length > int.MaxValue)
-        {
-            throw new InvalidDataException(
-                $"Documentation path '{relativePath}' exceeds the supported snapshot size");
-        }
-
-        var content = new byte[stream.Length];
-        stream.ReadExactly(content);
-        return content;
-    }
-
-    private static bool RepositoryFileMatches(
-        string repoRoot,
-        string relativePath,
-        ReadOnlySpan<byte> expected)
-    {
-        try
-        {
-            return ReadRepositoryFile(repoRoot, relativePath, hooks: null)
-                .AsSpan()
-                .SequenceEqual(expected);
-        }
-        catch (Exception exception) when (exception is FileNotFoundException
-                                          or DirectoryNotFoundException)
-        {
-            return false;
-        }
-    }
-
-    internal static void WriteRepositoryFile(
-        string repoRoot,
-        string relativePath,
-        ReadOnlySpan<byte> content,
-        DocumentationIoHooks? hooks)
-    {
-        var canonicalRepoRoot = ResolveCanonicalRepositoryRoot(repoRoot);
-        var destination = ResolveRepositoryPath(
-            repoRoot,
-            relativePath,
-            allowMissingLeaf: true);
-        using var rootHandle = OpenRepositoryDirectory(repoRoot);
-        ValidatePublicationRoot(repoRoot, canonicalRepoRoot, rootHandle);
-
-        using var temporary = CreatePrivateTemporaryFile(
-            rootHandle,
-            repoRoot);
-        ValidatePrivateTemporaryFile(
-            rootHandle,
-            repoRoot,
-            canonicalRepoRoot,
-            temporary);
-        if (GetHandleLinkCount(temporary.Handle) != 1)
-        {
-            throw new InvalidDataException(
-                $"Private documentation output '{temporary.Name}' has multiple hard links");
-        }
-
-        RandomAccess.Write(temporary.Handle, content, fileOffset: 0);
-        RandomAccess.FlushToDisk(temporary.Handle);
-        ValidatePrivateTemporaryFile(
-            rootHandle,
-            repoRoot,
-            canonicalRepoRoot,
-            temporary);
-
-        hooks?.BeforeAtomicPublish?.Invoke(
-            new DocumentationPublishEvent(relativePath, temporary.Path));
-
-        ValidatePublicationRoot(repoRoot, canonicalRepoRoot, rootHandle);
-        ValidatePrivateTemporaryFile(
-            rootHandle,
-            repoRoot,
-            canonicalRepoRoot,
-            temporary);
-        if (GetHandleLinkCount(temporary.Handle) != 1)
-        {
-            throw new InvalidDataException(
-                $"Private documentation output '{temporary.Name}' has multiple hard links");
-        }
-        ValidateDestinationEntry(
-            rootHandle,
-            repoRoot,
-            canonicalRepoRoot,
-            relativePath,
-            destination);
-        AtomicPublish(
-            rootHandle,
-            temporary.Handle,
-            temporary.Name,
-            relativePath);
-        temporary.Published = true;
-    }
-
-    private static SafeFileHandle OpenRepositoryDirectory(string repoRoot)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var handle = CreateFile(
-                Path.GetFullPath(repoRoot),
-                FileListDirectory | Synchronize,
-                FileShareRead | FileShareWrite | FileShareDelete,
-                IntPtr.Zero,
-                OpenExisting,
-                FileFlagBackupSemantics | FileFlagOpenReparsePoint,
-                IntPtr.Zero);
-            if (handle.IsInvalid)
-            {
-                throw LastIoException("Could not open the repository directory safely");
-            }
-            return handle;
-        }
-
-        var descriptor = Open(
-            Path.GetFullPath(repoRoot),
-            UnixOpenReadOnly | UnixOpenDirectory | UnixOpenCloseOnExec | UnixOpenNoFollow);
-        if (descriptor < 0)
-        {
-            throw LastIoException("Could not open the repository directory safely");
-        }
-        return new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
-    }
-
-    private static PrivateTemporaryFile CreatePrivateTemporaryFile(
-        SafeFileHandle rootHandle,
-        string repoRoot)
-    {
-        var temporaryName = $".documentation-{Guid.NewGuid():N}.tmp";
-        var temporaryPath = Path.Combine(repoRoot, temporaryName);
-        if (OperatingSystem.IsWindows())
-        {
-            var handle = CreateFile(
-                temporaryPath,
-                GenericRead | GenericWrite | DeleteAccess,
-                FileShareRead | FileShareDelete,
-                IntPtr.Zero,
-                CreateNew,
-                FileFlagOpenReparsePoint | FileFlagWriteThrough,
-                IntPtr.Zero);
-            if (handle.IsInvalid)
-            {
-                throw LastIoException(
-                    $"Could not create private documentation output '{temporaryName}'");
-            }
-            return new PrivateTemporaryFile(
-                rootHandle,
-                handle,
-                temporaryName,
-                temporaryPath);
-        }
-
-        if (OperatingSystem.IsMacOS())
-        {
-            var template = Encoding.UTF8.GetBytes(
-                Path.Combine(
-                    repoRoot,
-                    $".documentation-{Guid.NewGuid():N}-XXXXXX")
-                + "\0");
-            var descriptor = MakeTemporaryFile(template);
-            if (descriptor < 0)
-            {
-                throw LastIoException(
-                    "Could not create a private documentation output on macOS");
-            }
-            var terminator = Array.IndexOf(template, (byte)0);
-            temporaryPath = Encoding.UTF8.GetString(template, 0, terminator);
-            temporaryName = Path.GetFileName(temporaryPath);
-            return new PrivateTemporaryFile(
-                rootHandle,
-                new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true),
-                temporaryName,
-                temporaryPath);
-        }
-
-        var linuxDescriptor = OpenAtCreate(
-            rootHandle.DangerousGetHandle().ToInt32(),
-            temporaryName,
-            UnixOpenReadWrite
-            | UnixOpenCreate
-            | UnixOpenExclusive
-            | UnixOpenCloseOnExec
-            | UnixOpenNoFollow,
-            Convert.ToUInt32("600", 8));
-        if (linuxDescriptor < 0)
-        {
-            throw LastIoException(
-                $"Could not create private documentation output '{temporaryName}'");
-        }
-        return new PrivateTemporaryFile(
-            rootHandle,
-            new SafeFileHandle(new IntPtr(linuxDescriptor), ownsHandle: true),
-            temporaryName,
-            temporaryPath);
-    }
-
-    private static SafeFileHandle OpenRelativeFile(
-        SafeFileHandle rootHandle,
-        string relativePath)
-    {
-        var segments = relativePath.Replace('\\', '/').Split('/');
-        SafeFileHandle? currentDirectory = null;
-        try
-        {
-            var directoryDescriptor = rootHandle.DangerousGetHandle().ToInt32();
-            for (var index = 0; index < segments.Length - 1; index++)
-            {
-                var descriptor = OpenAtNoMode(
-                    directoryDescriptor,
-                    segments[index],
-                    UnixOpenReadOnly
-                    | UnixOpenDirectory
-                    | UnixOpenCloseOnExec
-                    | UnixOpenNoFollow);
-                if (descriptor < 0)
-                {
-                    throw new InvalidDataException(
-                        $"Documentation path '{relativePath}' contains an unsafe directory "
-                        + $"component '{segments[index]}'",
-                        LastIoException("Handle-relative directory open failed"));
-                }
-                currentDirectory?.Dispose();
-                currentDirectory = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
-                directoryDescriptor = descriptor;
-            }
-
-            var fileDescriptor = OpenAtNoMode(
-                directoryDescriptor,
-                segments[^1],
-                UnixOpenReadOnly | UnixOpenCloseOnExec | UnixOpenNoFollow);
-            if (fileDescriptor < 0)
-            {
-                throw new InvalidDataException(
-                    $"Documentation path '{relativePath}' could not be opened without following links",
-                    LastIoException("Handle-relative file open failed"));
-            }
-            return new SafeFileHandle(new IntPtr(fileDescriptor), ownsHandle: true);
-        }
-        finally
-        {
-            currentDirectory?.Dispose();
-        }
-    }
-
-    private static void ValidatePrivateTemporaryFile(
-        SafeFileHandle rootHandle,
-        string repoRoot,
-        string canonicalRepoRoot,
-        PrivateTemporaryFile temporary)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            ValidateOpenedHandle(
-                repoRoot,
-                canonicalRepoRoot,
-                temporary.Name,
-                temporary.Path,
-                temporary.Handle);
-            return;
-        }
-
-        using var currentEntry = OpenRelativeFile(rootHandle, temporary.Name);
-        if (GetHandleIdentity(currentEntry) != GetHandleIdentity(temporary.Handle))
-        {
-            throw new InvalidDataException(
-                $"Private documentation output '{temporary.Name}' changed before publication");
-        }
-    }
-
-    private static void ValidatePublicationRoot(
-        string repoRoot,
-        string canonicalRepoRoot,
-        SafeFileHandle rootHandle)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            using var currentRoot = OpenRepositoryDirectory(repoRoot);
-            if (GetHandleIdentity(currentRoot) != GetHandleIdentity(rootHandle))
-            {
-                throw new InvalidDataException(
-                    "The repository directory changed during documentation publication");
-            }
-            return;
-        }
-
-        var resolvedRoot = Path.GetFullPath(ResolveOpenedHandlePath(rootHandle))
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        if (!resolvedRoot.Equals(canonicalRepoRoot, comparison)
-            || !ResolveCanonicalRepositoryRoot(repoRoot).Equals(
-                canonicalRepoRoot,
-                comparison))
-        {
-            throw new InvalidDataException(
-                "The repository directory changed during documentation publication");
-        }
-    }
-
-    private static void ValidateDestinationEntry(
-        SafeFileHandle rootHandle,
-        string repoRoot,
-        string canonicalRepoRoot,
-        string relativePath,
-        string destination)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            var descriptor = OpenAtNoMode(
-                rootHandle.DangerousGetHandle().ToInt32(),
-                relativePath,
-                UnixOpenReadOnly | UnixOpenCloseOnExec | UnixOpenNoFollow);
-            if (descriptor < 0)
-            {
-                var error = Marshal.GetLastPInvokeError();
-                if (error == 2)
-                {
-                    return;
-                }
-                throw new InvalidDataException(
-                    $"Documentation output '{relativePath}' is an unsafe existing entry "
-                    + $"(errno {error})");
-            }
-            using var unixHandle = new SafeFileHandle(
-                new IntPtr(descriptor),
-                ownsHandle: true);
-            if (GetHandleLinkCount(unixHandle) != 1)
-            {
-                throw new InvalidDataException(
-                    $"Documentation output '{relativePath}' must not be a hard link");
-            }
-            return;
-        }
-
-        if (!File.Exists(destination))
-        {
-            return;
-        }
-
-        using var handle = File.OpenHandle(
-            destination,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Write | FileShare.Delete);
-        ValidateOpenedHandle(
-            repoRoot,
-            canonicalRepoRoot,
-            relativePath,
-            destination,
-            handle);
-        if (GetHandleLinkCount(handle) != 1)
-        {
-            throw new InvalidDataException(
-                $"Documentation output '{relativePath}' must not be a hard link");
-        }
-    }
-
-    private static void AtomicPublish(
-        SafeFileHandle rootHandle,
-        SafeFileHandle temporaryHandle,
-        string temporaryName,
-        string relativePath)
-    {
-        if (relativePath.Contains('/', StringComparison.Ordinal)
-            || relativePath.Contains('\\', StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(
-                $"Documentation output '{relativePath}' must be in the repository root");
-        }
-
-        if (OperatingSystem.IsWindows())
-        {
-            RenameFileByHandle(
-                temporaryHandle,
-                rootHandle,
-                relativePath);
-            return;
-        }
-
-        var rootDescriptor = rootHandle.DangerousGetHandle().ToInt32();
-        if (RenameAt(
-                rootDescriptor,
-                temporaryName,
-                rootDescriptor,
-                relativePath) != 0)
-        {
-            throw LastIoException(
-                $"Could not publish documentation output '{relativePath}' atomically");
-        }
-    }
-
-    private static void RenameFileByHandle(
-        SafeFileHandle fileHandle,
-        SafeFileHandle rootHandle,
-        string destinationName)
-    {
-        var destinationBytes = Encoding.Unicode.GetBytes(destinationName);
-        var rootOffset = IntPtr.Size == 8 ? 8 : 4;
-        var lengthOffset = rootOffset + IntPtr.Size;
-        var nameOffset = lengthOffset + sizeof(uint);
-        var bufferSize = checked(nameOffset + destinationBytes.Length);
-        var buffer = Marshal.AllocHGlobal(bufferSize);
-        var ioStatusBlock = Marshal.AllocHGlobal(IntPtr.Size * 2);
-        try
-        {
-            for (var index = 0; index < bufferSize; index++)
-            {
-                Marshal.WriteByte(buffer, index, 0);
-            }
-            Marshal.WriteByte(buffer, 0, 1);
-            Marshal.WriteIntPtr(buffer, rootOffset, rootHandle.DangerousGetHandle());
-            Marshal.WriteInt32(buffer, lengthOffset, destinationBytes.Length);
-            Marshal.Copy(destinationBytes, 0, IntPtr.Add(buffer, nameOffset), destinationBytes.Length);
-            Marshal.WriteIntPtr(ioStatusBlock, 0, IntPtr.Zero);
-            Marshal.WriteIntPtr(ioStatusBlock, IntPtr.Size, IntPtr.Zero);
-
-            var status = NtSetInformationFile(
-                    fileHandle,
-                    ioStatusBlock,
-                    buffer,
-                    (uint)bufferSize,
-                    FileRenameInformation);
-            if (status < 0)
-            {
-                throw new IOException(
-                    $"Could not publish documentation output '{destinationName}' atomically "
-                    + $"(NTSTATUS 0x{status:x8})");
-            }
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(ioStatusBlock);
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
-
-    private static uint GetHandleLinkCount(SafeFileHandle handle)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            if (!GetFileInformationByHandle(handle, out var information))
-            {
-                throw LastIoException("Could not inspect documentation output link count");
-            }
-            return information.NumberOfLinks;
-        }
-
-        var buffer = Marshal.AllocHGlobal(256);
-        try
-        {
-            if (CallFStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
-            {
-                throw LastIoException("Could not inspect documentation output link count");
-            }
-            if (OperatingSystem.IsMacOS())
-            {
-                return unchecked((ushort)Marshal.ReadInt16(buffer, 6));
-            }
-            return RuntimeInformation.ProcessArchitecture switch
-            {
-                Architecture.X64 => checked((uint)Marshal.ReadInt64(buffer, 16)),
-                Architecture.Arm64 => unchecked((uint)Marshal.ReadInt32(buffer, 20)),
-                _ => throw new PlatformNotSupportedException(
-                    "Documentation publication supports Linux x64 and arm64"),
-            };
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
-
-    private static FileIdentity GetHandleIdentity(SafeFileHandle handle)
-    {
-        var buffer = Marshal.AllocHGlobal(256);
-        try
-        {
-            if (CallFStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
-            {
-                throw LastIoException("Could not inspect a documentation file identity");
-            }
-            return OperatingSystem.IsMacOS()
-                ? new FileIdentity(
-                    unchecked((uint)Marshal.ReadInt32(buffer, 0)),
-                    unchecked((ulong)Marshal.ReadInt64(buffer, 8)))
-                : new FileIdentity(
-                    unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
-                    unchecked((ulong)Marshal.ReadInt64(buffer, 8)));
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
-
-    private static int CallFStat(int descriptor, IntPtr buffer) =>
-        OperatingSystem.IsMacOS()
-        && RuntimeInformation.ProcessArchitecture == Architecture.X64
-            ? FStatInode64(descriptor, buffer)
-            : FStat(descriptor, buffer);
-
-    private static void ValidateOpenedHandle(
-        string repoRoot,
-        string canonicalRepoRoot,
-        string relativePath,
-        string expectedPath,
-        SafeFileHandle handle)
-    {
-        var resolvedPath = ResolveOpenedHandlePath(handle);
-        var relative = Path.GetRelativePath(canonicalRepoRoot, resolvedPath);
-        if (Path.IsPathRooted(relative)
-            || relative.Equals("..", StringComparison.Ordinal)
-            || relative.StartsWith(
-                ".." + Path.DirectorySeparatorChar,
-                StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(
-                $"Opened documentation path '{relativePath}' resolves outside the repository root");
-        }
-
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        var expectedRelativePath = Path.GetRelativePath(
-            Path.GetFullPath(repoRoot),
-            Path.GetFullPath(expectedPath));
-        var canonicalExpectedPath = Path.GetFullPath(
-            Path.Combine(canonicalRepoRoot, expectedRelativePath));
-        if (!canonicalExpectedPath.Equals(Path.GetFullPath(resolvedPath), comparison))
-        {
-            throw new InvalidDataException(
-                $"Opened documentation path '{relativePath}' changed after validation");
-        }
-    }
-
-    private static string ResolveCanonicalRepositoryRoot(string repoRoot)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return Path.GetFullPath(repoRoot)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-
-        var markerPath = Path.Combine(Path.GetFullPath(repoRoot), "aws2azure.slnx");
-        using var handle = File.OpenHandle(
-            markerPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Write | FileShare.Delete);
-        return Path.GetDirectoryName(ResolveOpenedHandlePath(handle))
-               ?? throw new InvalidDataException(
-                   "Could not resolve the canonical repository root");
-    }
-
-    private static string ResolveOpenedHandlePath(SafeFileHandle handle)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var capacity = 512;
-            while (true)
-            {
-                var buffer = new StringBuilder(capacity);
-                var length = GetFinalPathNameByHandle(
-                    handle,
-                    buffer,
-                    (uint)buffer.Capacity,
-                    0);
-                if (length == 0)
-                {
-                    throw new IOException(
-                        "Could not resolve an opened documentation file handle",
-                        Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
-                }
-                if (length < buffer.Capacity)
-                {
-                    var path = buffer.ToString();
-                    if (path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
-                    {
-                        return @"\\" + path[8..];
-                    }
-                    return path.StartsWith(@"\\?\", StringComparison.Ordinal)
-                        ? path[4..]
-                        : path;
-                }
-                capacity = checked((int)length + 1);
-            }
-        }
-
-        var descriptor = handle.DangerousGetHandle().ToInt32();
-        var descriptorPath = Path.Combine(
-            "/proc/self/fd",
-            descriptor.ToString(
-                System.Globalization.CultureInfo.InvariantCulture));
-        var target = File.ResolveLinkTarget(descriptorPath, returnFinalTarget: true);
-        if (target is not null)
-        {
-            return Path.GetFullPath(target.FullName);
-        }
-
-        throw new PlatformNotSupportedException(
-            "The platform cannot resolve opened documentation file handles safely");
-    }
-
-    private static IOException LastIoException(string message) =>
-        new(
-            message,
-            Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
-
-    private static int UnixOpenCreate =>
-        OperatingSystem.IsMacOS() ? 0x0200 : 0x0040;
-
-    private static int UnixOpenExclusive =>
-        OperatingSystem.IsMacOS() ? 0x0800 : 0x0080;
-
-    private static int UnixOpenNoFollow =>
-        OperatingSystem.IsMacOS() ? 0x0100 : 0x20000;
-
-    private static int UnixOpenDirectory =>
-        OperatingSystem.IsMacOS() ? 0x100000 : 0x10000;
-
-    private static int UnixOpenCloseOnExec =>
-        OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
-
-    private const int UnixOpenReadOnly = 0;
-    private const int UnixOpenReadWrite = 2;
-    private const uint GenericRead = 0x80000000;
-    private const uint GenericWrite = 0x40000000;
-    private const uint DeleteAccess = 0x00010000;
-    private const uint Synchronize = 0x00100000;
-    private const uint FileListDirectory = 0x00000001;
-    private const uint FileShareRead = 0x00000001;
-    private const uint FileShareWrite = 0x00000002;
-    private const uint FileShareDelete = 0x00000004;
-    private const uint CreateNew = 1;
-    private const uint OpenExisting = 3;
-    private const uint FileFlagWriteThrough = 0x80000000;
-    private const uint FileFlagBackupSemantics = 0x02000000;
-    private const uint FileFlagOpenReparsePoint = 0x00200000;
-    private const int FileRenameInformation = 10;
-    private const int FileDispositionInformation = 13;
-
-    [DllImport(
-        "kernel32.dll",
-        EntryPoint = "GetFinalPathNameByHandleW",
-        CharSet = CharSet.Unicode,
-        SetLastError = true,
-        ExactSpelling = true)]
-    private static extern uint GetFinalPathNameByHandle(
-        SafeFileHandle file,
-        [Out] StringBuilder filePath,
-        uint filePathLength,
-        uint flags);
-
-    [DllImport(
-        "kernel32.dll",
-        EntryPoint = "CreateFileW",
-        CharSet = CharSet.Unicode,
-        SetLastError = true,
-        ExactSpelling = true)]
-    private static extern SafeFileHandle CreateFile(
-        string fileName,
-        uint desiredAccess,
-        uint shareMode,
-        IntPtr securityAttributes,
-        uint creationDisposition,
-        uint flagsAndAttributes,
-        IntPtr templateFile);
-
-    [DllImport("ntdll.dll")]
-    private static extern int NtSetInformationFile(
-        SafeFileHandle file,
-        IntPtr ioStatusBlock,
-        IntPtr fileInformation,
-        uint length,
-        int fileInformationClass);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetFileInformationByHandle(
-        SafeFileHandle file,
-        out ByHandleFileInformation information);
-
-    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
-    private static extern int Open(string path, int flags);
-
-    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
-    private static extern int OpenAtNoMode(int directory, string path, int flags);
-
-    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
-    private static extern int OpenAtCreate(int directory, string path, int flags, uint mode);
-
-    [DllImport("libc", EntryPoint = "mkstemp", SetLastError = true)]
-    private static extern int MakeTemporaryFile([In, Out] byte[] template);
-
-    [DllImport("libc", EntryPoint = "renameat", SetLastError = true)]
-    private static extern int RenameAt(
-        int oldDirectory,
-        string oldPath,
-        int newDirectory,
-        string newPath);
-
-    [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)]
-    private static extern int UnlinkAt(int directory, string path, int flags);
-
-    [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
-    private static extern int FStat(int descriptor, IntPtr buffer);
-
-    [DllImport("libc", EntryPoint = "fstat$INODE64", SetLastError = true)]
-    private static extern int FStatInode64(int descriptor, IntPtr buffer);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct FileTime
-    {
-        internal uint Low;
-        internal uint High;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ByHandleFileInformation
-    {
-        internal uint FileAttributes;
-        internal FileTime CreationTime;
-        internal FileTime LastAccessTime;
-        internal FileTime LastWriteTime;
-        internal uint VolumeSerialNumber;
-        internal uint FileSizeHigh;
-        internal uint FileSizeLow;
-        internal uint NumberOfLinks;
-        internal uint FileIndexHigh;
-        internal uint FileIndexLow;
-    }
-
-    internal sealed class DocumentationIoHooks
-    {
-        internal Action<DocumentationIoEvent>? AfterPathValidationBeforeIo { get; init; }
-        internal Action<DocumentationPublishEvent>? BeforeAtomicPublish { get; init; }
-    }
-
-    internal readonly record struct DocumentationIoEvent(
-        string RelativePath,
-        DocumentationIoOperation Operation);
-
-    internal readonly record struct DocumentationPublishEvent(
-        string RelativePath,
-        string TemporaryPath);
-
-    internal enum DocumentationIoOperation
-    {
-        Read,
-        Write,
-    }
-
-    private readonly record struct FileIdentity(ulong Device, ulong Inode);
-
-    private sealed class PrivateTemporaryFile : IDisposable
-    {
-        internal PrivateTemporaryFile(
-            SafeFileHandle rootHandle,
-            SafeFileHandle handle,
-            string name,
-            string path)
-        {
-            RootHandle = rootHandle;
-            Handle = handle;
-            Name = name;
-            Path = path;
-        }
-
-        private SafeFileHandle RootHandle { get; }
-        internal SafeFileHandle Handle { get; }
-        internal string Name { get; }
-        internal string Path { get; }
-        internal bool Published { get; set; }
-
-        public void Dispose()
-        {
-            try
-            {
-                if (!Published)
-                {
-                    DeletePrivateFile();
-                }
-            }
-            finally
-            {
-                Handle.Dispose();
-            }
-        }
-
-        private void DeletePrivateFile()
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                var disposition = Marshal.AllocHGlobal(1);
-                var ioStatusBlock = Marshal.AllocHGlobal(IntPtr.Size * 2);
-                try
-                {
-                    Marshal.WriteByte(disposition, 0, 1);
-                    Marshal.WriteIntPtr(ioStatusBlock, 0, IntPtr.Zero);
-                    Marshal.WriteIntPtr(ioStatusBlock, IntPtr.Size, IntPtr.Zero);
-                    var status = NtSetInformationFile(
-                        Handle,
-                        ioStatusBlock,
-                        disposition,
-                        1,
-                        FileDispositionInformation);
-                    if (status < 0)
-                    {
-                        throw new IOException(
-                            $"Could not remove private documentation output '{Name}' "
-                            + $"(NTSTATUS 0x{status:x8})");
-                    }
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(ioStatusBlock);
-                    Marshal.FreeHGlobal(disposition);
-                }
-                return;
-            }
-
-            var result = UnlinkAt(
-                RootHandle.DangerousGetHandle().ToInt32(),
-                Name,
-                flags: 0);
-            if (result != 0 && Marshal.GetLastPInvokeError() != 2)
-            {
-                throw LastIoException(
-                    $"Could not remove private documentation output '{Name}'");
-            }
-        }
-    }
-
-    private sealed class DocumentationRepositorySnapshot : IDisposable
-    {
-        private DocumentationRepositorySnapshot(string root)
-        {
-            Root = root;
-        }
-
-        internal string Root { get; }
-
-        internal static DocumentationRepositorySnapshot Capture(
-            string repoRoot,
-            DocumentationIoHooks? hooks)
-        {
-            var fullRepoRoot = Path.GetFullPath(repoRoot);
-            var canonicalRepoRoot = ResolveCanonicalRepositoryRoot(fullRepoRoot);
-            var files = EnumerateRelativeFiles(fullRepoRoot, "docs", "*", recursive: true)
-                .Append("aws2azure.slnx")
-                .Append("config.schema.json")
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .Select(path => (
-                    Path: path,
-                    Content: ReadRepositoryFile(
-                        fullRepoRoot,
-                        canonicalRepoRoot,
-                        path,
-                        hooks)))
-                .ToList();
-
-            var snapshotRoot = Path.Combine(
-                Path.GetTempPath(),
-                $"aws2azure-documentation-snapshot-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(snapshotRoot);
-            try
-            {
-                foreach (var file in files)
-                {
-                    var destination = Path.Combine(
-                        snapshotRoot,
-                        file.Path.Replace('/', Path.DirectorySeparatorChar));
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    File.WriteAllBytes(destination, file.Content);
-                }
-                return new DocumentationRepositorySnapshot(snapshotRoot);
-            }
-            catch
-            {
-                Directory.Delete(snapshotRoot, recursive: true);
-                throw;
-            }
-        }
-
-        public void Dispose()
-        {
-            Directory.Delete(Root, recursive: true);
-        }
-    }
 
     private static DocumentationFreshness Current(string? verifiedRealAzureDate = null) =>
         new()

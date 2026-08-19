@@ -41,7 +41,6 @@ docs/perf/history.csv
 # Perf — machine-readable per-run results consumed by the relative gate (fresh each run; not committed)
 docs/perf/baseline-latest.json
 change-aware-validation.json
-/.documentation-*.tmp
 
 # MkDocs local build output
 /site/

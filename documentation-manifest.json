@@ -3,11 +3,33 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:370dc5353faefa2987d66fe19cdbd232a17dec989674881f7bf980ad4c3a3a33",
+  "manifest_revision": "sha256:ae8cdca440cf2e7fb66906847967da30acab839b1908ce36a52ae45fae1ad806",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
     "manifest_revision_type": "ordered_document_index_sha256"
+  },
+  "coverage": {
+    "included_markdown_roots": [
+      "README.md",
+      "docs",
+      "deploy",
+      "tests"
+    ],
+    "excluded_markdown_paths": [
+      {
+        "path": ".github/copilot-instructions.md",
+        "reason": "agent-specific repository instructions, not product documentation"
+      },
+      {
+        "path": ".github/RELEASE_TEMPLATE.md",
+        "reason": "maintainer workflow template, not a documentation artifact"
+      },
+      {
+        "path": "AGENTS.md",
+        "reason": "agent-specific repository instructions, not product documentation"
+      }
+    ]
   },
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
@@ -639,6 +661,774 @@
       "revision": "sha256:a00e670d4523f3a5f4dd1d9726777b7d3e6435e285b7c8368bafb6c191677f32",
       "freshness": {
         "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:deploy-helm-aws2azure-readme",
+      "path": "deploy/helm/aws2azure/README.md",
+      "type": "documentation-guide",
+      "scope": "deploy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:ccb889ba5b7cd9e3444b7147df4f76e10f7c17a4a41f817cb44f37465fecd7cb",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adoption",
+      "path": "docs/adoption.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:e3c1ad20a8202d9bd6a00284e6dedff5280d53741b7f77b0b2184bd3159071f5",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0001-sb-rest-runtime-protocol",
+      "path": "docs/adr/0001-sb-rest-runtime-protocol.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:9eaff7e220b2286fd4ac1d6fb02db9997c68d1270ff703e805364479157adb35",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0002-amqp-client-library",
+      "path": "docs/adr/0002-amqp-client-library.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:1ea160b4aab1f09c07642578ff6e28fce4463734e0d894872c702a46b7a893f2",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0003-aws-to-azure-only",
+      "path": "docs/adr/0003-aws-to-azure-only.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:9d08536c5e3a36bb8277208e0d91e1c86b21983fd3fe2c50f6e5eb8bb24bf87e",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0004-wire-protocol-sidecar-translator",
+      "path": "docs/adr/0004-wire-protocol-sidecar-translator.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:32312afbe4687f5aa125eb1bd14ee8685edebfa0c9cd105c2b92dda08fa5e4ce",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0005-sidecar-resource-budget",
+      "path": "docs/adr/0005-sidecar-resource-budget.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:d3996a8f2963a2073b5c1de3b6bf497e7f1739fb1dc9223480d4d607b89e911b",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0006-dotnet-native-aot-runtime",
+      "path": "docs/adr/0006-dotnet-native-aot-runtime.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a287458d5fa3bcda24672dff33a8637731c8026fe86cd79d37f6e507bc345c55",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0007-single-binary-service-multiplexing",
+      "path": "docs/adr/0007-single-binary-service-multiplexing.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:bc0d46d810fb241886c94c0b59514df1570b63ec9afafd4d8858ed2ed5e82edc",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0008-direct-azure-rest-integration",
+      "path": "docs/adr/0008-direct-azure-rest-integration.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:004db3000fc016476d467fcfd1f5ff718f6811176d26b50abdb18452da863b35",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0009-aws-wire-protocol-without-aws-sdk",
+      "path": "docs/adr/0009-aws-wire-protocol-without-aws-sdk.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:c72d7b38acd5f684c919da6aa1d0c56976de8b835c559a1cd0f8756822b63371",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0010-static-credential-mapping",
+      "path": "docs/adr/0010-static-credential-mapping.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:59a48b41a0b9e2a4b9594e034375ef6a2dbccb73731f684ed32957cf982c8c15",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0011-gap-docs-as-source-of-truth",
+      "path": "docs/adr/0011-gap-docs-as-source-of-truth.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:3028fced721472f3f5f4699edd7762fffce66a3586765194f5935f8ec06b8f45",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0012-greenfield-implementation",
+      "path": "docs/adr/0012-greenfield-implementation.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:28539b4ca48c25ec1cc2cb4136601783e2963e4682ba781230f0c3854b445af4",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0013-manual-composition-and-aot-safe-di",
+      "path": "docs/adr/0013-manual-composition-and-aot-safe-di.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:b044259d42227c2735b1544b9c511922801c2ba6e468ba13785713e439d22a47",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0014-system-text-json-source-generation",
+      "path": "docs/adr/0014-system-text-json-source-generation.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:3c65955c60340102eaff2d13a156e81c2d0379912ddf6312197be1ea1623a747",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0015-streaming-xml-reader-writer",
+      "path": "docs/adr/0015-streaming-xml-reader-writer.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:759eda3bebb3cc52602ceaf1abc1dd763091650ad7ad99e194ab2e1d64a5e8db",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0016-loggermessage-source-generated-logging",
+      "path": "docs/adr/0016-loggermessage-source-generated-logging.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:074a157da53d0738214989be702b75100ff7898e1be3cba845f9900b5e619b97",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0017-manual-resilience-policies",
+      "path": "docs/adr/0017-manual-resilience-policies.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:fa26952c9bda81e5c9962cf9e5328120ced54c99a45f219be6095fcefdf35657",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-0018-service-bus-transport-and-emulator-evolution",
+      "path": "docs/adr/0018-service-bus-transport-and-emulator-evolution.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:6d8f4de533f2a1cce7b1b4e8fcc77bd4255ba99542179e25939fbafb6e6f5e01",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-adr-readme",
+      "path": "docs/adr/README.md",
+      "type": "documentation-guide",
+      "scope": "adr",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:8b7f76b32b2997feb99f24bd9dc44b69dd08327faf316a2efc3ef62c3011e006",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-azure-authentication",
+      "path": "docs/azure-authentication.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:b9a5f44591e38007ecd1556b62efd35e7ff7e8fecdca6be2d097309aa55dcf00",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-contributing-documentation",
+      "path": "docs/contributing/documentation.md",
+      "type": "documentation-guide",
+      "scope": "contributing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:34bfad9484d266c9dee03712ad67bd19987a043869d8186008e557230c17dda3",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-deployment-module-selection",
+      "path": "docs/deployment/module-selection.md",
+      "type": "documentation-guide",
+      "scope": "deployment",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:ab26e2aa0b0668943f356cf09735447b1083873f4917472c732f1fe52683439d",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-deployment-production-runbook",
+      "path": "docs/deployment/production-runbook.md",
+      "type": "documentation-guide",
+      "scope": "deployment",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:70692f4ada1cb5e53934c5d28319641223e60f187ba660296b4a47f5fee86e97",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-deployment-sidecar",
+      "path": "docs/deployment/sidecar.md",
+      "type": "documentation-guide",
+      "scope": "deployment",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:30a374cb81624f45f06b3276bacacdc1a3caaf0766fb246090fa62a444fa9f79",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-gaps-readme",
+      "path": "docs/gaps/README.md",
+      "type": "documentation-guide",
+      "scope": "gaps",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:d7bdb9a2be4bd9a2513252e64603c2ed3521f4e033f0a90d3efc9831acc2d25e",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-getting-started",
+      "path": "docs/getting-started.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:1b900501b1bab9b1f966df83a082d5c2cbe93b4dce0f2b8b59d7f536f7631e4e",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-index",
+      "path": "docs/index.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:ebdb0cfff0e092f2a243c602e0edb4974427026ee93b5f43e67662d4e61d67c1",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-baseline-latest",
+      "path": "docs/perf/baseline-latest.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a89a5cef2959bb6570d314977b97055756e3ecff2e2b8ac95cc0bd5a70b3abe4",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-cosmos-binary-decode",
+      "path": "docs/perf/cosmos-binary-decode.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:0c29aca59768252e33bf309e9d965f2b37b8b66b7ac20df5795f173024cb4a8c",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-cosmos-binary-encode-spike",
+      "path": "docs/perf/cosmos-binary-encode-spike.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:6b6e00311504c255e25b6e7b0e2cbd8055244b5140a6d80d0dfbd32fef2bedea",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-cosmos-binary-fused-decode-spike",
+      "path": "docs/perf/cosmos-binary-fused-decode-spike.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:e839c404ef8d448579c14683f9c07eed15c0cdb0408e54fbdb1616e7a4e9a17f",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-cosmos-query-body-encode",
+      "path": "docs/perf/cosmos-query-body-encode.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a9f2243625955ec03e1eceaf402bd6d6529f2a6b0d4aed3ebe67cd2ddb91b816",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-cosmos-sproc-params-encode",
+      "path": "docs/perf/cosmos-sproc-params-encode.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:555a1189a5419e5912872f12bdf55b523100f72aabf834dbc40b320a88cba345",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-footprint-latest",
+      "path": "docs/perf/footprint-latest.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:d843dc5b72405082717ea33d9abde61643ad204887b1e2d523700446b36bc73d",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-perf-readme",
+      "path": "docs/perf/README.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:0e1aa5c0a82d1050da490e40dc1082538bbde086db952178f39c35407779d017",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-presigned-urls",
+      "path": "docs/presigned-urls.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:8fd0886236d92e42cee6b02e01c013a75d556621c333d8925017434a786587ed",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-project-maturity",
+      "path": "docs/project-maturity.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:72124db1a86349bccfdfd8f94b0d840000484159cab4c4d1f235a86d8882a03f",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-completeness",
+      "path": "docs/site/completeness.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:81d92af5cd1c9f231d71471e72c5dc63b6618c626cd5ed2ba56a0815a69dcb18",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-coverage",
+      "path": "docs/site/coverage.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:cd42fd54354be464c6b987a73d21527c57a0055cb278f475e57492af67024329",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-design-gaps",
+      "path": "docs/site/design-gaps.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:8d36c9f5b05891b21cb2e617b9629fc7cfd90f8090a0e08939bca82e00d2e323",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-divergences",
+      "path": "docs/site/divergences.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:ed9d70c4b4b14d05d36037aa842ec74e86131e7a725f38ae26c346387c7bda91",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-dynamodb",
+      "path": "docs/site/dynamodb.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:31eac3186e0bf8f2441cfaee60ad9a5901901f830373747120caa7209ec2f6db",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-index",
+      "path": "docs/site/index.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:c78e82889a111e1a3f5342117cc90d0ea6ef6cdd2d5291fdb31a2eee05d3003c",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-kinesis",
+      "path": "docs/site/kinesis.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:19624ae393652a167cfec5abc761214f08d0d983ed6fd5f24384182c66435658",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-s3",
+      "path": "docs/site/s3.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:5f8767ea152d618a11e41e52e07aa5b32744fa4cfc411291e71465b9c5a21988",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-secretsmanager",
+      "path": "docs/site/secretsmanager.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:2d120a21009344a3a1d6884669adfe879434b2606a5596997b0845ad7f97b6a2",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-sns",
+      "path": "docs/site/sns.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:1b0ffc2a242aa6363c6eef263b77225b7385e2807027a598f759909a8185efb2",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-sqs",
+      "path": "docs/site/sqs.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:25373f11e86a3cc9f78e2e2a5a8be159d90b1ae1c567965417e1933ff17aebc4",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-site-workload-compatibility",
+      "path": "docs/site/workload-compatibility.md",
+      "type": "generated-documentation",
+      "scope": "site",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "revision": "sha256:fd217d9ba45c45792cab5fd06414577ad056c32ffb17e656915ea42ae8e159b7",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-operational-qualification",
+      "path": "docs/testing/operational-qualification.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:e2a80d797786a8490757d509feb13e4675ea3a784eb54856cb7b0a5cf3716f95",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-rc-staging-canary",
+      "path": "docs/testing/rc-staging-canary.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:24d21eac9e8f996d6747c8c746cb5ddd3181c1e79f36c426c8fb23c91e516bc1",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-real-aws-capture",
+      "path": "docs/testing/real-aws-capture.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a8623ad011e7ad4ab172611e3356f418f27c696ce0ef1e2a0f8489b2043d1fd8",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-real-azure-nightly",
+      "path": "docs/testing/real-azure-nightly.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:022affa9cd25fa9a347a2da2648fed773b422158f6ad232aa95b70c92484c3ce",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-slo-qualification",
+      "path": "docs/testing/slo-qualification.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:f4daf2406fb25a961eb8c849a9cd915b7aeefb4e5626228da3bb05a6ebf14db0",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-troubleshooting",
+      "path": "docs/troubleshooting.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:6568ab0d0763c1736f0b9cad33faaea115be28e74ab9bb7af5a4b84bb3607e6a",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-versioning-and-compatibility",
+      "path": "docs/versioning-and-compatibility.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:7fed68b367dba6f442ef40706746b6ef3914ca405dbf89e6367f98ff064d6c16",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-workloads-qualification-readme",
+      "path": "docs/workloads/qualification/README.md",
+      "type": "documentation-guide",
+      "scope": "workloads",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:71397e34e605191395ca52fd9caa1c4b15505ed76ac567dd42b9b0e0882479fc",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:readme",
+      "path": "README.md",
+      "type": "documentation-guide",
+      "scope": "project",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:441481e06756e6272c7d8fbfe0a419835815c4db5f0c498417e195e50809efd7",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:tests-aws2azureconformance-fixtures-s3-readme",
+      "path": "tests/Aws2Azure.Conformance/fixtures/s3/README.md",
+      "type": "documentation-guide",
+      "scope": "tests",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:04d7cc8e07add90f726b55289b352dde239efe2d492c1b888aa624f3143933b7",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:tests-aws2azureconformance-readme",
+      "path": "tests/Aws2Azure.Conformance/README.md",
+      "type": "documentation-guide",
+      "scope": "tests",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:a7c68625d35fc7207441529496865a7ca76d9c9f7823a6a4e210810400458a06",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:tests-aws2azureintegrationtests-dynamodb-readme",
+      "path": "tests/Aws2Azure.IntegrationTests/DynamoDb/README.md",
+      "type": "documentation-guide",
+      "scope": "tests",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:7f9f25e72fa459b993cfc3bdc74965d1ffd65103f0501f178e2981adf9e63f2e",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:tests-aws2azureintegrationtests-readme",
+      "path": "tests/Aws2Azure.IntegrationTests/README.md",
+      "type": "documentation-guide",
+      "scope": "tests",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:60570e61cb9cff86f3751bba27037e511f586b8951e6cb58ec62cdc21efc63d0",
+      "freshness": {
+        "mode": "current"
       }
     },
     {
