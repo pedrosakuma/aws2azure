@@ -19,7 +19,7 @@
           "auth": {
             "mode": "workloadIdentity"
           },
-          "shardIteratorSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "shardIteratorSigningKey": "cmVwbGFjZS13aXRoLXVuaXF1ZS1yYW5kb20ta2V5ISE=",
           "streams": {
             "orders": {
               "eventHubName": "orders-v2",

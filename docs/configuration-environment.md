@@ -9,7 +9,7 @@ differences; use a schema-validated JSON file for the stable topology.
 
 | Variable | Type / accepted value | Default | Applicability | Validation and behavior |
 |---|---|---|---|---|
-| `AWS2AZURE_CONFIG_FILE` | File path | `config.json` beside the binary, then release `config.example.json` | All deployments | Selected file must be readable JSON. Missing explicit paths result in an empty document and startup validation failure. |
+| `AWS2AZURE_CONFIG_FILE` | File path | `config.json` beside the binary, then release `config.example.json` | All deployments | Selected files must be readable JSON. A missing explicit path starts from an empty document before overrides; startup fails unless supported `AWS2AZURE__` overrides construct a complete valid configuration. |
 | `ASPNETCORE_URLS` | Semicolon-separated listener URLs | ASP.NET Core host default; repository deployments set `http://+:8080` | HTTP listener and built-in `--health-check` | Use valid Kestrel URL prefixes. The health-check uses the first URL and replaces `+`/`*` with `localhost`. |
 | `AWS2AZURE_INSECURE_TLS` | Exact string `1` | Off | Local self-signed emulators only | Disables all outbound Azure certificate validation and logs a warning. Never set in production. Other values leave validation enabled. |
 | `AWS2AZURE_MAX_CONNECTIONS_PER_SERVER` | Positive integer | `64` | Outbound Azure HTTP | Invalid, zero, or negative values use `64`. |

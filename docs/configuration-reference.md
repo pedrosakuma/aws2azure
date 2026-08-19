@@ -192,6 +192,13 @@ the property has no schema default; omission is distinct from an empty value.
 | `services.sqs` | object or null | None | SQS module | Optional. Unknown properties rejected by the authoring schema. |
 | `services.sqs.enabled` | boolean | `false` | SQS module | Optional. |
 
+## Cross-field requirements
+
+The schema also enforces these conditions across otherwise optional fields:
+
+- When an SNS serviceBusTopics binding omits eventGridFallback, every topic whose backend is EventGrid requires both eventGridTopicEndpoint and eventGridAccessKey.
+- When services.sns.defaultBackend is EventGrid, every serviceBusTopics SNS binding requires eventGridFallback.
+
 ## Authoring profile versus v1 runtime reads
 
 The table describes canonical authoring. New and edited files should use the exact

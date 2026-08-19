@@ -253,6 +253,8 @@ public static class ConfigSchemaGenerator
                 ("topics", Nullable(NamedMap(Ref("topicSettingsWithoutFallback")))))));
         backend.Add("allOf", Array(
             Object(
+                ("x-constraint-description",
+                    "When an SNS serviceBusTopics binding omits eventGridFallback, every topic whose backend is EventGrid requires both eventGridTopicEndpoint and eventGridAccessKey."),
                 ("if", noFallback),
                 ("then", topicsConstraint))));
         return backend;
@@ -498,7 +500,11 @@ public static class ConfigSchemaGenerator
         var rootRequirement = Object(
             ("properties", Object(
                 ("bindings", Object(("items", bindingConstraint))))));
-        return Object(("if", rootCondition), ("then", rootRequirement));
+        return Object(
+            ("x-constraint-description",
+                "When services.sns.defaultBackend is EventGrid, every serviceBusTopics SNS binding requires eventGridFallback."),
+            ("if", rootCondition),
+            ("then", rootRequirement));
     }
 
     private static JsonObject ServiceBusTopicsBindingCondition()

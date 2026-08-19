@@ -852,6 +852,7 @@
       ],
       "allOf": [
         {
+          "x-constraint-description": "When an SNS serviceBusTopics binding omits eventGridFallback, every topic whose backend is EventGrid requires both eventGridTopicEndpoint and eventGridAccessKey.",
           "if": {
             "anyOf": [
               {
@@ -1677,6 +1678,7 @@
   },
   "allOf": [
     {
+      "x-constraint-description": "When services.sns.defaultBackend is EventGrid, every serviceBusTopics SNS binding requires eventGridFallback.",
       "if": {
         "required": [
           "services"

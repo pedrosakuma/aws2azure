@@ -59,6 +59,21 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
+    public void Generated_configuration_reference_contains_cross_field_sns_requirements()
+    {
+        var generated = ConfigurationReferenceGenerator.Generate();
+
+        Assert.Contains(
+            "every serviceBusTopics SNS binding requires eventGridFallback",
+            generated,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "requires both eventGridTopicEndpoint and eventGridAccessKey",
+            generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Environment_reference_contains_every_process_environment_variable()
     {
         var documented = File.ReadAllText(

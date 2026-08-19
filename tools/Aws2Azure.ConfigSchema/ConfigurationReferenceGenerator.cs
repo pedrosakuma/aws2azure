@@ -56,6 +56,22 @@ public static class ConfigurationReferenceGenerator
                 .Append(Escape(row.Validation)).AppendLine(" |");
         }
 
+        var constraints = new HashSet<string>(StringComparer.Ordinal);
+        CollectConstraintDescriptions(root, constraints);
+        if (constraints.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("## Cross-field requirements");
+            output.AppendLine();
+            output.AppendLine(
+                "The schema also enforces these conditions across otherwise optional fields:");
+            output.AppendLine();
+            foreach (var constraint in constraints.Order(StringComparer.Ordinal))
+            {
+                output.Append("- ").AppendLine(constraint);
+            }
+        }
+
         output.AppendLine();
         output.AppendLine("## Authoring profile versus v1 runtime reads");
         output.AppendLine();
@@ -561,6 +577,37 @@ public static class ConfigurationReferenceGenerator
             if (item is JsonObject variant)
             {
                 CollectStringAnnotations(root, variant, scalarName, arrayName, values);
+            }
+        }
+    }
+
+    private static void CollectConstraintDescriptions(
+        JsonNode node,
+        HashSet<string> descriptions)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["x-constraint-description"] is JsonValue description
+                && description.TryGetValue<string>(out var text))
+            {
+                descriptions.Add(text);
+            }
+            foreach (var (_, child) in obj)
+            {
+                if (child is not null)
+                {
+                    CollectConstraintDescriptions(child, descriptions);
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var child in array)
+            {
+                if (child is not null)
+                {
+                    CollectConstraintDescriptions(child, descriptions);
+                }
             }
         }
     }

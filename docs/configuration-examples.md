@@ -9,6 +9,11 @@ Replace every `replace-with-*` value and example identity/resource name. Store
 the resulting file in a platform secret, mount it read-only, and select it with
 `AWS2AZURE_CONFIG_FILE`.
 
+The Kinesis example's `shardIteratorSigningKey` is also a deterministic
+schema-valid placeholder. Replace it with a unique, cryptographically random
+32-byte-or-longer key encoded as base64; reusing or publishing that key makes
+opaque iterator tokens forgeable.
+
 ## Backend and authentication coverage
 
 | AWS surface | Azure backend | Authentication demonstrated | Example |
