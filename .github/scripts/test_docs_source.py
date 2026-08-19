@@ -75,6 +75,27 @@ class DocumentationSourceTests(unittest.TestCase):
                 f"Persona source link does not resolve: {reference}",
             )
 
+    def test_portal_and_repository_root_link_discovery_artifacts(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        portal = (repo_root / "docs" / "index.md").read_text(encoding="utf-8")
+        readme = (repo_root / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "https://pedrosakuma.github.io/aws2azure/llms.txt",
+            portal,
+        )
+        self.assertIn(
+            "https://pedrosakuma.github.io/aws2azure/documentation-manifest.json",
+            portal,
+        )
+        self.assertIn("[`llms.txt`](./llms.txt)", readme)
+        self.assertIn(
+            "[`documentation-manifest.json`](./documentation-manifest.json)",
+            readme,
+        )
+        self.assertTrue((repo_root / "llms.txt").is_file())
+        self.assertTrue((repo_root / "documentation-manifest.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

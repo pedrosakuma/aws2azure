@@ -1,0 +1,45 @@
+# aws2azure
+
+> Vendor-neutral discovery map for the canonical aws2azure documentation and evidence trail.
+
+aws2azure translates AWS wire-protocol requests into direct Azure REST calls. Compatibility is workload-specific; module availability is not a claim of complete AWS parity.
+
+## Authority precedence
+
+For current adoption decisions, use this order:
+
+1. [Live workload certification](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/docs/site/workload-ga.json) - canonical current, point-in-time verdicts.
+2. [Versioned workload manifests](https://pedrosakuma.github.io/aws2azure/workloads/) - normative profile contracts and qualification inputs.
+3. [Gap YAML and generated operation/design-gap artifacts](https://pedrosakuma.github.io/aws2azure/site/) - normative capability detail.
+4. [Immutable historical release notes](https://pedrosakuma.github.io/aws2azure/releases/v1.0.0/) - what was promoted at that time, never the current verdict.
+5. [Explanatory guides](https://pedrosakuma.github.io/aws2azure/) - orientation and procedures, not authority over structured sources.
+
+A historical GA statement never overrides a later `candidate`, `conditional`, or `blocked` live certification verdict.
+
+## Artifact classes
+
+- **Canonical/current:** `docs/site/workload-ga.json`, its authority contract, and `config.schema.json`.
+- **Generated:** workload certification plus stable operation and design-gap reference pages; regenerate rather than hand-edit.
+- **Historical:** versioned release notes and release evidence under `docs/releases/`.
+- **Explanatory:** portal, configuration, workload, deployment, and operational guides.
+
+## Recommended reading order
+
+1. [Project maturity and support terms](https://pedrosakuma.github.io/aws2azure/project-maturity/)
+2. [Current workload certification](https://pedrosakuma.github.io/aws2azure/site/workload-ga/)
+3. The matching [versioned workload profile](https://pedrosakuma.github.io/aws2azure/workloads/)
+4. [Operation coverage](https://pedrosakuma.github.io/aws2azure/site/coverage/) and [design gaps](https://pedrosakuma.github.io/aws2azure/site/design-gaps/)
+5. [Canonical operator configuration schema](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/config.schema.json) and [human configuration reference](https://pedrosakuma.github.io/aws2azure/configuration-schema/)
+6. [Production runbook](https://pedrosakuma.github.io/aws2azure/deployment/production-runbook/)
+
+## Machine-readable discovery
+
+- [Documentation manifest](https://pedrosakuma.github.io/aws2azure/documentation-manifest.json) - exhaustive stable IDs, paths, types, scopes, authority classes, provenance, service/operation/profile identities, and content revisions.
+- [Current workload verdicts](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/docs/site/workload-ga.json)
+- [Workload authority contract](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/docs/workloads/certification/authority.yaml)
+- [Configuration schema](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/config.schema.json)
+
+Current workload authority was evaluated at `2026-08-18T17:30:00Z`.
+Canonical workload inputs revision: `sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d`.
+Evaluator implementation revision: `sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235`.
+Documentation manifest revision: `sha256:370dc5353faefa2987d66fe19cdbd232a17dec989674881f7bf980ad4c3a3a33`.

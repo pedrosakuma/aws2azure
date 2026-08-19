@@ -71,7 +71,9 @@ Architecture decisions that explain the project constraints are recorded in
 The canonical documentation portal is
 **[https://pedrosakuma.github.io/aws2azure/](https://pedrosakuma.github.io/aws2azure/)**.
 It combines the hand-authored guides and generated operation-gap reference in
-one searchable surface.
+one searchable surface. Machine consumers can start with the vendor-neutral
+[`llms.txt`](./llms.txt) reading order and deterministic
+[`documentation-manifest.json`](./documentation-manifest.json) index.
 
 Start broad, then drill down — the map below is layered so you only open what you
 need:

@@ -79,6 +79,18 @@ The portal has two intentionally different content layers:
   [Operation reference](site/index.md) is rendered from the gap YAML. It remains
   generated and is never duplicated or hand-edited for publication.
 
+## Machine-readable discovery
+
+Generic crawlers and retrieval systems can start with the published
+[`llms.txt`](https://pedrosakuma.github.io/aws2azure/llms.txt) reading order and
+the exhaustive
+[`documentation-manifest.json`](https://pedrosakuma.github.io/aws2azure/documentation-manifest.json)
+index. The manifest exposes stable document identities, authority class,
+source-versus-generated provenance, service/operation/profile scope, freshness,
+and deterministic content revisions. Its precedence keeps current workload
+certification above versioned profile inputs, gap sources, historical release
+notes, and explanatory guides.
+
 ## Fast reference
 
 | Need | Start here |

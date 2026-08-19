@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from mkdocs_hooks import on_page_content, on_page_markdown
+from mkdocs_hooks import on_page_content, on_page_markdown, on_post_build
 
 
 class MkDocsHooksTests(unittest.TestCase):
@@ -19,6 +19,10 @@ class MkDocsHooksTests(unittest.TestCase):
         (self.docs_root / "reference.md").write_text("# Reference\n", encoding="utf-8")
         (self.repo_root / "source.json").write_text("{}\n", encoding="utf-8")
         (self.repo_root / "config.schema.json").write_text("{}\n", encoding="utf-8")
+        (self.repo_root / "llms.txt").write_text("# Discovery\n", encoding="utf-8")
+        (self.repo_root / "documentation-manifest.json").write_text(
+            '{"schema_version":1}\n', encoding="utf-8"
+        )
         (self.repo_root / "diagram.png").write_bytes(b"not-a-real-png")
 
         self.page = SimpleNamespace(
@@ -101,6 +105,25 @@ class MkDocsHooksTests(unittest.TestCase):
         self.assertIn('href="project-maturity/"', rewritten)
         self.assertIn('href="workloads/#profiles"', rewritten)
         self.assertIn('href="https://example.com/guide.md"', rewritten)
+
+    def test_publishes_root_discovery_artifacts_without_transforming_bytes(self) -> None:
+        site_root = self.repo_root / "site"
+        site_root.mkdir()
+        config = {
+            "config_file_path": str(self.repo_root / "mkdocs.yml"),
+            "site_dir": str(site_root),
+        }
+
+        on_post_build(config=config)
+
+        self.assertEqual(
+            (self.repo_root / "llms.txt").read_bytes(),
+            (site_root / "llms.txt").read_bytes(),
+        )
+        self.assertEqual(
+            (self.repo_root / "documentation-manifest.json").read_bytes(),
+            (site_root / "documentation-manifest.json").read_bytes(),
+        )
 
 
 if __name__ == "__main__":

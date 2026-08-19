@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -20,6 +21,7 @@ _HTML_MARKDOWN_HREF = re.compile(
     r"(?P=quote)",
     re.IGNORECASE,
 )
+_DISCOVERY_ARTIFACTS = ("llms.txt", "documentation-manifest.json")
 
 
 def _rewrite_outside_code(
@@ -209,3 +211,12 @@ def on_page_content(html: str, *, page, config, files) -> str:
         return f"{match.group('prefix')}{rewritten}{quote_character}"
 
     return _HTML_MARKDOWN_HREF.sub(replace, html)
+
+
+def on_post_build(*, config) -> None:
+    """Publish repository-root discovery artifacts at the documentation root."""
+
+    repo_root = Path(config["config_file_path"]).resolve().parent
+    site_root = Path(config["site_dir"]).resolve()
+    for name in _DISCOVERY_ARTIFACTS:
+        shutil.copyfile(repo_root / name, site_root / name)

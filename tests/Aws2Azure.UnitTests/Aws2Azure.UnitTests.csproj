@@ -30,6 +30,7 @@
     <ProjectReference Include="..\..\src\Aws2Azure.Modules.SecretsManager\Aws2Azure.Modules.SecretsManager.csproj" />
     <ProjectReference Include="..\..\tools\Aws2Azure.ChangeAwareValidation\Aws2Azure.ChangeAwareValidation.csproj" />
     <ProjectReference Include="..\..\tools\Aws2Azure.ConfigSchema\Aws2Azure.ConfigSchema.csproj" />
+    <ProjectReference Include="..\..\tools\Aws2Azure.Documentation\Aws2Azure.Documentation.csproj" />
     <ProjectReference Include="..\..\tools\Aws2Azure.GapDocs\Aws2Azure.GapDocs.csproj" />
   </ItemGroup>
 
