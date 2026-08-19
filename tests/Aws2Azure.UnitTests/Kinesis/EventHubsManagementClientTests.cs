@@ -73,6 +73,37 @@ public sealed class EventHubsManagementClientTests
         Assert.Equal(new DateTimeOffset(2024, 6, 20, 8, 45, 0, TimeSpan.Zero), description.CreatedAt);
     }
 
+    [Fact]
+    public async Task GetEventHubAsync_treats_2xx_response_without_description_as_not_found()
+    {
+        var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(EmptyFeedPayload, Encoding.UTF8, "application/atom+xml"),
+        });
+        using var httpClient = new AzureHttpClient(handler, ownsHandler: false);
+        var client = new EventHubsManagementClient(
+            httpClient,
+            new TestAuthenticator(),
+            NullLogger<EventHubsManagementClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<EventHubsManagementException>(() => client.GetEventHubAsync(
+            new EventHubsCredentials { Namespace = "myns", SasKeyName = "Root", SasKey = "secret" },
+            "myns.servicebus.windows.net",
+            "missing-eh",
+            CancellationToken.None).AsTask());
+
+        Assert.Equal(HttpStatusCode.NotFound, exception.StatusCode);
+    }
+
+    private const string EmptyFeedPayload = """
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">Event Hubs</title>
+  <id>https://mynamespace.servicebus.windows.net/missing-eh</id>
+  <updated>2024-06-20T08:45:00Z</updated>
+</feed>
+""";
+
     private const string SampleAtomPayload = """
 <?xml version="1.0" encoding="utf-8"?>
 <entry xmlns="http://www.w3.org/2005/Atom">

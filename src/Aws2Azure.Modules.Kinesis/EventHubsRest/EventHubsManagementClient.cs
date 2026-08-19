@@ -71,7 +71,23 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        return await ParseEventHubAsync(content, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ParseEventHubAsync(content, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException)
+        {
+            // Azure Service Bus's Atom-based entity management API (shared by
+            // Event Hubs) can answer a GET for a name that was never
+            // provisioned with HTTP 200 and a body that doesn't contain an
+            // <EventHubDescription> element (e.g. an empty <feed>), instead
+            // of a clean 404. Left unhandled, the malformed-body parse
+            // failure would escape as a raw InvalidDataException, bypass the
+            // Kinesis error-shape mapping entirely, and surface to the AWS
+            // SDK as an unrecognized generic error. Treat it the same as a
+            // real 404 so callers still get a native ResourceNotFoundException.
+            throw new EventHubsManagementException(HttpStatusCode.NotFound, content);
+        }
     }
 
     internal static async ValueTask<EventHubDescription> ParseEventHubAsync(string content, CancellationToken cancellationToken)
