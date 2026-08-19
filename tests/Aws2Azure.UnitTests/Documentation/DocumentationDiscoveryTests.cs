@@ -304,6 +304,209 @@ public sealed class DocumentationDiscoveryTests
         }
     }
 
+    [Fact]
+    public void Snapshot_rejects_file_swap_after_validation_before_open()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-race-file");
+        var target = Path.Combine(externalRoot, "external-schema.json");
+        var canonical = Path.Combine(isolatedRepo, "config.schema.json");
+        var probe = Path.Combine(isolatedRepo, "symlink-probe");
+        try
+        {
+            const string externalContent = """{"external_race_bytes":true}""";
+            File.WriteAllText(target, externalContent);
+            if (!TryCreateFileSymbolicLink(probe, target))
+            {
+                return;
+            }
+            File.Delete(probe);
+
+            var swapped = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                AfterPathValidationBeforeIo = ioEvent =>
+                {
+                    if (swapped
+                        || ioEvent.Operation
+                        != DocumentationDiscoveryGenerator.DocumentationIoOperation.Read
+                        || ioEvent.RelativePath != "config.schema.json")
+                    {
+                        return;
+                    }
+
+                    File.Delete(canonical);
+                    File.CreateSymbolicLink(canonical, target);
+                    swapped = true;
+                },
+            };
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.Build(isolatedRepo, hooks));
+
+            Assert.True(swapped);
+            Assert.Contains("resolves outside the repository root", exception.Message);
+            Assert.DoesNotContain(externalContent, exception.Message);
+        }
+        finally
+        {
+            File.Delete(probe);
+            File.Delete(canonical);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Snapshot_rejects_parent_swap_after_validation_before_open()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-race-parent");
+        var parent = Path.Combine(isolatedRepo, "docs", "configuration", "examples");
+        var originalParent = parent + "-original";
+        var targetRelativePath = Directory.EnumerateFiles(parent, "*.json")
+            .Select(path => Path.GetRelativePath(isolatedRepo, path).Replace('\\', '/'))
+            .Order(StringComparer.Ordinal)
+            .First();
+        var targetFileName = Path.GetFileName(targetRelativePath);
+        var probe = Path.Combine(isolatedRepo, "directory-symlink-probe");
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(externalRoot, targetFileName),
+                """{"external_parent_race_bytes":true}""");
+            if (!TryCreateDirectorySymbolicLink(probe, externalRoot))
+            {
+                return;
+            }
+            DeleteDirectoryLink(probe);
+
+            var swapped = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                AfterPathValidationBeforeIo = ioEvent =>
+                {
+                    if (swapped
+                        || ioEvent.Operation
+                        != DocumentationDiscoveryGenerator.DocumentationIoOperation.Read
+                        || ioEvent.RelativePath != targetRelativePath)
+                    {
+                        return;
+                    }
+
+                    Directory.Move(parent, originalParent);
+                    Directory.CreateSymbolicLink(parent, externalRoot);
+                    swapped = true;
+                },
+            };
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.Build(isolatedRepo, hooks));
+
+            Assert.True(swapped);
+            Assert.Contains("resolves outside the repository root", exception.Message);
+        }
+        finally
+        {
+            DeleteDirectoryLink(probe);
+            DeleteDirectoryLink(parent);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Output_handle_does_not_follow_leaf_swapped_after_validation()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-race-output");
+        var externalTarget = Path.Combine(externalRoot, "external-llms.txt");
+        var output = Path.Combine(isolatedRepo, DocumentationDiscoveryGenerator.LlmsRelativePath);
+        var probe = Path.Combine(isolatedRepo, "output-symlink-probe");
+        try
+        {
+            const string externalContent = "external output must remain unchanged";
+            const string generatedContent = "generated content\n";
+            File.WriteAllText(externalTarget, externalContent);
+            File.WriteAllText(output, "old generated content");
+            if (!TryCreateFileSymbolicLink(probe, externalTarget))
+            {
+                return;
+            }
+            File.Delete(probe);
+
+            var swapped = false;
+            var hooks = new DocumentationDiscoveryGenerator.DocumentationIoHooks
+            {
+                AfterPathValidationBeforeIo = ioEvent =>
+                {
+                    if (swapped
+                        || ioEvent.Operation
+                        != DocumentationDiscoveryGenerator.DocumentationIoOperation.Write
+                        || ioEvent.RelativePath != DocumentationDiscoveryGenerator.LlmsRelativePath)
+                    {
+                        return;
+                    }
+
+                    File.Delete(output);
+                    File.CreateSymbolicLink(output, externalTarget);
+                    swapped = true;
+                },
+            };
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.WriteRepositoryFile(
+                    isolatedRepo,
+                    DocumentationDiscoveryGenerator.LlmsRelativePath,
+                    System.Text.Encoding.UTF8.GetBytes(generatedContent),
+                    hooks));
+
+            Assert.True(swapped);
+            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.Equal(externalContent, File.ReadAllText(externalTarget));
+            Assert.Equal(externalContent, File.ReadAllText(output));
+            Assert.NotNull(new FileInfo(output).LinkTarget);
+        }
+        finally
+        {
+            File.Delete(probe);
+            File.Delete(output);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Snapshot_supports_repository_paths_with_a_symlinked_ancestor()
+    {
+        var container = CreateTempDirectory("aws2azure-documentation-ancestor");
+        var isolatedRepo = CreateIsolatedRepository();
+        var realParent = Path.Combine(container, "real");
+        var aliasParent = Path.Combine(container, "alias");
+        var movedRepo = Path.Combine(realParent, "repo");
+        try
+        {
+            Directory.CreateDirectory(realParent);
+            Directory.Move(isolatedRepo, movedRepo);
+            isolatedRepo = movedRepo;
+            if (!TryCreateDirectorySymbolicLink(aliasParent, realParent))
+            {
+                return;
+            }
+
+            var manifest = DocumentationDiscoveryGenerator.Build(
+                Path.Combine(aliasParent, "repo"));
+
+            Assert.NotEmpty(manifest.Documents);
+        }
+        finally
+        {
+            DeleteDirectoryLink(aliasParent);
+            DeleteDirectory(container);
+            DeleteDirectory(isolatedRepo);
+        }
+    }
+
     private static string CreateIsolatedRepository()
     {
         var isolatedRepo = CreateTempDirectory("aws2azure-documentation-repo");

@@ -9,4 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Aws2Azure.GapDocs\Aws2Azure.GapDocs.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
+  </ItemGroup>
 </Project>

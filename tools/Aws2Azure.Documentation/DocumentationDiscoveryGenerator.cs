@@ -1,8 +1,10 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Aws2Azure.GapDocs;
+using Microsoft.Win32.SafeHandles;
 
 namespace Aws2Azure.Documentation;
 
@@ -113,10 +115,10 @@ public static class DocumentationDiscoveryGenerator
             if (check)
             {
                 var stale = outputs
-                    .Where(output => !File.Exists(output.Path)
-                                     || !File.ReadAllBytes(output.Path)
-                                         .AsSpan()
-                                         .SequenceEqual(Encoding.UTF8.GetBytes(output.Content)))
+                    .Where(output => !RepositoryFileMatches(
+                        repoRoot,
+                        Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'),
+                        Encoding.UTF8.GetBytes(output.Content)))
                     .Select(output => Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'))
                     .ToList();
                 if (stale.Count > 0)
@@ -135,7 +137,11 @@ public static class DocumentationDiscoveryGenerator
 
             foreach (var output in outputs)
             {
-                File.WriteAllText(output.Path, output.Content, new UTF8Encoding(false));
+                WriteRepositoryFile(
+                    repoRoot,
+                    Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/'),
+                    Encoding.UTF8.GetBytes(output.Content),
+                    hooks: null);
                 Console.WriteLine(
                     $"[documentation] wrote {Path.GetRelativePath(repoRoot, output.Path).Replace('\\', '/')}");
             }
@@ -154,7 +160,18 @@ public static class DocumentationDiscoveryGenerator
         }
     }
 
-    public static DocumentationManifest Build(string repoRoot)
+    public static DocumentationManifest Build(string repoRoot) =>
+        Build(repoRoot, hooks: null);
+
+    internal static DocumentationManifest Build(
+        string repoRoot,
+        DocumentationIoHooks? hooks)
+    {
+        using var snapshot = DocumentationRepositorySnapshot.Capture(repoRoot, hooks);
+        return BuildFromSnapshot(snapshot.Root);
+    }
+
+    private static DocumentationManifest BuildFromSnapshot(string repoRoot)
     {
         var fullRepoRoot = Path.GetFullPath(repoRoot);
         if (!File.Exists(Path.Combine(fullRepoRoot, "aws2azure.slnx")))
@@ -518,7 +535,7 @@ public static class DocumentationDiscoveryGenerator
         };
         manifest.ManifestRevision = ComputeManifestRevision(manifest);
 
-        var errors = Validate(fullRepoRoot, manifest);
+        var errors = ValidateSnapshot(fullRepoRoot, manifest);
         if (errors.Count > 0)
         {
             throw new InvalidDataException(
@@ -531,6 +548,14 @@ public static class DocumentationDiscoveryGenerator
     }
 
     public static IReadOnlyList<string> Validate(
+        string repoRoot,
+        DocumentationManifest manifest)
+    {
+        using var snapshot = DocumentationRepositorySnapshot.Capture(repoRoot, hooks: null);
+        return ValidateSnapshot(snapshot.Root, manifest);
+    }
+
+    private static IReadOnlyList<string> ValidateSnapshot(
         string repoRoot,
         DocumentationManifest manifest)
     {
@@ -1102,6 +1127,292 @@ public static class DocumentationDiscoveryGenerator
         new(
             $"Documentation path '{documentPath}' contains a symbolic link or reparse point "
             + $"at '{componentPath}'");
+
+    private static byte[] ReadRepositoryFile(
+        string repoRoot,
+        string relativePath,
+        DocumentationIoHooks? hooks) =>
+        ReadRepositoryFile(
+            repoRoot,
+            ResolveCanonicalRepositoryRoot(repoRoot),
+            relativePath,
+            hooks);
+
+    private static byte[] ReadRepositoryFile(
+        string repoRoot,
+        string canonicalRepoRoot,
+        string relativePath,
+        DocumentationIoHooks? hooks)
+    {
+        var expectedPath = ResolveRepositoryPath(repoRoot, relativePath);
+        hooks?.AfterPathValidationBeforeIo?.Invoke(
+            new DocumentationIoEvent(relativePath, DocumentationIoOperation.Read));
+
+        using var handle = File.OpenHandle(
+            expectedPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Write | FileShare.Delete,
+            FileOptions.SequentialScan);
+        ValidateOpenedHandle(
+            repoRoot,
+            canonicalRepoRoot,
+            relativePath,
+            expectedPath,
+            handle);
+
+        using var stream = new FileStream(handle, FileAccess.Read);
+        if (stream.Length > int.MaxValue)
+        {
+            throw new InvalidDataException(
+                $"Documentation path '{relativePath}' exceeds the supported snapshot size");
+        }
+
+        var content = new byte[stream.Length];
+        stream.ReadExactly(content);
+        return content;
+    }
+
+    private static bool RepositoryFileMatches(
+        string repoRoot,
+        string relativePath,
+        ReadOnlySpan<byte> expected)
+    {
+        try
+        {
+            return ReadRepositoryFile(repoRoot, relativePath, hooks: null)
+                .AsSpan()
+                .SequenceEqual(expected);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException
+                                          or DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    internal static void WriteRepositoryFile(
+        string repoRoot,
+        string relativePath,
+        ReadOnlySpan<byte> content,
+        DocumentationIoHooks? hooks)
+    {
+        var canonicalRepoRoot = ResolveCanonicalRepositoryRoot(repoRoot);
+        var destination = ResolveRepositoryPath(
+            repoRoot,
+            relativePath,
+            allowMissingLeaf: true);
+        var mode = File.Exists(destination) ? FileMode.Open : FileMode.CreateNew;
+        using var handle = File.OpenHandle(
+            destination,
+            mode,
+            FileAccess.ReadWrite,
+            FileShare.Read | FileShare.Delete,
+            FileOptions.WriteThrough);
+        ValidateOpenedHandle(
+            repoRoot,
+            canonicalRepoRoot,
+            relativePath,
+            destination,
+            handle);
+
+        hooks?.AfterPathValidationBeforeIo?.Invoke(
+            new DocumentationIoEvent(relativePath, DocumentationIoOperation.Write));
+        using (var stream = new FileStream(handle, FileAccess.Write))
+        {
+            stream.SetLength(0);
+            stream.Write(content);
+            stream.Flush(flushToDisk: true);
+        }
+
+        _ = ResolveRepositoryPath(repoRoot, relativePath);
+    }
+
+    private static void ValidateOpenedHandle(
+        string repoRoot,
+        string canonicalRepoRoot,
+        string relativePath,
+        string expectedPath,
+        SafeFileHandle handle)
+    {
+        var resolvedPath = ResolveOpenedHandlePath(handle);
+        var relative = Path.GetRelativePath(canonicalRepoRoot, resolvedPath);
+        if (Path.IsPathRooted(relative)
+            || relative.Equals("..", StringComparison.Ordinal)
+            || relative.StartsWith(
+                ".." + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Opened documentation path '{relativePath}' resolves outside the repository root");
+        }
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var expectedRelativePath = Path.GetRelativePath(
+            Path.GetFullPath(repoRoot),
+            Path.GetFullPath(expectedPath));
+        var canonicalExpectedPath = Path.GetFullPath(
+            Path.Combine(canonicalRepoRoot, expectedRelativePath));
+        if (!canonicalExpectedPath.Equals(Path.GetFullPath(resolvedPath), comparison))
+        {
+            throw new InvalidDataException(
+                $"Opened documentation path '{relativePath}' changed after validation");
+        }
+    }
+
+    private static string ResolveCanonicalRepositoryRoot(string repoRoot)
+    {
+        var markerPath = Path.Combine(Path.GetFullPath(repoRoot), "aws2azure.slnx");
+        using var handle = File.OpenHandle(
+            markerPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Write | FileShare.Delete);
+        return Path.GetDirectoryName(ResolveOpenedHandlePath(handle))
+               ?? throw new InvalidDataException(
+                   "Could not resolve the canonical repository root");
+    }
+
+    private static string ResolveOpenedHandlePath(SafeFileHandle handle)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var capacity = 512;
+            while (true)
+            {
+                var buffer = new StringBuilder(capacity);
+                var length = GetFinalPathNameByHandle(
+                    handle,
+                    buffer,
+                    (uint)buffer.Capacity,
+                    0);
+                if (length == 0)
+                {
+                    throw new IOException(
+                        "Could not resolve an opened documentation file handle",
+                        Marshal.GetExceptionForHR(Marshal.GetHRForLastWin32Error()));
+                }
+                if (length < buffer.Capacity)
+                {
+                    var path = buffer.ToString();
+                    if (path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
+                    {
+                        return @"\\" + path[8..];
+                    }
+                    return path.StartsWith(@"\\?\", StringComparison.Ordinal)
+                        ? path[4..]
+                        : path;
+                }
+                capacity = checked((int)length + 1);
+            }
+        }
+
+        var descriptor = handle.DangerousGetHandle().ToInt64();
+        foreach (var prefix in new[] { "/proc/self/fd", "/dev/fd" })
+        {
+            var descriptorPath = Path.Combine(prefix, descriptor.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+            if (!File.Exists(descriptorPath))
+            {
+                continue;
+            }
+            var target = File.ResolveLinkTarget(descriptorPath, returnFinalTarget: true);
+            if (target is not null)
+            {
+                return Path.GetFullPath(target.FullName);
+            }
+        }
+
+        throw new PlatformNotSupportedException(
+            "The platform cannot resolve opened documentation file handles safely");
+    }
+
+    [DllImport(
+        "kernel32.dll",
+        EntryPoint = "GetFinalPathNameByHandleW",
+        CharSet = CharSet.Unicode,
+        SetLastError = true,
+        ExactSpelling = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle file,
+        [Out] StringBuilder filePath,
+        uint filePathLength,
+        uint flags);
+
+    internal sealed class DocumentationIoHooks
+    {
+        internal Action<DocumentationIoEvent>? AfterPathValidationBeforeIo { get; init; }
+    }
+
+    internal readonly record struct DocumentationIoEvent(
+        string RelativePath,
+        DocumentationIoOperation Operation);
+
+    internal enum DocumentationIoOperation
+    {
+        Read,
+        Write,
+    }
+
+    private sealed class DocumentationRepositorySnapshot : IDisposable
+    {
+        private DocumentationRepositorySnapshot(string root)
+        {
+            Root = root;
+        }
+
+        internal string Root { get; }
+
+        internal static DocumentationRepositorySnapshot Capture(
+            string repoRoot,
+            DocumentationIoHooks? hooks)
+        {
+            var fullRepoRoot = Path.GetFullPath(repoRoot);
+            var canonicalRepoRoot = ResolveCanonicalRepositoryRoot(fullRepoRoot);
+            var files = EnumerateRelativeFiles(fullRepoRoot, "docs", "*", recursive: true)
+                .Append("aws2azure.slnx")
+                .Append("config.schema.json")
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .Select(path => (
+                    Path: path,
+                    Content: ReadRepositoryFile(
+                        fullRepoRoot,
+                        canonicalRepoRoot,
+                        path,
+                        hooks)))
+                .ToList();
+
+            var snapshotRoot = Path.Combine(
+                Path.GetTempPath(),
+                $"aws2azure-documentation-snapshot-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(snapshotRoot);
+            try
+            {
+                foreach (var file in files)
+                {
+                    var destination = Path.Combine(
+                        snapshotRoot,
+                        file.Path.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    File.WriteAllBytes(destination, file.Content);
+                }
+                return new DocumentationRepositorySnapshot(snapshotRoot);
+            }
+            catch
+            {
+                Directory.Delete(snapshotRoot, recursive: true);
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            Directory.Delete(Root, recursive: true);
+        }
+    }
 
     private static DocumentationFreshness Current(string? verifiedRealAzureDate = null) =>
         new()
