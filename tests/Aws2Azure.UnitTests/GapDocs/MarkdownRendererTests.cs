@@ -83,11 +83,11 @@ public sealed class MarkdownRendererTests
     [InlineData("Secondary indexes (GSI / LSI)", "secondary-indexes-gsi-lsi")]
     [InlineData("Already_1", "already_1")]
     [InlineData("- Edge -", "-edge-")]
-    public void LegacyDesignGapHeadingIds_matches_python_markdown_slugification(
+    public void LegacyHeadingIds_matches_python_markdown_slugification(
         string heading,
         string expected)
     {
-        var headings = new LegacyDesignGapHeadingIds();
+        var headings = new LegacyHeadingIds();
 
         Assert.Equal(expected, headings.Add(heading));
         Assert.Equal(
@@ -95,6 +95,41 @@ public sealed class MarkdownRendererTests
                 ? expected[..^1] + "2"
                 : expected + "_1",
             headings.Add(heading));
+    }
+
+    [Fact]
+    public void Render_preserves_every_legacy_service_fragment_for_the_canonical_corpus()
+    {
+        var repoRoot = FindRepoRoot();
+        var operations = Loader.LoadAll(Path.Combine(repoRoot, "docs", "gaps"));
+
+        foreach (var group in operations
+                     .GroupBy(operation => operation.Service.ToLowerInvariant())
+                     .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            var ordered = group
+                .OrderBy(operation => operation.Operation, StringComparer.Ordinal)
+                .ToList();
+            var expected = LegacyServiceFragments.Create(group.Key, ordered)
+                .Select(fragment => fragment.Fragment)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var markdown = File.ReadAllText(
+                Path.Combine(repoRoot, "docs", "site", DocumentationLinks.ServicePage(group.Key)));
+            var actual = Regex.Matches(
+                    markdown,
+                    """<a id="([^"]+)" data-legacy-fragment="true"></a>""",
+                    RegexOptions.CultureInvariant)
+                .Select(match => match.Groups[1].Value)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Equal(expected, actual);
+        }
+
+        var s3 = File.ReadAllText(Path.Combine(repoRoot, "docs", "site", "s3.md"));
+        Assert.Contains("id=\"sub-features\" data-legacy-fragment=\"true\"", s3);
+        Assert.Contains("id=\"sub-features_1\" data-legacy-fragment=\"true\"", s3);
     }
 
     [Fact]

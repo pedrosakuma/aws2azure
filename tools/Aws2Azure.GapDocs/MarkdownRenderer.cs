@@ -5,9 +5,16 @@ using System.Text;
 
 namespace Aws2Azure.GapDocs;
 
-public sealed class LegacyDesignGapHeadingIds
+public sealed class LegacyHeadingIds
 {
-    private readonly HashSet<string> ids = new(StringComparer.Ordinal);
+    private readonly HashSet<string> ids;
+
+    public LegacyHeadingIds(IEnumerable<string>? existingIds = null)
+    {
+        ids = existingIds is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(existingIds, StringComparer.Ordinal);
+    }
 
     public string Add(string heading)
     {
@@ -85,7 +92,9 @@ public static class LegacyDesignGapFragments
     public static IReadOnlyList<LegacyDesignGapFragment> Create(
         IReadOnlyList<ServiceDesignDoc> designDocs)
     {
-        var headings = new LegacyDesignGapHeadingIds();
+        var headings = new LegacyHeadingIds(
+            designDocs.SelectMany(doc => doc.DesignGaps.Select(
+                gap => DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, gap.Area))));
         headings.Add("Design gaps");
         headings.Add("Summary");
 
@@ -104,6 +113,37 @@ public static class LegacyDesignGapFragments
             }
         }
 
+        return fragments;
+    }
+}
+
+public sealed record LegacyServiceFragment(string Operation, string Fragment);
+
+public static class LegacyServiceFragments
+{
+    public static IReadOnlyList<LegacyServiceFragment> Create(
+        string service,
+        IReadOnlyList<OperationDoc> operations)
+    {
+        var headings = new LegacyHeadingIds();
+        headings.Add(service);
+        var fragments = new List<LegacyServiceFragment>();
+        foreach (var operation in operations)
+        {
+            headings.Add(operation.Operation);
+            if (operation.SubFeatures.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("Sub-features")));
+            }
+            if (operation.BehaviorDifferences.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("Behaviour differences")));
+            }
+            if (operation.References.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("References")));
+            }
+        }
         return fragments;
     }
 }
@@ -481,6 +521,8 @@ public static class MarkdownRenderer
 
     private static void WriteServicePage(string service, IList<OperationDoc> ops, string siteRoot)
     {
+        var legacyFragments = LegacyServiceFragments.Create(service, ops.ToList())
+            .ToLookup(fragment => fragment.Operation, StringComparer.OrdinalIgnoreCase);
         var sb = new StringBuilder();
         sb.AppendLine($"<a id=\"{DocumentationLinks.Anchor(service)}\"></a>");
         sb.AppendLine();
@@ -496,8 +538,13 @@ public static class MarkdownRenderer
         sb.AppendLine("|---|---|---|---|---|");
         foreach (var op in ops)
         {
+            var legacyAliases = string.Concat(
+                legacyFragments[op.Operation].Select(
+                    fragment =>
+                        $"<a id=\"{fragment.Fragment}\" data-legacy-fragment=\"true\"></a>"));
             sb.AppendLine(
                 $"| <a id=\"{DocumentationLinks.OperationCompatibilityAnchor(op.Operation)}\"></a>" +
+                legacyAliases +
                 $"[{op.Operation}]({DocumentationLinks.OperationPage(op.Service, op.Operation)}) | " +
                 $"{StatusBadge(op.Status)} | {DispositionBadge(op.Disposition)} | {Seal(op.VerifiedRealAzure)} | " +
                 $"`{DocumentationLinks.OperationIdentity(op.Service, op.Operation)}` |");

@@ -166,7 +166,14 @@ def validate_capability_pages(
     witnesses = {
         "service": (
             site_dir / "site" / "s3" / "index.html",
-            {"service-s3", "putobject"},
+            {
+                "service-s3",
+                "putobject",
+                "sub-features",
+                "sub-features_1",
+                "behaviour-differences",
+                "references",
+            },
         ),
         "operation": (
             site_dir / "site" / "operations" / "s3" / "putobject" / "index.html",
@@ -177,7 +184,11 @@ def validate_capability_pages(
         ),
         "design-gap index": (
             site_dir / "site" / "design-gaps" / "index.html",
-            {"s3-no-iam---acl---bucket-policy-authorization-model"},
+            {
+                "s3-no-iam---acl---bucket-policy-authorization-model",
+                "transaction-scope-is-single-partition-single-table",
+                "no-aws-region-account-namespace_1",
+            },
         ),
         "design gap": (
             site_dir
@@ -244,6 +255,37 @@ def validate_legacy_design_gap_fragments(
             "Built design-gap index lacks deterministic duplicate-heading fragments: "
             f"{sorted(missing_witnesses)!r}"
         )
+    return errors
+
+
+def validate_legacy_service_fragments(
+    site_dir: Path, pages: dict[Path, PageParser]
+) -> list[str]:
+    errors: list[str] = []
+    for service in ("dynamodb", "kinesis", "s3", "secretsmanager", "sns", "sqs"):
+        page_path = (site_dir / "site" / service / "index.html").resolve()
+        page = pages.get(page_path)
+        if page is None:
+            errors.append(f"Generated service index is missing: {page_path}")
+            continue
+
+        source_path = Path("docs/site") / f"{service}.md"
+        marker = '" data-legacy-fragment="true"></a>'
+        expected: set[str] = set()
+        for line in source_path.read_text(encoding="utf-8").splitlines():
+            start = 0
+            while (marker_at := line.find(marker, start)) >= 0:
+                id_at = line.rfind('<a id="', start, marker_at)
+                if id_at >= 0:
+                    expected.add(line[id_at + len('<a id="') : marker_at])
+                start = marker_at + len(marker)
+
+        if page.legacy_fragments != expected:
+            errors.append(
+                f"Built {service} legacy fragments differ from generated Markdown: "
+                f"missing={sorted(expected - page.legacy_fragments)!r}, "
+                f"unexpected={sorted(page.legacy_fragments - expected)!r}"
+            )
     return errors
 
 
@@ -324,6 +366,7 @@ def main() -> int:
     errors.extend(validate_search(site_dir))
     errors.extend(validate_capability_pages(site_dir, pages))
     errors.extend(validate_legacy_design_gap_fragments(site_dir, pages))
+    errors.extend(validate_legacy_service_fragments(site_dir, pages))
     errors.extend(validate_operator_schema_link(site_dir, pages))
     errors.extend(validate_persona_links(site_dir, base_path))
     if errors:
