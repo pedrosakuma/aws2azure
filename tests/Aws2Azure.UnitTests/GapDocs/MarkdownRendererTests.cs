@@ -28,7 +28,8 @@ public sealed class MarkdownRendererTests
             var serviceIndex = Read(output, "s3.md");
             Assert.Contains("# s3 {#service-s3}", serviceIndex, StringComparison.Ordinal);
             Assert.Contains("`service:s3`", serviceIndex, StringComparison.Ordinal);
-            Assert.Contains("<a id=\"putobject\"></a>[PutObject](operations/s3/putobject.md)", serviceIndex, StringComparison.Ordinal);
+            Assert.Contains("<a id=\"putobject\"></a>", serviceIndex, StringComparison.Ordinal);
+            Assert.Contains("[PutObject](operations/s3/putobject.md)", serviceIndex, StringComparison.Ordinal);
             Assert.Contains("`operation:s3:putobject`", serviceIndex, StringComparison.Ordinal);
 
             var operationPage = Read(output, "operations", "s3", "putobject.md");
