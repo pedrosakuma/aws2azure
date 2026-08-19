@@ -253,8 +253,19 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 QueueUrl = queueUrl,
                 MessageBody = "should-not-be-delivered",
             }, timeout.Token));
-        Assert.Equal("AWS.SimpleQueueService.NonExistentQueue", exception.ErrorCode);
-        Assert.Equal(ErrorType.Sender, exception.ErrorType);
+        // Once the SDK recognizes the shape correctly (see the AwsJson
+        // protocol-code fix in SqsErrorResponse.cs), its own ErrorCode
+        // property reflects the wire-level Smithy shape name it actually
+        // received, not the legacy Query-protocol code documented by AWS.
+        Assert.Equal("QueueDoesNotExist", exception.ErrorCode);
+        // AWSSDK.SQS only derives ErrorType from the legacy x-amzn-query-error
+        // response header (a Code;Sender|Receiver pair used for backward
+        // compatibility with pre-JSON-protocol SQS clients); the proxy doesn't
+        // emit that header, so JsonErrorResponseUnmarshaller's hardcoded
+        // ErrorType.Unknown default applies here, same as every other
+        // JSON-protocol error the proxy renders (see the analogous Kinesis
+        // real-Azure assertion).
+        Assert.Equal(ErrorType.Unknown, exception.ErrorType);
     }
 
     private static async Task<Dictionary<string, string>> ReceiveBodiesAsync(

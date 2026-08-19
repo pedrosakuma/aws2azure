@@ -78,7 +78,11 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
                 ShardIteratorType = "LATEST",
             }, timeout.Token)).ConfigureAwait(false);
         Assert.Equal(HttpStatusCode.BadRequest, failure.StatusCode);
-        Assert.Equal(ErrorType.Sender, failure.ErrorType);
+        // AWSSDK.Kinesis's JSON-RPC error unmarshaller (JsonErrorResponseUnmarshaller)
+        // hardcodes ErrorType.Unknown for every JSON-protocol error — unlike the
+        // XML-protocol path, it never parses a Sender/Receiver classification out of
+        // the response body or headers. No wire response can make this Sender.
+        Assert.Equal(ErrorType.Unknown, failure.ErrorType);
     }
 
     [SkippableFact]
