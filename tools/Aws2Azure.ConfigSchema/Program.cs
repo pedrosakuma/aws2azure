@@ -1,21 +1,37 @@
 using Aws2Azure.ConfigSchema;
 
 var repoRoot = FindRepoRoot();
-var outputPath = Path.Combine(repoRoot, ConfigSchemaGenerator.ArtifactRelativePath);
-var generated = ConfigSchemaGenerator.Generate();
+var artifacts = new[]
+{
+    new GeneratedArtifact(
+        ConfigSchemaGenerator.ArtifactRelativePath,
+        ConfigSchemaGenerator.Generate()),
+    new GeneratedArtifact(
+        ConfigurationReferenceGenerator.ArtifactRelativePath,
+        ConfigurationReferenceGenerator.Generate()),
+};
 
 if (args.Length == 1 && args[0].Equals("--check", StringComparison.Ordinal))
 {
-    if (!File.Exists(outputPath)
-        || !File.ReadAllText(outputPath).Equals(generated, StringComparison.Ordinal))
+    var stale = artifacts
+        .Where(artifact =>
+        {
+            var path = Path.Combine(repoRoot, artifact.RelativePath);
+            return !File.Exists(path)
+                || !File.ReadAllText(path).Equals(artifact.Content, StringComparison.Ordinal);
+        })
+        .Select(static artifact => artifact.RelativePath)
+        .ToArray();
+    if (stale.Length > 0)
     {
         Console.Error.WriteLine(
-            $"[config-schema] {ConfigSchemaGenerator.ArtifactRelativePath} is out of date. " +
+            $"[config-schema] {string.Join(", ", stale)} is out of date. " +
             "Run: dotnet run --project tools/Aws2Azure.ConfigSchema");
         return 1;
     }
 
-    Console.WriteLine($"[config-schema] {ConfigSchemaGenerator.ArtifactRelativePath} is current.");
+    Console.WriteLine(
+        $"[config-schema] {string.Join(", ", artifacts.Select(static artifact => artifact.RelativePath))} are current.");
     return 0;
 }
 
@@ -25,8 +41,13 @@ if (args.Length != 0)
     return 2;
 }
 
-File.WriteAllText(outputPath, generated);
-Console.WriteLine($"[config-schema] wrote {outputPath}");
+foreach (var artifact in artifacts)
+{
+    var outputPath = Path.Combine(repoRoot, artifact.RelativePath);
+    Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+    File.WriteAllText(outputPath, artifact.Content);
+    Console.WriteLine($"[config-schema] wrote {outputPath}");
+}
 return 0;
 
 static string FindRepoRoot()
@@ -45,3 +66,5 @@ static string FindRepoRoot()
 
     throw new InvalidOperationException("Could not find the aws2azure repository root.");
 }
+
+internal sealed record GeneratedArtifact(string RelativePath, string Content);

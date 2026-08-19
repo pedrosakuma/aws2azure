@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.RegularExpressions;
 using Aws2Azure.ConfigSchema;
 using Aws2Azure.Core.Configuration;
 using Json.Schema;
@@ -29,6 +30,106 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
+    public void Generated_configuration_reference_matches_committed_artifact()
+    {
+        var committed = File.ReadAllText(
+            Path.Combine(RepoRoot, ConfigurationReferenceGenerator.ArtifactRelativePath));
+
+        Assert.Equal(committed, ConfigurationReferenceGenerator.Generate());
+    }
+
+    [Fact]
+    public void Generated_configuration_reference_contains_every_source_generated_config_property()
+    {
+        var generated = ConfigurationReferenceGenerator.Generate();
+        var documentedNames = generated
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(static line => line.StartsWith("| `", StringComparison.Ordinal))
+            .Select(static line => line.Split('`')[1])
+            .Select(static path => path.Split('.').Last().Replace("[]", "", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var type in ConfigContractTypes())
+        {
+            foreach (var property in type.Properties)
+            {
+                Assert.Contains(property.Name, documentedNames);
+            }
+        }
+    }
+
+    [Fact]
+    public void Environment_reference_contains_every_process_environment_variable()
+    {
+        var documented = File.ReadAllText(
+            Path.Combine(RepoRoot, "docs", "configuration-environment.md"));
+        var source = string.Join(
+            '\n',
+            Directory.EnumerateFiles(
+                    Path.Combine(RepoRoot, "src"),
+                    "*.cs",
+                    SearchOption.AllDirectories)
+                .Select(File.ReadAllText));
+        var directReads = Regex.Matches(
+            source,
+            "GetEnvironmentVariable\\(\"(?<name>[A-Z][A-Z0-9_]+)\"\\)");
+        var namedConstants = Regex.Matches(
+            source,
+            "EnvironmentVariable\\s*=\\s*\"(?<name>[A-Z][A-Z0-9_]+)\"");
+        var names = directReads
+            .Concat(namedConstants)
+            .Select(static match => match.Groups["name"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.NotEmpty(names);
+        foreach (var name in names)
+        {
+            Assert.Contains($"`{name}`", documented, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Production_documentation_examples_cover_all_backends_and_auth_modes()
+    {
+        var exampleDirectory = Path.Combine(RepoRoot, "docs", "configuration", "examples");
+        var kinds = new HashSet<string>(StringComparer.Ordinal);
+        var modes = new HashSet<string>(StringComparer.Ordinal);
+        var previousTenant = Environment.GetEnvironmentVariable("AZURE_TENANT_ID");
+        var previousClient = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        var previousToken = Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", "documentation-tenant");
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", "documentation-client");
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", "documentation-token-file");
+
+            foreach (var path in Directory.EnumerateFiles(exampleDirectory, "*.json").Order())
+            {
+                var instance = JsonNode.Parse(File.ReadAllText(path))
+                    ?? throw new InvalidDataException($"{path} is empty.");
+                AssertValid(instance);
+                CollectStringProperties(instance, "kind", kinds);
+                CollectStringProperties(instance, "mode", modes);
+                ValidateRuntime(instance);
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_TENANT_ID", previousTenant);
+            Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", previousClient);
+            Environment.SetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE", previousToken);
+        }
+
+        Assert.Equal(
+            new[] { "blob", "cosmos", "eventGrid", "eventHubs", "keyVault", "serviceBus", "serviceBusTopics" },
+            kinds.Order());
+        Assert.Equal(
+            new[] { "clientSecret", "managedIdentity", "reference", "sas", "sharedKey", "workloadIdentity" },
+            modes.Order());
+    }
+
+    [Fact]
     public void Queue_transport_has_no_schema_default_because_it_inherits_backend_transport()
     {
         var generated = JsonNode.Parse(ConfigSchemaGenerator.Generate())!;
@@ -41,27 +142,7 @@ public sealed class ConfigSchemaTests
     public void Schema_contains_every_source_generated_config_property()
     {
         var generated = ConfigSchemaGenerator.Generate();
-        JsonTypeInfo[] contractTypes =
-        [
-            ConfigDocumentJsonContext.Default.ConfigDocument,
-            ConfigDocumentJsonContext.Default.ServicesConfig,
-            ConfigDocumentJsonContext.Default.ServiceToggleConfig,
-            ConfigDocumentJsonContext.Default.S3ServiceConfig,
-            ConfigDocumentJsonContext.Default.SnsServiceConfig,
-            ConfigDocumentJsonContext.Default.DynamoDbServiceConfig,
-            ConfigDocumentJsonContext.Default.BindingEntry,
-            ConfigDocumentJsonContext.Default.AwsIdentityConfig,
-            ConfigDocumentJsonContext.Default.AzureBindingSet,
-            ConfigDocumentJsonContext.Default.AzureBackendConfig,
-            ConfigDocumentJsonContext.Default.AzureTargetConfig,
-            ConfigDocumentJsonContext.Default.AzureAuthConfig,
-            ConfigDocumentJsonContext.Default.AzureIdentity,
-            ConfigDocumentJsonContext.Default.SqsQueueSettings,
-            ConfigDocumentJsonContext.Default.SnsTopicSettings,
-            ConfigDocumentJsonContext.Default.KinesisStreamSettings,
-        ];
-
-        foreach (var type in contractTypes)
+        foreach (var type in ConfigContractTypes())
         {
             foreach (var property in type.Properties)
             {
@@ -1012,12 +1093,62 @@ public sealed class ConfigSchemaTests
     private static EvaluationResults Evaluate(JsonNode instance) =>
         Schema.Evaluate(instance, EvaluationOptions);
 
+    private static JsonTypeInfo[] ConfigContractTypes() =>
+    [
+        ConfigDocumentJsonContext.Default.ConfigDocument,
+        ConfigDocumentJsonContext.Default.ServicesConfig,
+        ConfigDocumentJsonContext.Default.ServiceToggleConfig,
+        ConfigDocumentJsonContext.Default.S3ServiceConfig,
+        ConfigDocumentJsonContext.Default.SnsServiceConfig,
+        ConfigDocumentJsonContext.Default.DynamoDbServiceConfig,
+        ConfigDocumentJsonContext.Default.BindingEntry,
+        ConfigDocumentJsonContext.Default.AwsIdentityConfig,
+        ConfigDocumentJsonContext.Default.AzureBindingSet,
+        ConfigDocumentJsonContext.Default.AzureBackendConfig,
+        ConfigDocumentJsonContext.Default.AzureTargetConfig,
+        ConfigDocumentJsonContext.Default.AzureAuthConfig,
+        ConfigDocumentJsonContext.Default.AzureIdentity,
+        ConfigDocumentJsonContext.Default.SqsQueueSettings,
+        ConfigDocumentJsonContext.Default.SnsTopicSettings,
+        ConfigDocumentJsonContext.Default.KinesisStreamSettings,
+    ];
+
     private static void ValidateRuntime(JsonNode instance)
     {
         var document = JsonSerializer.Deserialize(
             instance.ToJsonString(),
             ConfigDocumentJsonContext.Default.ConfigDocument)!;
         ProxyConfigValidator.Validate(ConfigDocumentTranslator.ToProxyConfig(document));
+    }
+
+    private static void CollectStringProperties(JsonNode node, string propertyName, HashSet<string> values)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var (name, value) in obj)
+            {
+                if (name.Equals(propertyName, StringComparison.Ordinal)
+                    && value is JsonValue scalar
+                    && scalar.TryGetValue<string>(out var text))
+                {
+                    values.Add(text);
+                }
+                if (value is not null)
+                {
+                    CollectStringProperties(value, propertyName, values);
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var value in array)
+            {
+                if (value is not null)
+                {
+                    CollectStringProperties(value, propertyName, values);
+                }
+            }
+        }
     }
 
     private static JsonNode MinimalConfig() => JsonNode.Parse("""

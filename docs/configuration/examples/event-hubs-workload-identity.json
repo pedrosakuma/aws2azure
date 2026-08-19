@@ -1,0 +1,34 @@
+{
+  "services": {
+    "kinesis": {
+      "enabled": true
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPRODEVENTS",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "kinesis": {
+          "kind": "eventHubs",
+          "target": {
+            "namespace": "prod-events"
+          },
+          "auth": {
+            "mode": "workloadIdentity"
+          },
+          "shardIteratorSigningKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "streams": {
+            "orders": {
+              "eventHubName": "orders-v2",
+              "consumerGroup": "aws-readers",
+              "partitionCount": 8
+            }
+          }
+        }
+      }
+    }
+  ]
+}

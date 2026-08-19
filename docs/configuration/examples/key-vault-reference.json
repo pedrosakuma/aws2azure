@@ -1,0 +1,33 @@
+{
+  "services": {
+    "secretsmanager": {
+      "enabled": true
+    }
+  },
+  "azureIdentities": {
+    "prod-key-vault-identity": {
+      "authMode": "managedIdentity",
+      "clientId": "33333333-3333-3333-3333-333333333333"
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPRODVAULT",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "secretsmanager": {
+          "kind": "keyVault",
+          "target": {
+            "vaultUrl": "https://prod-application-vault.vault.azure.net/"
+          },
+          "auth": {
+            "mode": "reference",
+            "identity": "prod-key-vault-identity"
+          }
+        }
+      }
+    }
+  ]
+}

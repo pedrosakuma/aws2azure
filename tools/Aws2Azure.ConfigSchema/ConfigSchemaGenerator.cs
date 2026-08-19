@@ -440,6 +440,7 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject SchemeUri(params string[] schemes) => Object(
         ("type", "string"),
+        ("x-uri-schemes", Array(schemes)),
         ("pattern",
             $"^(?:{string.Join("|", schemes.Select(CaseInsensitiveText))})://" +
             "(?:[^/?#@\\s]+@)?" +
@@ -537,7 +538,9 @@ public static class ConfigSchemaGenerator
                 ("type", "string"),
                 ("pattern", CaseInsensitivePattern(value))));
         }
-        var schema = Object(("oneOf", variants));
+        var schema = Object(
+            ("oneOf", variants),
+            ("x-canonical-values", Array(values)));
         if (defaultValue is not null)
         {
             schema.Add("default", defaultValue);
@@ -547,12 +550,14 @@ public static class ConfigSchemaGenerator
 
     private static JsonObject Const(string value) => Object(
         ("type", "string"),
+        ("x-canonical-value", value),
         ("pattern", CaseInsensitivePattern(value)));
 
     private static JsonObject EnumLiteral(string value, bool isDefault = false)
     {
         var schema = Object(
             ("type", "string"),
+            ("x-canonical-value", value),
             ("pattern", CaseInsensitivePattern(value)));
         if (isDefault)
         {

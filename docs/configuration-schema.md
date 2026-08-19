@@ -1,5 +1,10 @@
 # Operator configuration schema
 
+For the generated property-by-property inventory, use the
+[complete configuration field reference](./configuration-reference.md). For
+deployable documents, use the
+[schema-validated production examples](./configuration-examples.md).
+
 [`config.schema.json`](../config.schema.json) is the canonical, machine-readable
 authoring profile for the binding-centric JSON document selected by
 `AWS2AZURE_CONFIG_FILE`. It uses JSON Schema draft 2020-12 and is generated
@@ -146,6 +151,9 @@ fields. A named identity may omit `authMode`; it defaults to `clientSecret`.
 
 `AWS2AZURE__` overrides use `__` as a JSON path separator. The prefix is exact;
 path segments are case-insensitive. Array indices are decimal path segments:
+
+The exhaustive process-variable and override-path reference is
+[Process environment and configuration overrides](./configuration-environment.md).
 
 ```text
 AWS2AZURE__SERVICES__DYNAMODB__CONSISTENCYCHECK=Required
