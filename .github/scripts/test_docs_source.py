@@ -50,13 +50,18 @@ class DocumentationSourceTests(unittest.TestCase):
 
         expected = {
             "project-maturity.md",
+            "adoption.md",
             "site/workload-compatibility.md",
             "site/coverage.md",
             "getting-started.md",
+            "configuration-reference.md",
+            "configuration-environment.md",
+            "configuration-examples.md",
             "azure-authentication.md",
             "workloads/README.md",
             "deployment/sidecar.md",
             "deployment/production-runbook.md",
+            "troubleshooting.md",
             "versioning-and-compatibility.md",
         }
         self.assertEqual(expected, parser.references)

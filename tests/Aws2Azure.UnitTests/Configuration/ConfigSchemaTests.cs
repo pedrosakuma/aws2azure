@@ -10,6 +10,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace Aws2Azure.UnitTests.Configuration;
 
+[Collection("EnvironmentVariables")]
 public sealed class ConfigSchemaTests
 {
     private static readonly string RepoRoot = FindRepoRoot();

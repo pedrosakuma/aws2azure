@@ -30,12 +30,16 @@ author new legacy-shaped files.
 
 **Symptom:** `404` with `aws2azure: no service module matched host ...`.
 
-- The request `Host` must start with the AWS service name (`s3.`, `sqs.`,
-  `dynamodb.`, `sns.`, `kinesis.`, or `secretsmanager.`).
+- The request `Host` must match the module's accepted AWS endpoint forms.
+  SQS, DynamoDB, Kinesis, and Secrets Manager accept `<service>.`,
+  `<service>-`, or the bare service name; SNS accepts `sns.` or bare `sns`.
+  S3 accepts path-style `s3.`, `s3-`, or bare `s3`, and recognizes
+  `<bucket>.s3.`/`<bucket>.s3-` as virtual-hosted routing.
 - Preserve that Host through ingress/proxy layers. Point the AWS SDK endpoint at
   a service-prefixed DNS name resolving to aws2azure.
-- Configure S3 for path-style addressing unless the complete virtual-hosted
-  DNS/Host path is intentionally preserved.
+- Configure S3 for path-style addressing. Although the router recognizes a
+  preserved virtual-hosted S3 Host, v1 returns
+  `VirtualHostedStyleNotSupported` rather than dispatching that request.
 - Confirm the module is compiled with `/_aws2azure/modules` and enabled in
   `services.<service>.enabled`.
 

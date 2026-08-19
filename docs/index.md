@@ -30,6 +30,7 @@ operation-level gaps, and production procedures into one searchable surface.
     </div>
     <div class="portal-path__links">
       <a href="project-maturity.md">Maturity terms</a>
+      <a href="adoption.md">Adoption checklist</a>
       <a href="site/workload-compatibility.md">Workload verdicts</a>
       <a href="site/coverage.md">Operation coverage</a>
     </div>
@@ -42,6 +43,9 @@ operation-level gaps, and production procedures into one searchable surface.
     </div>
     <div class="portal-path__links">
       <a href="getting-started.md">Getting started</a>
+      <a href="configuration-reference.md">Configuration reference</a>
+      <a href="configuration-environment.md">Environment and overrides</a>
+      <a href="configuration-examples.md">Production examples</a>
       <a href="azure-authentication.md">Authentication</a>
       <a href="workloads/README.md">Workload profiles</a>
     </div>
@@ -55,6 +59,7 @@ operation-level gaps, and production procedures into one searchable surface.
     <div class="portal-path__links">
       <a href="deployment/sidecar.md">Deploy</a>
       <a href="deployment/production-runbook.md">Production runbook</a>
+      <a href="troubleshooting.md">Troubleshooting</a>
       <a href="versioning-and-compatibility.md">Versioning</a>
     </div>
   </section>
@@ -79,8 +84,11 @@ The portal has two intentionally different content layers:
 | Need | Start here |
 |---|---|
 | Determine whether a workload is supportable | [Workload compatibility](site/workload-compatibility.md) |
+| Follow the shortest safe adoption path | [Adoption checklist](adoption.md) |
 | Check one AWS API | [Coverage matrix](site/coverage.md) |
 | Understand a cross-cutting incompatibility | [Design gaps](site/design-gaps.md) |
+| Build a complete valid configuration | [Configuration reference](configuration-reference.md) |
+| Diagnose startup, routing, auth, or evidence | [Troubleshooting](troubleshooting.md) |
 | Verify real-Azure evidence | [Real-Azure conformance and divergences](site/divergences.md) |
 | Prepare a production rollout | [Production runbook](deployment/production-runbook.md) |
 | Understand a foundational constraint | [Architecture Decision Records](adr/README.md) |

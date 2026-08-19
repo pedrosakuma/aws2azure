@@ -141,6 +141,17 @@ def validate_search(site_dir: Path) -> list[str]:
         ),
         "configuration concept": ("azureIdentities", "getting-started/"),
         "operator schema": ("config.schema.json", "configuration-schema/"),
+        "complete field reference": (
+            "operator-selected",
+            "configuration-reference/",
+        ),
+        "environment override": (
+            "AWS2AZURE_MAX_CONNECTIONS_PER_SERVER",
+            "configuration-environment/",
+        ),
+        "production example": ("serviceBusTopics", "configuration-examples/"),
+        "adoption path": ("manifest", "adoption/"),
+        "troubleshooting": ("SignatureDoesNotMatch", "troubleshooting/"),
         "workload verdict": ("conditional", "site/workload-compatibility/"),
         "production procedure": ("rollback", "deployment/production-runbook/"),
     }
@@ -324,13 +335,18 @@ def validate_persona_links(site_dir: Path, base_path: str) -> list[str]:
 
     expected = {
         "project-maturity/",
+        "adoption/",
         "site/workload-compatibility/",
         "site/coverage/",
         "getting-started/",
+        "configuration-reference/",
+        "configuration-environment/",
+        "configuration-examples/",
         "azure-authentication/",
         "workloads/",
         "deployment/sidecar/",
         "deployment/production-runbook/",
+        "troubleshooting/",
         "versioning-and-compatibility/",
     }
     if actual == expected:

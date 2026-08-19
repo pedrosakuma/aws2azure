@@ -76,6 +76,7 @@ nav:
   - Home: index.md
   - Evaluate:
       - Project maturity: project-maturity.md
+      - Adoption checklist: adoption.md
       - Workload compatibility: site/workload-compatibility.md
       - Workload GA certification: site/workload-ga.md
       - Operation coverage: site/coverage.md
@@ -85,6 +86,9 @@ nav:
   - "Build & integrate":
       - Getting started: getting-started.md
       - Operator configuration: configuration-schema.md
+      - Complete field reference: configuration-reference.md
+      - Environment and overrides: configuration-environment.md
+      - Production examples: configuration-examples.md
       - Azure authentication: azure-authentication.md
       - Presigned URLs: presigned-urls.md
       - Workload profiles:
@@ -107,6 +111,7 @@ nav:
       - Sidecar deployment: deployment/sidecar.md
       - Build-time module selection: deployment/module-selection.md
       - Production runbook: deployment/production-runbook.md
+      - Troubleshooting: troubleshooting.md
       - Release-candidate canary: testing/rc-staging-canary.md
       - Operational qualification: testing/operational-qualification.md
       - SLO qualification: testing/slo-qualification.md
