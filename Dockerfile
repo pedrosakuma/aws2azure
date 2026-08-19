@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # Build stage: restore, build, publish AOT
 # -----------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302 AS build
 WORKDIR /src
 
 # Native-AOT toolchain. `dotnet publish` with <PublishAot>true</PublishAot>
