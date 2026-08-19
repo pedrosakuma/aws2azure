@@ -33,19 +33,23 @@ public static class Evaluator
         "production ready",
     ];
 
-    // Files that are hand-authored and can go stale relative to live workload
-    // certification. Generated pages under docs/site/** are excluded: they are
-    // produced by tools/Aws2Azure.GapDocs from the same canonical inputs this
-    // evaluator already cross-checks, and are out of scope to re-validate here.
+    // Every hand-authored doc under README.md and docs/ can go stale relative
+    // to live workload certification, so the scan covers the whole tree.
+    // Generated pages under docs/site/** are excluded (see
+    // <see cref="IsExcludedFromMaturityScan"/>): they are produced by
+    // tools/Aws2Azure.GapDocs from the same canonical inputs this evaluator
+    // already cross-checks, and are out of scope to re-validate here.
     private static readonly string[] MaturityScanRoots =
     [
         "README.md",
-        "docs/project-maturity.md",
-        "docs/index.md",
-        "docs/adoption.md",
-        "docs/releases",
-        "docs/deployment",
-        "docs/workloads",
+        "docs",
+    ];
+
+    // Relative-path (repo-root-rooted, '/'-separated) prefixes excluded from
+    // the maturity scan even though they live under a scanned root.
+    private static readonly string[] MaturityScanExclusions =
+    [
+        "docs/site/",
     ];
 
     public static EvalResult Run(string repoRoot, EvalDataset dataset)
@@ -271,6 +275,12 @@ public static class Evaluator
 
             foreach (var file in files.OrderBy(path => path, StringComparer.Ordinal))
             {
+                var relative = Path.GetRelativePath(repoRoot, file).Replace('\\', '/');
+                if (MaturityScanExclusions.Any(prefix => relative.StartsWith(prefix, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
                 var text = File.ReadAllText(file);
                 var hasFileWideCitation = FileWideCitationTerms.Any(term =>
                     text.Contains(term, StringComparison.OrdinalIgnoreCase));
@@ -283,7 +293,6 @@ public static class Evaluator
                     {
                         continue;
                     }
-                    var relative = Path.GetRelativePath(repoRoot, file).Replace('\\', '/');
                     var line = text[..match.Index].Count(c => c == '\n') + 1;
                     violations.Add(
                         $"{relative}:{line}: states an unhedged maturity claim ('{match.Value}') with no nearby " +

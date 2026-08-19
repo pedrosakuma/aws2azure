@@ -45,3 +45,4 @@ change-aware-validation.json
 
 # MkDocs local build output
 /site/
+.venv/
