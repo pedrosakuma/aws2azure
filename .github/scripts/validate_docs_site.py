@@ -150,6 +150,8 @@ def validate_search(site_dir: Path) -> list[str]:
             "configuration-environment/",
         ),
         "production example": ("serviceBusTopics", "configuration-examples/"),
+        "documentation discovery": ("documentation-manifest.json", ""),
+        "authority precedence": ("current workload certification", ""),
         "adoption path": ("manifest", "adoption/"),
         "troubleshooting": ("SignatureDoesNotMatch", "troubleshooting/"),
         "workload verdict": ("conditional", "site/workload-compatibility/"),
@@ -358,6 +360,102 @@ def validate_persona_links(site_dir: Path, base_path: str) -> list[str]:
     ]
 
 
+def validate_discovery_artifacts(site_dir: Path) -> list[str]:
+    errors: list[str] = []
+    llms_path = site_dir / "llms.txt"
+    manifest_path = site_dir / "documentation-manifest.json"
+    if not llms_path.is_file():
+        errors.append(f"Published LLM discovery file is missing: {llms_path}")
+    if not manifest_path.is_file():
+        errors.append(f"Published documentation manifest is missing: {manifest_path}")
+        return errors
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    documents = manifest.get("documents", [])
+    by_id = {document.get("id"): document for document in documents}
+    witnesses = {
+        "current workload verdict": (
+            "workload-certification:current:machine",
+            "docs/site/workload-ga.json",
+            "current",
+        ),
+        "historical v1 release": (
+            "release:v1.0.0:notes",
+            "docs/releases/v1.0.0.md",
+            "historical",
+        ),
+        "configuration schema": (
+            "configuration:schema",
+            "config.schema.json",
+            "canonical",
+        ),
+        "operation source": (
+            "operation:s3:getobject:source",
+            "docs/gaps/s3/GetObject.yaml",
+            "normative-capability",
+        ),
+        "operation reference": (
+            "operation:s3:getobject:reference",
+            "docs/site/operations/s3/getobject.md",
+            "normative-capability",
+        ),
+        "profile source": (
+            "profile:s3-basic-object-crud:manifest",
+            "docs/workloads/s3-basic-object-crud.yaml",
+            "normative-input",
+        ),
+    }
+    for label, (identifier, expected_path, expected_authority) in witnesses.items():
+        document = by_id.get(identifier)
+        if document is None:
+            errors.append(f"Documentation manifest lacks {label} witness {identifier!r}")
+            continue
+        if document.get("path") != expected_path:
+            errors.append(
+                f"Documentation manifest {label} path differs: "
+                f"{document.get('path')!r} != {expected_path!r}"
+            )
+        if document.get("authority") != expected_authority:
+            errors.append(
+                f"Documentation manifest {label} authority differs: "
+                f"{document.get('authority')!r} != {expected_authority!r}"
+            )
+
+    ids = [document.get("id") for document in documents]
+    paths = [document.get("path") for document in documents]
+    if len(ids) != len(set(ids)):
+        errors.append("Documentation manifest contains duplicate document IDs")
+    if len(paths) != len(set(paths)):
+        errors.append("Documentation manifest contains duplicate document paths")
+
+    precedence = manifest.get("authority_precedence", [])
+    sources = [entry.get("source") for entry in precedence]
+    expected_sources = [
+        "live_workload_certification",
+        "workload_profile_manifests",
+        "gap_docs",
+        "release_notes",
+        "explanatory_guides",
+    ]
+    if sources != expected_sources:
+        errors.append(
+            "Documentation manifest authority precedence differs: "
+            f"{sources!r} != {expected_sources!r}"
+        )
+
+    if llms_path.is_file():
+        llms = llms_path.read_text(encoding="utf-8")
+        for term in (
+            "Live workload certification",
+            "Immutable historical release notes",
+            "Documentation manifest",
+        ):
+            if term not in llms:
+                errors.append(f"Published llms.txt lacks discovery witness {term!r}")
+
+    return errors
+
+
 def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(
@@ -385,6 +483,7 @@ def main() -> int:
     errors.extend(validate_legacy_service_fragments(site_dir, pages))
     errors.extend(validate_operator_schema_link(site_dir, pages))
     errors.extend(validate_persona_links(site_dir, base_path))
+    errors.extend(validate_discovery_artifacts(site_dir))
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
