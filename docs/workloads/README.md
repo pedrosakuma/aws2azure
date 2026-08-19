@@ -89,6 +89,83 @@ The default gap-doc generation writes the same aggregate verdicts to
 `docs/site/workload-ga.md` and `docs/site/workload-ga.json`; CI evaluates every
 manifest independently and rejects stale generated output.
 
+`certification/authority.yaml` is the explicit, versioned evaluation contract.
+Its `evaluated_as_of_utc` is an exact, deterministic UTC instant and cannot be
+later than the trusted `UtcNow` used by validation. Every timestamped evidence,
+approval, qualification, runtime, rollback, and revocation cutoff uses that
+exact instant; generation never substitutes the wall clock into output.
+
+At startup the authoritative generation and certification paths capture the
+authority contract plus every canonical YAML input into one private immutable
+byte snapshot. The normalized canonical hash is derived from those captured
+bytes, and all parsing and evaluation reads the materialized snapshot rather
+than returning to the working tree. The authority contract is captured and
+parsed from the same snapshot but excluded from the canonical hash to avoid a
+circular expected-hash dependency. A source edit after capture therefore
+cannot alter the bytes being evaluated or published.
+
+The contract separately pins
+`expected_evaluator_implementation_revision`, a reproducible digest over all
+GapDocs C# sources plus its project, repository build properties, and pinned SDK
+definition. MSBuild computes the same normalized digest and embeds it as a
+generated constant in the executing GapDocs assembly. Generation and
+certification require the captured source digest, authority contract digest,
+and embedded executing-assembly digest to match, so running a stale `--no-build`
+binary fails closed. The generated identity source is excluded from its own
+inputs to avoid a circular digest. This exclusion follows the resolved
+`IntermediateOutputPath`, so custom in-project intermediate directories cannot
+feed generated C# back into either the build-time or runtime source identity.
+Current and stale intermediate roots are recognized only by a separate
+`.workload-ga-evaluator-intermediate-root` marker with the exact ordinal
+filename and exact BOM-less UTF-8 reserved bytes. BOM-prefixed, UTF-16/UTF-32,
+or case-variant markers do not classify a root. A source file merely named
+`WorkloadGaEvaluatorIdentity.g.cs` does not classify its directory as generated
+or remove sibling sources from compilation or identity hashing. A custom active
+`IntermediateOutputPath` that contains any compile item other than the exact
+SDK-generated sources and embedded identity is rejected, preventing compiled
+evaluator code from bypassing the implementation digest. Those generated files
+must have been added to `Compile` by a trusted .NET SDK target while the
+corresponding generation setting is enabled, and must match both their resolved
+SDK paths and restricted generated-source shapes;
+all non-generated `Compile` items must remain under the evaluator source root
+and are included in the digest. SDK-generated intermediates are excluded
+consistently at build time and runtime.
+
+Every qualified workload's sealed candidate runtime is validated at the exact
+`evaluated_as_of_utc`, whether or not rollback is a required scenario. Artifact
+expiry is exclusive: `expires_at` must be later than the authority instant;
+equality and later evaluation instants produce a candidate verdict.
+
+`expected_evaluator_schema_version` describes the authority evaluator format
+only; it is not presented as implementation identity. Canonical or
+implementation changes fail validation until their expected digests are
+deliberately reviewed and updated. Paths and line endings are normalized before
+hashing, so both identities are checkout-independent and reproducible.
+Committed qualification-artifact digests likewise normalize text line endings
+to LF before hashing, so checkout `core.autocrlf` settings cannot change a live
+authority verdict.
+
+`certify-workload` only issues authoritative output for regular, non-symlink
+`.yaml` manifests under `docs/workloads`; those bytes are therefore part of the
+canonical identity. `check-workload` remains available for non-authoritative
+inspection of arbitrary manifests.
+
+JSON compatibility is additive. `certify-workload --format json` remains a raw
+schema-1 profile report, and `docs/site/workload-ga.json` remains an array of
+schema-1 profile reports. Each report now carries optional `evaluation` and
+`authority` properties; existing schema-1 consumers that ignore unknown fields
+retain their original root shape and fields. The authority contract's own
+`schema_version` is independent and does not change the report schema.
+
+For current workload adoption, the generated workload certification has the
+highest precedence. Profile manifests and gap docs are normative inputs,
+release notes are immutable historical records of what was promoted at that
+time, and guides are explanatory only. A historical GA release claim never
+overrides a later `candidate`, `conditional`, or `blocked` certification
+verdict. Because the certification is point-in-time, consumers must also check
+`evaluated_as_of_utc`, the canonical-input revision, and the evaluator
+implementation revision rather than treating any verdict as permanent.
+
 Profile-specific adoption guidance:
 
 - [S3 basic object CRUD](s3-basic-object-crud.md)

@@ -2,6 +2,20 @@
 
 These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.
 
+> **Current adoption authority (as of `2026-08-18T17:30:00Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
+>
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c`; contract: `docs/workloads/certification/authority.yaml`.
+
+## Authority precedence
+
+| Rank | Source | Role |
+|---:|---|---|
+| 1 | Live workload certification | Authoritative current adoption verdict |
+| 2 | Workload profile manifests | Normative certification input |
+| 3 | Gap docs | Normative capability input |
+| 4 | Release notes | Immutable historical record |
+| 5 | Explanatory guides | Non-authoritative explanation |
+
 Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 
 | Profile | Version | Minimum proxy | Verdict | Blocking reasons |

@@ -63,6 +63,8 @@ public sealed class WorkloadGaReport
     public string MinimumProxyVersion { get; set; } = string.Empty;
     public string Verdict { get; set; } = "blocked";
     public List<WorkloadGaFinding> Findings { get; set; } = new();
+    public WorkloadGaEvaluationMetadata? Evaluation { get; set; }
+    public WorkloadGaAuthorityMetadata? Authority { get; set; }
 }
 
 public sealed class WorkloadGaFinding
@@ -370,8 +372,9 @@ public static class WorkloadGaEvaluator
         IReadOnlyList<OperationDoc> operationDocs,
         IReadOnlyList<ServiceDesignDoc> designDocs,
         string repoRoot,
-        DateOnly currentDate)
+        DateTimeOffset evaluatedAsOfUtc)
     {
+        var evaluatedDate = DateOnly.FromDateTime(evaluatedAsOfUtc.UtcDateTime);
         var report = new WorkloadGaReport
         {
             ProfileId = manifest.Id,
@@ -436,14 +439,29 @@ public static class WorkloadGaEvaluator
                     "The profile explicitly accepts the operation's documented partial semantics.");
             }
 
-            if (!HasFreshSeal(doc.VerifiedRealAzure, currentDate, manifest.RealAzureSealMaxAgeDays))
+            var sealState = GetSealState(
+                doc.VerifiedRealAzure,
+                evaluatedDate,
+                manifest.RealAzureSealMaxAgeDays);
+            if (sealState != "fresh")
             {
                 hasSealBlocker = true;
-                Add(report, doc.VerifiedRealAzure is null ? "real_azure_seal_missing" : "real_azure_seal_expired",
-                    "blocking", reference,
-                    doc.VerifiedRealAzure is null
-                        ? "Required operation has no real-Azure verification seal."
-                        : $"Real-Azure verification is older than {manifest.RealAzureSealMaxAgeDays} days.");
+                Add(
+                    report,
+                    sealState switch
+                    {
+                        "missing" => "real_azure_seal_missing",
+                        "future" => "real_azure_seal_after_evaluation",
+                        _ => "real_azure_seal_expired",
+                    },
+                    "blocking",
+                    reference,
+                    sealState switch
+                    {
+                        "missing" => "Required operation has no real-Azure verification seal.",
+                        "future" => "Real-Azure verification postdates the certification evaluation.",
+                        _ => $"Real-Azure verification is older than {manifest.RealAzureSealMaxAgeDays} days.",
+                    });
             }
         }
 
@@ -485,19 +503,29 @@ public static class WorkloadGaEvaluator
             {
                 continue;
             }
-            if (!HasFreshSeal(subFeature.VerifiedRealAzure, currentDate, manifest.RealAzureSealMaxAgeDays))
+            var sealState = GetSealState(
+                subFeature.VerifiedRealAzure,
+                evaluatedDate,
+                manifest.RealAzureSealMaxAgeDays);
+            if (sealState != "fresh")
             {
                 hasSealBlocker = true;
                 Add(
                     report,
-                    subFeature.VerifiedRealAzure is null
-                        ? "sub_feature_real_azure_seal_missing"
-                        : "sub_feature_real_azure_seal_expired",
+                    sealState switch
+                    {
+                        "missing" => "sub_feature_real_azure_seal_missing",
+                        "future" => "sub_feature_real_azure_seal_after_evaluation",
+                        _ => "sub_feature_real_azure_seal_expired",
+                    },
                     "blocking",
                     subject,
-                    subFeature.VerifiedRealAzure is null
-                        ? "Required backend-specific sub-feature has no real-Azure verification seal."
-                        : $"Backend-specific real-Azure verification is older than {manifest.RealAzureSealMaxAgeDays} days.");
+                    sealState switch
+                    {
+                        "missing" => "Required backend-specific sub-feature has no real-Azure verification seal.",
+                        "future" => "Backend-specific real-Azure verification postdates the certification evaluation.",
+                        _ => $"Backend-specific real-Azure verification is older than {manifest.RealAzureSealMaxAgeDays} days.",
+                    });
             }
         }
 
@@ -571,9 +599,13 @@ public static class WorkloadGaEvaluator
         // relative identifier without needing its own displayPath parameter.
         qualification.SourceFile = ToRepoRelativePath(resolvedPath, repoRoot);
         var qualificationErrors = SloQualificationValidator.Validate(
-            qualification,
-            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc),
-            qualificationPath);
+                qualification,
+                evaluatedAsOfUtc,
+                qualificationPath)
+            .ToList();
+        qualificationErrors.AddRange(
+            WorkloadGaTemporalValidator.ValidateQualification(qualification, evaluatedAsOfUtc)
+                .Select(error => $"{qualificationPath}: {error}"));
         foreach (var error in qualificationErrors)
         {
             Add(report, "qualification_evidence_invalid", "blocking", qualificationPath, error);
@@ -584,7 +616,7 @@ public static class WorkloadGaEvaluator
                 qualification,
                 report,
                 repoRoot,
-                currentDate)
+                evaluatedAsOfUtc)
             || qualification.Verdict != "qualified")
         {
             report.Verdict = "candidate";
@@ -607,7 +639,7 @@ public static class WorkloadGaEvaluator
         SloQualificationDocument qualification,
         WorkloadGaReport report,
         string repoRoot,
-        DateOnly currentDate)
+        DateTimeOffset evaluatedAsOfUtc)
     {
         var matches = true;
         if (!qualification.Profile.Id.Equals(manifest.Id, StringComparison.Ordinal)
@@ -656,7 +688,39 @@ public static class WorkloadGaEvaluator
                     "Qualification scenario must be backed by real-Azure evidence.");
             }
         }
-        if (manifest.Evidence.RequiredScenarios.Contains("rollback", StringComparer.Ordinal))
+
+        var candidateRuntimeValid = true;
+        try
+        {
+            if (qualification.Candidate.Runtime is null)
+            {
+                throw new InvalidDataException(
+                    "Qualified workload evidence lacks a sealed candidate runtime.");
+            }
+            SealedRuntimeEvidenceValidator.ValidateCandidate(
+                qualification.Candidate.Runtime,
+                manifest.Id,
+                manifest.Version,
+                qualification.Candidate.GitSha,
+                qualification.Candidate.ArtifactDigest,
+                evaluatedAsOfUtc);
+        }
+        catch (InvalidDataException exception)
+        {
+            matches = false;
+            candidateRuntimeValid = false;
+            Add(
+                report,
+                "candidate_runtime_mismatch",
+                "blocking",
+                qualification.SourceFile,
+                exception.Message);
+        }
+
+        if (candidateRuntimeValid
+            && manifest.Evidence.RequiredScenarios.Contains(
+                "rollback",
+                StringComparer.Ordinal))
         {
             var ledgerPath = Path.Combine(
                 repoRoot,
@@ -672,31 +736,25 @@ public static class WorkloadGaEvaluator
                 // finding.
                 ledger.SourceFile = ToRepoRelativePath(ledgerPath, repoRoot);
                 var ledgerErrors = ApprovedRuntimeLedgerValidator.Validate(
-                    [ledger],
-                    [manifest],
-                    currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                        [ledger],
+                        [manifest],
+                        evaluatedAsOfUtc)
+                    .ToList();
+                ledgerErrors.AddRange(
+                    WorkloadGaTemporalValidator.ValidateApprovedRuntime(
+                            ledger,
+                            evaluatedAsOfUtc)
+                        .Select(error => $"{ledger.SourceFile}: {error}"));
                 if (ledgerErrors.Count > 0)
                 {
                     throw new InvalidDataException(string.Join("; ", ledgerErrors));
                 }
-                if (qualification.Candidate.Runtime is null)
-                {
-                    throw new InvalidDataException(
-                        "Rollback qualification lacks a sealed candidate runtime.");
-                }
-                SealedRuntimeEvidenceValidator.ValidateCandidate(
-                    qualification.Candidate.Runtime,
-                    manifest.Id,
-                    manifest.Version,
-                    qualification.Candidate.GitSha,
-                    qualification.Candidate.ArtifactDigest,
-                    currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
                 if (ledger.Status == "approved")
                 {
                     SealedRuntimeEvidenceValidator.ValidateApprovedCandidate(
-                        qualification.Candidate.Runtime,
+                        qualification.Candidate.Runtime!,
                         ledger,
-                        currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                        evaluatedAsOfUtc);
                     ValidateApprovedQualification(manifest, qualification, ledger, repoRoot);
                     var rollbackTarget = ledger.Qualification!.RollbackTarget!;
                     foreach (var proof in qualification.RollbackProofs)
@@ -704,7 +762,7 @@ public static class WorkloadGaEvaluator
                         SealedRuntimeEvidenceValidator.ValidateRollbackTarget(
                             proof.Prior,
                             rollbackTarget,
-                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                            evaluatedAsOfUtc);
                     }
                 }
                 else
@@ -714,7 +772,7 @@ public static class WorkloadGaEvaluator
                         SealedRuntimeEvidenceValidator.ValidatePrior(
                             proof.Prior,
                             ledger,
-                            currentDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc));
+                            evaluatedAsOfUtc);
                     }
                 }
             }
@@ -744,8 +802,8 @@ public static class WorkloadGaEvaluator
         var decision = ledger.Qualification
             ?? throw new InvalidDataException(
                 "Approved profile ledger lacks qualification metadata.");
-        var artifactDigest = "sha256:" + Convert.ToHexStringLower(
-            SHA256.HashData(File.ReadAllBytes(Path.GetFullPath(qualification.SourceFile, repoRoot))));
+        var artifactDigest = ComputeQualificationArtifactDigest(
+            Path.GetFullPath(qualification.SourceFile, repoRoot));
         if (decision.Artifact != manifest.Evidence.QualificationArtifact
             || decision.Digest != artifactDigest
             || decision.Verdict != qualification.Verdict
@@ -759,19 +817,35 @@ public static class WorkloadGaEvaluator
         }
     }
 
-    private static bool HasFreshSeal(
+    public static string ComputeQualificationArtifactDigest(string path)
+    {
+        var canonicalText = File.ReadAllText(path)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
+        return "sha256:" + Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(canonicalText)));
+    }
+
+    private static string GetSealState(
         RealAzureVerification? verification,
         DateOnly currentDate,
         int maxAgeDays)
     {
-        return verification is not null
-               && DateOnly.TryParseExact(
-                   verification.Date,
-                   "yyyy-MM-dd",
-                   CultureInfo.InvariantCulture,
-                   DateTimeStyles.None,
-                   out var date)
-               && date >= currentDate.AddDays(-maxAgeDays);
+        if (verification is null
+            || !DateOnly.TryParseExact(
+                verification.Date,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var date))
+        {
+            return "missing";
+        }
+        if (date > currentDate)
+        {
+            return "future";
+        }
+        return date >= currentDate.AddDays(-maxAgeDays) ? "fresh" : "expired";
     }
 
     private static bool ContainsSymbolicLink(string root, string path)
@@ -820,14 +894,22 @@ public static class WorkloadGaEvaluator
 
 public static class WorkloadGaRenderer
 {
-    public static string RenderJson(WorkloadGaReport report) =>
-        JsonSerializer.Serialize(report, WorkloadGaJsonContext.Default.WorkloadGaReport);
+    public static string RenderJson(
+        WorkloadGaReport report,
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        AttachAuthority(report, evaluation);
+        return JsonSerializer.Serialize(report, WorkloadGaJsonContext.Default.WorkloadGaReport);
+    }
 
-    public static string RenderMarkdown(WorkloadGaReport report)
+    public static string RenderMarkdown(
+        WorkloadGaReport report,
+        WorkloadGaEvaluationMetadata evaluation)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"# Workload GA profile: {report.Name}");
         builder.AppendLine();
+        AppendAuthorityNotice(builder, evaluation);
         builder.AppendLine($"- **Profile:** `{report.ProfileId}` v{report.ProfileVersion}");
         builder.AppendLine($"- **Minimum proxy version:** `{report.MinimumProxyVersion}`");
         builder.AppendLine($"- **Verdict:** {Badge(report.Verdict)}");
@@ -844,16 +926,22 @@ public static class WorkloadGaRenderer
 
     public static void RenderIndex(
         IReadOnlyList<WorkloadGaReport> reports,
+        WorkloadGaEvaluationMetadata evaluation,
         string markdownPath,
         string jsonPath)
     {
         var ordered = reports.OrderBy(report => report.ProfileId, StringComparer.Ordinal).ToList();
+        foreach (var report in ordered)
+        {
+            AttachAuthority(report, evaluation);
+        }
         var builder = new StringBuilder();
         builder.AppendLine("# Workload GA certification");
         builder.AppendLine();
         builder.AppendLine(
             "These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.");
         builder.AppendLine();
+        AppendAuthorityNotice(builder, evaluation);
         builder.AppendLine("Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA");
         builder.AppendLine();
         builder.AppendLine("| Profile | Version | Minimum proxy | Verdict | Blocking reasons |");
@@ -874,6 +962,45 @@ public static class WorkloadGaRenderer
             jsonPath,
             JsonSerializer.Serialize(ordered, WorkloadGaJsonContext.Default.ListWorkloadGaReport)
             + Environment.NewLine);
+    }
+
+    private static void AttachAuthority(
+        WorkloadGaReport report,
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        report.Evaluation = evaluation;
+        report.Authority = new WorkloadGaAuthorityMetadata();
+    }
+
+    private static void AppendAuthorityNotice(
+        StringBuilder builder,
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        builder.AppendLine(
+            $"> **Current adoption authority (as of `{evaluation.EvaluatedAsOfUtc}`):** " +
+            "This generated certification has the highest precedence for current workload adoption. " +
+            "Release notes are immutable historical records and cannot override a current " +
+            "`candidate`, `conditional`, or `blocked` verdict.");
+        builder.AppendLine(">");
+        builder.AppendLine(
+            $"> Source repository: `{evaluation.Source.Repository}`; canonical inputs: " +
+            $"`{evaluation.Source.CanonicalInputsRevisionType}:" +
+            $"{evaluation.Source.CanonicalInputsRevision["sha256:".Length..]}`; evaluator schema: " +
+            $"`{evaluation.Source.EvaluatorSchemaVersion}`; evaluator implementation: " +
+            $"`{evaluation.Source.EvaluatorImplementationRevisionType}:" +
+            $"{evaluation.Source.EvaluatorImplementationRevision["sha256:".Length..]}`; " +
+            $"contract: `{evaluation.Contract}`.");
+        builder.AppendLine();
+        builder.AppendLine("## Authority precedence");
+        builder.AppendLine();
+        builder.AppendLine("| Rank | Source | Role |");
+        builder.AppendLine("|---:|---|---|");
+        builder.AppendLine("| 1 | Live workload certification | Authoritative current adoption verdict |");
+        builder.AppendLine("| 2 | Workload profile manifests | Normative certification input |");
+        builder.AppendLine("| 3 | Gap docs | Normative capability input |");
+        builder.AppendLine("| 4 | Release notes | Immutable historical record |");
+        builder.AppendLine("| 5 | Explanatory guides | Non-authoritative explanation |");
+        builder.AppendLine();
     }
 
     private static string Badge(string verdict) => verdict switch

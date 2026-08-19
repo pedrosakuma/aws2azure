@@ -1,0 +1,496 @@
+<Project>
+  <UsingTask
+    TaskName="GenerateWorkloadGaEvaluatorIdentity"
+    TaskFactory="RoslynCodeTaskFactory"
+    AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Files ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <CompileFiles ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <AllowedActiveGeneratedFiles
+        ParameterType="Microsoft.Build.Framework.ITaskItem[]"
+        Required="true" />
+      <RepositoryRoot ParameterType="System.String" Required="true" />
+      <OutputFile ParameterType="System.String" Required="true" />
+      <IntermediateRootMarkerFile ParameterType="System.String" Required="true" />
+      <ToolRoot ParameterType="System.String" Required="true" />
+      <TrustedSdkRoot ParameterType="System.String" Required="true" />
+      <Revision ParameterType="System.String" Output="true" />
+      <GeneratedIntermediateFiles
+        ParameterType="Microsoft.Build.Framework.ITaskItem[]"
+        Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Using Namespace="System.Text" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var root = Path.GetFullPath(RepositoryRoot);
+        var trustedSdkRoot = Path.GetFullPath(TrustedSdkRoot);
+        Func<string, string> relative = path =>
+            Path.GetFullPath(path)
+                .Substring(root.TrimEnd('\\', '/').Length)
+                .TrimStart('\\', '/')
+                .Replace('\\', '/');
+        var pathComparison = Path.DirectorySeparatorChar == '\\'
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        const string markerFileName =
+            ".workload-ga-evaluator-intermediate-root";
+        const string markerContent =
+            "aws2azure-gapdocs-evaluator-identity-root:v1\n";
+        var markerBytes = Encoding.UTF8.GetBytes(markerContent);
+        Func<string, bool> isExactMarker = path =>
+            Path.GetFileName(path).Equals(
+                markerFileName,
+                StringComparison.Ordinal)
+            && File.ReadAllBytes(path).SequenceEqual(markerBytes);
+        var markerFile = Path.GetFullPath(IntermediateRootMarkerFile);
+        var markerDirectory = Path.GetDirectoryName(markerFile);
+        Directory.CreateDirectory(markerDirectory);
+        foreach (var caseVariant in Directory
+                     .EnumerateFiles(markerDirectory, "*", SearchOption.TopDirectoryOnly)
+                     .Where(path => Path.GetFileName(path).Equals(
+                             markerFileName,
+                             StringComparison.OrdinalIgnoreCase)
+                         && !Path.GetFileName(path).Equals(
+                             markerFileName,
+                             StringComparison.Ordinal)))
+        {
+            File.Delete(caseVariant);
+        }
+        if (!File.Exists(markerFile)
+            || !File.ReadAllBytes(markerFile).SequenceEqual(markerBytes))
+        {
+            File.WriteAllBytes(markerFile, markerBytes);
+        }
+        var inputFiles = Files
+            .Select(file => Path.GetFullPath(file.ItemSpec))
+            .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal)
+            .ToList();
+        var generatedIntermediateRoots = Directory
+            .EnumerateFiles(
+                Path.GetFullPath(ToolRoot),
+                "*",
+                SearchOption.AllDirectories)
+            .Where(isExactMarker)
+            .Select(path => Path.GetDirectoryName(path))
+            .Where(path => path is not null)
+            .Select(path => Path.GetFullPath(path))
+            .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal)
+            .ToList();
+        Func<string, string, bool> isWithin = (directory, path) =>
+            path.Equals(directory, pathComparison)
+            || path.StartsWith(
+                directory.TrimEnd('\\', '/') + Path.DirectorySeparatorChar,
+                pathComparison);
+        var activeIntermediateRoot = Path.GetDirectoryName(
+            Path.GetFullPath(OutputFile));
+        var outputFile = Path.GetFullPath(OutputFile);
+        Func<string, bool> isEnabled = value =>
+            value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("enable", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("enabled", StringComparison.OrdinalIgnoreCase);
+        Func<string, bool> hasTrustedSdkCompileProvenance = path =>
+            CompileFiles.Any(file =>
+            {
+                if (!Path.GetFullPath(file.ItemSpec).Equals(path, pathComparison))
+                {
+                    return false;
+                }
+                var definingProject = file.GetMetadata("DefiningProjectFullPath");
+                return !string.IsNullOrWhiteSpace(definingProject)
+                    && isWithin(trustedSdkRoot, Path.GetFullPath(definingProject));
+            });
+        Func<string, bool> hasGeneratedSourceShape = path =>
+        {
+            if (path.Equals(outputFile, pathComparison))
+            {
+                return true;
+            }
+            var source = File.ReadAllText(path);
+            if (source.IndexOf('\u0085') >= 0
+                || source.IndexOf('\u2028') >= 0
+                || source.IndexOf('\u2029') >= 0)
+            {
+                return false;
+            }
+            var lines = source
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n")
+                .Split('\n');
+            Func<string, string, bool> isSafeAssemblyAttribute =
+                (line, prefix) =>
+                {
+                    if (!line.StartsWith(prefix, StringComparison.Ordinal)
+                        || !line.EndsWith(")]", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    var depth = 0;
+                    var quoted = false;
+                    var escaped = false;
+                    var openBrackets = 0;
+                    var closeBrackets = 0;
+                    for (var index = 0; index < line.Length; index++)
+                    {
+                        var character = line[index];
+                        if (escaped)
+                        {
+                            escaped = false;
+                            continue;
+                        }
+                        if (quoted && character == '\\')
+                        {
+                            escaped = true;
+                            continue;
+                        }
+                        if (character == '"')
+                        {
+                            quoted = !quoted;
+                            continue;
+                        }
+                        if (quoted)
+                        {
+                            continue;
+                        }
+                        if (character == '{'
+                            || character == '}'
+                            || character == ';')
+                        {
+                            return false;
+                        }
+                        if (character == '[')
+                        {
+                            openBrackets++;
+                            if (index + 7 <= line.Length
+                                && line.Substring(index, 7).Equals(
+                                    "[module",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                return false;
+                            }
+                        }
+                        else if (character == ']')
+                        {
+                            closeBrackets++;
+                        }
+                        if (index + 1 < line.Length
+                            && ((character == '/'
+                                    && (line[index + 1] == '/'
+                                        || line[index + 1] == '*'))
+                                || (character == '*'
+                                    && line[index + 1] == '/')))
+                        {
+                            return false;
+                        }
+                        if (character == '(')
+                        {
+                            depth++;
+                        }
+                        else if (character == ')')
+                        {
+                            depth--;
+                        }
+                        else if (character == ',' && depth == 0)
+                        {
+                            return false;
+                        }
+                        if (depth < 0)
+                        {
+                            return false;
+                        }
+                    }
+                    return !quoted
+                        && depth == 0
+                        && openBrackets == 1
+                        && closeBrackets == 1;
+                };
+            var fileName = Path.GetFileName(path);
+            if (fileName.EndsWith(
+                    ".AssemblyInfo.cs",
+                    StringComparison.Ordinal))
+            {
+                return lines.All(line =>
+                {
+                    var trimmed = line.Trim();
+                    return trimmed.Length == 0
+                        || trimmed.StartsWith("//", StringComparison.Ordinal)
+                        || trimmed.Equals("using System;", StringComparison.Ordinal)
+                        || trimmed.Equals(
+                            "using System.Reflection;",
+                            StringComparison.Ordinal)
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyCompanyAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyConfigurationAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyCopyrightAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyDescriptionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyFileVersionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyInformationalVersionAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyProductAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyTitleAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyTrademarkAttribute(")
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: System.Reflection.AssemblyVersionAttribute(");
+                });
+            }
+            if (fileName.EndsWith(
+                    ".GlobalUsings.g.cs",
+                    StringComparison.Ordinal))
+            {
+                var allowedGlobalUsings = new HashSet<string>(
+                    new[]
+                    {
+                        "global using System;",
+                        "global using System.Collections.Generic;",
+                        "global using System.IO;",
+                        "global using System.Linq;",
+                        "global using System.Net.Http;",
+                        "global using System.Threading;",
+                        "global using System.Threading.Tasks;",
+                    },
+                    StringComparer.Ordinal);
+                return lines.All(line =>
+                {
+                    var trimmed = line.Trim();
+                    return trimmed.Length == 0
+                        || trimmed.StartsWith("//", StringComparison.Ordinal)
+                        || allowedGlobalUsings.Contains(trimmed);
+                });
+            }
+            if (fileName.EndsWith(
+                    ".AssemblyAttributes.cs",
+                    StringComparison.Ordinal))
+            {
+                return lines.All(line =>
+                {
+                    var trimmed = line.Trim();
+                    return trimmed.Length == 0
+                        || trimmed.StartsWith("//", StringComparison.Ordinal)
+                        || trimmed.Equals("using System;", StringComparison.Ordinal)
+                        || trimmed.Equals(
+                            "using System.Reflection;",
+                            StringComparison.Ordinal)
+                        || isSafeAssemblyAttribute(
+                            trimmed,
+                            "[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(");
+                });
+            }
+            return false;
+        };
+        Func<string, bool> isKnownGeneratedSource = path =>
+        {
+            if (path.Equals(outputFile, pathComparison))
+            {
+                return true;
+            }
+            var contract = AllowedActiveGeneratedFiles.FirstOrDefault(
+                file => Path.GetFullPath(file.ItemSpec).Equals(
+                    path,
+                    pathComparison));
+            if (contract is null
+                || !isEnabled(contract.GetMetadata("GenerationEnabled"))
+                || !hasTrustedSdkCompileProvenance(path)
+                || !Path.GetDirectoryName(path).Equals(
+                    activeIntermediateRoot,
+                    pathComparison))
+            {
+                return false;
+            }
+            return hasGeneratedSourceShape(path);
+        };
+        var unexpectedActiveCompileFiles = Directory
+            .EnumerateFiles(
+                activeIntermediateRoot,
+                "*.cs",
+                SearchOption.AllDirectories)
+            .Select(Path.GetFullPath)
+            .Where(compilePath =>
+            {
+                var belongsToStaleDescendant =
+                    generatedIntermediateRoots.Any(
+                        directory => !directory.Equals(
+                            activeIntermediateRoot,
+                            pathComparison)
+                            && isWithin(activeIntermediateRoot, directory)
+                            && isWithin(directory, compilePath));
+                return isWithin(activeIntermediateRoot, compilePath)
+                    && !isKnownGeneratedSource(compilePath)
+                    && !belongsToStaleDescendant;
+            })
+            .Select(path => relative(path) + " [" + string.Join(
+                ", ",
+                CompileFiles
+                    .Where(file => Path.GetFullPath(file.ItemSpec).Equals(
+                        path,
+                        pathComparison))
+                    .Select(file =>
+                        "AutoGen=" + file.GetMetadata("AutoGen") +
+                        ";DefiningProject=" +
+                        file.GetMetadata("DefiningProjectFullPath"))) + "]")
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToList();
+        if (unexpectedActiveCompileFiles.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "IntermediateOutputPath contains non-generated evaluator " +
+                "Compile item(s), which would bypass evaluator identity: " +
+                string.Join(", ", unexpectedActiveCompileFiles));
+        }
+        GeneratedIntermediateFiles = CompileFiles
+            .Where(file =>
+            {
+                var compilePath = Path.GetFullPath(file.ItemSpec);
+                return generatedIntermediateRoots.Any(
+                    directory => !directory.Equals(
+                        activeIntermediateRoot,
+                        pathComparison)
+                        && isWithin(directory, compilePath)
+                        && !(isWithin(directory, activeIntermediateRoot)
+                            && isWithin(activeIntermediateRoot, compilePath)));
+            })
+            .ToArray();
+        var nonGeneratedCompileFiles = CompileFiles
+            .Select(file => Path.GetFullPath(file.ItemSpec))
+            .Where(path => !GeneratedIntermediateFiles.Any(
+                generated => Path.GetFullPath(generated.ItemSpec).Equals(
+                    path,
+                    pathComparison)))
+            .Where(path => !isKnownGeneratedSource(path))
+            .ToList();
+        var compileFilesOutsideToolRoot = nonGeneratedCompileFiles
+            .Where(path => !isWithin(Path.GetFullPath(ToolRoot), path))
+            .Select(relative)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToList();
+        if (compileFilesOutsideToolRoot.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Evaluator Compile item(s) outside the evaluator source root " +
+                "cannot be represented by runtime identity validation: " +
+                string.Join(", ", compileFilesOutsideToolRoot));
+        }
+        inputFiles.AddRange(nonGeneratedCompileFiles);
+        inputFiles = inputFiles
+            .Distinct(pathComparison == StringComparison.OrdinalIgnoreCase
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal)
+            .ToList();
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var item in inputFiles
+                     .Where(path => !path.Equals(
+                         outputFile,
+                         pathComparison)
+                         && !generatedIntermediateRoots.Any(
+                             directory => !directory.Equals(
+                                 activeIntermediateRoot,
+                                 pathComparison)
+                                 && isWithin(directory, path)))
+                     .OrderBy(
+                         path => relative(path),
+                         StringComparer.Ordinal))
+        {
+            var relativePath = relative(item);
+            hash.AppendData(Encoding.UTF8.GetBytes(relativePath));
+            hash.AppendData(Encoding.UTF8.GetBytes("\n"));
+            var content = File.ReadAllText(item)
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n");
+            hash.AppendData(Encoding.UTF8.GetBytes(content));
+            hash.AppendData(Encoding.UTF8.GetBytes("\n\0"));
+        }
+
+        Revision = "sha256:" + BitConverter.ToString(hash.GetHashAndReset())
+            .Replace("-", string.Empty)
+            .ToLowerInvariant();
+        var generated =
+            "// <auto-generated />\n" +
+            "namespace Aws2Azure.GapDocs;\n\n" +
+            "internal static class WorkloadGaEmbeddedEvaluatorIdentity\n" +
+            "{\n" +
+            $"    internal const string Revision = \"{Revision}\";\n" +
+            "}\n";
+        Directory.CreateDirectory(Path.GetDirectoryName(OutputFile));
+        if (!File.Exists(OutputFile)
+            || !File.ReadAllText(OutputFile).Equals(generated, StringComparison.Ordinal))
+        {
+            File.WriteAllText(OutputFile, generated, new UTF8Encoding(false));
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateWorkloadGaEvaluatorIdentity" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_WorkloadGaEvaluatorIdentityDirectory>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)', '$(MSBuildProjectDirectory)'))</_WorkloadGaEvaluatorIdentityDirectory>
+      <_WorkloadGaEvaluatorIdentityFile>$(_WorkloadGaEvaluatorIdentityDirectory)/WorkloadGaEvaluatorIdentity.g.cs</_WorkloadGaEvaluatorIdentityFile>
+      <_WorkloadGaEvaluatorIdentityMarkerFile>$(_WorkloadGaEvaluatorIdentityDirectory)/.workload-ga-evaluator-intermediate-root</_WorkloadGaEvaluatorIdentityMarkerFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WorkloadGaEvaluatorIdentityInput
+        Include="$(MSBuildProjectDirectory)/**/*.cs"
+        Exclude="$(MSBuildProjectDirectory)/bin/**;$(MSBuildProjectDirectory)/obj/**;$(_WorkloadGaEvaluatorIdentityDirectory)/**;$(_WorkloadGaEvaluatorIdentityFile)" />
+      <_WorkloadGaEvaluatorIdentityInput
+        Include="$(MSBuildProjectFullPath);$(MSBuildProjectDirectory)/GenerateEvaluatorIdentity.targets;$(MSBuildProjectDirectory)/../../Directory.Build.props;$(MSBuildProjectDirectory)/../../global.json" />
+      <_WorkloadGaAllowedActiveGeneratedCompile
+        Include="$([System.IO.Path]::GetFullPath('$(GeneratedAssemblyInfoFile)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(GenerateAssemblyInfo)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
+      <_WorkloadGaAllowedActiveGeneratedCompile
+        Include="$([System.IO.Path]::GetFullPath('$(GeneratedGlobalUsingsFile)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(ImplicitUsings)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
+      <_WorkloadGaAllowedActiveGeneratedCompile
+        Include="$([System.IO.Path]::GetFullPath('$(TargetFrameworkMonikerAssemblyAttributesPath)', '$(MSBuildProjectDirectory)'))">
+        <GenerationEnabled>$(GenerateTargetFrameworkAttribute)</GenerationEnabled>
+      </_WorkloadGaAllowedActiveGeneratedCompile>
+    </ItemGroup>
+    <GenerateWorkloadGaEvaluatorIdentity
+      Files="@(_WorkloadGaEvaluatorIdentityInput)"
+      CompileFiles="@(Compile)"
+      AllowedActiveGeneratedFiles="@(_WorkloadGaAllowedActiveGeneratedCompile)"
+      RepositoryRoot="$(MSBuildProjectDirectory)/../.."
+      OutputFile="$(_WorkloadGaEvaluatorIdentityFile)"
+      IntermediateRootMarkerFile="$(_WorkloadGaEvaluatorIdentityMarkerFile)"
+      ToolRoot="$(MSBuildProjectDirectory)"
+      TrustedSdkRoot="$(MSBuildToolsPath)">
+      <Output TaskParameter="Revision" PropertyName="WorkloadGaEvaluatorImplementationRevision" />
+      <Output
+        TaskParameter="GeneratedIntermediateFiles"
+        ItemName="_WorkloadGaGeneratedIntermediateCompile" />
+    </GenerateWorkloadGaEvaluatorIdentity>
+    <ItemGroup>
+      <Compile Remove="@(_WorkloadGaGeneratedIntermediateCompile)" />
+      <Compile Remove="$(_WorkloadGaEvaluatorIdentityFile)" />
+      <Compile
+        Include="$(_WorkloadGaEvaluatorIdentityFile)"
+        AutoGen="true"
+        DesignTime="true"
+        Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

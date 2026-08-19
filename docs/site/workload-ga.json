@@ -55,7 +55,66 @@
         "subject": "dynamodb:Key encoding and on-disk storage format",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -95,7 +154,66 @@
         "subject": "dynamodb:DescribeTable#GSI/LSI schema / status / projection description",
         "message": "Required backend-specific sub-feature has no real-Azure verification seal."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -225,7 +343,66 @@
         "subject": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml",
         "message": "docs/workloads/evidence/dynamodb-single-partition-transactions.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -259,7 +436,66 @@
         "subject": "kinesis-basic-record-ingestion",
         "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -317,7 +553,66 @@
         "subject": "kinesis-single-consumer-per-shard",
         "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -381,7 +676,66 @@
         "subject": "docs/workloads/evidence/s3-basic-object-crud.yaml",
         "message": "docs/workloads/evidence/s3-basic-object-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -469,7 +823,66 @@
         "subject": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml",
         "message": "docs/workloads/evidence/secretsmanager-basic-lifecycle.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -515,7 +928,66 @@
         "subject": "sns-standard-publish-event-grid",
         "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -561,7 +1033,66 @@
         "subject": "sns-standard-publish-service-bus",
         "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -637,7 +1168,66 @@
         "subject": "sns-subscription-management-service-bus",
         "message": "No reviewed real-Azure workload qualification artifact is referenced."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -719,7 +1309,66 @@
         "subject": "sqs:SetQueueAttributes#RedrivePolicy \u2192 ForwardDeadLetteredMessagesTo",
         "message": "Required backend-specific sub-feature has no real-Azure verification seal."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -753,7 +1402,66 @@
         "subject": "sqs:Transport-dependent capability differences",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   },
   {
     "schema_version": 1,
@@ -835,6 +1543,65 @@
         "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
         "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
-    ]
+    ],
+    "evaluation": {
+      "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+      "contract": "docs/workloads/certification/authority.yaml",
+      "source": {
+        "repository": "pedrosakuma/aws2azure",
+        "canonical_inputs_revision_type": "normalized_yaml_sha256",
+        "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+        "evaluator_schema_version": 3,
+        "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
+        "evaluator_implementation_revision": "sha256:9fa65e2a6266cb9e68874df1a532f04429bbe677265ebc1ae62f5d8ab1dcb52c",
+        "canonical_input_roots": [
+          "docs/gaps/**/*.yaml",
+          "docs/workloads/**/*.yaml"
+        ],
+        "excluded_canonical_inputs": [
+          "docs/workloads/certification/authority.yaml"
+        ],
+        "evaluator_implementation_roots": [
+          "tools/Aws2Azure.GapDocs/**/*.cs",
+          "tools/Aws2Azure.GapDocs/Aws2Azure.GapDocs.csproj",
+          "tools/Aws2Azure.GapDocs/GenerateEvaluatorIdentity.targets",
+          "Directory.Build.props",
+          "global.json"
+        ]
+      }
+    },
+    "authority": {
+      "scope": "current_workload_adoption",
+      "temporal_scope": "point_in_time",
+      "highest_precedence_source": "live_workload_certification",
+      "historical_claims_may_override": false,
+      "precedence": [
+        {
+          "rank": 1,
+          "source": "live_workload_certification",
+          "role": "authoritative_current_verdict"
+        },
+        {
+          "rank": 2,
+          "source": "workload_profile_manifests",
+          "role": "normative_certification_input"
+        },
+        {
+          "rank": 3,
+          "source": "gap_docs",
+          "role": "normative_capability_input"
+        },
+        {
+          "rank": 4,
+          "source": "release_notes",
+          "role": "immutable_historical_record"
+        },
+        {
+          "rank": 5,
+          "source": "explanatory_guides",
+          "role": "non_authoritative_explanation"
+        }
+      ]
+    }
   }
 ]
