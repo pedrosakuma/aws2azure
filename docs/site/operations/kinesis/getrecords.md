@@ -1,0 +1,43 @@
+# kinesis / GetRecords {#operation-kinesis-getrecords}
+
+[← kinesis operation index](../../kinesis.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:kinesis:getrecords`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Event Hubs (AMQP 1.0 data plane)`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### Event Hubs AMQP partition receive {#sub-feature-event-hubs-amqp-partition-receive}
+
+- **Capability ID:** `sub-feature:kinesis:getrecords:event-hubs-amqp-partition-receive`
+- **Status:** ✅ implemented
+
+Consumes Event Hubs AMQP receive links against ConsumerGroups/{group}/Partitions/{id}.
+
+### Core iterator types {#sub-feature-core-iterator-types}
+
+- **Capability ID:** `sub-feature:kinesis:getrecords:core-iterator-types`
+- **Status:** ✅ implemented
+
+Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUENCE_NUMBER iterators via stateless proxy-issued tokens.
+
+## Behaviour differences
+
+- Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from AWS Kinesis sequence numbers and the proxy's synthetic PutRecord/PutRecords values. [conformance:field-value:Records[].SequenceNumber]
+- NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque. [conformance:field-value:NextShardIterator]
+- MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock.
+- AT_TIMESTAMP is translated to an Event Hubs enqueue-time selector that is exclusive (>) rather than AWS's inclusive semantics, so a record at the exact timestamp boundary may be skipped.
+- AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy derives an Event Hubs enqueue-time position from aws2azure's synthetic PutRecord sequence number ((unixMs << 20) | counter). AT_SEQUENCE_NUMBER subtracts 1 ms before applying Event Hubs' exclusive selector so boundary records are included at millisecond granularity; records from the same millisecond may also be returned, which preserves AWS's inclusive boundary intent. If parsing fails the read falls back to the start of the shard.
+- Receive links are pooled per signed shard-iterator identity, so distinct iterators over the same partition keep independent broker cursors. Idle links are evicted after the iterator's 5-minute TTL without closing the shared Event Hubs connection.
+- Within one iterator chain, NextShardIterator preserves the iterator identity and advances on the existing AMQP link. The position embedded in the continuation token is used to recreate the link only after a link failure or idle eviction.
+- Expired and future-issued iterator tokens are rejected as ExpiredIteratorException. Request cancellation propagates without issuing a continuation token, and a failed receive does not advance the iterator chain.
+- A single GetRecords call issues exactly one AMQP ReceiveBatchAsync (with a short tail-wait after the first delivery) and returns whatever the broker delivers within that window — it does not loop to fill Limit. This matches the Azure Event Hubs SDK PartitionReceiver behaviour but means small partial batches are normal even when more records are available; the next GetRecords call will drain them.
+- Verified against Event Hubs emulator; production Azure Event Hubs coverage is exercised by the real-Azure conformance workflow.
+
+## References
+
+- <https://docs.aws.amazon.com/kinesis/latest/APIReference/API_GetRecords.html>
+

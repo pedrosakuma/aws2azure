@@ -26,7 +26,7 @@ public sealed class WorkloadCheckerTests
         Assert.Equal("Transaction scope is single-partition, single-table", gap.Area);
         Assert.Contains("idempotent application-level compensation", gap.Workaround, StringComparison.Ordinal);
         Assert.EndsWith(
-            "design-gaps.md#dynamodb-transaction-scope-is-single-partition-single-table",
+            "design-gaps/dynamodb/transaction-scope-is-single-partition-single-table.md",
             gap.Documentation,
             StringComparison.Ordinal);
     }
@@ -91,7 +91,7 @@ public sealed class WorkloadCheckerTests
         var markdown = WorkloadReportRenderer.RenderMarkdown(first);
         Assert.Contains("**Overall:** ⛔ blocked", markdown, StringComparison.Ordinal);
         Assert.Contains(
-            "docs/site/design-gaps.md#dynamodb-transaction-scope-is-single-partition-single-table",
+            "docs/site/design-gaps/dynamodb/transaction-scope-is-single-partition-single-table.md",
             markdown,
             StringComparison.Ordinal);
     }

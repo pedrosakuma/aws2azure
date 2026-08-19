@@ -505,6 +505,26 @@ public sealed class WorkloadGaCertificationTests
             var freshValidation = RunDotnet(fixtureRoot, evaluator, "--validate");
             AssertProcessSucceeded(freshValidation, "fresh evaluator validation");
 
+            var authorityPath = Path.Combine(
+                fixtureRoot,
+                WorkloadGaEvaluationMetadataBuilder.ContractPath
+                    .Replace('/', Path.DirectorySeparatorChar));
+            var validAuthority = File.ReadAllText(authorityPath);
+            File.WriteAllText(
+                authorityPath,
+                validAuthority.Replace(
+                    WorkloadGaEvaluationMetadataBuilder
+                        .ComputeEvaluatorImplementationRevision(fixtureRoot),
+                    Digest('0'),
+                    StringComparison.Ordinal));
+            var staleContractValidation = RunDotnet(fixtureRoot, evaluator, "--validate");
+            Assert.NotEqual(0, staleContractValidation.ExitCode);
+            Assert.Contains(
+                "expected_evaluator_implementation_revision",
+                staleContractValidation.StandardError,
+                StringComparison.Ordinal);
+            File.WriteAllText(authorityPath, validAuthority);
+
             File.AppendAllText(
                 Path.Combine(
                     fixtureRoot,

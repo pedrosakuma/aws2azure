@@ -1,0 +1,65 @@
+# dynamodb / DeleteItem {#operation-dynamodb-deleteitem}
+
+[← dynamodb operation index](../../dynamodb.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:dynamodb:deleteitem`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Cosmos DB (Core SQL API)`
+
+## Sub-features
+
+### HASH-only key tables {#sub-feature-hash-only-key-tables}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:hash-only-key-tables`
+- **Status:** ✅ implemented
+
+### HASH+RANGE composite key tables {#sub-feature-hashrange-composite-key-tables}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:hashrange-composite-key-tables`
+- **Status:** ✅ implemented
+
+### Idempotent delete (missing item returns success) {#sub-feature-idempotent-delete--missing-item-returns-success}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:idempotent-delete--missing-item-returns-success`
+- **Status:** ✅ implemented
+
+Cosmos 404 → DynamoDB 200 empty, matching DynamoDB semantics.
+
+### ConditionExpression / Expected / ConditionalOperator {#sub-feature-conditionexpression---expected---conditionaloperator}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:conditionexpression---expected---conditionaloperator`
+- **Status:** ✅ implemented
+
+Conditional path performs GET → evaluate → DELETE(If-Match) with retry on 412/Conflict/404. If the condition evaluates true against a missing item, the operation returns success as a no-op. Failure returns HTTP 400 ConditionalCheckFailedException with optional Item when ReturnValuesOnConditionCheckFailure=ALL_OLD.
+
+### ExpressionAttributeNames / ExpressionAttributeValues {#sub-feature-expressionattributenames---expressionattributevalues}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:expressionattributenames---expressionattributevalues`
+- **Status:** ✅ implemented
+
+### ReturnValues {#sub-feature-returnvalues}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:returnvalues`
+- **Status:** ✅ implemented
+
+Supports NONE and ALL_OLD. ALL_OLD returns the deleted item image when one existed; a missing-item delete still succeeds with no Attributes, matching DynamoDB.
+
+### ReturnConsumedCapacity / ReturnItemCollectionMetrics {#sub-feature-returnconsumedcapacity---returnitemcollectionmetrics}
+
+- **Capability ID:** `sub-feature:dynamodb:deleteitem:returnconsumedcapacity---returnitemcollectionmetrics`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🔵 by design
+
+Requests are accepted but the response always omits ConsumedCapacity / ItemCollectionMetrics because Cosmos DB exposes no faithful DynamoDB-equivalent delete accounting surface.
+
+## Behaviour differences
+
+- Cosmos storage-metadata system fields (`_rid`/`_self`/`_etag`/`_ts`/`_attachments`/`_lsn`/`_metadata`) are stripped from response items and never surface as DynamoDB attributes (#203). Caveat: a user attribute literally named identically is also stripped on read; the durable fix is attribute namespacing.
+- Missing container (table deleted mid-op) is distinguished from missing item via Cosmos `x-ms-substatus: 1003` and surfaces as ResourceNotFoundException; missing items remain idempotent successes.
+- Key attribute values (S/B) are hex-encoded into the internal Cosmos `id`/partition-key (S → hex(UTF-8 bytes), B → hex(raw bytes), N → order-preserving numeric digit string), so Cosmos-forbidden characters (`/`, `\`, `?`, `#`) are accepted. The encoding is order- and prefix-preserving and invisible to clients. Effective raw key limit is ~127 bytes (hex doubles length against Cosmos' 255-char id cap); over-limit keys are rejected with ValidationException. **On-disk-format breaking change** — items written by earlier builds route under a different id.
+- Cosmos 429 surfaced as DynamoDB ProvisionedThroughputExceededException — including 429 on metadata read.
+- Conditional deletes use the single-item `atomicWrite_v2` Cosmos stored procedure when stored procedures are enabled and the ConditionExpression is within the sproc's supported subset (scalar comparisons, AND/OR/NOT, `attribute_exists`/`attribute_not_exists`, `attribute_type` of S/N/BOOL/NULL/L/M, `begins_with`, BETWEEN, IN): the condition is evaluated server-side and the delete is applied atomically, addressing the document by its own `_self` link from the read query (a constructed `getSelfLink() + 'docs/' + id` link is an invalid mixed link rejected by real Cosmos). **Validated against real Azure Cosmos DB** (Strong consistency). Conditions outside the subset (`size()`, `contains()`, `attribute_type` of a set/binary, binary/set literal comparisons, list-index paths) and the case where the sproc is unavailable (e.g. the emulator) fall back to the non-atomic GET → DELETE path under mode `Preferred`, or fail loud under `Required`.
+- Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the fallback path is emulator-covered, the `atomicWrite_v2` sproc path is validated against real Azure Cosmos DB.
+- When the existing item is materialized for ConditionExpression evaluation (the GET → DELETE fallback path) and Cosmos returns a CosmosBinary body (opt-in `DynamoDb.CosmosBinaryResponses`), the AttributeValue map is built straight off the binary body via `CosmosBinaryReader` (no binary→text decode + JsonDocument DOM), falling back to decode-to-text on an unsupported marker. The chosen path is observable on `aws2azure_dynamodb_read_decode_path_total{op="delete",path=binary|fallback|text}`. The emulator never emits CosmosBinary, so the binary-direct path is exercised against real Azure only.
+

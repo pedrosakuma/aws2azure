@@ -5,6 +5,149 @@ using System.Text;
 
 namespace Aws2Azure.GapDocs;
 
+public sealed class LegacyHeadingIds
+{
+    private readonly HashSet<string> ids;
+
+    public LegacyHeadingIds(IEnumerable<string>? existingIds = null)
+    {
+        ids = existingIds is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(existingIds, StringComparer.Ordinal);
+    }
+
+    public string Add(string heading)
+    {
+        var normalized = heading.Normalize(NormalizationForm.FormKD);
+        var filtered = new StringBuilder(normalized.Length);
+
+        foreach (var c in normalized)
+        {
+            if (c > 0x7f)
+            {
+                continue;
+            }
+            if (char.IsLetterOrDigit(c) || c == '_')
+            {
+                filtered.Append(char.ToLowerInvariant(c));
+            }
+            else if (char.IsWhiteSpace(c) || c == '-')
+            {
+                filtered.Append(c);
+            }
+        }
+
+        var value = filtered.ToString().Trim();
+        var slug = new StringBuilder(value.Length);
+        var pendingSeparator = false;
+        foreach (var c in value)
+        {
+            if (char.IsWhiteSpace(c) || c == '-')
+            {
+                pendingSeparator = true;
+                continue;
+            }
+            if (pendingSeparator)
+            {
+                slug.Append('-');
+                pendingSeparator = false;
+            }
+            slug.Append(c);
+        }
+        if (pendingSeparator)
+        {
+            slug.Append('-');
+        }
+
+        var candidate = slug.ToString();
+        while (candidate.Length == 0 || ids.Contains(candidate))
+        {
+            var separator = candidate.LastIndexOf('_');
+            if (separator >= 0
+                && separator + 1 < candidate.Length
+                && int.TryParse(
+                    candidate.AsSpan(separator + 1),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var suffix))
+            {
+                candidate = candidate[..(separator + 1)]
+                    + (suffix + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                candidate += "_1";
+            }
+        }
+
+        ids.Add(candidate);
+        return candidate;
+    }
+}
+
+public sealed record LegacyDesignGapFragment(string Service, string Area, string Fragment);
+
+public static class LegacyDesignGapFragments
+{
+    public static IReadOnlyList<LegacyDesignGapFragment> Create(
+        IReadOnlyList<ServiceDesignDoc> designDocs)
+    {
+        var headings = new LegacyHeadingIds(
+            designDocs.SelectMany(doc => doc.DesignGaps.Select(
+                gap => DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, gap.Area))));
+        headings.Add("Design gaps");
+        headings.Add("Summary");
+
+        var fragments = new List<LegacyDesignGapFragment>();
+        foreach (var doc in designDocs.OrderBy(
+                     d => d.Service.ToLowerInvariant(),
+                     StringComparer.Ordinal))
+        {
+            headings.Add(doc.Service.ToLowerInvariant());
+            foreach (var gap in doc.DesignGaps)
+            {
+                fragments.Add(new LegacyDesignGapFragment(
+                    doc.Service,
+                    gap.Area,
+                    headings.Add(gap.Area)));
+            }
+        }
+
+        return fragments;
+    }
+}
+
+public sealed record LegacyServiceFragment(string Operation, string Fragment);
+
+public static class LegacyServiceFragments
+{
+    public static IReadOnlyList<LegacyServiceFragment> Create(
+        string service,
+        IReadOnlyList<OperationDoc> operations)
+    {
+        var headings = new LegacyHeadingIds();
+        headings.Add(service);
+        var fragments = new List<LegacyServiceFragment>();
+        foreach (var operation in operations)
+        {
+            headings.Add(operation.Operation);
+            if (operation.SubFeatures.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("Sub-features")));
+            }
+            if (operation.BehaviorDifferences.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("Behaviour differences")));
+            }
+            if (operation.References.Count > 0)
+            {
+                fragments.Add(new(operation.Operation, headings.Add("References")));
+            }
+        }
+        return fragments;
+    }
+}
+
 public static class MarkdownRenderer
 {
     public static void Render(
@@ -13,7 +156,7 @@ public static class MarkdownRenderer
         RealAzureMigrationDoc migration,
         string siteRoot)
     {
-        Directory.CreateDirectory(siteRoot);
+        RecreateDirectory(siteRoot);
 
         var byService = docs
             .GroupBy(d => d.Service.ToLowerInvariant())
@@ -28,7 +171,12 @@ public static class MarkdownRenderer
         WriteDesignGaps(designDocs, siteRoot);
         foreach (var group in byService)
         {
-            WriteServicePage(group.Key, group.OrderBy(o => o.Operation, System.StringComparer.Ordinal).ToList(), siteRoot);
+            var operations = group.OrderBy(o => o.Operation, System.StringComparer.Ordinal).ToList();
+            WriteServicePage(group.Key, operations, siteRoot);
+            foreach (var operation in operations)
+            {
+                WriteOperationPage(operation, siteRoot);
+            }
         }
     }
 
@@ -54,7 +202,9 @@ public static class MarkdownRenderer
             var extra = designByService.TryGetValue(group.Key, out var n) && n > 0
                 ? $", {n} design gap(s)"
                 : string.Empty;
-            sb.AppendLine($"- [{group.Key}]({group.Key}.md) — {group.Count()} operation(s){extra}");
+            sb.AppendLine(
+                $"- [{group.Key}]({DocumentationLinks.ServicePage(group.Key)}) — " +
+                $"{group.Count()} operation(s){extra}");
         }
         sb.AppendLine();
         sb.AppendLine("## Cross-cutting");
@@ -82,7 +232,7 @@ public static class MarkdownRenderer
             foreach (var op in group.OrderBy(o => o.Operation, System.StringComparer.Ordinal))
             {
                 sb.AppendLine(
-                    $"| {op.Service} | [{op.Operation}]({group.Key}.md#{op.Operation.ToLowerInvariant()}) | " +
+                    $"| {op.Service} | [{op.Operation}]({DocumentationLinks.OperationPage(op.Service, op.Operation)}) | " +
                     $"{StatusBadge(op.Status)} | {DispositionBadge(op.Disposition)} | {IssueLink(op.TrackingIssue)} | " +
                     $"{Seal(op.VerifiedRealAzure)} | `{op.AzureEquivalent}` |");
             }
@@ -125,7 +275,7 @@ public static class MarkdownRenderer
                 + nonImplementedSubFeatures.Count(sf => IsStructuralDisposition(sf.Disposition))
                 + (serviceDesign?.DesignGaps.Count(g => IsStructuralGap(g)) ?? 0);
             sb.AppendLine(
-                $"| [{group.Key}]({group.Key}.md) | {CountStatus(operations, "implemented")} | {CountStatus(operations, "partial")} | " +
+                $"| [{group.Key}]({DocumentationLinks.ServicePage(group.Key)}) | {CountStatus(operations, "implemented")} | {CountStatus(operations, "partial")} | " +
                 $"{CountStatus(operations, "stub")} | {CountStatus(operations, "unsupported")} | " +
                 $"{CountDisposition(operations, "feasible_backlog")} | {CountDisposition(operations, "by_design")} | " +
                 $"{CountDisposition(operations, "non_goal")} | {CountDisposition(nonImplementedSubFeatures, "feasible_backlog")} | " +
@@ -149,18 +299,18 @@ public static class MarkdownRenderer
                 .ToList();
             var structuralEntries = operations
                 .Where(o => IsStructuralDisposition(o.Disposition))
-                .Select(o => $"- Operation [{o.Operation}]({group.Key}.md#{o.Operation.ToLowerInvariant()}) — {DispositionBadge(o.Disposition)}")
+                .Select(o => $"- Operation [{o.Operation}]({DocumentationLinks.OperationPage(o.Service, o.Operation)}) — {DispositionBadge(o.Disposition)}")
                 .Concat(nonImplementedSubFeatures
                     .Where(entry => IsStructuralDisposition(entry.SubFeature.Disposition))
                     .Select(entry =>
-                        $"- Sub-feature [{entry.Operation}]({group.Key}.md#{entry.Operation.ToLowerInvariant()}) / {Esc(entry.SubFeature.Name)} — {DispositionBadge(entry.SubFeature.Disposition)}"))
+                        $"- Sub-feature [{entry.Operation}]({DocumentationLinks.OperationPage(group.Key, entry.Operation)}#{DocumentationLinks.SubFeatureAnchor(entry.SubFeature.Name)}) / {Esc(entry.SubFeature.Name)} — {DispositionBadge(entry.SubFeature.Disposition)}"))
                 .ToList();
             if (serviceDesign is not null)
             {
                 structuralEntries.AddRange(serviceDesign.DesignGaps
                     .Where(IsStructuralGap)
                     .Select(gap =>
-                        $"- Design gap [${Esc(gap.Area)}](design-gaps.md#{DocumentationLinks.Anchor(serviceDesign.Service + "-" + gap.Area)}) — {DispositionBadge(DesignGapDisposition(gap))}")
+                        $"- Design gap [${Esc(gap.Area)}]({DocumentationLinks.DesignGapPage(serviceDesign.Service, gap.Area)}) — {DispositionBadge(DesignGapDisposition(gap))}")
                     .Select(entry => entry.Replace("[$", "[", System.StringComparison.Ordinal)));
             }
 
@@ -187,13 +337,13 @@ public static class MarkdownRenderer
                 foreach (var operation in feasibleOps)
                 {
                     sb.AppendLine(
-                        $"- Operation [{operation.Operation}]({group.Key}.md#{operation.Operation.ToLowerInvariant()}) — " +
+                        $"- Operation [{operation.Operation}]({DocumentationLinks.OperationPage(operation.Service, operation.Operation)}) — " +
                         $"{IssueLink(operation.TrackingIssue)}");
                 }
                 foreach (var entry in feasibleSubFeatures)
                 {
                     sb.AppendLine(
-                        $"- Sub-feature [{entry.Operation}]({group.Key}.md#{entry.Operation.ToLowerInvariant()}) / " +
+                        $"- Sub-feature [{entry.Operation}]({DocumentationLinks.OperationPage(group.Key, entry.Operation)}#{DocumentationLinks.SubFeatureAnchor(entry.SubFeature.Name)}) / " +
                         $"{Esc(entry.SubFeature.Name)} — {IssueLink(entry.SubFeature.TrackingIssue)}");
                 }
                 if (serviceDesign is not null)
@@ -201,7 +351,7 @@ public static class MarkdownRenderer
                     foreach (var gap in serviceDesign.DesignGaps.Where(g => g.Disposition.Equals("feasible_backlog", System.StringComparison.OrdinalIgnoreCase)))
                     {
                         sb.AppendLine(
-                            $"- Design gap [{Esc(gap.Area)}](design-gaps.md#{DocumentationLinks.Anchor(serviceDesign.Service + "-" + gap.Area)}) — " +
+                            $"- Design gap [{Esc(gap.Area)}]({DocumentationLinks.DesignGapPage(serviceDesign.Service, gap.Area)}) — " +
                             $"{IssueLink(gap.TrackingIssue)}");
                     }
                 }
@@ -218,7 +368,7 @@ public static class MarkdownRenderer
             {
                 sb.AppendLine(
                     $"{serviceDesign.WorkloadPatterns.Count} workload pattern(s) are documented for this service. " +
-                    $"See [workload-compatibility](workload-compatibility.md#{group.Key}) and [workload-ga](workload-ga.md).");
+                    $"See [workload-compatibility](workload-compatibility.md#{DocumentationLinks.Anchor(group.Key)}) and [workload-ga](workload-ga.md).");
             }
             sb.AppendLine();
 
@@ -269,7 +419,7 @@ public static class MarkdownRenderer
         {
             var ops = group.ToList();
             sb.AppendLine(
-                $"| [{group.Key}]({group.Key}.md) | Available | " +
+                $"| [{group.Key}]({DocumentationLinks.ServicePage(group.Key)}) | Available | " +
                 $"{CountStatus(ops, "implemented")} | {CountStatus(ops, "partial")} | " +
                 $"{CountStatus(ops, "stub")} | {CountStatus(ops, "unsupported")} | " +
                 $"{ops.Count(o => o.VerifiedRealAzure is not null)}/{ops.Count} |");
@@ -326,7 +476,9 @@ public static class MarkdownRenderer
                 g => g.Area,
                 System.StringComparer.OrdinalIgnoreCase);
 
-            sb.AppendLine($"## {serviceDoc.Service.ToLowerInvariant()}");
+            sb.AppendLine(
+                $"## {serviceDoc.Service.ToLowerInvariant()} " +
+                $"{{#{DocumentationLinks.Anchor(serviceDoc.Service)}}}");
             sb.AppendLine();
             sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |");
             sb.AppendLine("|---|---|---|---:|---|---|");
@@ -348,13 +500,13 @@ public static class MarkdownRenderer
                 var details = new List<string> { Esc(pattern.Summary), Esc(pattern.Guidance) };
                 foreach (var operation in referencedOperations.Where(o => !o.Status.Equals("implemented", System.StringComparison.OrdinalIgnoreCase)))
                 {
-                    details.Add($"[{operation.Operation}]({serviceDoc.Service.ToLowerInvariant()}.md#{operation.Operation.ToLowerInvariant()}) is {operation.Status}");
+                    details.Add($"[{operation.Operation}]({DocumentationLinks.OperationPage(operation.Service, operation.Operation)}) is {operation.Status}");
                 }
                 foreach (var area in pattern.DesignGaps)
                 {
                     if (gapsByArea.TryGetValue(area, out var gap))
                     {
-                        details.Add($"[Design gap](design-gaps.md#{DocumentationLinks.Anchor(serviceDoc.Service + "-" + area)}): {gap.Area}");
+                        details.Add($"[Design gap]({DocumentationLinks.DesignGapPage(serviceDoc.Service, gap.Area)}): {gap.Area}");
                     }
                 }
                 sb.AppendLine(
@@ -369,77 +521,138 @@ public static class MarkdownRenderer
 
     private static void WriteServicePage(string service, IList<OperationDoc> ops, string siteRoot)
     {
+        var legacyFragments = LegacyServiceFragments.Create(service, ops.ToList())
+            .ToLookup(fragment => fragment.Operation, StringComparer.OrdinalIgnoreCase);
         var sb = new StringBuilder();
-        sb.AppendLine($"# {service}");
+        sb.AppendLine($"<a id=\"{DocumentationLinks.Anchor(service)}\"></a>");
         sb.AppendLine();
+        sb.AppendLine($"# {service} {{#{DocumentationLinks.ServiceCanonicalAnchor(service)}}}");
+        sb.AppendLine();
+        sb.AppendLine($"**Capability ID:** `{DocumentationLinks.ServiceIdentity(service)}`");
+        sb.AppendLine();
+        sb.AppendLine("This service page is a generated index. Each operation links to a stable,");
+        sb.AppendLine("independently searchable detail page. Existing `#{operation}` links remain");
+        sb.AppendLine("compatible through the explicit anchors in the table.");
+        sb.AppendLine();
+        sb.AppendLine("| Operation | Status | Disposition | Real-Azure | Capability ID |");
+        sb.AppendLine("|---|---|---|---|---|");
         foreach (var op in ops)
         {
-            sb.AppendLine($"## {op.Operation}");
-            sb.AppendLine();
-            sb.AppendLine($"- **Status:** {StatusBadge(op.Status)}");
-            if (!string.IsNullOrWhiteSpace(op.Disposition))
-            {
-                sb.AppendLine($"- **Disposition:** {DispositionBadge(op.Disposition)}");
-            }
-            if (!string.IsNullOrWhiteSpace(op.TrackingIssue))
-            {
-                sb.AppendLine($"- **Tracking issue:** {IssueLink(op.TrackingIssue)}");
-            }
-            sb.AppendLine($"- **Azure equivalent:** `{op.AzureEquivalent}`");
-            if (op.VerifiedRealAzure is not null)
-            {
-                sb.AppendLine($"- **Real-Azure verified:** ✅ {VerificationDetails(op.VerifiedRealAzure)}");
-            }
-            sb.AppendLine();
-
-            if (op.SubFeatures.Count > 0)
-            {
-                sb.AppendLine("### Sub-features");
-                sb.AppendLine();
-                sb.AppendLine("| Name | Status | Disposition | Tracking | Real-Azure | Notes | Gap | Workaround |");
-                sb.AppendLine("|---|---|---|---|---|---|---|---|");
-                foreach (var sf in op.SubFeatures)
-                {
-                    sb.AppendLine(
-                        $"| {sf.Name} | {StatusBadge(sf.Status)} | {DispositionBadge(sf.Disposition)} | " +
-                        $"{IssueLink(sf.TrackingIssue)} | {Seal(sf.VerifiedRealAzure)} | {Esc(sf.Notes)} | " +
-                        $"{Esc(sf.Gap)} | {Esc(sf.Workaround)} |");
-                }
-                sb.AppendLine();
-            }
-
-            if (op.BehaviorDifferences.Count > 0)
-            {
-                sb.AppendLine("### Behaviour differences");
-                sb.AppendLine();
-                foreach (var bd in op.BehaviorDifferences) sb.AppendLine($"- {bd}");
-                sb.AppendLine();
-            }
-
-            if (op.References.Count > 0)
-            {
-                sb.AppendLine("### References");
-                sb.AppendLine();
-                foreach (var r in op.References) sb.AppendLine($"- <{r}>");
-                sb.AppendLine();
-            }
+            var legacyAliases = string.Concat(
+                legacyFragments[op.Operation].Select(
+                    fragment =>
+                        $"<a id=\"{fragment.Fragment}\" data-legacy-fragment=\"true\"></a>"));
+            sb.AppendLine(
+                $"| <a id=\"{DocumentationLinks.OperationCompatibilityAnchor(op.Operation)}\"></a>" +
+                legacyAliases +
+                $"[{op.Operation}]({DocumentationLinks.OperationPage(op.Service, op.Operation)}) | " +
+                $"{StatusBadge(op.Status)} | {DispositionBadge(op.Disposition)} | {Seal(op.VerifiedRealAzure)} | " +
+                $"`{DocumentationLinks.OperationIdentity(op.Service, op.Operation)}` |");
         }
-        File.WriteAllText(Path.Combine(siteRoot, service + ".md"), sb.ToString());
+        File.WriteAllText(Path.Combine(siteRoot, DocumentationLinks.ServicePage(service)), sb.ToString());
     }
 
-    // Cross-cutting design gaps: architectural limitations that span operations
-    // (consistency model, transaction scope, absent control-plane surfaces...).
-    // Rendered as its own page so the per-operation matrix stays focused and the
-    // reader can drill in only when they need the "why can't I do X at all" story.
+    private static void WriteOperationPage(OperationDoc op, string siteRoot)
+    {
+        var relativePath = DocumentationLinks.OperationPage(op.Service, op.Operation);
+        var outputPath = Path.Combine(siteRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(
+            $"# {op.Service} / {op.Operation} " +
+            $"{{#{DocumentationLinks.OperationCanonicalAnchor(op.Service, op.Operation)}}}");
+        sb.AppendLine();
+        sb.AppendLine($"[← {op.Service} operation index](../../{DocumentationLinks.ServicePage(op.Service)}) · [Coverage matrix](../../coverage.md)");
+        sb.AppendLine();
+        sb.AppendLine($"- **Capability ID:** `{DocumentationLinks.OperationIdentity(op.Service, op.Operation)}`");
+        sb.AppendLine($"- **Status:** {StatusBadge(op.Status)}");
+        if (!string.IsNullOrWhiteSpace(op.Disposition))
+        {
+            sb.AppendLine($"- **Disposition:** {DispositionBadge(op.Disposition)}");
+        }
+        if (!string.IsNullOrWhiteSpace(op.TrackingIssue))
+        {
+            sb.AppendLine($"- **Tracking issue:** {IssueLink(op.TrackingIssue)}");
+        }
+        sb.AppendLine($"- **Azure equivalent:** `{op.AzureEquivalent}`");
+        if (op.VerifiedRealAzure is not null)
+        {
+            sb.AppendLine($"- **Real-Azure verified:** ✅ {VerificationDetails(op.VerifiedRealAzure)}");
+        }
+        sb.AppendLine();
+
+        if (op.SubFeatures.Count > 0)
+        {
+            sb.AppendLine("## Sub-features");
+            sb.AppendLine();
+            foreach (var sf in op.SubFeatures)
+            {
+                sb.AppendLine($"### {sf.Name} {{#{DocumentationLinks.SubFeatureAnchor(sf.Name)}}}");
+                sb.AppendLine();
+                sb.AppendLine($"- **Capability ID:** `{DocumentationLinks.SubFeatureIdentity(op.Service, op.Operation, sf.Name)}`");
+                sb.AppendLine($"- **Status:** {StatusBadge(sf.Status)}");
+                if (!string.IsNullOrWhiteSpace(sf.Disposition))
+                {
+                    sb.AppendLine($"- **Disposition:** {DispositionBadge(sf.Disposition)}");
+                }
+                if (!string.IsNullOrWhiteSpace(sf.TrackingIssue))
+                {
+                    sb.AppendLine($"- **Tracking issue:** {IssueLink(sf.TrackingIssue)}");
+                }
+                if (sf.VerifiedRealAzure is not null)
+                {
+                    sb.AppendLine($"- **Real-Azure verified:** ✅ {VerificationDetails(sf.VerifiedRealAzure)}");
+                }
+                sb.AppendLine();
+                if (!string.IsNullOrWhiteSpace(sf.Notes))
+                {
+                    sb.AppendLine(sf.Notes);
+                    sb.AppendLine();
+                }
+                if (!string.IsNullOrWhiteSpace(sf.Gap))
+                {
+                    sb.AppendLine($"**Gap.** {sf.Gap}");
+                    sb.AppendLine();
+                }
+                if (!string.IsNullOrWhiteSpace(sf.Workaround))
+                {
+                    sb.AppendLine($"**Workaround.** {sf.Workaround}");
+                    sb.AppendLine();
+                }
+            }
+        }
+
+        if (op.BehaviorDifferences.Count > 0)
+        {
+            sb.AppendLine("## Behaviour differences");
+            sb.AppendLine();
+            foreach (var bd in op.BehaviorDifferences) sb.AppendLine($"- {bd}");
+            sb.AppendLine();
+        }
+
+        if (op.References.Count > 0)
+        {
+            sb.AppendLine("## References");
+            sb.AppendLine();
+            foreach (var reference in op.References) sb.AppendLine($"- <{reference}>");
+            sb.AppendLine();
+        }
+
+        File.WriteAllText(outputPath, sb.ToString());
+    }
+
     private static void WriteDesignGaps(IReadOnlyList<ServiceDesignDoc> designDocs, string siteRoot)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# Design gaps");
+        sb.AppendLine("# Design gaps {#design-gaps}");
         sb.AppendLine();
         sb.AppendLine("Architectural limitations that do **not** map to a single operation — the");
         sb.AppendLine("consistency model, transaction scope, and control-plane surfaces that differ");
         sb.AppendLine("between the AWS service and its Azure target. Per-operation behaviour lives on");
-        sb.AppendLine("each [service page](index.md); this page is the cross-cutting story.");
+        sb.AppendLine("each [service page](index.md). This page is an index whose links open");
+        sb.AppendLine("stable, independently searchable design-gap pages. Existing public anchors");
+        sb.AppendLine("remain on this index for compatibility.");
         sb.AppendLine();
         sb.AppendLine("Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned");
         sb.AppendLine();
@@ -447,6 +660,10 @@ public static class MarkdownRenderer
         var ordered = designDocs
             .OrderBy(d => d.Service.ToLowerInvariant(), System.StringComparer.Ordinal)
             .ToList();
+        var legacyFragments = LegacyDesignGapFragments.Create(ordered)
+            .ToDictionary(
+                fragment => (fragment.Service, fragment.Area),
+                fragment => fragment.Fragment);
 
         if (ordered.Count == 0)
         {
@@ -455,16 +672,23 @@ public static class MarkdownRenderer
             return;
         }
 
-        sb.AppendLine("## Summary");
+        sb.AppendLine("## Summary {#summary}");
         sb.AppendLine();
         sb.AppendLine("| Service | Area | Status | Disposition | Tracking |");
         sb.AppendLine("|---|---|---|---|---|");
         foreach (var doc in ordered)
         {
-            foreach (var g in doc.DesignGaps)
+            foreach (var g in doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal))
             {
+                var stableAnchor = DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, g.Area);
+                var legacyAnchor = legacyFragments[(doc.Service, g.Area)];
+                var legacyAlias = legacyAnchor.Equals(stableAnchor, StringComparison.Ordinal)
+                    ? string.Empty
+                    : $"<a id=\"{legacyAnchor}\" data-legacy-fragment=\"true\"></a>";
                 sb.AppendLine(
-                    $"| [{doc.Service.ToLowerInvariant()}](#{doc.Service.ToLowerInvariant()}) | {Esc(g.Area)} | " +
+                    $"| [{doc.Service.ToLowerInvariant()}](#{DocumentationLinks.Anchor(doc.Service)}) | " +
+                    $"<a id=\"{stableAnchor}\"></a>{legacyAlias}" +
+                    $"[{Esc(g.Area)}]({DocumentationLinks.DesignGapPage(doc.Service, g.Area)}) | " +
                     $"{DesignBadge(g.Status)} | {DispositionBadge(DesignGapDisposition(g))} | {IssueLink(g.TrackingIssue)} |");
             }
         }
@@ -472,47 +696,84 @@ public static class MarkdownRenderer
 
         foreach (var doc in ordered)
         {
-            sb.AppendLine($"## {doc.Service.ToLowerInvariant()}");
+            sb.AppendLine(
+                $"## {doc.Service.ToLowerInvariant()} " +
+                $"{{#{DocumentationLinks.Anchor(doc.Service)}}}");
             sb.AppendLine();
-            foreach (var g in doc.DesignGaps)
+            foreach (var gap in doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal))
             {
-                sb.AppendLine($"<a id=\"{DocumentationLinks.Anchor(doc.Service + "-" + g.Area)}\"></a>");
-                sb.AppendLine();
-                sb.AppendLine($"### {Esc(g.Area)}");
-                sb.AppendLine();
-                sb.AppendLine($"- **Status:** {DesignBadge(g.Status)}");
-                if (!string.IsNullOrWhiteSpace(g.Disposition))
-                {
-                    sb.AppendLine($"- **Disposition:** {DispositionBadge(g.Disposition)}");
-                }
-                if (!string.IsNullOrWhiteSpace(g.TrackingIssue))
-                {
-                    sb.AppendLine($"- **Tracking issue:** {IssueLink(g.TrackingIssue)}");
-                }
-                sb.AppendLine();
-                sb.AppendLine(g.Summary);
-                sb.AppendLine();
-                if (!string.IsNullOrWhiteSpace(g.Impact))
-                {
-                    sb.AppendLine($"**Impact.** {g.Impact}");
-                    sb.AppendLine();
-                }
-                if (!string.IsNullOrWhiteSpace(g.Workaround))
-                {
-                    sb.AppendLine($"**Workaround.** {g.Workaround}");
-                    sb.AppendLine();
-                }
-                if (g.References.Count > 0)
-                {
-                    sb.AppendLine("References:");
-                    sb.AppendLine();
-                    foreach (var r in g.References) sb.AppendLine($"- <{r}>");
-                    sb.AppendLine();
-                }
+                sb.AppendLine(
+                    $"- [{Esc(gap.Area)}]({DocumentationLinks.DesignGapPage(doc.Service, gap.Area)}) — " +
+                    $"{DesignBadge(gap.Status)} · `{DocumentationLinks.DesignGapIdentity(doc.Service, gap.Area)}`");
             }
+            sb.AppendLine();
         }
 
         File.WriteAllText(Path.Combine(siteRoot, "design-gaps.md"), sb.ToString());
+
+        foreach (var doc in ordered)
+        {
+            foreach (var gap in doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal))
+            {
+                WriteDesignGapPage(doc.Service, gap, siteRoot);
+            }
+        }
+    }
+
+    private static void WriteDesignGapPage(string service, DesignGap gap, string siteRoot)
+    {
+        var relativePath = DocumentationLinks.DesignGapPage(service, gap.Area);
+        var outputPath = Path.Combine(siteRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+        var sb = new StringBuilder();
+        sb.AppendLine(
+            $"# {service} design gap / {Esc(gap.Area)} " +
+            $"{{#{DocumentationLinks.DesignGapCanonicalAnchor(service, gap.Area)}}}");
+        sb.AppendLine();
+        sb.AppendLine("[← Design-gap index](../../design-gaps.md)");
+        sb.AppendLine();
+        sb.AppendLine($"- **Capability ID:** `{DocumentationLinks.DesignGapIdentity(service, gap.Area)}`");
+        sb.AppendLine($"- **Status:** {DesignBadge(gap.Status)}");
+        if (!string.IsNullOrWhiteSpace(gap.Disposition))
+        {
+            sb.AppendLine($"- **Disposition:** {DispositionBadge(gap.Disposition)}");
+        }
+        if (!string.IsNullOrWhiteSpace(gap.TrackingIssue))
+        {
+            sb.AppendLine($"- **Tracking issue:** {IssueLink(gap.TrackingIssue)}");
+        }
+        sb.AppendLine();
+        sb.AppendLine(gap.Summary);
+        sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(gap.Impact))
+        {
+            sb.AppendLine($"**Impact.** {gap.Impact}");
+            sb.AppendLine();
+        }
+        if (!string.IsNullOrWhiteSpace(gap.Workaround))
+        {
+            sb.AppendLine($"**Workaround.** {gap.Workaround}");
+            sb.AppendLine();
+        }
+        if (gap.References.Count > 0)
+        {
+            sb.AppendLine("## References");
+            sb.AppendLine();
+            foreach (var reference in gap.References) sb.AppendLine($"- <{reference}>");
+            sb.AppendLine();
+        }
+
+        File.WriteAllText(outputPath, sb.ToString());
+    }
+
+    private static void RecreateDirectory(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        Directory.CreateDirectory(path);
     }
 
     private static string DesignBadge(string status) => status.ToLowerInvariant() switch
@@ -629,7 +890,9 @@ public static class MarkdownRenderer
                 migrationByOperation.TryGetValue(o.Service + "/" + o.Operation, out var debt);
                 var tracking = debt is null ? "—" : $"[issue]({debt.TrackingIssue})";
                 var expires = debt?.ExpiresOn ?? "—";
-                sb.AppendLine($"| {o.Service} | {o.Operation} | {tracking} | {expires} |");
+                sb.AppendLine(
+                    $"| {o.Service} | [{o.Operation}]({DocumentationLinks.OperationPage(o.Service, o.Operation)}) | " +
+                    $"{tracking} | {expires} |");
             }
         }
         sb.AppendLine();
@@ -642,7 +905,9 @@ public static class MarkdownRenderer
         {
             foreach (var bd in o.BehaviorDifferences)
             {
-                sb.AppendLine($"| {o.Service} | {o.Operation} | {Seal(o.VerifiedRealAzure)} | {Esc(bd)} |");
+                sb.AppendLine(
+                    $"| {o.Service} | [{o.Operation}]({DocumentationLinks.OperationPage(o.Service, o.Operation)}) | " +
+                    $"{Seal(o.VerifiedRealAzure)} | {Esc(bd)} |");
             }
         }
         File.WriteAllText(Path.Combine(siteRoot, "divergences.md"), sb.ToString());

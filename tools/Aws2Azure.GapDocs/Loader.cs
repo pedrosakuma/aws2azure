@@ -97,6 +97,26 @@ public static class Loader
 
 public static class Validator
 {
+    private static readonly HashSet<string> ReservedServicePages = new(
+        [
+            "index.md",
+            "coverage.md",
+            "completeness.md",
+            "workload-compatibility.md",
+            "workload-ga.md",
+            "divergences.md",
+            "design-gaps.md",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> ReservedWorkloadCompatibilityAnchors = new(
+        [
+            "workload-compatibility",
+            "service-coverage-profile",
+            "adoption-decision",
+            "automated-workload-check",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
     public static IReadOnlyList<string> Validate(
         IReadOnlyList<OperationDoc> docs,
         RealAzureMigrationDoc migration,
@@ -104,10 +124,53 @@ public static class Validator
     {
         var errors = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenDocumentPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var serviceSlugOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var docsByKey = docs
             .GroupBy(OperationKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var migrationKeys = ValidateMigration(migration, docsByKey, currentDate, errors);
+        foreach (var serviceGroup in docs
+                     .Where(doc => !string.IsNullOrWhiteSpace(doc.Service))
+                     .GroupBy(doc => doc.Service, StringComparer.OrdinalIgnoreCase))
+        {
+            var owner = serviceGroup.Key;
+            var slug = DocumentationLinks.Anchor(owner);
+            if (serviceSlugOwners.TryGetValue(slug, out var existing)
+                && !existing.Equals(owner, StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add(
+                    $"{serviceGroup.First().SourceFile}: service '{owner}' documentation identity " +
+                    $"collides with service '{existing}' as '{slug}'");
+            }
+            else
+            {
+                serviceSlugOwners[slug] = owner;
+            }
+            var servicePage = DocumentationLinks.ServicePage(owner);
+            if (ReservedServicePages.Contains(servicePage))
+            {
+                errors.Add(
+                    $"{serviceGroup.First().SourceFile}: service '{owner}' documentation page " +
+                    $"'{servicePage}' is reserved for an aggregate generated page");
+            }
+
+            var servicePageAnchors = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                DocumentationLinks.Anchor(owner),
+                DocumentationLinks.ServiceCanonicalAnchor(owner)
+            };
+            foreach (var operation in serviceGroup)
+            {
+                var compatibilityAnchor = DocumentationLinks.OperationCompatibilityAnchor(operation.Operation);
+                if (!servicePageAnchors.Add(compatibilityAnchor))
+                {
+                    errors.Add(
+                        $"{operation.SourceFile}: operation '{operation.Operation}' documentation anchor " +
+                        $"'{compatibilityAnchor}' collides on service page '{servicePage}'");
+                }
+            }
+        }
 
         foreach (var doc in docs)
         {
@@ -116,6 +179,14 @@ public static class Validator
             if (string.IsNullOrWhiteSpace(doc.Service)) Err("missing required field 'service'");
             if (string.IsNullOrWhiteSpace(doc.Operation)) Err("missing required field 'operation'");
             if (string.IsNullOrWhiteSpace(doc.AzureEquivalent)) Err("missing required field 'azure_equivalent'");
+            if (DocumentationLinks.Anchor(doc.Service).Length == 0)
+            {
+                Err($"service '{doc.Service}' does not produce a stable documentation identity");
+            }
+            if (DocumentationLinks.Anchor(doc.Operation).Length == 0)
+            {
+                Err($"operation '{doc.Operation}' does not produce a stable documentation identity");
+            }
 
             if (!StatusValues.Operation.Contains(doc.Status))
             {
@@ -152,11 +223,26 @@ public static class Validator
             {
                 Err($"duplicate service/operation pair '{key}'");
             }
+            var documentPath = DocumentationLinks.OperationPage(doc.Service, doc.Operation);
+            if (!seenDocumentPaths.Add(documentPath))
+            {
+                Err($"operation documentation path '{documentPath}' collides with another operation");
+            }
 
+            var seenSubFeatureAnchors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < doc.SubFeatures.Count; i++)
             {
                 var sf = doc.SubFeatures[i];
                 if (string.IsNullOrWhiteSpace(sf.Name)) Err($"sub_features[{i}].name missing");
+                var subFeatureAnchor = DocumentationLinks.SubFeatureAnchor(sf.Name);
+                if (subFeatureAnchor == "sub-feature-")
+                {
+                    Err($"sub_features[{i}] '{sf.Name}' does not produce a stable documentation anchor");
+                }
+                else if (!seenSubFeatureAnchors.Add(subFeatureAnchor))
+                {
+                    Err($"sub_features[{i}] '{sf.Name}' produces duplicate documentation anchor '{subFeatureAnchor}'");
+                }
                 if (!StatusValues.SubFeature.Contains(sf.Status))
                 {
                     Err($"sub_features[{i}] invalid status '{sf.Status}'");
@@ -472,7 +558,17 @@ public static class Validator
             operationDocs.Select(o => o.Service.ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
         var seenServices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var serviceSlugOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var seenPatternIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var designGapIndexAnchors = new HashSet<string>(
+            designDocs
+                .Where(doc => !string.IsNullOrWhiteSpace(doc.Service))
+                .Select(doc => DocumentationLinks.Anchor(doc.Service)),
+            StringComparer.OrdinalIgnoreCase)
+        {
+            "design-gaps",
+            "summary"
+        };
         var operationsByService = operationDocs
             .GroupBy(o => o.Service, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -492,6 +588,25 @@ public static class Validator
             }
 
             var service = doc.Service.ToLowerInvariant();
+            var serviceSlug = DocumentationLinks.Anchor(service);
+            if (serviceSlugOwners.TryGetValue(serviceSlug, out var existingService)
+                && !existingService.Equals(service, StringComparison.OrdinalIgnoreCase))
+            {
+                Err(
+                    $"service '{doc.Service}' documentation identity collides with service " +
+                    $"'{existingService}' as '{serviceSlug}'");
+            }
+            else
+            {
+                serviceSlugOwners[serviceSlug] = service;
+            }
+            if (doc.WorkloadPatterns.Count > 0
+                && ReservedWorkloadCompatibilityAnchors.Contains(serviceSlug))
+            {
+                Err(
+                    $"service '{doc.Service}' documentation anchor '{serviceSlug}' is reserved " +
+                    "on aggregate page 'workload-compatibility.md'");
+            }
             var expectedDir = Path.Combine("docs", "gaps", service);
             if (!doc.SourceFile.Replace('\\', '/').Contains("/" + expectedDir.Replace('\\', '/') + "/"))
             {
@@ -517,6 +632,10 @@ public static class Validator
             {
                 var g = doc.DesignGaps[i];
                 if (string.IsNullOrWhiteSpace(g.Area)) Err($"design_gaps[{i}].area missing");
+                if (DocumentationLinks.Anchor(g.Area).Length == 0)
+                {
+                    Err($"design_gaps[{i}] '{g.Area}' does not produce a stable documentation identity");
+                }
                 if (string.IsNullOrWhiteSpace(g.Summary)) Err($"design_gaps[{i}].summary missing");
                 if (!StatusValues.DesignGap.Contains(g.Status))
                 {
@@ -533,11 +652,24 @@ public static class Validator
             }
 
             var designGapsByArea = new Dictionary<string, DesignGap>(StringComparer.OrdinalIgnoreCase);
+            var designGapPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var gap in doc.DesignGaps.Where(g => !string.IsNullOrWhiteSpace(g.Area)))
             {
                 if (!designGapsByArea.TryAdd(gap.Area, gap))
                 {
                     Err($"duplicate design gap area '{gap.Area}'");
+                }
+                var documentPath = DocumentationLinks.DesignGapPage(doc.Service, gap.Area);
+                if (!designGapPaths.Add(documentPath))
+                {
+                    Err($"design gap '{gap.Area}' produces duplicate documentation path '{documentPath}'");
+                }
+                var compatibilityAnchor = DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, gap.Area);
+                if (!designGapIndexAnchors.Add(compatibilityAnchor))
+                {
+                    Err(
+                        $"design gap '{gap.Area}' documentation anchor '{compatibilityAnchor}' " +
+                        "collides on aggregate page 'design-gaps.md'");
                 }
             }
             var seenPatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

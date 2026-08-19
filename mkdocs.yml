@@ -58,6 +58,10 @@ exclude_docs: |
   **/*.yaml
   **/*.yml
 
+not_in_nav: |
+  site/operations/**/*.md
+  site/design-gaps/**/*.md
+
 validation:
   nav:
     omitted_files: warn

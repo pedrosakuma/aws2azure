@@ -1,0 +1,22 @@
+# secretsmanager / ListSecrets {#operation-secretsmanager-listsecrets}
+
+[← secretsmanager operation index](../../secretsmanager.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:secretsmanager:listsecrets`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets?api-version=7.4`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Behaviour differences
+
+- Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
+- Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
+- Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
+- SecretList entries emit Tags as an AWS Key/Value array and resolve the secret Name/ARN from the Key Vault item id; a JSON-map tag shape would desync the AWS SDK list unmarshaller.
+- Pagination: AWS NextToken carries the Key Vault $skiptoken continuation value (and MaxResults maps to Key Vault maxresults); the proxy always rebuilds its own vault URI from the token rather than following an inbound URL, so NextToken cannot be used as an SSRF vector.
+
+## References
+
+- <https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html>
+- <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret-properties-versions>
+

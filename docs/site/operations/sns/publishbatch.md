@@ -1,0 +1,61 @@
+# sns / PublishBatch {#operation-sns-publishbatch}
+
+[← sns operation index](../../sns.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:sns:publishbatch`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+- **Azure equivalent:** `Azure Service Bus Topics / Azure Event Grid`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### AMQP batch publish path {#sub-feature-amqp-batch-publish-path}
+
+- **Capability ID:** `sub-feature:sns:publishbatch:amqp-batch-publish-path`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+Sends PublishBatch entries to Azure Service Bus Topics over AMQP 1.0 and reports per-entry success or failure.
+
+### Event Grid batch publish path {#sub-feature-event-grid-batch-publish-path}
+
+- **Capability ID:** `sub-feature:sns:publishbatch:event-grid-batch-publish-path`
+- **Status:** ✅ implemented
+- **Real-Azure verified:** ✅ 2026-07-21 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29789050325)
+
+Sends PublishBatch entries to Azure Event Grid custom topics in classic-schema JSON batches, splitting oversized batches when required.
+
+### Service Bus FIFO batch subset {#sub-feature-service-bus-fifo-batch-subset}
+
+- **Capability ID:** `sub-feature:sns:publishbatch:service-bus-fifo-batch-subset`
+- **Status:** ✅ implemented
+
+For Service Bus-backed .fifo topics, each entry requires MessageGroupId and uses that value as AMQP group-id/Service Bus SessionId. MessageDeduplicationId is mapped to the broker MessageId per entry, and ContentBasedDeduplication=true falls back to SHA-256(message body) when an entry omits MessageDeduplicationId.
+
+## Behaviour differences
+
+- MessageId values are proxy-generated GUIDs, not AWS-generated SNS identifiers.
+- SequenceNumber is returned empty because neither Azure Service Bus nor Azure Event Grid exposes an SNS-compatible sequence number on publish.
+- MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet.
+- On the Service Bus Topics backend, MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers.
+- On the Event Grid backend, the proxy emits the classic Event Grid schema with eventType=aws.sns.Message; CloudEvents-formatted Event Grid topics are not supported in this slice.
+- On the Event Grid backend, MessageAttributes are emitted inside data.MessageAttributes as { Type, Value } objects.
+- On the Event Grid backend, returned MessageId values are the proxy-generated GUIDs used as the Event Grid envelope id fields.
+- On the Event Grid backend, HTTP-level failures are mapped to per-entry Failed results for every message in the affected HTTP batch, even though Event Grid itself accepts or rejects each POST atomically.
+- For Service Bus-backed FIFO topics, broker-side duplicate detection is still limited to the Service Bus duplicate-detection window; aws2azure provisions new FIFO topics with a 5-minute window but cannot enforce dedup forever or outside that broker window.
+- For Service Bus-backed FIFO topics, SequenceNumber remains empty even though SessionId ordering metadata is set, because Service Bus does not return an SNS-compatible batch publish sequence identifier.
+- For standard (non-.fifo) SNS topic names, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameter instead of being silently approximated.
+- FIFO topics are unsupported on the Event Grid backend. PublishBatch rejects .fifo topics and FIFO-only entry parameters there with InvalidParameter instead of dropping them.
+- aws2azure sets Service Bus SessionId on published FIFO messages, but the current SNS subscription-management APIs still create regular Service Bus subscriptions. Guaranteed ordered processing therefore requires consumers to use Service Bus-native session-aware subscriptions provisioned outside the SNS compatibility APIs.
+- PublishBatch uses best-effort per-entry outcomes over AMQP and proxied per-entry outcomes over Event Grid; partial-failure behavior can differ from AWS SNS semantics.
+- Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event, 1 MB per HTTP batch, and 5000 events per POST.
+
+## References
+
+- <https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html>
+- <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions>
+- <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>
+- <https://learn.microsoft.com/azure/event-grid/post-to-custom-topic>
+

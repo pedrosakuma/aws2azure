@@ -236,7 +236,7 @@ public static class WorkloadCompatibilityEvaluator
             Summary =
                 $"Operation is documented as {operation.Status} with Azure equivalent '{operation.AzureEquivalent}'.",
             Documentation =
-                $"docs/site/{operation.Service.ToLowerInvariant()}.md#{DocumentationLinks.Anchor(operation.Operation)}",
+                $"docs/site/{DocumentationLinks.OperationPage(operation.Service, operation.Operation)}",
         };
         finding.Details.AddRange(operation.BehaviorDifferences);
 
@@ -288,7 +288,7 @@ public static class WorkloadCompatibilityEvaluator
                 Impact = gap.Impact,
                 Workaround = gap.Workaround,
                 Documentation =
-                    $"docs/site/design-gaps.md#{DocumentationLinks.Anchor(designDoc.Service + "-" + gap.Area)}",
+                    $"docs/site/{DocumentationLinks.DesignGapPage(designDoc.Service, gap.Area)}",
                 References = new List<string>(gap.References),
             });
         }
@@ -385,6 +385,40 @@ public static class WorkloadReportRenderer
 
 public static class DocumentationLinks
 {
+    public static string ServiceIdentity(string service) => $"service:{Anchor(service)}";
+
+    public static string ServicePage(string service) => $"{Anchor(service)}.md";
+
+    public static string OperationPage(string service, string operation) =>
+        $"operations/{Anchor(service)}/{Anchor(operation)}.md";
+
+    public static string DesignGapPage(string service, string area) =>
+        $"design-gaps/{Anchor(service)}/{Anchor(area)}.md";
+
+    public static string OperationIdentity(string service, string operation) =>
+        $"operation:{Anchor(service)}:{Anchor(operation)}";
+
+    public static string SubFeatureIdentity(string service, string operation, string subFeature) =>
+        $"sub-feature:{Anchor(service)}:{Anchor(operation)}:{Anchor(subFeature)}";
+
+    public static string DesignGapIdentity(string service, string area) =>
+        $"design-gap:{Anchor(service)}:{Anchor(area)}";
+
+    public static string OperationCompatibilityAnchor(string operation) => Anchor(operation);
+
+    public static string ServiceCanonicalAnchor(string service) => $"service-{Anchor(service)}";
+
+    public static string OperationCanonicalAnchor(string service, string operation) =>
+        $"operation-{Anchor(service)}-{Anchor(operation)}";
+
+    public static string SubFeatureAnchor(string subFeature) => $"sub-feature-{Anchor(subFeature)}";
+
+    public static string DesignGapCompatibilityAnchor(string service, string area) =>
+        Anchor(service + "-" + area);
+
+    public static string DesignGapCanonicalAnchor(string service, string area) =>
+        $"design-gap-{Anchor(service)}-{Anchor(area)}";
+
     public static string Anchor(string value)
     {
         var sb = new StringBuilder(value.Length);

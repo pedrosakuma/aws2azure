@@ -1,0 +1,38 @@
+# sqs / DeleteMessage {#operation-sqs-deletemessage}
+
+[← sqs operation index](../../sqs.md) · [Coverage matrix](../../coverage.md)
+
+- **Capability ID:** `operation:sqs:deletemessage`
+- **Status:** ✅ implemented
+- **Azure equivalent:** `Azure Service Bus queue runtime REST API — DELETE /{queue}/messages/{messageId}/{lockToken}?api-version=2021-05`
+- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+
+## Sub-features
+
+### ReceiptHandle round-trip {#sub-feature-receipthandle-round-trip}
+
+- **Capability ID:** `sub-feature:sqs:deletemessage:receipthandle-round-trip`
+- **Status:** ✅ implemented
+
+Decoded back into (messageId, lockToken) — opaque to the client.
+
+### Idempotent behaviour on expired lock / already-deleted message {#sub-feature-idempotent-behaviour-on-expired-lock---already-deleted-message}
+
+- **Capability ID:** `sub-feature:sqs:deletemessage:idempotent-behaviour-on-expired-lock---already-deleted-message`
+- **Status:** 🟡 partial
+- **Disposition:** 🔵 by design
+
+SB 404 surfaces as SQS ReceiptHandleIsInvalid; AWS treats DeleteMessage as idempotent on already-deleted messages but errors on expired locks. The proxy currently surfaces the SB 404 verbatim — see behavior_differences.
+
+## Behaviour differences
+
+- If the SB lock has expired before DeleteMessage arrives, the proxy returns ReceiptHandleIsInvalid (404). AWS SQS would return success (idempotent) for already-deleted messages and an error only for genuinely invalid handles — these two cases are indistinguishable on SB REST without an extra round-trip.
+- The standard-queue delete path is validated against real Azure Service Bus through the message-lifecycle conformance scenario; FIFO settlement remains covered by the separate FIFO gap.
+- AMQP transport (Phase 2.5 slice 8b.4c): when the queue is configured with `transport: Amqp`, DeleteMessage settles the in-flight delivery via the AMQP `accepted` outcome against the cached receiver (via the lock-token in-flight cache landed in slice 8b.4b). Cache miss — already settled, lock expired, sender-settled at receive, or delivery came from a torn-down receiver instance — surfaces as ReceiptHandleIsInvalid, identical to the REST path's 404→ReceiptHandleIsInvalid mapping. Receipt handles minted by the AMQP path (version `2`) are rejected if presented to a REST-configured queue and vice versa — a queue's transport setting is part of the handle's contract.
+- Real-Azure GA qualification for sqs-standard-messaging (issue #626, runs 29854940190, 29855796892, 29856877991) exercises a REST-transport rollback counterpart (`rollback-rest`, supplementary, non-required) that receives on the REST lane before a sealed candidate→prior restart and attempts DeleteMessage after. Across all three runs the REST receipt handle did not redeem after the restart-cycle wall-clock gap — consistent with the expired-lock behavior documented above (Service Bus locks are time-bound broker-side regardless of transport, so a restart long enough to cross that window invalidates a REST handle the same way it invalidates an AMQP one), not evidence of a proxy defect. The graded/required proof for this profile is the AMQP `rollback` scenario (link-scoped receiver boundary), which passed all three runs; `rollback-rest` remains supplementary evidence, kept out of the reviewed qualification policy's scenario set.
+
+## References
+
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_DeleteMessage.html>
+- <https://learn.microsoft.com/rest/api/servicebus/delete-message>
+

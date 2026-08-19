@@ -181,7 +181,10 @@ public sealed class RealAzureSealValidationTests
             MarkdownRenderer.Render([operation], [], migration, output);
 
             var markdown = File.ReadAllText(Path.Combine(output, "divergences.md"));
-            Assert.Contains("| s3 | PutObject | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |", markdown, StringComparison.Ordinal);
+            Assert.Contains(
+                "| s3 | [PutObject](operations/s3/putobject.md) | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |",
+                markdown,
+                StringComparison.Ordinal);
         }
         finally
         {

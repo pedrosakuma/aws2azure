@@ -140,7 +140,7 @@ public sealed class WorkloadCompatibilityTests
 
             var markdown = File.ReadAllText(Path.Combine(output, "workload-compatibility.md"));
             Assert.Contains("| Basic writes | ✅ supported | 1 implemented | 1/1 |", markdown, StringComparison.Ordinal);
-            Assert.Contains("(design-gaps.md#s3-known-gap)", markdown, StringComparison.Ordinal);
+            Assert.Contains("(design-gaps/s3/known-gap.md)", markdown, StringComparison.Ordinal);
             Assert.Contains("A module being available", markdown, StringComparison.Ordinal);
             Assert.Contains("Operation seals", markdown, StringComparison.Ordinal);
             Assert.Contains("do not certify every sub-feature", markdown, StringComparison.Ordinal);
@@ -148,7 +148,7 @@ public sealed class WorkloadCompatibilityTests
             Assert.Contains("<a id=\"s3-known-gap\"></a>", designMarkdown, StringComparison.Ordinal);
             var completeness = File.ReadAllText(Path.Combine(output, "completeness.md"));
             Assert.Contains("| [s3](s3.md) | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |", completeness, StringComparison.Ordinal);
-            Assert.Contains("- Design gap [Known gap](design-gaps.md#s3-known-gap) — [#690]", completeness, StringComparison.Ordinal);
+            Assert.Contains("- Design gap [Known gap](design-gaps/s3/known-gap.md) — [#690]", completeness, StringComparison.Ordinal);
         }
         finally
         {
