@@ -26,17 +26,6 @@ jobs:
         run: dotnet run --project tools/Aws2Azure.DocsQuality
       - name: Evaluate retrieval-evaluation dataset and maturity claims
         run: dotnet run --project tools/Aws2Azure.DocsEval
-      - name: Validate gap-doc schema
-        run: dotnet run --project tools/Aws2Azure.GapDocs -- --validate
-      - name: Regenerate gap docs and ensure no diff
-        run: |
-          dotnet run --project tools/Aws2Azure.GapDocs
-          if [ -n "$(git status --porcelain --untracked-files=all -- docs/site src/Aws2Azure.Core/Generated)" ]; then
-            echo "::error::Generated artefacts are out of date. Run 'dotnet run --project tools/Aws2Azure.GapDocs' and commit the result."
-            git --no-pager diff -- docs/site src/Aws2Azure.Core/Generated
-            git status --short --untracked-files=all -- docs/site src/Aws2Azure.Core/Generated
-            exit 1
-          fi
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'

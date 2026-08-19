@@ -2,10 +2,13 @@
 
 Issue [#770](https://github.com/pedrosakuma/aws2azure/issues/770) unifies the
 previously separate documentation checks (internal links, generated-artifact
-freshness, schema-valid examples, undated maturity claims) into one CI job and
-one local command, and integrates
+freshness, schema-valid examples, undated maturity claims) into one local
+command and integrates
 [#776](https://github.com/pedrosakuma/aws2azure/issues/776)'s
-`tools/Aws2Azure.DocsEval` retrieval-evaluation gate into CI.
+`tools/Aws2Azure.DocsEval` retrieval-evaluation gate into CI. Gap-doc
+freshness continues to run in its own path-filtered `gap-docs` workflow
+rather than being duplicated in the `documentation` workflow (see the table
+below).
 
 ## Running the complete suite locally
 
@@ -13,8 +16,10 @@ one local command, and integrates
 pwsh ./eng/validate-docs.ps1
 ```
 
-This is the **one command** that runs every gate below, in the same order as
-the `documentation` CI workflow. It requires the .NET SDK on `PATH` (already
+This is the **one command** that runs every gate below in one pass — the
+`documentation` and `gap-docs` CI workflows enforce the same gates, split
+across two workflows for path-scoping reasons (see the gap-doc freshness row
+below). It requires the .NET SDK on `PATH` (already
 required by the rest of the repo) and a Python virtual environment with
 [`requirements-docs.txt`](../../requirements-docs.txt) installed at `.venv`:
 
@@ -35,7 +40,7 @@ green result before opening a PR.
 | Documentation discovery drift | `tools/Aws2Azure.Documentation -- --check` | `llms.txt` / `documentation-manifest.json` out of date relative to the documentation tree. |
 | Configuration examples and copy-paste commands | `tools/Aws2Azure.DocsQuality` | A committed `docs/configuration/examples/*.json`, or a fenced `json`/`jsonc` snippet that looks like a full config document, that no longer validates against `config.schema.json`; a `dotnet run --project`/`dotnet test`/`dotnet publish`/`eng/*`/`.github/scripts/*` command referencing a path that no longer exists. |
 | Retrieval-evaluation dataset and maturity claims | `tools/Aws2Azure.DocsEval` | A dataset case whose expected answer now disagrees with live workload certification, gap-doc status, or `config.schema.json`; any hand-authored doc under `docs/` or `README.md` stating an unhedged, uncited "GA"/"production-ready"/"generally available" claim. |
-| Gap-doc schema and generated-artifact freshness | `tools/Aws2Azure.GapDocs -- --validate` plus a regenerate-and-diff check | Invalid gap-doc YAML; `docs/site/**` or `src/Aws2Azure.Core/Generated/CapabilityRegistry.g.cs` out of date relative to their YAML/schema sources. This mirrors the existing `gap-docs` workflow's own regenerate-and-diff step so both CI jobs agree. |
+| Gap-doc schema and generated-artifact freshness | `tools/Aws2Azure.GapDocs -- --validate` plus a regenerate-and-diff check | Invalid gap-doc YAML; `docs/site/**` or `src/Aws2Azure.Core/Generated/CapabilityRegistry.g.cs` out of date relative to their YAML/schema sources. This is already enforced in CI by the path-filtered `gap-docs` workflow (which triggers on any change under `docs/gaps/**`, `docs/workloads/**`, `docs/site/**`, `tools/Aws2Azure.GapDocs/**`, or `src/Aws2Azure.Core/Generated/**`); the local script runs it too so a single command covers everything, but it is intentionally **not** duplicated in the unconditional `documentation` CI workflow. |
 | MkDocs strict build | `python -m mkdocs build --strict` | Missing navigation entries, unresolved internal links, unresolved anchors, and other structural issues across the entire hand-authored plus generated documentation tree. |
 | Built-site validation | `.github/scripts/validate_docs_site.py` | Broken internal links/assets/fragments in the *built* HTML, missing discovery artifacts, and representative search-index coverage. |
 
