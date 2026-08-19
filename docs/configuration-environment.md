@@ -11,7 +11,7 @@ differences; use a schema-validated JSON file for the stable topology.
 |---|---|---|---|---|
 | `AWS2AZURE_CONFIG_FILE` | File path | `config.json` beside the binary, then release `config.example.json` | All deployments | Selected files must be readable JSON. A missing explicit path starts from an empty document before overrides; startup fails unless supported `AWS2AZURE__` overrides construct a complete valid configuration. |
 | `ASPNETCORE_URLS` | Semicolon-separated listener URLs | ASP.NET Core host default; repository deployments set `http://+:8080` | HTTP listener and built-in `--health-check` | Use valid Kestrel URL prefixes. The health-check uses the first URL and replaces `+`/`*` with `localhost`. |
-| `AWS2AZURE_INSECURE_TLS` | Exact string `1` | Off | Local self-signed emulators only | Disables all outbound Azure certificate validation and logs a warning. Never set in production. Other values leave validation enabled. |
+| `AWS2AZURE_INSECURE_TLS` | Exact string `1` | Off | Local self-signed HTTP(S) emulators only | Bypasses certificate validation only on outbound Azure HTTP(S) requests made through the shared `AzureHttpClient` and logs a warning. It does not affect AMQP TLS or AMQP connection factories. This permits man-in-the-middle interception of affected HTTP(S) traffic; never set it in production. Other values leave validation enabled. |
 | `AWS2AZURE_MAX_CONNECTIONS_PER_SERVER` | Positive integer | `64` | Outbound Azure HTTP | Invalid, zero, or negative values use `64`. |
 | `AWS2AZURE_SB_SESSION_IDLE_SECONDS` | Integer seconds | `300` | AMQP FIFO session receivers | Positive values set idle eviction; zero/negative disables idle eviction. Invalid text logs a warning and uses `300`. |
 | `AWS2AZURE_AMQP_TIMING` | Exact string `1` | Off | On-demand AMQP diagnosis | Emits allocating, synchronous timing rows to stderr. Never leave enabled in production. |
@@ -71,7 +71,21 @@ AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__priority__TRANSPORT=Amqp
 
 `azureIdentities`, S3 `presignedTrustedSigningHosts`, SNS
 `topics`/`eventGridFallback`, and Kinesis `streams` are JSON-file-only.
-Malformed paths, unsupported leaves/modes, invalid values, indices above 1023,
-and trailing segments are ignored without creating partial objects. This is a
-v1 compatibility behavior, not a validation mechanism: validate the base file
-and confirm the effective configuration through startup.
+
+The typed overlay has two different failure classes:
+
+- Malformed paths, negative or above-1023 indices, trailing segments,
+  unsupported leaves/backend-mode combinations, and invalid typed
+  boolean/enum/transport values are rejected by preflight and ignored before
+  mutation. For example, `...__ENABLED=not-a-boolean` leaves the service
+  setting unchanged.
+- Recognized string leaves are applied as strings; they are not schema-checked
+  during overlay. An empty access key, malformed endpoint URI, or invalid
+  shard-iterator signing key therefore replaces the file value and then makes
+  translation or startup validation fail. A recognized binding/backend leaf
+  can also materialize the intermediate binding/backend objects before that
+  failure. For example,
+  `...__AZURE__S3__TARGET__ENDPOINT=not-a-uri` is applied and prevents startup.
+
+These are v1 compatibility behaviors, not a validation mechanism. Validate the
+base file and confirm that the effective configuration passes startup.

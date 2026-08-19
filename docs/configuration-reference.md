@@ -11,9 +11,9 @@ the property has no schema default; omission is distinct from an empty value.
 | JSON path | Type | Default | Applicability | Validation |
 |---|---|---|---|---|
 | `azureIdentities` | map or null | None | Named Entra identity | Optional. Named Entra identities referenced by AAD-capable backend auth blocks. |
-| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=clientSecret` | Optional. Unknown properties rejected by the authoring schema. |
-| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=managedIdentity` | Optional. Unknown properties rejected by the authoring schema. |
-| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=workloadIdentity` | Optional. Unknown properties rejected by the authoring schema. |
+| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=clientSecret` | Optional. Unknown properties rejected by the authoring schema. Map key: Minimum length 1. |
+| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=managedIdentity` | Optional. Unknown properties rejected by the authoring schema. Map key: Minimum length 1. |
+| `azureIdentities.<name>` | object | None | Named Entra identity; `authMode=workloadIdentity` | Optional. Unknown properties rejected by the authoring schema. Map key: Minimum length 1. |
 | `azureIdentities.<name>.authMode` | string | `clientSecret` | Named Entra identity; `authMode=clientSecret` | Optional. Values: `clientSecret`. |
 | `azureIdentities.<name>.authMode` | string | None | Named Entra identity; `authMode=managedIdentity` | Required. Values: `managedIdentity`. |
 | `azureIdentities.<name>.authMode` | string | None | Named Entra identity; `authMode=workloadIdentity` | Required. Values: `workloadIdentity`. |
@@ -71,7 +71,7 @@ the property has no schema default; omission is distinct from an empty value.
 | `bindings[].azure.kinesis.kind` | string | None | Kinesis / Event Hubs backend | Required. Values: `eventHubs`. |
 | `bindings[].azure.kinesis.shardIteratorSigningKey` | string or null | None | Kinesis / Event Hubs backend | Optional. Base64-encoded HMAC key that decodes to at least 32 bytes. Minimum length 44. Encoding: base64. |
 | `bindings[].azure.kinesis.streams` | map or null | None | Kinesis / Event Hubs backend | Optional. |
-| `bindings[].azure.kinesis.streams.<name>` | object | None | Kinesis / Event Hubs backend | Optional. Unknown properties rejected by the authoring schema. |
+| `bindings[].azure.kinesis.streams.<name>` | object | None | Kinesis / Event Hubs backend | Optional. Unknown properties rejected by the authoring schema. Map key: Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.kinesis.streams.<name>.consumerGroup` | string or null | None | Kinesis / Event Hubs backend | Optional. Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.kinesis.streams.<name>.eventHubName` | string or null | None | Kinesis / Event Hubs backend | Optional. Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.kinesis.streams.<name>.partitionCount` | integer or null | None | Kinesis / Event Hubs backend | Optional. Minimum 1. |
@@ -149,8 +149,8 @@ the property has no schema default; omission is distinct from an empty value.
 | `bindings[].azure.sns.target.managementEndpoint` | string or null | None | SNS / Service Bus Topics backend | Optional. Absolute URI; schemes: `http`, `https`. Empty string is treated as omitted; the backend uses its configured or derived endpoint. |
 | `bindings[].azure.sns.target.namespace` | string | None | SNS / Service Bus Topics backend | Required. Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.sns.topics` | map or null | None | SNS / Service Bus Topics backend | Optional. |
-| `bindings[].azure.sns.topics.<name>` | object | None | SNS / Service Bus Topics backend; `backend=EventGrid` | Optional. Unknown properties rejected by the authoring schema. |
-| `bindings[].azure.sns.topics.<name>` | object | None | SNS / Service Bus Topics backend; `backend=ServiceBusTopics` | Optional. Unknown properties rejected by the authoring schema. |
+| `bindings[].azure.sns.topics.<name>` | object | None | SNS / Service Bus Topics backend; `backend=EventGrid` | Optional. Unknown properties rejected by the authoring schema. Map key: Must contain a non-whitespace character. Minimum length 1. |
+| `bindings[].azure.sns.topics.<name>` | object | None | SNS / Service Bus Topics backend; `backend=ServiceBusTopics` | Optional. Unknown properties rejected by the authoring schema. Map key: Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.sns.topics.<name>.backend` | string | None | SNS / Service Bus Topics backend; `backend=EventGrid` | Required. Values: `EventGrid`. |
 | `bindings[].azure.sns.topics.<name>.backend` | string | `ServiceBusTopics` | SNS / Service Bus Topics backend; `backend=ServiceBusTopics` | Optional. Values: `ServiceBusTopics`. |
 | `bindings[].azure.sns.topics.<name>.eventGridAccessKey` | string or null | None | SNS / Service Bus Topics backend; `backend=EventGrid` | Optional. Must contain a non-whitespace character. Minimum length 1. |
@@ -163,7 +163,7 @@ the property has no schema default; omission is distinct from an empty value.
 | `bindings[].azure.sqs.auth.mode` | string | None | SQS / Service Bus backend | Required. Values: `sas`. |
 | `bindings[].azure.sqs.kind` | string | None | SQS / Service Bus backend | Required. Values: `serviceBus`. |
 | `bindings[].azure.sqs.queues` | map or null | None | SQS / Service Bus backend | Optional. |
-| `bindings[].azure.sqs.queues.<name>` | object | None | SQS / Service Bus backend | Optional. Unknown properties rejected by the authoring schema. |
+| `bindings[].azure.sqs.queues.<name>` | object | None | SQS / Service Bus backend | Optional. Unknown properties rejected by the authoring schema. Map key: Must contain a non-whitespace character. Minimum length 1. |
 | `bindings[].azure.sqs.queues.<name>.transport` | string or null | None | SQS / Service Bus backend | Optional. Values: `Rest`, `Amqp`. |
 | `bindings[].azure.sqs.target` | object | None | SQS / Service Bus backend | Required. Unknown properties rejected by the authoring schema. |
 | `bindings[].azure.sqs.target.managementEndpoint` | string or null | None | SQS / Service Bus backend | Optional. Absolute URI; schemes: `http`, `https`. Empty string is treated as omitted; the backend uses its configured or derived endpoint. |

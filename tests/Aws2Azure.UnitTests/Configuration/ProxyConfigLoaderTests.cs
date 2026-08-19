@@ -378,6 +378,69 @@ public class ProxyConfigLoaderTests : IDisposable
     }
 
     [Fact]
+    public void Malformed_paths_and_invalid_typed_values_are_ignored_before_mutation()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__SERVICES__S3__ENABLED"] = "not-a-boolean",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__MODE"] = "sas",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__ENDPOINT__EXTRA"] = "https://ignored.example/",
+            ["AWS2AZURE__BINDINGS__1024__AWS__ACCESSKEYID"] = "ignored",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Empty(config.Services);
+        Assert.Empty(config.Credentials);
+    }
+
+    [Fact]
+    public void Recognized_string_leaf_is_applied_then_rejected_by_startup_validation()
+    {
+        File.WriteAllText(_tempFile, """
+        {
+          "bindings": [{
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+            "azure": {
+              "s3": {
+                "kind": "blob",
+                "target": { "accountName": "account" },
+                "auth": { "mode": "sharedKey", "key": "key" }
+              }
+            }
+          }]
+        }
+        """);
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__ENDPOINT"] = "not-a-uri",
+        };
+
+        var config = ProxyConfigLoader.Load(_tempFile, env);
+
+        Assert.Equal(
+            "not-a-uri",
+            Assert.Single(config.Credentials).Azure.Blob!.ServiceEndpoint);
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigValidator.Validate(config));
+        Assert.Contains("endpoint", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Recognized_string_leaf_can_materialize_backend_before_translation_rejects_it()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__ENDPOINT"] = "not-a-uri",
+        };
+
+        var exception = Assert.Throws<ProxyConfigException>(
+            () => ProxyConfigLoader.Load(jsonFilePath: null, env));
+
+        Assert.Contains("bindings[0].azure.s3.kind", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Legacy_numeric_enum_and_padded_kind_overrides_preserve_meaning()
     {
         var env = new Dictionary<string, string?>

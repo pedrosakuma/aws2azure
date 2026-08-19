@@ -5,6 +5,8 @@ using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Aws2Azure.ConfigSchema;
 using Aws2Azure.Core.Configuration;
+using Aws2Azure.Core.Modules;
+using Aws2Azure.Core.SigV4;
 using Json.Schema;
 using YamlDotNet.RepresentationModel;
 
@@ -75,6 +77,46 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
+    public void Generated_configuration_reference_contains_every_map_key_constraint()
+    {
+        var generated = ConfigurationReferenceGenerator.Generate();
+        var mapRows = generated
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(static line => line.StartsWith("| `", StringComparison.Ordinal))
+            .Where(static line => line.Split('`')[1].EndsWith(".<name>", StringComparison.Ordinal))
+            .GroupBy(static line => line.Split('`')[1], StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.Ordinal);
+        var schema = JsonNode.Parse(ConfigSchemaGenerator.Generate())!;
+        var propertyNameSchemas = new List<JsonObject>();
+        CollectPropertyNameSchemas(schema, propertyNameSchemas);
+
+        Assert.NotEmpty(propertyNameSchemas);
+        Assert.All(mapRows.Values, static row => Assert.Contains("Map key:", row, StringComparison.Ordinal));
+        foreach (var propertyNames in propertyNameSchemas)
+        {
+            if (propertyNames["minLength"] is not null)
+            {
+                Assert.Contains(
+                    mapRows.Values,
+                    static row => row.Contains("Minimum length 1.", StringComparison.Ordinal));
+            }
+            if (propertyNames["pattern"] is not null)
+            {
+                Assert.Contains(
+                    mapRows.Values,
+                    static row =>
+                        row.Contains(
+                            "Map key: Must contain a non-whitespace character.",
+                            StringComparison.Ordinal));
+            }
+        }
+        Assert.Contains(
+            "Map key: Minimum length 1.",
+            mapRows["azureIdentities.<name>"],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Environment_reference_contains_every_process_environment_variable()
     {
         var documented = File.ReadAllText(
@@ -102,6 +144,26 @@ public sealed class ConfigSchemaTests
         {
             Assert.Contains($"`{name}`", documented, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void Troubleshooting_reference_uses_protocol_specific_clock_skew_errors()
+    {
+        var documented = File.ReadAllText(Path.Combine(RepoRoot, "docs", "troubleshooting.md"));
+        var xmlSkew = AuthErrorVocabulary.Resolve(
+            AwsAuthErrorDialect.S3Xml,
+            SigV4ValidationStatus.ClockSkewTooLarge);
+        var jsonSkew = AuthErrorVocabulary.Resolve(
+            AwsAuthErrorDialect.Json,
+            SigV4ValidationStatus.ClockSkewTooLarge);
+        var xmlMismatch = AuthErrorVocabulary.Resolve(
+            AwsAuthErrorDialect.S3Xml,
+            SigV4ValidationStatus.InvalidSignature);
+
+        Assert.Contains($"`{xmlSkew.Code}`", documented, StringComparison.Ordinal);
+        Assert.Contains($"`{jsonSkew.Code}`", documented, StringComparison.Ordinal);
+        Assert.Contains($"`{xmlMismatch.Code}`", documented, StringComparison.Ordinal);
+        Assert.NotEqual(xmlMismatch.Code, xmlSkew.Code);
     }
 
     [Fact]
@@ -1149,9 +1211,41 @@ public sealed class ConfigSchemaTests
                 {
                     values.Add(text);
                 }
+
                 if (value is not null)
                 {
                     CollectStringProperties(value, propertyName, values);
+                }
+            }
+
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var value in array)
+            {
+                if (value is not null)
+                {
+                    CollectStringProperties(value, propertyName, values);
+                }
+            }
+        }
+    }
+
+    private static void CollectPropertyNameSchemas(
+        JsonNode node,
+        List<JsonObject> propertyNameSchemas)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var (name, value) in obj)
+            {
+                if (name == "propertyNames" && value is JsonObject propertyNames)
+                {
+                    propertyNameSchemas.Add(propertyNames);
+                }
+                else if (value is not null)
+                {
+                    CollectPropertyNameSchemas(value, propertyNameSchemas);
                 }
             }
         }
@@ -1161,7 +1255,7 @@ public sealed class ConfigSchemaTests
             {
                 if (value is not null)
                 {
-                    CollectStringProperties(value, propertyName, values);
+                    CollectPropertyNameSchemas(value, propertyNameSchemas);
                 }
             }
         }

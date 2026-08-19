@@ -119,7 +119,15 @@ public static class ConfigurationReferenceGenerator
         {
             if (schema["additionalProperties"] is JsonObject mapValue)
             {
-                WalkSchema(root, mapValue, Append(path, "<name>"), discriminator, false, rows, seen);
+                WalkSchema(
+                    root,
+                    mapValue,
+                    Append(path, "<name>"),
+                    discriminator,
+                    false,
+                    rows,
+                    seen,
+                    schema["propertyNames"] as JsonObject);
             }
             return;
         }
@@ -162,7 +170,8 @@ public static class ConfigurationReferenceGenerator
         string discriminator,
         bool required,
         List<FieldRow> rows,
-        HashSet<string> seen)
+        HashSet<string> seen,
+        JsonObject? propertyNameSchema = null)
     {
         var rowSchema = Resolve(root, schema);
         var structuralSchema = rowSchema;
@@ -185,7 +194,8 @@ public static class ConfigurationReferenceGenerator
                     JoinDiscriminator(discriminator, variantDiscriminator),
                     required,
                     rows,
-                    seen);
+                    seen,
+                    propertyNameSchema);
             }
             return;
         }
@@ -200,7 +210,15 @@ public static class ConfigurationReferenceGenerator
             }
         }
 
-        AddRow(root, rowSchema, path, discriminator, required, rows, seen);
+        AddRow(
+            root,
+            rowSchema,
+            path,
+            discriminator,
+            required,
+            rows,
+            seen,
+            propertyNameSchema);
 
         var type = GetPrimaryType(root, structuralSchema);
         if (type == "object")
@@ -220,7 +238,8 @@ public static class ConfigurationReferenceGenerator
         string discriminator,
         bool required,
         List<FieldRow> rows,
-        HashSet<string> seen)
+        HashSet<string> seen,
+        JsonObject? propertyNameSchema)
     {
         var applicability = InferApplicability(path, discriminator);
         var key = path + "\n" + applicability + "\n" + required;
@@ -229,12 +248,30 @@ public static class ConfigurationReferenceGenerator
             return;
         }
 
+        var validation = DescribeValidation(root, schema, required);
+        if (propertyNameSchema is not null)
+        {
+            validation += " " + DescribePropertyNameValidation(root, propertyNameSchema);
+        }
+
         rows.Add(new FieldRow(
             path,
             DescribeType(root, schema),
             DescribeDefault(root, schema),
             applicability,
-            DescribeValidation(root, schema, required)));
+            validation));
+    }
+
+    private static string DescribePropertyNameValidation(JsonObject root, JsonObject schema)
+    {
+        const string requiredPrefix = "Required. ";
+        var validation = DescribeValidation(root, schema, required: true);
+        if (validation.StartsWith(requiredPrefix, StringComparison.Ordinal))
+        {
+            validation = validation[requiredPrefix.Length..];
+        }
+
+        return "Map key: " + validation;
     }
 
     private static string DescribeType(JsonObject root, JsonObject schema)

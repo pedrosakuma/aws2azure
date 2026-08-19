@@ -53,8 +53,11 @@ Read the AWS-native code before assuming Azure RBAC:
 
 - `InvalidAccessKeyId`/unknown access key means no exact
   `bindings[].aws.accessKeyId` matched.
-- `SignatureDoesNotMatch` means the matching binding secret, signed Host/path,
-  signed headers/query, body hash, credential scope, or clock differs.
+- `SignatureDoesNotMatch` in XML means the matching binding secret, signed
+  Host/path, signed headers/query, body hash, or credential scope differs.
+- Clock skew has a separate protocol-specific code: XML services return
+  `RequestTimeTooSkewed`; AWS-JSON services return
+  `InvalidSignatureException` (with service-specific HTTP status).
 - For presigned S3 URLs, preserve the signed Host or configure the narrow
   `presignedTrustedSigningHosts` allowlist documented in
   [Presigned URLs](presigned-urls.md).
