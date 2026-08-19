@@ -96,8 +96,18 @@ public static class DocumentationDiscoveryGenerator
             var manifest = Build(repoRoot);
             var outputs = new[]
             {
-                (Path: Path.Combine(repoRoot, ManifestRelativePath), Content: RenderManifest(manifest)),
-                (Path: Path.Combine(repoRoot, LlmsRelativePath), Content: RenderLlms(manifest)),
+                (
+                    Path: ResolveRepositoryPath(
+                        repoRoot,
+                        ManifestRelativePath,
+                        allowMissingLeaf: true),
+                    Content: RenderManifest(manifest)),
+                (
+                    Path: ResolveRepositoryPath(
+                        repoRoot,
+                        LlmsRelativePath,
+                        allowMissingLeaf: true),
+                    Content: RenderLlms(manifest)),
             };
 
             if (check)
@@ -155,10 +165,14 @@ public static class DocumentationDiscoveryGenerator
 
         var gapsRoot = Path.Combine(fullRepoRoot, "docs", "gaps");
         var workloadsRoot = Path.Combine(fullRepoRoot, "docs", "workloads");
+        _ = EnumerateRelativeFiles(fullRepoRoot, "docs/gaps", "*", recursive: true);
+        _ = EnumerateRelativeFiles(fullRepoRoot, "docs/workloads", "*", recursive: true);
         var operationDocs = Loader.LoadAll(gapsRoot);
         var designDocs = Loader.LoadDesignDocs(gapsRoot);
         var contract = WorkloadGaEvaluationContractLoader.Load(
-            Path.Combine(fullRepoRoot, WorkloadGaEvaluationMetadataBuilder.ContractPath));
+            ResolveRepositoryPath(
+                fullRepoRoot,
+                WorkloadGaEvaluationMetadataBuilder.ContractPath));
         var authority = ReadCurrentWorkloadAuthority(fullRepoRoot, contract);
         var documents = new List<DocumentationEntry>();
 
@@ -188,9 +202,7 @@ public static class DocumentationDiscoveryGenerator
                 Service = service,
                 Operation = operation,
                 Profile = profile,
-                Revision = ComputeFileRevision(Path.Combine(
-                    fullRepoRoot,
-                    normalizedPath.Replace('/', Path.DirectorySeparatorChar))),
+                Revision = ComputeFileRevision(fullRepoRoot, normalizedPath),
                 Freshness = freshness,
             });
         }
@@ -557,17 +569,16 @@ public static class DocumentationDiscoveryGenerator
                 errors.Add($"document path '{entry.Path}' points to a transient artifact");
             }
 
-            var fullPath = Path.GetFullPath(
-                Path.Combine(repoRoot, entry.Path.Replace('/', Path.DirectorySeparatorChar)));
-            var fullRoot = Path.GetFullPath(repoRoot);
-            if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                || !File.Exists(fullPath))
+            try
             {
-                errors.Add($"document path '{entry.Path}' does not resolve to a repository file");
+                _ = ResolveRepositoryPath(repoRoot, entry.Path);
             }
-            else if (new FileInfo(fullPath).LinkTarget is not null)
+            catch (Exception exception) when (exception is FileNotFoundException
+                                              or DirectoryNotFoundException
+                                              or InvalidDataException
+                                              or UnauthorizedAccessException)
             {
-                errors.Add($"document path '{entry.Path}' must not be a symbolic link");
+                errors.Add(exception.Message);
             }
 
             if (!IsSha256(entry.Revision))
@@ -687,7 +698,7 @@ public static class DocumentationDiscoveryGenerator
         string repoRoot,
         WorkloadGaEvaluationContract contract)
     {
-        var path = Path.Combine(repoRoot, "docs", "site", "workload-ga.json");
+        var path = ResolveRepositoryPath(repoRoot, "docs/site/workload-ga.json");
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         if (document.RootElement.ValueKind != JsonValueKind.Array
             || document.RootElement.GetArrayLength() == 0)
@@ -745,7 +756,7 @@ public static class DocumentationDiscoveryGenerator
         string repoRoot)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(
-            Path.Combine(repoRoot, "docs", "site", "workload-ga.json")));
+            ResolveRepositoryPath(repoRoot, "docs/site/workload-ga.json")));
         var authority = document.RootElement[0].GetProperty("authority");
         if (authority.GetProperty("historical_claims_may_override").GetBoolean())
         {
@@ -870,13 +881,9 @@ public static class DocumentationDiscoveryGenerator
         return HashText(builder.ToString());
     }
 
-    private static string ComputeFileRevision(string path)
+    private static string ComputeFileRevision(string repoRoot, string relativePath)
     {
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException("Canonical documentation path not found", path);
-        }
-
+        var path = ResolveRepositoryPath(repoRoot, relativePath);
         var content = File.ReadAllText(path);
         if (content.Length > 0 && content[0] == '\uFEFF')
         {
@@ -924,8 +931,15 @@ public static class DocumentationDiscoveryGenerator
                   && !normalized.Contains("/docs/site/", StringComparison.Ordinal);
     }
 
-    private static string RelativePath(string repoRoot, string path) =>
-        Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+    private static string RelativePath(string repoRoot, string path)
+    {
+        var relativePath = Path.GetRelativePath(
+                Path.GetFullPath(repoRoot),
+                Path.GetFullPath(path))
+            .Replace('\\', '/');
+        _ = ResolveRepositoryPath(repoRoot, relativePath);
+        return relativePath;
+    }
 
     private static IReadOnlyList<string> EnumerateRelativeFiles(
         string repoRoot,
@@ -933,21 +947,161 @@ public static class DocumentationDiscoveryGenerator
         string pattern,
         bool recursive = false)
     {
-        var root = Path.Combine(
-            repoRoot,
-            relativeRoot.Replace('/', Path.DirectorySeparatorChar));
-        if (!Directory.Exists(root))
+        var root = ResolveRepositoryPath(repoRoot, relativeRoot, requireDirectory: true);
+        var pending = new Stack<string>();
+        var visited = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+        var results = new List<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
         {
-            throw new DirectoryNotFoundException($"Documentation source directory not found: {root}");
+            var directory = pending.Pop();
+            if (!visited.Add(directory))
+            {
+                var relativeDirectory = Path.GetRelativePath(repoRoot, directory).Replace('\\', '/');
+                throw new InvalidDataException(
+                    $"Documentation traversal cycle detected at '{relativeDirectory}'");
+            }
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(
+                         directory,
+                         "*",
+                         SearchOption.TopDirectoryOnly)
+                     .Order(StringComparer.Ordinal))
+            {
+                var relativePath = Path.GetRelativePath(repoRoot, entry).Replace('\\', '/');
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw ReparsePointException(relativePath, relativePath);
+                }
+
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    if (recursive)
+                    {
+                        pending.Push(ResolveRepositoryPath(
+                            repoRoot,
+                            relativePath,
+                            requireDirectory: true));
+                    }
+                    continue;
+                }
+
+                _ = ResolveRepositoryPath(repoRoot, relativePath);
+                if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(
+                        pattern,
+                        Path.GetFileName(entry),
+                        ignoreCase: OperatingSystem.IsWindows()))
+                {
+                    results.Add(relativePath);
+                }
+            }
         }
-        return Directory.EnumerateFiles(
-                root,
-                pattern,
-                recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
-            .Select(path => RelativePath(repoRoot, path))
-            .Order(StringComparer.Ordinal)
-            .ToList();
+
+        results.Sort(StringComparer.Ordinal);
+        return results;
     }
+
+    private static string ResolveRepositoryPath(
+        string repoRoot,
+        string relativePath,
+        bool requireDirectory = false,
+        bool allowMissingLeaf = false)
+    {
+        var fullRoot = Path.GetFullPath(repoRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        ValidateNotReparsePoint(fullRoot, ".");
+
+        if (Path.IsPathRooted(relativePath))
+        {
+            throw new InvalidDataException(
+                $"Documentation path '{relativePath}' must be repository-relative");
+        }
+
+        var normalizedPath = relativePath.Replace('\\', '/');
+        var fullPath = Path.GetFullPath(Path.Combine(
+            fullRoot,
+            normalizedPath.Replace('/', Path.DirectorySeparatorChar)));
+        var relative = Path.GetRelativePath(fullRoot, fullPath);
+        if (Path.IsPathRooted(relative)
+            || relative.Equals("..", StringComparison.Ordinal)
+            || relative.StartsWith(
+                ".." + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Documentation path '{normalizedPath}' escapes the repository root");
+        }
+
+        var segments = relative.Split(
+            Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries);
+        var current = fullRoot;
+        for (var index = 0; index < segments.Length; index++)
+        {
+            current = Path.Combine(current, segments[index]);
+            var componentPath = Path.GetRelativePath(fullRoot, current).Replace('\\', '/');
+            try
+            {
+                ValidateNotReparsePoint(current, normalizedPath, componentPath);
+            }
+            catch (FileNotFoundException) when (allowMissingLeaf && index == segments.Length - 1)
+            {
+                return fullPath;
+            }
+            catch (DirectoryNotFoundException) when (
+                allowMissingLeaf && index == segments.Length - 1)
+            {
+                return fullPath;
+            }
+            catch (Exception exception) when (exception is FileNotFoundException
+                                              or DirectoryNotFoundException)
+            {
+                throw new FileNotFoundException(
+                    $"Document path '{normalizedPath}' does not resolve to a repository file "
+                    + $"(missing component '{componentPath}')",
+                    normalizedPath,
+                    exception);
+            }
+        }
+
+        if (requireDirectory && !Directory.Exists(fullPath))
+        {
+            throw new DirectoryNotFoundException(
+                $"Documentation source directory not found: {normalizedPath}");
+        }
+        if (!requireDirectory && !File.Exists(fullPath))
+        {
+            throw new FileNotFoundException(
+                $"Document path '{normalizedPath}' does not resolve to a repository file",
+                normalizedPath);
+        }
+
+        return fullPath;
+    }
+
+    private static void ValidateNotReparsePoint(
+        string path,
+        string documentPath,
+        string? componentPath = null)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw ReparsePointException(documentPath, componentPath ?? documentPath);
+        }
+    }
+
+    private static InvalidDataException ReparsePointException(
+        string documentPath,
+        string componentPath) =>
+        new(
+            $"Documentation path '{documentPath}' contains a symbolic link or reparse point "
+            + $"at '{componentPath}'");
 
     private static DocumentationFreshness Current(string? verifiedRealAzureDate = null) =>
         new()

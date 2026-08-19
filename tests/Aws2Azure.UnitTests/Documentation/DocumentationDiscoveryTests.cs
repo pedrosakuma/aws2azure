@@ -182,6 +182,208 @@ public sealed class DocumentationDiscoveryTests
         Assert.Contains("**Explanatory:**", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Directory_symlink_to_external_tree_is_rejected_before_enumeration()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-external");
+        var link = Path.Combine(isolatedRepo, "docs", "gaps", "external-tree");
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(externalRoot, "must-not-be-read.yaml"),
+                "this is deliberately not a valid gap document");
+            if (!TryCreateDirectorySymbolicLink(link, externalRoot))
+            {
+                return;
+            }
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.Build(isolatedRepo));
+
+            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.Contains("docs/gaps/external-tree", exception.Message);
+            Assert.DoesNotContain("must-not-be-read", exception.Message);
+        }
+        finally
+        {
+            DeleteDirectoryLink(link);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Canonical_file_below_symlinked_parent_is_rejected()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-parent");
+        var linkedParent = Path.Combine(isolatedRepo, "docs", "configuration", "examples");
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(externalRoot, "external-example.json"),
+                """{"external":true}""");
+            Directory.Delete(linkedParent, recursive: true);
+            if (!TryCreateDirectorySymbolicLink(linkedParent, externalRoot))
+            {
+                return;
+            }
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.Build(isolatedRepo));
+
+            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.Contains("docs/configuration/examples", exception.Message);
+        }
+        finally
+        {
+            DeleteDirectoryLink(linkedParent);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public void Canonical_file_symlink_is_rejected_before_hashing()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var externalRoot = CreateTempDirectory("aws2azure-documentation-file");
+        var target = Path.Combine(externalRoot, "external-schema.json");
+        var link = Path.Combine(isolatedRepo, "config.schema.json");
+        try
+        {
+            File.WriteAllText(target, """{"external_bytes_must_not_enter_manifest":true}""");
+            File.Delete(link);
+            if (!TryCreateFileSymbolicLink(link, target))
+            {
+                return;
+            }
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                DocumentationDiscoveryGenerator.Build(isolatedRepo));
+
+            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.Contains("config.schema.json", exception.Message);
+            Assert.DoesNotContain("external_bytes_must_not_enter_manifest", exception.Message);
+        }
+        finally
+        {
+            File.Delete(link);
+            DeleteDirectory(isolatedRepo);
+            DeleteDirectory(externalRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Directory_symlink_loop_is_rejected_without_recursion()
+    {
+        var isolatedRepo = CreateIsolatedRepository();
+        var loopRoot = Path.Combine(isolatedRepo, "docs", "gaps", "loop");
+        var link = Path.Combine(loopRoot, "self");
+        try
+        {
+            Directory.CreateDirectory(loopRoot);
+            if (!TryCreateDirectorySymbolicLink(link, loopRoot))
+            {
+                return;
+            }
+
+            var build = Task.Run(() =>
+                Record.Exception(() => DocumentationDiscoveryGenerator.Build(isolatedRepo)));
+
+            var result = await build.WaitAsync(TimeSpan.FromSeconds(5));
+            var exception = Assert.IsType<InvalidDataException>(result);
+            Assert.Contains("symbolic link or reparse point", exception.Message);
+            Assert.Contains("docs/gaps/loop/self", exception.Message);
+        }
+        finally
+        {
+            DeleteDirectoryLink(link);
+            DeleteDirectory(isolatedRepo);
+        }
+    }
+
+    private static string CreateIsolatedRepository()
+    {
+        var isolatedRepo = CreateTempDirectory("aws2azure-documentation-repo");
+        File.Copy(
+            Path.Combine(RepoRoot, "aws2azure.slnx"),
+            Path.Combine(isolatedRepo, "aws2azure.slnx"));
+
+        var manifest = DocumentationDiscoveryGenerator.Build(RepoRoot);
+        foreach (var relativePath in manifest.Documents
+                     .Select(document => document.Path)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var source = Path.Combine(
+                RepoRoot,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            var destination = Path.Combine(
+                isolatedRepo,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination);
+        }
+
+        return isolatedRepo;
+    }
+
+    private static string CreateTempDirectory(string prefix)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static bool TryCreateDirectorySymbolicLink(string link, string target)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception exception) when (SymbolicLinksUnavailable(exception))
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCreateFileSymbolicLink(string link, string target)
+    {
+        try
+        {
+            File.CreateSymbolicLink(link, target);
+            return true;
+        }
+        catch (Exception exception) when (SymbolicLinksUnavailable(exception))
+        {
+            return false;
+        }
+    }
+
+    private static bool SymbolicLinksUnavailable(Exception exception) =>
+        exception is UnauthorizedAccessException
+            or PlatformNotSupportedException
+        || OperatingSystem.IsWindows() && exception is IOException;
+
+    private static void DeleteDirectoryLink(string path)
+    {
+        if (Directory.Exists(path)
+            && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+        {
+            Directory.Delete(path);
+        }
+    }
+
+    private static void DeleteDirectory(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive: true);
+        }
+    }
+
     private static string FindRepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
