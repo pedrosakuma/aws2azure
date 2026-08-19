@@ -157,12 +157,6 @@ public static class ConfigDocumentTranslator
     {
         RequireKind(backend, path, "blob");
         RequireMode(backend.Auth, path, KeyOnly);
-        ValidateBackendFields(backend, path, BackendFields.None);
-        ValidateTargetFields(
-            backend.Target,
-            path,
-            TargetFields.Endpoint | TargetFields.AccountName);
-        ValidateAuthFields(backend.Auth, path);
         return new BlobCredentials
         {
             AccountName = backend.Target.AccountName ?? string.Empty,
@@ -175,12 +169,6 @@ public static class ConfigDocumentTranslator
     {
         RequireKind(backend, path, "serviceBus");
         RequireMode(backend.Auth, path, SasOnly);
-        ValidateBackendFields(backend, path, BackendFields.Queues);
-        ValidateTargetFields(
-            backend.Target,
-            path,
-            TargetFields.Namespace | TargetFields.ManagementEndpoint | TargetFields.Transport);
-        ValidateAuthFields(backend.Auth, path);
         return new ServiceBusCredentials
         {
             Namespace = backend.Target.Namespace ?? string.Empty,
@@ -196,12 +184,6 @@ public static class ConfigDocumentTranslator
     {
         RequireKind(backend, path, "cosmos");
         RequireMode(backend.Auth, path, KeyOrAad);
-        ValidateBackendFields(backend, path, BackendFields.None);
-        ValidateTargetFields(
-            backend.Target,
-            path,
-            TargetFields.Endpoint | TargetFields.DatabaseName | TargetFields.PreferredRegions);
-        ValidateAuthFields(backend.Auth, path);
         var cosmos = new CosmosCredentials
         {
             Endpoint = backend.Target.Endpoint ?? string.Empty,
@@ -219,15 +201,6 @@ public static class ConfigDocumentTranslator
         {
             case "servicebustopics":
                 RequireMode(backend.Auth, path, SasOrAad);
-                ValidateBackendFields(
-                    backend,
-                    path,
-                    BackendFields.Topics | BackendFields.EventGridFallback);
-                ValidateTargetFields(
-                    backend.Target,
-                    path,
-                    TargetFields.Namespace | TargetFields.Endpoint | TargetFields.ManagementEndpoint);
-                ValidateAuthFields(backend.Auth, path);
                 var topics = new ServiceBusTopicsCredentials
                 {
                     Namespace = backend.Target.Namespace ?? string.Empty,
@@ -246,20 +219,29 @@ public static class ConfigDocumentTranslator
                     azure.EventGrid = TranslateEventGridBackend(fallback, fallbackPath);
                 }
                 return;
+            case "eventgrid":
+                if (backend.EventGridFallback is not null)
+                {
+                    throw new ProxyConfigException(
+                        $"{path}.eventGridFallback: not allowed when kind=eventGrid; this binding is already Event Grid.");
+                }
+
+                // v1 accepted Event Grid as the primary SNS backend and ignored
+                // fields that did not apply to Event Grid. Keep that read contract;
+                // the canonical authoring profile uses serviceBusTopics plus a fallback.
+                azure.EventGrid = TranslateEventGridBackend(backend, path);
+                azure.EventGridIsStandalone = true;
+                return;
             default:
-                throw Invalid(path, backend.Kind, "serviceBusTopics");
+                throw Invalid(path, backend.Kind, "serviceBusTopics", "eventGrid");
         }
     }
 
-    private static EventGridCredentials TranslateEventGridBackend(AzureBackendConfig backend, string path)
+    private static EventGridCredentials TranslateEventGridBackend(
+        AzureBackendConfig backend,
+        string path)
     {
         RequireMode(backend.Auth, path, KeyOrAad);
-        ValidateBackendFields(backend, path, BackendFields.None);
-        ValidateTargetFields(
-            backend.Target,
-            path,
-            TargetFields.Endpoint | TargetFields.Namespace | TargetFields.TopicName);
-        ValidateAuthFields(backend.Auth, path);
         var grid = new EventGridCredentials
         {
             Endpoint = backend.Target.Endpoint ?? string.Empty,
@@ -274,15 +256,6 @@ public static class ConfigDocumentTranslator
     {
         RequireKind(backend, path, "eventHubs");
         RequireMode(backend.Auth, path, SasOrAad);
-        ValidateBackendFields(
-            backend,
-            path,
-            BackendFields.Streams | BackendFields.ShardIteratorSigningKey);
-        ValidateTargetFields(
-            backend.Target,
-            path,
-            TargetFields.Namespace | TargetFields.Endpoint);
-        ValidateAuthFields(backend.Auth, path);
         var eventHubs = new EventHubsCredentials
         {
             Namespace = backend.Target.Namespace ?? string.Empty,
@@ -300,9 +273,6 @@ public static class ConfigDocumentTranslator
     {
         RequireKind(backend, path, "keyVault");
         RequireMode(backend.Auth, path, AadOnly);
-        ValidateBackendFields(backend, path, BackendFields.None);
-        ValidateTargetFields(backend.Target, path, TargetFields.VaultUrl);
-        ValidateAuthFields(backend.Auth, path);
         var keyVault = new KeyVaultCredentials
         {
             VaultUrl = backend.Target.VaultUrl ?? string.Empty,
@@ -358,130 +328,6 @@ public static class ConfigDocumentTranslator
                 // SharedKey / Sas leave the AAD shape untouched; the concrete key or
                 // SAS fields were mapped by the caller.
                 return;
-        }
-    }
-
-    [Flags]
-    private enum BackendFields
-    {
-        None = 0,
-        Queues = 1,
-        Topics = 2,
-        Streams = 4,
-        ShardIteratorSigningKey = 8,
-        EventGridFallback = 16,
-    }
-
-    [Flags]
-    private enum TargetFields
-    {
-        None = 0,
-        Endpoint = 1,
-        AccountName = 2,
-        Namespace = 4,
-        DatabaseName = 8,
-        ManagementEndpoint = 16,
-        PreferredRegions = 32,
-        Transport = 64,
-        VaultUrl = 128,
-        TopicName = 256,
-    }
-
-    private static void ValidateBackendFields(
-        AzureBackendConfig backend,
-        string path,
-        BackendFields allowed)
-    {
-        RejectUnsupported(backend.Queues, allowed, BackendFields.Queues, path, "queues");
-        RejectUnsupported(backend.Topics, allowed, BackendFields.Topics, path, "topics");
-        RejectUnsupported(backend.Streams, allowed, BackendFields.Streams, path, "streams");
-        RejectUnsupported(
-            backend.ShardIteratorSigningKey,
-            allowed,
-            BackendFields.ShardIteratorSigningKey,
-            path,
-            "shardIteratorSigningKey");
-        RejectUnsupported(
-            backend.EventGridFallback,
-            allowed,
-            BackendFields.EventGridFallback,
-            path,
-            "eventGridFallback");
-    }
-
-    private static void ValidateTargetFields(
-        AzureTargetConfig target,
-        string path,
-        TargetFields allowed)
-    {
-        RejectUnsupported(target.Endpoint, allowed, TargetFields.Endpoint, path + ".target", "endpoint");
-        RejectUnsupported(target.AccountName, allowed, TargetFields.AccountName, path + ".target", "accountName");
-        RejectUnsupported(target.Namespace, allowed, TargetFields.Namespace, path + ".target", "namespace");
-        RejectUnsupported(target.DatabaseName, allowed, TargetFields.DatabaseName, path + ".target", "databaseName");
-        RejectUnsupported(
-            target.ManagementEndpoint,
-            allowed,
-            TargetFields.ManagementEndpoint,
-            path + ".target",
-            "managementEndpoint");
-        RejectUnsupported(
-            target.PreferredRegions,
-            allowed,
-            TargetFields.PreferredRegions,
-            path + ".target",
-            "preferredRegions");
-        RejectUnsupported(target.Transport, allowed, TargetFields.Transport, path + ".target", "transport");
-        RejectUnsupported(target.VaultUrl, allowed, TargetFields.VaultUrl, path + ".target", "vaultUrl");
-        RejectUnsupported(target.TopicName, allowed, TargetFields.TopicName, path + ".target", "topicName");
-    }
-
-    private static void ValidateAuthFields(AzureAuthConfig auth, string path)
-    {
-        var allowed = auth.Mode switch
-        {
-            AzureAuthKind.SharedKey => AuthFields.Key,
-            AzureAuthKind.Sas => AuthFields.Key | AuthFields.KeyName,
-            AzureAuthKind.ManagedIdentity => AuthFields.ClientId,
-            AzureAuthKind.ClientSecret =>
-                AuthFields.TenantId | AuthFields.ClientId | AuthFields.ClientSecret,
-            AzureAuthKind.WorkloadIdentity => AuthFields.None,
-            AzureAuthKind.Reference => AuthFields.Identity,
-            _ => AuthFields.None,
-        };
-        var authPath = path + ".auth";
-        RejectUnsupported(auth.Key, allowed, AuthFields.Key, authPath, "key");
-        RejectUnsupported(auth.KeyName, allowed, AuthFields.KeyName, authPath, "keyName");
-        RejectUnsupported(auth.TenantId, allowed, AuthFields.TenantId, authPath, "tenantId");
-        RejectUnsupported(auth.ClientId, allowed, AuthFields.ClientId, authPath, "clientId");
-        RejectUnsupported(auth.ClientSecret, allowed, AuthFields.ClientSecret, authPath, "clientSecret");
-        RejectUnsupported(auth.Identity, allowed, AuthFields.Identity, authPath, "identity");
-    }
-
-    [Flags]
-    private enum AuthFields
-    {
-        None = 0,
-        Key = 1,
-        KeyName = 2,
-        TenantId = 4,
-        ClientId = 8,
-        ClientSecret = 16,
-        Identity = 32,
-    }
-
-    private static void RejectUnsupported<TValue, TFields>(
-        TValue? value,
-        TFields allowed,
-        TFields field,
-        string path,
-        string property)
-        where TFields : struct, Enum
-    {
-        if (value is not null
-            && (Convert.ToUInt64(allowed) & Convert.ToUInt64(field)) == 0)
-        {
-            throw new ProxyConfigException(
-                $"{path}.{property} is not valid for this backend shape.");
         }
     }
 

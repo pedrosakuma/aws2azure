@@ -280,10 +280,11 @@ public class ProxyConfigLoaderTests : IDisposable
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__NAMESPACE", "not-blob")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__CLIENTSECRET", "not-shared-key")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SNS__TARGET__TOPICNAME", "obsolete-primary-event-grid")]
-    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", " blob ")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "1")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__S3__KIND", "unknown")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__UNKNOWN__KIND", "blob")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__KINESIS__AUTH__MODE", "sas, managedIdentity")]
+    [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SQS__TARGET__TRANSPORT", "Rest, Amqp")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__-1", "West US")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__DYNAMODB__TARGET__PREFERREDREGIONS__100000000", "West US")]
     [InlineData("AWS2AZURE__BINDINGS__0__AZURE__SQS__QUEUES__orders__UNKNOWN", "Rest")]
@@ -298,12 +299,73 @@ public class ProxyConfigLoaderTests : IDisposable
         Assert.Empty(config.Credentials);
     }
 
+    [Fact]
+    public void Env_vars_can_introduce_legacy_standalone_event_grid_in_any_order()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__BINDINGS__0__AZURE__SNS__AUTH__KEY"] = "event-grid-key",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SNS__TARGET__TOPICNAME"] = "orders",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SNS__AUTH__MODE"] = "sharedKey",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SNS__TARGET__NAMESPACE"] = "westus-1.eventgrid.azure.net",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"] = "secret",
+            ["AWS2AZURE__BINDINGS__0__AZURE__SNS__KIND"] = "eventGrid",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+        ProxyConfigValidator.Validate(config);
+
+        var azure = Assert.Single(config.Credentials).Azure;
+        Assert.Null(azure.ServiceBusTopics);
+        var eventGrid = Assert.IsType<EventGridCredentials>(azure.EventGrid);
+        Assert.Equal("orders", eventGrid.TopicName);
+        Assert.Equal("westus-1.eventgrid.azure.net", eventGrid.Namespace);
+        Assert.Equal("event-grid-key", eventGrid.AccessKey);
+    }
+
+    [Theory]
+    [InlineData("AUTH__MODE", "sas")]
+    [InlineData("AUTH__KEYNAME", "unsupported")]
+    [InlineData("TARGET__MANAGEMENTENDPOINT", "https://ignored.example/")]
+    public void Invalid_legacy_event_grid_override_is_ignored_without_mutation(
+        string suffix,
+        string value)
+    {
+        File.WriteAllText(_tempFile, """
+        {
+          "bindings": [{
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+            "azure": {
+              "sns": {
+                "kind": "eventGrid",
+                "target": { "endpoint": "https://orders.westus-1.eventgrid.azure.net/api/events" },
+                "auth": { "mode": "sharedKey", "key": "original-key" }
+              }
+            }
+          }]
+        }
+        """);
+        var env = new Dictionary<string, string?>
+        {
+            [$"AWS2AZURE__BINDINGS__0__AZURE__SNS__{suffix}"] = value,
+        };
+
+        var config = ProxyConfigLoader.Load(_tempFile, env);
+        ProxyConfigValidator.Validate(config);
+
+        var eventGrid = Assert.IsType<EventGridCredentials>(
+            Assert.Single(config.Credentials).Azure.EventGrid);
+        Assert.Equal(
+            "https://orders.westus-1.eventgrid.azure.net/api/events",
+            eventGrid.Endpoint);
+        Assert.Equal("original-key", eventGrid.AccessKey);
+    }
+
     [Theory]
     [InlineData("AWS2AZURE__SERVICES__S3__UNKNOWN", "true")]
     [InlineData("AWS2AZURE__SERVICES__S3__ENABLED__EXTRA", "true")]
     [InlineData("AWS2AZURE__SERVICES__S3__ENABLED", "not-a-boolean")]
-    [InlineData("AWS2AZURE__SERVICES__DYNAMODB__USESTOREDPROCEDURES", "1")]
-    [InlineData("AWS2AZURE__SERVICES__DYNAMODB__USESTOREDPROCEDURES", " Preferred ")]
     public void Malformed_or_unknown_service_override_does_not_mutate_document(
         string key,
         string value)
@@ -313,6 +375,31 @@ public class ProxyConfigLoaderTests : IDisposable
         var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
 
         Assert.Empty(config.Services);
+    }
+
+    [Fact]
+    public void Legacy_numeric_enum_and_padded_kind_overrides_preserve_meaning()
+    {
+        var env = new Dictionary<string, string?>
+        {
+            ["AWS2AZURE__SERVICES__SNS__DEFAULTBACKEND"] = "1",
+            ["AWS2AZURE__SERVICES__DYNAMODB__USESTOREDPROCEDURES"] = " Preferred ",
+            ["AWS2AZURE__BINDINGS__0__AWS__ACCESSKEYID"] = "AKIA",
+            ["AWS2AZURE__BINDINGS__0__AWS__SECRETACCESSKEY"] = "secret",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__KIND"] = " blob ",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__TARGET__ACCOUNTNAME"] = "account",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__MODE"] = "0",
+            ["AWS2AZURE__BINDINGS__0__AZURE__S3__AUTH__KEY"] = "key",
+        };
+
+        var config = ProxyConfigLoader.Load(jsonFilePath: null, env);
+
+        Assert.Equal(SnsTopicBackend.EventGrid, config.Sns.DefaultBackend);
+        Assert.Equal(StoredProcedureMode.Preferred, config.DynamoDb.UseStoredProcedures);
+        var blob = Assert.IsType<BlobCredentials>(
+            Assert.Single(config.Credentials).Azure.Blob);
+        Assert.Equal("account", blob.AccountName);
+        Assert.Equal("key", blob.AccountKey);
     }
 
     [Fact]

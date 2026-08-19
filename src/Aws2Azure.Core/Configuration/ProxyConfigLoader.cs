@@ -97,6 +97,7 @@ public static class ProxyConfigLoader
 
     private static void ApplyEnvOverrides(ConfigDocument document, IReadOnlyDictionary<string, string?> envVars)
     {
+        var backendKindOverrides = CaptureBackendKindOverrides(envVars);
         foreach (var (rawKey, value) in envVars)
         {
             if (!rawKey.StartsWith(EnvPrefix, StringComparison.Ordinal))
@@ -110,11 +111,51 @@ public static class ProxyConfigLoader
                 continue;
             }
 
-            ApplyOverride(document, path, value);
+            ApplyOverride(document, path, value, backendKindOverrides);
         }
     }
 
-    private static void ApplyOverride(ConfigDocument document, string[] path, string? value)
+    private static Dictionary<string, string> CaptureBackendKindOverrides(
+        IReadOnlyDictionary<string, string?> envVars)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (rawKey, value) in envVars)
+        {
+            if (!rawKey.StartsWith(EnvPrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var path = rawKey.Substring(EnvPrefix.Length).Split("__", StringSplitOptions.None);
+            if (path.Length != 5
+                || !path[0].Equals("BINDINGS", StringComparison.OrdinalIgnoreCase)
+                || !int.TryParse(
+                    path[1],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var index)
+                || index > MaxOverrideIndex
+                || !path[2].Equals("AZURE", StringComparison.OrdinalIgnoreCase)
+                || !path[4].Equals("KIND", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var service = path[3].ToUpperInvariant();
+            if (IsSupportedKind(service, value))
+            {
+                result[BackendKey(index, service)] = value!;
+            }
+        }
+
+        return result;
+    }
+
+    private static void ApplyOverride(
+        ConfigDocument document,
+        string[] path,
+        string? value,
+        IReadOnlyDictionary<string, string> backendKindOverrides)
     {
         switch (path[0].ToUpperInvariant())
         {
@@ -125,7 +166,7 @@ public static class ProxyConfigLoader
                 }
                 return;
             case "BINDINGS":
-                if (CanApplyBindingOverride(path, value))
+                if (CanApplyBindingOverride(document, path, value, backendKindOverrides))
                 {
                     ApplyBindingOverride(document, path, value);
                 }
@@ -165,7 +206,11 @@ public static class ProxyConfigLoader
         };
     }
 
-    private static bool CanApplyBindingOverride(string[] path, string? value)
+    private static bool CanApplyBindingOverride(
+        ConfigDocument document,
+        string[] path,
+        string? value,
+        IReadOnlyDictionary<string, string> backendKindOverrides)
     {
         if (path.Length < 4
             || !int.TryParse(
@@ -196,6 +241,11 @@ public static class ProxyConfigLoader
             return false;
         }
 
+        var backendKind = GetEffectiveBackendKind(
+            document,
+            index,
+            service,
+            backendKindOverrides);
         var group = path[4].ToUpperInvariant();
         if (group == "KIND")
         {
@@ -213,14 +263,14 @@ public static class ProxyConfigLoader
             }
 
             var field = path[5].ToUpperInvariant();
-            return IsSupportedAuthOverride(service, field, value);
+            return IsSupportedAuthOverride(service, backendKind, field, value);
         }
         if (group == "TARGET")
         {
             if (path.Length == 6)
             {
                 var field = path[5].ToUpperInvariant();
-                return IsSupportedTargetOverride(service, field, value);
+                return IsSupportedTargetOverride(service, backendKind, field, value);
             }
             return service == "DYNAMODB"
                 && path.Length == 7
@@ -245,18 +295,19 @@ public static class ProxyConfigLoader
 
     private static bool IsSupportedKind(string service, string? value)
     {
-        if (string.IsNullOrEmpty(value)
-            || value.AsSpan().Trim().Length != value.Length)
+        if (string.IsNullOrWhiteSpace(value))
         {
             return false;
         }
 
+        value = value.Trim();
         return service switch
         {
             "S3" => value.Equals("blob", StringComparison.OrdinalIgnoreCase),
             "SQS" => value.Equals("serviceBus", StringComparison.OrdinalIgnoreCase),
             "DYNAMODB" => value.Equals("cosmos", StringComparison.OrdinalIgnoreCase),
-            "SNS" => value.Equals("serviceBusTopics", StringComparison.OrdinalIgnoreCase),
+            "SNS" => value.Equals("serviceBusTopics", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("eventGrid", StringComparison.OrdinalIgnoreCase),
             "KINESIS" => value.Equals("eventHubs", StringComparison.OrdinalIgnoreCase),
             "SECRETSMANAGER" => value.Equals("keyVault", StringComparison.OrdinalIgnoreCase),
             _ => false,
@@ -265,13 +316,14 @@ public static class ProxyConfigLoader
 
     private static bool IsSupportedAuthOverride(
         string service,
+        string? backendKind,
         string field,
         string? value)
     {
         if (field == "MODE")
         {
             return TryParseEnum<AzureAuthKind>(value, out var mode)
-                && IsSupportedAuthMode(service, mode);
+                && IsSupportedAuthMode(service, backendKind, mode);
         }
 
         return service switch
@@ -279,19 +331,26 @@ public static class ProxyConfigLoader
             "S3" => field == "KEY",
             "SQS" => field is "KEY" or "KEYNAME",
             "DYNAMODB" => field is "KEY" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
-            "SNS" => field is "KEY" or "KEYNAME" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            "SNS" when IsStandaloneEventGrid(backendKind) =>
+                field is "KEY" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
+            "SNS" =>
+                field is "KEY" or "KEYNAME" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
             "KINESIS" => field is "KEY" or "KEYNAME" or "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
             "SECRETSMANAGER" => field is "TENANTID" or "CLIENTID" or "CLIENTSECRET" or "IDENTITY",
             _ => false,
         };
     }
 
-    private static bool IsSupportedAuthMode(string service, AzureAuthKind mode)
+    private static bool IsSupportedAuthMode(
+        string service,
+        string? backendKind,
+        AzureAuthKind mode)
         => service switch
         {
             "S3" => mode == AzureAuthKind.SharedKey,
             "SQS" => mode == AzureAuthKind.Sas,
             "DYNAMODB" => mode is not AzureAuthKind.Sas,
+            "SNS" when IsStandaloneEventGrid(backendKind) => mode is not AzureAuthKind.Sas,
             "SNS" or "KINESIS" => mode is not AzureAuthKind.SharedKey,
             "SECRETSMANAGER" => mode is not (AzureAuthKind.SharedKey or AzureAuthKind.Sas),
             _ => false,
@@ -299,6 +358,7 @@ public static class ProxyConfigLoader
 
     private static bool IsSupportedTargetOverride(
         string service,
+        string? backendKind,
         string field,
         string? value)
         => service switch
@@ -307,11 +367,49 @@ public static class ProxyConfigLoader
             "SQS" => field is "NAMESPACE" or "MANAGEMENTENDPOINT"
                 || field == "TRANSPORT" && TryParseEnum<SqsTransport>(value, out _),
             "DYNAMODB" => field is "ENDPOINT" or "DATABASENAME",
+            "SNS" when IsStandaloneEventGrid(backendKind) =>
+                field is "ENDPOINT" or "NAMESPACE" or "TOPICNAME",
             "SNS" => field is "ENDPOINT" or "NAMESPACE" or "MANAGEMENTENDPOINT",
             "KINESIS" => field is "NAMESPACE" or "ENDPOINT",
             "SECRETSMANAGER" => field == "VAULTURL",
             _ => false,
         };
+
+    private static string? GetEffectiveBackendKind(
+        ConfigDocument document,
+        int index,
+        string service,
+        IReadOnlyDictionary<string, string> backendKindOverrides)
+    {
+        if (backendKindOverrides.TryGetValue(BackendKey(index, service), out var overrideKind))
+        {
+            return overrideKind;
+        }
+
+        if (index >= document.Bindings.Count || document.Bindings[index] is not { } binding)
+        {
+            return null;
+        }
+
+        return service switch
+        {
+            "S3" => binding.Azure.S3?.Kind,
+            "SQS" => binding.Azure.Sqs?.Kind,
+            "DYNAMODB" => binding.Azure.DynamoDb?.Kind,
+            "SNS" => binding.Azure.Sns?.Kind,
+            "KINESIS" => binding.Azure.Kinesis?.Kind,
+            "SECRETSMANAGER" => binding.Azure.SecretsManager?.Kind,
+            _ => null,
+        };
+    }
+
+    private static bool IsStandaloneEventGrid(string? backendKind)
+        => backendKind?.Trim().Equals("eventGrid", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string BackendKey(int index, string service)
+        => string.Create(
+            CultureInfo.InvariantCulture,
+            $"{index}:{service}");
 
     private static void ApplyServiceOverride(ServicesConfig services, string[] path, string? value)
     {
@@ -492,6 +590,7 @@ public static class ProxyConfigLoader
             case "NAMESPACE": target.Namespace = value; return;
             case "DATABASENAME": target.DatabaseName = value; return;
             case "MANAGEMENTENDPOINT": target.ManagementEndpoint = value; return;
+            case "TOPICNAME": target.TopicName = value; return;
             case "VAULTURL": target.VaultUrl = value; return;
             case "TRANSPORT":
                 if (TryParseEnum<SqsTransport>(value, out var transport)) target.Transport = transport;

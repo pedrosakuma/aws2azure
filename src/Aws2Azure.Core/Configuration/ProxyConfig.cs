@@ -231,6 +231,7 @@ public sealed class AzureCredentials
     public CosmosCredentials? Cosmos { get; set; }
     public EventHubsCredentials? EventHubs { get; set; }
     public EventGridCredentials? EventGrid { get; set; }
+    internal bool EventGridIsStandalone { get; set; }
     public KeyVaultCredentials? KeyVault { get; set; }
 }
 

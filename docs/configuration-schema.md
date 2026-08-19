@@ -52,11 +52,14 @@ Enum values and backend `kind` discriminators remain case-insensitive for
 compatibility. The spellings shown in this document and the schema defaults are
 canonical. The authoring profile requires JSON strings without surrounding
 whitespace. Runtime reads additionally preserve v1 inputs that use a defined
-numeric enum value or surrounding whitespace on a backend `kind`; serialization
-emits enum names, and new documents should use the canonical strings. Undefined
-numeric enum values, numeric strings, and whitespace-padded enum names are
-rejected. Nullable optional properties may be set to JSON `null`, with the same
-effect as omission; semantically required values do not accept `null`.
+numeric enum token or numeric string, whitespace-padded enum names, or
+surrounding whitespace on a backend `kind`; serialization emits enum names, and
+new documents should use the canonical strings. Undefined numeric values and
+comma-composed enum names are rejected. Runtime compatibility also ignores
+known fields that do not apply to the selected backend/auth mode, while the
+canonical schema rejects them. Nullable optional properties may be set to JSON
+`null`, with the same effect as omission; semantically required values do not
+accept `null`.
 
 ## Services and defaults
 
@@ -104,9 +107,21 @@ either configure `eventGridFallback`, or give each Event Grid topic both
 `services.sns.defaultBackend` to `EventGrid` requires `eventGridFallback` on
 every `serviceBusTopics` binding.
 
-Event Grid is a routing fallback for a `serviceBusTopics` binding, not a
-standalone primary SNS backend. SNS control-plane operations require the
-Service Bus Topics backend even when Event Grid is selected for publication.
+The canonical authoring profile models Event Grid as a routing fallback for a
+`serviceBusTopics` binding. SNS control-plane operations require the Service
+Bus Topics backend even when Event Grid is selected for publication.
+
+For v1 compatibility, runtime JSON reads and environment overrides continue to
+accept a standalone `bindings[].azure.sns.kind: eventGrid` backend. It translates
+directly to Event Grid credentials, accepts Event Grid target/auth fields, and
+serializes the discriminator as canonical `eventGrid`, but it remains outside
+the canonical authoring profile because it cannot provide the SNS control
+plane. Migrate an existing standalone block by configuring the primary SNS
+backend as `serviceBusTopics` and moving its Event Grid `target` and `auth`
+objects into `eventGridFallback`. New configurations should use that preferred
+shape. To preserve standalone publish routing, also set
+`services.sns.defaultBackend: EventGrid` (or set `topics.<pattern>.backend:
+EventGrid` for selected topics).
 
 ## Authentication shapes
 
@@ -144,6 +159,18 @@ DynamoDB behavior fields; binding AWS fields; backend `kind`; target fields;
 auth fields; Kinesis `shardIteratorSigningKey`; indexed Cosmos
 `preferredRegions`; and SQS queue `transport`. Queue names containing `__` are
 reconstructed from all segments between `QUEUES` and `TRANSPORT`.
+
+For the legacy standalone SNS `eventGrid` kind, backend overrides accept only
+Event Grid target fields (`endpoint`, `namespace`, `topicName`) and shared-key
+or Entra auth fields/modes. Override validation resolves the effective `kind`
+before applying leaves, so dictionary/environment enumeration order does not
+change the result. Service Bus-only leaves and SAS mode are ignored without
+mutating the backend.
+
+Environment values retain v1 parser compatibility: defined numeric enum values,
+whitespace-padded enum names, and whitespace-padded recognized backend kinds are
+accepted. New overrides should use the canonical names shown above. Undefined
+numeric enums and unrecognized kinds remain ignored without mutation.
 
 `azureIdentities`, S3 `presignedTrustedSigningHosts`, SNS
 `topics`/`eventGridFallback`, and Kinesis `streams` are currently

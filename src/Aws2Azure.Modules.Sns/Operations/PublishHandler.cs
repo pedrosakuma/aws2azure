@@ -14,7 +14,7 @@ internal static class PublishHandler
     public static async Task HandleAsync(
         HttpContext context,
         SnsParseResult parseResult,
-        ServiceBusTopicsCredentials credentials,
+        ServiceBusTopicsCredentials? credentials,
         EventGridCredentials? eventGridCredentials,
         SnsSettings snsSettings,
         IServiceBusTopicsManagementClient managementClient,
@@ -24,7 +24,6 @@ internal static class PublishHandler
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(parseResult);
-        ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(snsSettings);
         ArgumentNullException.ThrowIfNull(managementClient);
         ArgumentNullException.ThrowIfNull(amqpSender);
@@ -49,6 +48,9 @@ internal static class PublishHandler
         if (route.Backend == SnsTopicBackend.ServiceBusTopics
             && (request.TopicName.EndsWith(".fifo", StringComparison.Ordinal) || SnsFifoPublishSupport.HasFifoFields(request)))
         {
+            var serviceBusCredentials = credentials
+                ?? throw new InvalidOperationException(
+                    "Service Bus SNS routing requires Service Bus Topics credentials.");
             ServiceBusFifoTopicState topicState;
             try
             {
@@ -56,7 +58,7 @@ internal static class PublishHandler
                         request.TopicArn,
                         request.TopicName,
                         route.ServiceBusTopicName,
-                        credentials,
+                        serviceBusCredentials,
                         managementClient,
                         cancellationToken)
                     .ConfigureAwait(false);

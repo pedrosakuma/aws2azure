@@ -11,11 +11,22 @@ internal readonly record struct SnsTopicRoute(
 
 internal static class SnsTopicRouting
 {
-    public static SnsTopicRoute Resolve(ServiceBusTopicsCredentials credentials, SnsSettings snsSettings, string topicName)
+    public static SnsTopicRoute Resolve(
+        ServiceBusTopicsCredentials? credentials,
+        SnsSettings snsSettings,
+        string topicName)
     {
-        ArgumentNullException.ThrowIfNull(credentials);
         ArgumentNullException.ThrowIfNull(snsSettings);
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+
+        if (credentials is null)
+        {
+            return new SnsTopicRoute(
+                SnsTopicBackend.EventGrid,
+                topicName,
+                EventGridTopicEndpoint: null,
+                EventGridAccessKey: null);
+        }
 
         var settings = ResolveTopicSettings(credentials.Topics, topicName);
         return new SnsTopicRoute(

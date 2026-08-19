@@ -165,6 +165,71 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
+    public void Legacy_standalone_event_grid_matches_canonical_fallback_migration()
+    {
+        const string legacyJson = """
+        {
+          "bindings": [{
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+            "azure": {
+              "sns": {
+                "kind": " EVENTGRID ",
+                "target": { "endpoint": "https://orders.westus-1.eventgrid.azure.net/api/events" },
+                "auth": { "mode": "sharedKey", "key": "event-grid-key" }
+              }
+            }
+          }]
+        }
+        """;
+        const string canonicalJson = """
+        {
+          "bindings": [{
+            "aws": { "accessKeyId": "AKIA", "secretAccessKey": "secret" },
+            "azure": {
+              "sns": {
+                "kind": "serviceBusTopics",
+                "target": { "namespace": "orders-service-bus" },
+                "auth": { "mode": "sas", "keyName": "Root", "key": "service-bus-key" },
+                "eventGridFallback": {
+                  "kind": "eventGrid",
+                  "target": { "endpoint": "https://orders.westus-1.eventgrid.azure.net/api/events" },
+                  "auth": { "mode": "sharedKey", "key": "event-grid-key" }
+                }
+              }
+            }
+          }]
+        }
+        """;
+
+        Assert.False(Evaluate(JsonNode.Parse(legacyJson)!).IsValid);
+        AssertValid(JsonNode.Parse(canonicalJson)!);
+        var legacyDocument = JsonSerializer.Deserialize(
+            legacyJson,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var canonicalDocument = JsonSerializer.Deserialize(
+            canonicalJson,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var legacyConfig = ConfigDocumentTranslator.ToProxyConfig(legacyDocument);
+        var canonicalConfig = ConfigDocumentTranslator.ToProxyConfig(canonicalDocument);
+        ProxyConfigValidator.Validate(legacyConfig);
+        ProxyConfigValidator.Validate(canonicalConfig);
+        var legacy = Assert.IsType<EventGridCredentials>(
+            Assert.Single(legacyConfig.Credentials).Azure.EventGrid);
+        var canonical = Assert.IsType<EventGridCredentials>(
+            Assert.Single(canonicalConfig.Credentials).Azure.EventGrid);
+
+        Assert.Equal(canonical.Endpoint, legacy.Endpoint);
+        Assert.Equal(canonical.AccessKey, legacy.AccessKey);
+        var serialized = JsonNode.Parse(JsonSerializer.Serialize(
+            legacyDocument,
+            ConfigDocumentJsonContext.Default.ConfigDocument))!;
+        Assert.Equal(
+            "eventGrid",
+            serialized["bindings"]![0]!["azure"]!["sns"]!["kind"]!.GetValue<string>());
+        Assert.False(Evaluate(serialized).IsValid);
+    }
+
+    [Fact]
     public void Defaulted_auth_discriminators_are_valid_in_schema_and_runtime()
     {
         var instance = JsonNode.Parse("""
@@ -284,7 +349,7 @@ public sealed class ConfigSchemaTests
     }
 
     [Fact]
-    public void Backend_specific_extra_fields_are_rejected_by_schema_and_runtime()
+    public void Backend_specific_extra_fields_are_rejected_by_schema_but_ignored_at_runtime()
     {
         var instance = JsonNode.Parse("""
         {
@@ -308,28 +373,43 @@ public sealed class ConfigSchemaTests
         var document = JsonSerializer.Deserialize(
             instance.ToJsonString(),
             ConfigDocumentJsonContext.Default.ConfigDocument)!;
-        Assert.Throws<ProxyConfigException>(
-            () => ConfigDocumentTranslator.ToProxyConfig(document));
+        var config = ConfigDocumentTranslator.ToProxyConfig(document);
+        ProxyConfigValidator.Validate(config);
+        var blob = Assert.IsType<BlobCredentials>(
+            Assert.Single(config.Credentials).Azure.Blob);
+        Assert.Equal("account", blob.AccountName);
+        Assert.Equal("key", blob.AccountKey);
     }
 
     [Theory]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "1" } }, "bindings": [] }""")]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": " Preferred " } }, "bindings": [] }""")]
     [InlineData("""{ "services": { "dynamodb": { "useStoredProcedures": "Preferred\n" } }, "bindings": [] }""")]
-    public void Numeric_strings_or_whitespace_padded_enum_names_are_rejected(string json)
+    public void Legacy_numeric_strings_or_whitespace_padded_enum_names_are_runtime_compatible(string json)
     {
         var instance = JsonNode.Parse(json)!;
 
         Assert.False(Evaluate(instance).IsValid);
-        var exception = Record.Exception(() =>
-        {
-            var document = JsonSerializer.Deserialize(
-                json,
-                ConfigDocumentJsonContext.Default.ConfigDocument)!;
-            ConfigDocumentTranslator.ToProxyConfig(document);
-        });
-        Assert.IsAssignableFrom<Exception>(exception);
-        Assert.True(exception is JsonException or ProxyConfigException);
+        var document = JsonSerializer.Deserialize(
+            json,
+            ConfigDocumentJsonContext.Default.ConfigDocument)!;
+        var config = ConfigDocumentTranslator.ToProxyConfig(document);
+        Assert.Equal(StoredProcedureMode.Preferred, config.DynamoDb.UseStoredProcedures);
+    }
+
+    [Theory]
+    [InlineData("999")]
+    [InlineData("Disabled, Preferred")]
+    public void Undefined_or_compound_enum_strings_are_rejected(string value)
+    {
+        var json = $$"""
+        { "services": { "dynamodb": { "useStoredProcedures": "{{value}}" } }, "bindings": [] }
+        """;
+
+        Assert.False(Evaluate(JsonNode.Parse(json)!).IsValid);
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(
+            json,
+            ConfigDocumentJsonContext.Default.ConfigDocument));
     }
 
     [Fact]

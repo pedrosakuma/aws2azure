@@ -62,7 +62,7 @@ internal static class SnsBackendPublisherFactory
 {
     public static ISnsBackendPublisher Create(
         SnsTopicRoute route,
-        ServiceBusTopicsCredentials credentials,
+        ServiceBusTopicsCredentials? credentials,
         EventGridCredentials? eventGridCredentials,
         ISnsAmqpSender amqpSender,
         IEventGridPublisher eventGridPublisher)
@@ -71,6 +71,12 @@ internal static class SnsBackendPublisherFactory
         {
             var destination = SnsTopicRouting.ResolveEventGridDestination(route, eventGridCredentials);
             return new EventGridBackendPublisher(eventGridPublisher, destination);
+        }
+
+        if (credentials is null)
+        {
+            throw new InvalidOperationException(
+                "Service Bus SNS routing requires Service Bus Topics credentials.");
         }
 
         return new ServiceBusAmqpBackendPublisher(

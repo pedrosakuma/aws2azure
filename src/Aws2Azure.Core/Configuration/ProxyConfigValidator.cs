@@ -279,7 +279,10 @@ public static class ProxyConfigValidator
 
         if (azure.EventGrid is { } eventGrid)
         {
-            ValidateEventGrid(eventGrid, prefix + ".sns.eventGridFallback", errors);
+            var eventGridPrefix = azure.EventGridIsStandalone
+                ? prefix + ".sns"
+                : prefix + ".sns.eventGridFallback";
+            ValidateEventGrid(eventGrid, eventGridPrefix, errors);
         }
 
         if (azure.KeyVault is { } keyVault)
@@ -754,7 +757,9 @@ public static class ProxyConfigValidator
             ResolveBlockIdentity(
                 identities,
                 azure.EventGrid,
-                prefix + ".sns.eventGridFallback",
+                azure.EventGridIsStandalone
+                    ? prefix + ".sns"
+                    : prefix + ".sns.eventGridFallback",
                 errors);
             ResolveBlockIdentity(identities, azure.KeyVault, prefix + ".secretsmanager", errors);
         }

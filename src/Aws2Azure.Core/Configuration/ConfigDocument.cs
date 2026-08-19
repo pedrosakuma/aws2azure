@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -381,12 +382,26 @@ internal static class ConfigEnumParser
     public static bool TryParse<TEnum>(string? value, out TEnum result)
         where TEnum : struct, Enum
     {
-        if (!string.IsNullOrEmpty(value)
-            && value.AsSpan().Trim().Length == value.Length)
+        if (!string.IsNullOrWhiteSpace(value))
         {
+            var trimmed = value.Trim();
             foreach (var candidate in Enum.GetValues<TEnum>())
             {
-                if (value.Equals(candidate.ToString(), StringComparison.OrdinalIgnoreCase))
+                if (trimmed.Equals(candidate.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    result = candidate;
+                    return true;
+                }
+            }
+
+            if (long.TryParse(
+                    trimmed,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var numeric))
+            {
+                var candidate = (TEnum)Enum.ToObject(typeof(TEnum), numeric);
+                if (Enum.IsDefined(candidate))
                 {
                     result = candidate;
                     return true;

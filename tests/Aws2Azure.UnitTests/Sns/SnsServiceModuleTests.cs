@@ -112,6 +112,29 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
+    public async Task Publish_with_legacy_standalone_event_grid_does_not_require_service_bus()
+    {
+        var sender = new RecordingSender();
+        var eventGridPublisher = new RecordingEventGridPublisher();
+        var module = NewModule(
+            includeTopicCreds: false,
+            includeEventGridCreds: true,
+            sender: sender,
+            eventGridPublisher: eventGridPublisher);
+        var ctx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Null(sender.SingleCall);
+        Assert.NotNull(eventGridPublisher.SingleCall);
+        Assert.Equal(
+            "https://example.westus2-1.eventgrid.azure.net/api/events",
+            eventGridPublisher.SingleCall!.Value.Destination.Endpoint);
+    }
+
+    [Fact]
     public async Task PublishBatch_routes_to_amqp_sender()
     {
         var sender = new RecordingSender();
@@ -124,6 +147,27 @@ public class SnsServiceModuleTests
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         Assert.NotNull(sender.BatchCall);
         Assert.Single(sender.BatchCall!.Value.Messages);
+    }
+
+    [Fact]
+    public async Task PublishBatch_with_legacy_standalone_event_grid_does_not_require_service_bus()
+    {
+        var sender = new RecordingSender();
+        var eventGridPublisher = new RecordingEventGridPublisher();
+        var module = NewModule(
+            includeTopicCreds: false,
+            includeEventGridCreds: true,
+            sender: sender,
+            eventGridPublisher: eventGridPublisher);
+        var ctx = NewContext("Action=PublishBatch&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&PublishBatchRequestEntries.member.1.Id=a&PublishBatchRequestEntries.member.1.Message=hello");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Null(sender.BatchCall);
+        Assert.NotNull(eventGridPublisher.BatchCall);
+        Assert.Single(eventGridPublisher.BatchCall!.Value.Events);
     }
 
     [Fact]
@@ -307,6 +351,7 @@ public class SnsServiceModuleTests
     private sealed class RecordingEventGridPublisher : IEventGridPublisher
     {
         public (EventGridPublishDestination Destination, EventGridPublishMessage Message)? SingleCall { get; private set; }
+        public (EventGridPublishDestination Destination, IReadOnlyList<EventGridPublishMessage> Events)? BatchCall { get; private set; }
 
         public Task PublishAsync(EventGridPublishDestination destination, EventGridPublishMessage message, CancellationToken cancellationToken)
         {
@@ -315,6 +360,9 @@ public class SnsServiceModuleTests
         }
 
         public Task<SnsBatchSendResult> PublishBatchAsync(EventGridPublishDestination destination, IReadOnlyList<EventGridPublishMessage> messages, CancellationToken cancellationToken)
-            => Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
+        {
+            BatchCall = (destination, messages);
+            return Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
+        }
     }
 }
