@@ -1,4 +1,5 @@
 using Aws2Azure.GapDocs;
+using System.Text.RegularExpressions;
 
 namespace Aws2Azure.UnitTests.GapDocs;
 
@@ -39,7 +40,9 @@ public sealed class MarkdownRendererTests
 
             var designIndex = Read(output, "design-gaps.md");
             Assert.Contains(
-                "<a id=\"s3-no-iam---acl-authorization\"></a>[No IAM / ACL authorization](design-gaps/s3/no-iam---acl-authorization.md)",
+                "<a id=\"s3-no-iam---acl-authorization\"></a>" +
+                "<a id=\"no-iam-acl-authorization\" data-legacy-fragment=\"true\"></a>" +
+                "[No IAM / ACL authorization](design-gaps/s3/no-iam---acl-authorization.md)",
                 designIndex,
                 StringComparison.Ordinal);
 
@@ -51,6 +54,47 @@ public sealed class MarkdownRendererTests
         {
             Directory.Delete(output, recursive: true);
         }
+    }
+
+    [Fact]
+    public void Render_preserves_every_legacy_design_gap_fragment_for_the_canonical_corpus()
+    {
+        var repoRoot = FindRepoRoot();
+        var designs = Loader.LoadDesignDocs(Path.Combine(repoRoot, "docs", "gaps"));
+        var expected = LegacyDesignGapFragments.Create(designs)
+            .Select(fragment => fragment.Fragment)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var markdown = File.ReadAllText(Path.Combine(repoRoot, "docs", "site", "design-gaps.md"));
+        var actual = Regex.Matches(
+                markdown,
+                """<a id="([^"]+)" data-legacy-fragment="true"></a>""",
+                RegexOptions.CultureInvariant)
+            .Select(match => match.Groups[1].Value)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(expected, actual);
+        Assert.Contains("no-aws-region-account-namespace", actual);
+        Assert.Contains("no-aws-region-account-namespace_1", actual);
+    }
+
+    [Theory]
+    [InlineData("Secondary indexes (GSI / LSI)", "secondary-indexes-gsi-lsi")]
+    [InlineData("Already_1", "already_1")]
+    [InlineData("- Edge -", "-edge-")]
+    public void LegacyDesignGapHeadingIds_matches_python_markdown_slugification(
+        string heading,
+        string expected)
+    {
+        var headings = new LegacyDesignGapHeadingIds();
+
+        Assert.Equal(expected, headings.Add(heading));
+        Assert.Equal(
+            expected.EndsWith("_1", StringComparison.Ordinal)
+                ? expected[..^1] + "2"
+                : expected + "_1",
+            headings.Add(heading));
     }
 
     [Fact]
@@ -173,4 +217,19 @@ public sealed class MarkdownRendererTests
                     path => Convert.ToHexString(File.ReadAllBytes(path)),
                     StringComparer.Ordinal),
             StringComparer.Ordinal);
+
+    private static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
+            {
+                return directory.FullName;
+            }
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate repository root.");
+    }
 }

@@ -5,6 +5,109 @@ using System.Text;
 
 namespace Aws2Azure.GapDocs;
 
+public sealed class LegacyDesignGapHeadingIds
+{
+    private readonly HashSet<string> ids = new(StringComparer.Ordinal);
+
+    public string Add(string heading)
+    {
+        var normalized = heading.Normalize(NormalizationForm.FormKD);
+        var filtered = new StringBuilder(normalized.Length);
+
+        foreach (var c in normalized)
+        {
+            if (c > 0x7f)
+            {
+                continue;
+            }
+            if (char.IsLetterOrDigit(c) || c == '_')
+            {
+                filtered.Append(char.ToLowerInvariant(c));
+            }
+            else if (char.IsWhiteSpace(c) || c == '-')
+            {
+                filtered.Append(c);
+            }
+        }
+
+        var value = filtered.ToString().Trim();
+        var slug = new StringBuilder(value.Length);
+        var pendingSeparator = false;
+        foreach (var c in value)
+        {
+            if (char.IsWhiteSpace(c) || c == '-')
+            {
+                pendingSeparator = true;
+                continue;
+            }
+            if (pendingSeparator)
+            {
+                slug.Append('-');
+                pendingSeparator = false;
+            }
+            slug.Append(c);
+        }
+        if (pendingSeparator)
+        {
+            slug.Append('-');
+        }
+
+        var candidate = slug.ToString();
+        while (candidate.Length == 0 || ids.Contains(candidate))
+        {
+            var separator = candidate.LastIndexOf('_');
+            if (separator >= 0
+                && separator + 1 < candidate.Length
+                && int.TryParse(
+                    candidate.AsSpan(separator + 1),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var suffix))
+            {
+                candidate = candidate[..(separator + 1)]
+                    + (suffix + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                candidate += "_1";
+            }
+        }
+
+        ids.Add(candidate);
+        return candidate;
+    }
+}
+
+public sealed record LegacyDesignGapFragment(string Service, string Area, string Fragment);
+
+public static class LegacyDesignGapFragments
+{
+    public static IReadOnlyList<LegacyDesignGapFragment> Create(
+        IReadOnlyList<ServiceDesignDoc> designDocs)
+    {
+        var headings = new LegacyDesignGapHeadingIds();
+        headings.Add("Design gaps");
+        headings.Add("Summary");
+
+        var fragments = new List<LegacyDesignGapFragment>();
+        foreach (var doc in designDocs.OrderBy(
+                     d => d.Service.ToLowerInvariant(),
+                     StringComparer.Ordinal))
+        {
+            headings.Add(doc.Service.ToLowerInvariant());
+            foreach (var gap in doc.DesignGaps)
+            {
+                fragments.Add(new LegacyDesignGapFragment(
+                    doc.Service,
+                    gap.Area,
+                    headings.Add(gap.Area)));
+            }
+        }
+
+        return fragments;
+    }
+}
+
 public static class MarkdownRenderer
 {
     public static void Render(
@@ -510,6 +613,10 @@ public static class MarkdownRenderer
         var ordered = designDocs
             .OrderBy(d => d.Service.ToLowerInvariant(), System.StringComparer.Ordinal)
             .ToList();
+        var legacyFragments = LegacyDesignGapFragments.Create(ordered)
+            .ToDictionary(
+                fragment => (fragment.Service, fragment.Area),
+                fragment => fragment.Fragment);
 
         if (ordered.Count == 0)
         {
@@ -526,9 +633,14 @@ public static class MarkdownRenderer
         {
             foreach (var g in doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal))
             {
+                var stableAnchor = DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, g.Area);
+                var legacyAnchor = legacyFragments[(doc.Service, g.Area)];
+                var legacyAlias = legacyAnchor.Equals(stableAnchor, StringComparison.Ordinal)
+                    ? string.Empty
+                    : $"<a id=\"{legacyAnchor}\" data-legacy-fragment=\"true\"></a>";
                 sb.AppendLine(
                     $"| [{doc.Service.ToLowerInvariant()}](#{DocumentationLinks.Anchor(doc.Service)}) | " +
-                    $"<a id=\"{DocumentationLinks.DesignGapCompatibilityAnchor(doc.Service, g.Area)}\"></a>" +
+                    $"<a id=\"{stableAnchor}\"></a>{legacyAlias}" +
                     $"[{Esc(g.Area)}]({DocumentationLinks.DesignGapPage(doc.Service, g.Area)}) | " +
                     $"{DesignBadge(g.Status)} | {DispositionBadge(DesignGapDisposition(g))} | {IssueLink(g.TrackingIssue)} |");
             }

@@ -15,6 +15,7 @@ class PageParser(HTMLParser):
         self.identifiers: set[str] = set()
         self.ids: set[str] = set()
         self.duplicate_identifiers: set[str] = set()
+        self.legacy_fragments: set[str] = set()
         self.references: list[tuple[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -27,6 +28,8 @@ class PageParser(HTMLParser):
         identifier = html_id or values.get("name")
         if identifier:
             self.identifiers.add(identifier)
+            if "data-legacy-fragment" in values:
+                self.legacy_fragments.add(identifier)
 
         for attribute in ("href", "src"):
             value = values.get(attribute)
@@ -201,6 +204,49 @@ def validate_capability_pages(
     return errors
 
 
+def validate_legacy_design_gap_fragments(
+    site_dir: Path, pages: dict[Path, PageParser]
+) -> list[str]:
+    page_path = (site_dir / "site" / "design-gaps" / "index.html").resolve()
+    page = pages.get(page_path)
+    if page is None:
+        return [f"Generated design-gap index is missing: {page_path}"]
+
+    source_path = Path("docs/site/design-gaps.md")
+    if not source_path.exists():
+        return [f"Generated design-gap Markdown is missing: {source_path.resolve()}"]
+
+    marker = '" data-legacy-fragment="true"></a>'
+    expected: set[str] = set()
+    for line in source_path.read_text(encoding="utf-8").splitlines():
+        marker_at = line.find(marker)
+        if marker_at < 0:
+            continue
+        id_at = line.rfind('<a id="', 0, marker_at)
+        if id_at >= 0:
+            expected.add(line[id_at + len('<a id="') : marker_at])
+
+    errors: list[str] = []
+    if page.legacy_fragments != expected:
+        errors.append(
+            "Built design-gap legacy fragments differ from generated Markdown: "
+            f"missing={sorted(expected - page.legacy_fragments)!r}, "
+            f"unexpected={sorted(page.legacy_fragments - expected)!r}"
+        )
+
+    duplicate_heading_witnesses = {
+        "no-aws-region-account-namespace",
+        "no-aws-region-account-namespace_1",
+    }
+    missing_witnesses = duplicate_heading_witnesses - page.identifiers
+    if missing_witnesses:
+        errors.append(
+            "Built design-gap index lacks deterministic duplicate-heading fragments: "
+            f"{sorted(missing_witnesses)!r}"
+        )
+    return errors
+
+
 def validate_operator_schema_link(
     site_dir: Path, pages: dict[Path, PageParser]
 ) -> list[str]:
@@ -277,6 +323,7 @@ def main() -> int:
     errors.extend(validate_unique_identifiers(pages))
     errors.extend(validate_search(site_dir))
     errors.extend(validate_capability_pages(site_dir, pages))
+    errors.extend(validate_legacy_design_gap_fragments(site_dir, pages))
     errors.extend(validate_operator_schema_link(site_dir, pages))
     errors.extend(validate_persona_links(site_dir, base_path))
     if errors:
