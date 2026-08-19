@@ -5,6 +5,7 @@
 - **Capability ID:** `operation:s3:presignedurl`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330)
 
 ## Sub-features
 

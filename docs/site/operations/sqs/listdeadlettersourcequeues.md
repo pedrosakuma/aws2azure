@@ -5,6 +5,7 @@
 - **Capability ID:** `operation:sqs:listdeadlettersourcequeues`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31447694984) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31447694984)
 
 ## Sub-features
 

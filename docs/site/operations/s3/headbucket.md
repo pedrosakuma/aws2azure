@@ -5,6 +5,7 @@
 - **Capability ID:** `operation:s3:headbucket`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `HEAD https://{account}.blob.core.windows.net/{container}?restype=container`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330)
 
 ## Sub-features
 
