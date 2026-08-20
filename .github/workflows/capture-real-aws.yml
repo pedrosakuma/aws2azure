@@ -61,12 +61,15 @@ jobs:
 
       - name: Capture real AWS happy-path goldens
         if: steps.gate.outputs.enabled == 'true'
+        env:
+          # TEMPORARY: DynamoDB PutItem InvalidSignatureException diagnostic run — remove before merging.
+          AWS2AZURE_SIGV4_DEBUG: "1"
         run: |
           set -euo pipefail
           dotnet test tests/Aws2Azure.IntegrationTests/Aws2Azure.IntegrationTests.csproj \
             -c Release \
             --no-build \
-            --filter "Category=RealAws" \
+            --filter "Category=RealAws&FullyQualifiedName~DynamoDb_happy_path_cases_capture_real_aws_goldens" \
             --logger "trx;LogFileName=real-aws-capture.trx" \
             --results-directory TestResults
 
