@@ -70,6 +70,10 @@ public static partial class S3HappyPathMatrix
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
+            // Real AWS rejects DeleteObjects with "HeadersNotSigned: content-md5"
+            // unless the header is included in SignedHeaders, not just present
+            // on the request — Azure's own validator does not enforce this.
+            extraSignedHeaders: ["content-md5"],
             sessionToken: context.SessionToken);
         return request;
     }
