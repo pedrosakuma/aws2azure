@@ -109,6 +109,17 @@ public static class TestSigV4Signer
         var key = SigningKey.Derive(secret, shortDate, region, service);
         var signature = SigningKey.ToLowerHex(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(stringToSign)));
 
+        // TEMPORARY diagnostic instrumentation (issue: capture-real-aws.yml
+        // DynamoDB PutItem InvalidSignatureException investigation) — remove
+        // before merging.
+        if (Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
+        {
+            Console.WriteLine($"[sigv4-debug] method={request.Method.Method} target={(request.Headers.TryGetValues("X-Amz-Target", out var t) ? string.Join(",", t) : "<none>")} secretLen={secret.Length} accessKey={accessKey} sessionTokenLen={sessionToken?.Length ?? -1}");
+            Console.WriteLine("[sigv4-debug] canonical=<<<\n" + canonical + "\n>>>");
+            Console.WriteLine("[sigv4-debug] stringToSign=<<<\n" + stringToSign + "\n>>>");
+            Console.WriteLine("[sigv4-debug] signature=" + signature);
+        }
+
         var auth =
             $"{SigV4Constants.Algorithm} " +
             $"Credential={accessKey}/{scope}, " +
