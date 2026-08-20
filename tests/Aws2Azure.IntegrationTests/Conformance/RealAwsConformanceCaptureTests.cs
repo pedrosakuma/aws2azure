@@ -384,6 +384,24 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 var step = plan.Steps[index];
                 var state = new ConformanceExecutionState(context, exchanges);
                 using var request = await step.BuildRequestAsync(state).ConfigureAwait(false);
+
+                // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
+                // investigation): dump the actual HttpRequestMessage as HttpClient
+                // will see it (all headers, including any it might add/normalize),
+                // right before sending, to rule out a silent header mutation
+                // between signing and transmission.
+                if (service == "dynamodb" && Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
+                {
+                    var reqHeaders = string.Join(" | ", request.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}"));
+                    var contentHeaders = request.Content is null
+                        ? "<none>"
+                        : string.Join(" | ", request.Content.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}"));
+                    var bodyText = request.Content is null
+                        ? "<none>"
+                        : await request.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    Console.WriteLine($"[sigv4-debug] wire-request step={step.Name} method={request.Method} uri={request.RequestUri} reqHeaders=[{reqHeaders}] contentHeaders=[{contentHeaders}] body={bodyText}");
+                }
+
                 using var response = await client.SendAsync(
                     request,
                     HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
