@@ -386,6 +386,17 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 using var request = await step.BuildRequestAsync(state).ConfigureAwait(false);
 
                 // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
+                // investigation): force a fresh TCP connection per request to rule
+                // out HTTP/1.1 keep-alive desync after a deliberately-triggered 400
+                // response (from the error-matrix cases that precede the happy
+                // path in the same shared HttpClient) corrupting a later request's
+                // wire bytes despite the in-memory HttpRequestMessage being correct.
+                if (service == "dynamodb" && Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
+                {
+                    request.Headers.ConnectionClose = true;
+                }
+
+                // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
                 // investigation): dump the actual HttpRequestMessage as HttpClient
                 // will see it (all headers, including any it might add/normalize),
                 // right before sending, to rule out a silent header mutation
