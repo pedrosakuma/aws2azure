@@ -63,6 +63,54 @@ public sealed class CopyObjectHandlersTests
         Assert.Equal(2, handler.Requests.Count);
     }
 
+    [Fact]
+    public async Task Copy_object_default_metadata_directive_strips_internal_multipart_marker_from_destination()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(
+            HttpStatusCode.OK,
+            eTag: "\"0xabc\"",
+            lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero),
+            responseHeaders:
+            [
+                new KeyValuePair<string, string>("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName, "2"),
+                new KeyValuePair<string, string>("x-ms-meta-user-visible", "yes"),
+            ]));
+        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xdef\"", lastModified: new DateTimeOffset(2026, 8, 1, 12, 31, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(
+            HttpStatusCode.OK,
+            eTag: "\"0xdef\"",
+            lastModified: new DateTimeOffset(2026, 8, 1, 12, 31, 0, TimeSpan.Zero),
+            responseHeaders:
+            [
+                new KeyValuePair<string, string>("x-ms-meta-user-visible", "yes"),
+            ]));
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/source-bucket/source.txt")
+            ]);
+
+        await ObjectHandlers.HandleAsync(context, Route(S3Operation.CopyObject, "dest-bucket", "dest.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(4, handler.Requests.Count);
+        Assert.Contains("?comp=metadata", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.False(handler.Requests[2].Headers.ContainsKey("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+        Assert.True(handler.Requests[2].Headers.TryGetValue("x-ms-meta-user-visible", out var values));
+        Assert.Equal("yes", Assert.Single(values));
+
+        var xml = await TestHttpContext.ReadBodyAsync(context);
+        var doc = XDocument.Parse(xml);
+        Assert.DoesNotContain("-", doc.Root!.Element(S3Ns + "ETag")?.Value ?? string.Empty, StringComparison.Ordinal);
+    }
+
     private static BlobClient NewBlobClient(AzureHttpClient http) =>
         new(http, new BlobCredentials
         {
@@ -77,7 +125,8 @@ public sealed class CopyObjectHandlersTests
         HttpStatusCode statusCode,
         string? eTag = null,
         string? versionId = null,
-        DateTimeOffset? lastModified = null)
+        DateTimeOffset? lastModified = null,
+        IReadOnlyList<KeyValuePair<string, string>>? responseHeaders = null)
     {
         var response = new HttpResponseMessage(statusCode)
         {
@@ -94,6 +143,13 @@ public sealed class CopyObjectHandlersTests
         if (lastModified is not null)
         {
             response.Content.Headers.LastModified = lastModified;
+        }
+        if (responseHeaders is not null)
+        {
+            foreach (var (name, value) in responseHeaders)
+            {
+                response.Headers.TryAddWithoutValidation(name, value);
+            }
         }
         return response;
     }

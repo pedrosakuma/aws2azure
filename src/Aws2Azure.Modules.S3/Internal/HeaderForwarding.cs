@@ -1,7 +1,8 @@
+using System.Text;
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
-using System.Text;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -21,6 +22,9 @@ internal static class HeaderForwarding
     private const string DefaultBucketRegion = "us-east-1";
     private const string DefaultServerSideEncryption = "AES256";
     private const string DefaultObjectContentType = "binary/octet-stream";
+    internal const string InternalMultipartPartCountMetadataName = "aws2azuremultipartparts";
+    private const string AzureMetadataPrefix = "x-ms-meta-";
+    private const string S3MetadataPrefix = "x-amz-meta-";
     // S3 request → Azure PUT/GET/HEAD/DELETE request.
     //
     // If-Match / If-None-Match are NOT in this list — they carry ETags
@@ -152,12 +156,44 @@ internal static class HeaderForwarding
                 continue;
             }
 
-            var azureName = "x-ms-meta-" + kv.Key.AsSpan("x-amz-meta-".Length).ToString();
+            var metadataName = kv.Key.AsSpan("x-amz-meta-".Length);
+            if (IsInternalMetadataName(metadataName))
+            {
+                continue;
+            }
+
+            var azureName = "x-ms-meta-" + metadataName.ToString();
             foreach (var value in kv.Value)
             {
                 if (!string.IsNullOrEmpty(value))
                 {
                     target.Headers.TryAddWithoutValidation(azureName, value);
+                }
+            }
+        }
+    }
+
+    internal static void CopyUserMetadataFromAzureResponse(HttpResponseMessage source, HttpRequestMessage target)
+    {
+        foreach (var header in source.Headers)
+        {
+            if (!header.Key.StartsWith(AzureMetadataPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var metadataName = header.Key.AsSpan(AzureMetadataPrefix.Length);
+            if (IsInternalMetadataName(metadataName))
+            {
+                continue;
+            }
+
+            var targetHeader = AzureMetadataPrefix + metadataName.ToString();
+            foreach (var value in header.Value)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    target.Headers.TryAddWithoutValidation(targetHeader, value);
                 }
             }
         }
@@ -234,9 +270,15 @@ internal static class HeaderForwarding
 
         foreach (var kv in source.Headers)
         {
-            if (kv.Key.StartsWith("x-ms-meta-", StringComparison.OrdinalIgnoreCase))
+            if (kv.Key.StartsWith(AzureMetadataPrefix, StringComparison.OrdinalIgnoreCase))
             {
-                var s3Name = "x-amz-meta-" + kv.Key.AsSpan("x-ms-meta-".Length).ToString();
+                var metadataName = kv.Key.AsSpan(AzureMetadataPrefix.Length);
+                if (IsInternalMetadataName(metadataName))
+                {
+                    continue;
+                }
+
+                var s3Name = S3MetadataPrefix + metadataName.ToString();
                 foreach (var value in kv.Value)
                 {
                     target.Headers.Append(s3Name, value);
@@ -244,7 +286,6 @@ internal static class HeaderForwarding
             }
         }
 
-        string? contentMd5Base64 = null;
         if (source.Content is { } content)
         {
             foreach (var header in StandardResponseHeaders)
@@ -258,13 +299,6 @@ internal static class HeaderForwarding
                     CopyHeaderTo(values, target.Headers, header);
                 }
             }
-            if (content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
-            {
-                foreach (var v in md5)
-                {
-                    if (!string.IsNullOrEmpty(v)) { contentMd5Base64 = v; break; }
-                }
-            }
             // Content-Length lives on HttpContent.Headers only; preserve it so
             // HEAD callers learn the blob size and GET bodies aren't chunked.
             if (content.Headers.ContentLength is { } len)
@@ -273,9 +307,9 @@ internal static class HeaderForwarding
             }
         }
 
-        if (TryGetEtag(source, out var azureEtag))
+        if (TranslateAzureResponseEtagToS3(source) is { } translatedEtag)
         {
-            target.Headers[HeaderNames.ETag] = "\"" + TranslateAzureEtagToS3(azureEtag, contentMd5Base64) + "\"";
+            target.Headers[HeaderNames.ETag] = translatedEtag;
         }
 
         if (source.Headers.TryGetValues("x-ms-request-id", out var azureReqId))
@@ -469,8 +503,13 @@ internal static class HeaderForwarding
     /// Azure surfaces <c>Content-MD5</c>; falls back to a deterministic
     /// MD5 of the ETag bytes so the value is stable across reads.
     /// </summary>
-    internal static string TranslateAzureEtagToS3(string azureEtag, string? contentMd5Base64)
+    internal static string TranslateAzureEtagToS3(string azureEtag, string? contentMd5Base64, int? multipartPartCount = null)
     {
+        if (multipartPartCount is > 0)
+        {
+            return TranslateAzureMultipartEtagToS3(azureEtag, multipartPartCount.Value);
+        }
+
         if (!string.IsNullOrEmpty(contentMd5Base64))
         {
             try
@@ -488,6 +527,54 @@ internal static class HeaderForwarding
         var trimmed = azureEtag.AsSpan().Trim().Trim('"');
         var hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.ASCII.GetBytes(trimmed.ToString()));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    internal static string TranslateAzureMultipartEtagToS3(string azureEtag, int partCount)
+    {
+        var stripped = azureEtag.Trim('"');
+        if (stripped.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            stripped = stripped[2..];
+        }
+
+        if (stripped.Length < 32)
+        {
+            stripped = stripped.PadRight(32, '0');
+        }
+        else if (stripped.Length > 32)
+        {
+            stripped = stripped[..32];
+        }
+
+        return stripped.ToLowerInvariant() + "-" +
+            partCount.ToString(CultureInfo.InvariantCulture);
+    }
+
+    internal static string? TranslateAzureResponseEtagToS3(HttpResponseMessage source)
+    {
+        if (!TryGetEtag(source, out var azureEtag))
+        {
+            return null;
+        }
+
+        string? contentMd5Base64 = null;
+        if (source.Content is { } content
+            && content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
+        {
+            foreach (var value in md5)
+            {
+                if (!string.IsNullOrEmpty(value))
+                {
+                    contentMd5Base64 = value;
+                    break;
+                }
+            }
+        }
+
+        int? multipartPartCount = TryGetMultipartPartCount(source, out var partCount)
+            ? partCount
+            : null;
+        return "\"" + TranslateAzureEtagToS3(azureEtag, contentMd5Base64, multipartPartCount) + "\"";
     }
 
     /// <summary>
@@ -591,4 +678,37 @@ internal static class HeaderForwarding
         || name.Equals(HeaderNames.ContentDisposition, StringComparison.OrdinalIgnoreCase)
         || name.Equals(HeaderNames.ContentMD5, StringComparison.OrdinalIgnoreCase)
         || name.Equals(HeaderNames.CacheControl, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetMultipartPartCount(HttpResponseMessage source, out int partCount)
+    {
+        partCount = 0;
+        return TryGetAzureMetadataValue(source, InternalMultipartPartCountMetadataName, out var value)
+            && int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out partCount)
+            && partCount > 0;
+    }
+
+    internal static bool HasInternalMultipartPartCountMetadata(HttpResponseMessage source)
+        => TryGetAzureMetadataValue(source, InternalMultipartPartCountMetadataName, out _);
+
+    private static bool TryGetAzureMetadataValue(HttpResponseMessage source, string metadataName, out string value)
+    {
+        var headerName = AzureMetadataPrefix + metadataName;
+        if (source.Headers.TryGetValues(headerName, out var values))
+        {
+            foreach (var headerValue in values)
+            {
+                if (!string.IsNullOrEmpty(headerValue))
+                {
+                    value = headerValue;
+                    return true;
+                }
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    internal static bool IsInternalMetadataName(ReadOnlySpan<char> metadataName) =>
+        metadataName.Equals(InternalMultipartPartCountMetadataName, StringComparison.OrdinalIgnoreCase);
 }

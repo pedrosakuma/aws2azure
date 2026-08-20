@@ -336,6 +336,7 @@ internal static class ObjectHandlers
         // them. The follow-up call also rewrites ETag/Last-Modified, so we
         // overwrite our return values with the response from that call to
         // keep the CopyObjectResult coherent with the destination blob.
+        string? etag = null;
         if (replace)
         {
             var (err, propsETag, propsLastModified) =
@@ -358,6 +359,19 @@ internal static class ObjectHandlers
             if (metadataLastModified is not null) lastModified = metadataLastModified.Value;
             if (!string.IsNullOrEmpty(metadataETag)) rawAzureEtag = metadataETag;
         }
+        else
+        {
+            var (metadataError, metadataS3Etag, metadataETag, metadataLastModified) =
+                await StripInternalCopiedMetadataAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
+            if (metadataError is { } metadataMapping)
+            {
+                await S3ErrorMapping.WriteAsync(context, metadataMapping).ConfigureAwait(false);
+                return;
+            }
+            if (!string.IsNullOrEmpty(metadataS3Etag)) etag = metadataS3Etag;
+            if (metadataLastModified is not null) lastModified = metadataLastModified.Value;
+            if (!string.IsNullOrEmpty(metadataETag)) rawAzureEtag = metadataETag;
+        }
 
         // Issue a HEAD against the destination to obtain the authoritative
         // ETag + Content-MD5 pair that future GET/HEAD calls will surface.
@@ -369,10 +383,10 @@ internal static class ObjectHandlers
         // on 412/404/transient failure, fall back to translating the known
         // raw ETag (deterministic synthetic) rather than returning null or
         // a wrong-version ETag.
-        var etag = await GetDestinationS3EtagAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false)
-                   ?? (rawAzureEtag is not null
-                       ? "\"" + HeaderForwarding.TranslateAzureEtagToS3(rawAzureEtag, contentMd5Base64: null) + "\""
-                       : null);
+        etag ??= await GetDestinationS3EtagAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false)
+                 ?? (rawAzureEtag is not null
+                     ? "\"" + HeaderForwarding.TranslateAzureEtagToS3(rawAzureEtag, contentMd5Base64: null) + "\""
+                     : null);
 
         var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
 
@@ -460,6 +474,52 @@ internal static class ObjectHandlers
         return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
     }
 
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? S3Etag, string? ETag, DateTimeOffset? LastModified)>
+        StripInternalCopiedMetadataAsync(
+            BlobClient blob,
+            string destBucket,
+            string destKey,
+            string? ifMatchEtag,
+            CancellationToken ct)
+    {
+        using var head = new HttpRequestMessage(HttpMethod.Head, blob.BuildBlobUri(destBucket, destKey));
+        if (!string.IsNullOrEmpty(ifMatchEtag))
+        {
+            head.Headers.TryAddWithoutValidation("If-Match", ifMatchEtag);
+        }
+
+        using var headResp = await blob.SendBlobRequestAsync(head, ct).ConfigureAwait(false);
+        if (!headResp.IsSuccessStatusCode || !HeaderForwarding.HasInternalMultipartPartCountMetadata(headResp))
+        {
+            return (null, headResp.IsSuccessStatusCode ? HeaderForwarding.TranslateAzureResponseEtagToS3(headResp) : null, null, headResp.Content.Headers.LastModified);
+        }
+
+        var currentEtag = headResp.Headers.ETag?.Tag ?? ifMatchEtag;
+        var uri = new Uri(blob.BuildBlobUri(destBucket, destKey).AbsoluteUri + "?comp=metadata");
+        using var req = new HttpRequestMessage(HttpMethod.Put, uri);
+        req.Content = new ByteArrayContent(Array.Empty<byte>());
+        req.Content.Headers.ContentLength = 0;
+        if (!string.IsNullOrEmpty(currentEtag))
+        {
+            req.Headers.TryAddWithoutValidation("If-Match", currentEtag);
+        }
+
+        HeaderForwarding.CopyUserMetadataFromAzureResponse(headResp, req);
+
+        using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            if (resp.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
+            {
+                return (null, null, null, null);
+            }
+
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null, null);
+        }
+
+        return (null, null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+    }
+
     /// <summary>
     /// HEADs the destination blob — optionally guarded by <c>If-Match</c>
     /// against the raw Azure ETag we just wrote — to obtain the
@@ -482,29 +542,7 @@ internal static class ObjectHandlers
         {
             return null;
         }
-        return TranslateResponseEtagForS3(resp);
-    }
-
-    /// <summary>
-    /// Returns a quoted, S3-shaped ETag for an Azure response — pairs the
-    /// raw Azure ETag with any Content-MD5 hint and delegates to
-    /// <see cref="HeaderForwarding.TranslateAzureEtagToS3"/>. Returns
-    /// <c>null</c> when the response has no ETag at all (caller decides
-    /// whether to fall back to a different value).
-    /// </summary>
-    private static string? TranslateResponseEtagForS3(HttpResponseMessage resp)
-    {
-        var raw = resp.Headers.ETag?.Tag;
-        if (string.IsNullOrEmpty(raw))
-        {
-            return null;
-        }
-        string? md5Base64 = null;
-        if (resp.Content?.Headers.ContentMD5 is { Length: 16 } md5Bytes)
-        {
-            md5Base64 = Convert.ToBase64String(md5Bytes);
-        }
-        return "\"" + HeaderForwarding.TranslateAzureEtagToS3(raw, md5Base64) + "\"";
+        return HeaderForwarding.TranslateAzureResponseEtagToS3(resp);
     }
 
     private static bool ForwardBlobProperty(HttpRequest source, HttpRequestMessage target, string s3Header, string azureHeader)
@@ -858,7 +896,13 @@ internal static class ObjectHandlers
                 continue;
             }
 
-            request.Headers.TryAddWithoutValidation("x-ms-meta-" + field.Key["x-amz-meta-".Length..], field.Value);
+            var metadataName = field.Key.AsSpan("x-amz-meta-".Length);
+            if (HeaderForwarding.IsInternalMetadataName(metadataName))
+            {
+                continue;
+            }
+
+            request.Headers.TryAddWithoutValidation("x-ms-meta-" + metadataName.ToString(), field.Value);
         }
 
         return true;
@@ -1026,7 +1070,7 @@ internal static class ObjectHandlers
             return (S3ErrorMapping.FromAzure(head, operation), null, null);
         }
 
-        var sourceEtag = TranslateResponseEtagForS3(head);
+        var sourceEtag = HeaderForwarding.TranslateAzureResponseEtagToS3(head);
         if (string.IsNullOrEmpty(sourceEtag))
         {
             return (new S3ErrorMapping.Mapping(StatusCodes.Status500InternalServerError,

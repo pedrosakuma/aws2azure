@@ -296,6 +296,43 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
+    public async Task PresignedPost_ignores_reserved_internal_multipart_metadata_name()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xPOST\""));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+
+        var (bodyBytes, contentType) = BuildPresignedPostRequest(
+            "bucket",
+            "upload.txt",
+            "hello post"u8.ToArray(),
+            additionalFields: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName] = "9",
+                ["x-amz-meta-color"] = "blue"
+            });
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Post,
+            path: "/bucket",
+            contentType: contentType);
+        context.Request.Body = new MemoryStream(bodyBytes);
+        context.Request.ContentLength = bodyBytes.Length;
+
+        await ObjectHandlers.HandlePostObjectAsync(
+            context,
+            new S3RouteResult(S3Operation.PostObject, "bucket", null, VirtualHosted: false),
+            http,
+            Resolver(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        var request = Assert.Single(handler.Requests);
+        Assert.False(request.Headers.ContainsKey("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+        Assert.Equal("blue", Assert.Single(request.Headers["x-ms-meta-color"]));
+    }
+
+    [Fact]
     public async Task PresignedPost_with_bad_signature_is_rejected_without_backend_call()
     {
         var handler = new ScriptedHandler();
