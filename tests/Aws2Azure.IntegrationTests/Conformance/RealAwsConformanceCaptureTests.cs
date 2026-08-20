@@ -462,7 +462,28 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
 
                     var headers = CollectHeaders(response);
                     var canonical = AwsErrorCanonicalizer.Canonicalize(actualStatus, headers, body);
-                    AssertStepMatchesExpected(testCase, step.Name, expectedStep, response, body, canonical);
+                    try
+                    {
+                        AssertStepMatchesExpected(testCase, step.Name, expectedStep, response, body, canonical);
+                    }
+                    catch (XunitException) when (service == "dynamodb" && attempt < maxAttempts)
+                    {
+                        // TransactWriteItems/TransactGetItems can both return
+                        // 200 while the read side still observes a stale,
+                        // pre-write snapshot in the seconds after a case's
+                        // own CreateTable (see transact-get-write-items-
+                        // roundtrip's "Responses.0.Item" assertion, which can
+                        // still fail here even after the explicit
+                        // wait-for-ACTIVE below - ACTIVE table status does
+                        // not guarantee the specific write is yet visible to
+                        // an immediately-following transactional read). Retry
+                        // the step itself (not just the status-code checks
+                        // above), since the request must be re-signed fresh
+                        // each attempt.
+                        await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                        continue;
+                    }
+
                     store.SaveStep(
                         testCase.Name,
                         step.Name,
