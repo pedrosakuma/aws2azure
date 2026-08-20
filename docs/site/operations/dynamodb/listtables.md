@@ -5,7 +5,7 @@
 - **Capability ID:** `operation:dynamodb:listtables`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls`
-- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/00000000000) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/00000000000)
+- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854)
 
 ## Sub-features
 

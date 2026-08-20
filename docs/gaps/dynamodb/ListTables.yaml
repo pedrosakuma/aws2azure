@@ -4,8 +4,8 @@ azure_equivalent: Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls
 status: implemented
 verified_real_azure:
   date: '2026-08-20'
-  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/00000000000
-  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/00000000000
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854
 sub_features:
 - name: Limit (1..100)
   status: implemented
