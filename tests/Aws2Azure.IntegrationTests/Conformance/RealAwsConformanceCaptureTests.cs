@@ -38,6 +38,12 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["bucketName"] = fixture.CreateEphemeralName("s3bucket"),
+                    // list-buckets-roundtrip creates two of its own buckets
+                    // (prefix + "-a"/"-b") rather than reusing bucketName
+                    // above, so it needs its own ephemeral, IAM-scoped prefix
+                    // (the real-AWS least-privilege policy only allows
+                    // s3:CreateBucket on arn:aws:s3:::aws2azure-it-*).
+                    ["bucketPrefix"] = fixture.CreateEphemeralName("s3listbuckets"),
                 })).ConfigureAwait(false);
     }
 
@@ -114,6 +120,15 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["tableName"] = tableName,
+                        // The cases below each create and delete their own
+                        // table rather than reusing tableName above, so each
+                        // needs its own ephemeral, IAM-scoped name (the
+                        // real-AWS least-privilege policy only allows
+                        // dynamodb:CreateTable on arn:...:table/aws2azure-it-*).
+                        ["createTableName"] = fixture.CreateEphemeralName("dynamodbcreate"),
+                        ["transactTableName"] = fixture.CreateEphemeralName("dynamodbtransact"),
+                        ["tagTableName"] = fixture.CreateEphemeralName("dynamodbtag"),
+                        ["ttlTableName"] = fixture.CreateEphemeralName("dynamodbttl"),
                     })).ConfigureAwait(false);
         }
         finally
@@ -213,6 +228,18 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     ["queueName1"] = fixture.CreateEphemeralName("sqsqueue1"),
                     ["queueName2"] = fixture.CreateEphemeralName("sqsqueue2"),
                     ["queueName3"] = fixture.CreateEphemeralName("sqsqueue3"),
+                    // Each of the cases below creates and deletes its own
+                    // queue rather than reusing queueName above, so each
+                    // needs its own ephemeral, IAM-scoped name (the real-AWS
+                    // least-privilege policy only allows sqs:CreateQueue on
+                    // arn:...:aws2azure-it-*).
+                    ["queueTaggingQueueName"] = fixture.CreateEphemeralName("sqsqueuetag"),
+                    ["queueAttributesQueueName"] = fixture.CreateEphemeralName("sqsqueueattr"),
+                    ["changeVisibilityQueueName"] = fixture.CreateEphemeralName("sqsqueuevis"),
+                    ["changeVisibilityBatchQueueName"] = fixture.CreateEphemeralName("sqsqueuevisb"),
+                    ["purgeQueueName"] = fixture.CreateEphemeralName("sqsqueuepurge"),
+                    ["dlqQueueName"] = fixture.CreateEphemeralName("sqsqueuedlq"),
+                    ["dlqSourceQueueName"] = fixture.CreateEphemeralName("sqsqueuedlqsrc"),
                 })).ConfigureAwait(false);
     }
 
