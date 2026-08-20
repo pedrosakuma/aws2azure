@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:0bee098578105ee26cacc240cf75a6ec7550edc19500558b90467f7aea1de602",
+  "manifest_revision": "sha256:67e022fe9035a5834af04a841fa9aea4d0dbd1c8119850bc4251502c8e8cb782",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:f680d9fabd84e021f6094b8882aa9c42a7118f374820628c57330929336b8c19",
+    "canonical_inputs_revision": "sha256:a795daab71cdc1c877d49dfa5a064957144e7701a57e6a1d89a6491317abba23",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
@@ -1198,7 +1198,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:6786eb8b3bba93b64d6c40852b3e388705c6ff80901bda98cc05b695e8587aff",
+      "revision": "sha256:d797568127807010d33c05c2d1c07d6f74671967f1df5a0efcfd116956da885c",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5353,7 +5353,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "ChangeMessageVisibilityBatch",
-      "revision": "sha256:2e16f8386546ba6005d917d1cb538f18bb25d8246a3389c239b4534fd26fde5f",
+      "revision": "sha256:fdc114d85d92b3a84a7fa2be1b77eeefbb5b32d4600628d276d2e4d371878510",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5368,7 +5368,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "ChangeMessageVisibilityBatch",
-      "revision": "sha256:1ab65e324441ae64e9cfa96868b5e50a3bbfe7fb00161ba3b10806b5dc737182",
+      "revision": "sha256:2b716c3ef3ddba73cd32aa3f531659654e28f56597fd4b9e011a408db213e4dd",
       "freshness": {
         "mode": "current"
       }
@@ -5667,7 +5667,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "PurgeQueue",
-      "revision": "sha256:a88314eceabd297a7c91cf149ca749945998910c6cdfdd512e64269d02656d2c",
+      "revision": "sha256:dbe90159bfc5e27751608ec3b94b27bbdc6c4d4aa4aa743f947f27aab90b97a5",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5682,7 +5682,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "PurgeQueue",
-      "revision": "sha256:700256b547fcfe0cdf3b385968f01089c6e72e96e80966a4a1a028ac7fd663c3",
+      "revision": "sha256:6b86add0db2e046d131e9bd27fbf4c4d5b168c1de9b548a7ca7265082f70a633",
       "freshness": {
         "mode": "current"
       }
@@ -6644,7 +6644,7 @@
       "scope": "all-services",
       "authority": "normative-input",
       "provenance": "source",
-      "revision": "sha256:22b507c002938c34a5d2a92f05217290baad5d963735615ae4eb2e5ad047acba",
+      "revision": "sha256:704eb8384c257b8f2f1ce4b8069aee0aee91c8c51b4f60a054ead48626ff9f57",
       "freshness": {
         "mode": "current"
       }
@@ -6791,7 +6791,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:42a3f4bb298bff02982d0259a3d2a29fe5d6c73675f98fbf461d044952054b28",
+      "revision": "sha256:b9bb8dc4f778eb35313baf0599085a0a456d255b029fb9b510b1dde9b0f4e1d8",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6805,7 +6805,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:a5a8794ef60693be3e28c483ef87603e2570e39eebfd0d889cda7b8915260a58",
+      "revision": "sha256:92564be45af24625afe13c58d48a6dae53232bb83c98b09f9b8cc4031f289806",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6819,7 +6819,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:f7c4336d33468f0c3a688b8859052a3dd5d5218f914dd958398d70cca763d313",
+      "revision": "sha256:47b4ae7164a3cc0ce093e155036097dac76fb6f8f7997d536e6992f99d3d3715",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"

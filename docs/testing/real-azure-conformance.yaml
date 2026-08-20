@@ -611,6 +611,24 @@ services:
         operations: [SendMessageBatch, DeleteMessageBatch]
         tests:
           - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Message_batches_report_real_service_bus_results
+      - id: purge-queue-lifecycle
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: PurgeQueue drains a real Service Bus queue so an immediate follow-up receive returns no messages.
+        operations: [PurgeQueue]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.PurgeQueue_empties_a_real_service_bus_queue
+      - id: batch-visibility-timeout
+        priority: p1
+        category: batch
+        evidence_source: real_azure
+        establishes_verification: true
+        description: ChangeMessageVisibilityBatch on the dedicated REST lane preserves per-entry success and failure while zero-timeout entries immediately redeliver and renewed entries stay hidden past the original lock expiry.
+        operations: [ChangeMessageVisibilityBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.ChangeMessageVisibilityBatch_mixes_zero_timeout_lock_renewal_and_invalid_handles_against_real_service_bus
       - id: queue-metadata-and-tags
         priority: p1
         category: core
