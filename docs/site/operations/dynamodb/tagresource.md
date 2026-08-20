@@ -5,6 +5,7 @@
 - **Capability ID:** `operation:dynamodb:tagresource`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB account/resource tags (control plane)`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31448839859) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31448839859)
 
 ## Sub-features
 

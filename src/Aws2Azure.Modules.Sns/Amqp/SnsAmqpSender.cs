@@ -46,6 +46,20 @@ internal enum SnsAmqpFailureKind
     ClientFatal,
     ServerFatal,
     Redirect,
+    // Azure Service Bus Topics' CBS put-token for a sender link against a
+    // nonexistent topic fails claim validation before granting access,
+    // surfacing as a CbsAuthenticationException with HTTP status 404 and a
+    // "messaging entity ... could not be found" description — confirmed
+    // against a real Service Bus namespace (see
+    // SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error
+    // and the ad-hoc CBS put-token capture that grounded this fix). This
+    // deployment always authenticates the AMQP sender with a
+    // namespace-scoped, full-rights credential (the RootManageSharedAccessKey
+    // connection string or an equivalent namespace-level AAD role), so only
+    // a missing entity — never a genuine claims shortfall — can produce a
+    // 404 at this stage. Any other CBS put-token status code (401/403/etc.)
+    // still surfaces as a genuine Auth/Forbidden failure.
+    EntityUnavailable,
 }
 
 internal sealed class SnsAmqpException : Exception
@@ -306,6 +320,11 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 "InvalidParameter",
                 "Azure Service Bus Topics rejected the publish request as invalid.",
                 SenderFault: true),
+            SnsAmqpFailureKind.EntityUnavailable => new SnsBatchSendOutcome(
+                false,
+                "NotFound",
+                "Topic does not exist.",
+                SenderFault: true),
             _ => new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false),
         };
 
@@ -320,7 +339,7 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 wrapped = new SnsAmqpException(
                     "Service Bus Topics AMQP authorization failed.",
                     cbsAuthentication,
-                    SnsAmqpFailureKind.Auth,
+                    MapCbsStatus(cbsAuthentication.StatusCode),
                     description: cbsAuthentication.StatusDescription);
                 return true;
             case EntraIdTokenException tokenException:
@@ -380,6 +399,30 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         _ => SnsAmqpFailureKind.Unknown,
     };
 
+    // Same mapping as MapKind, but for link/transfer-level rejections
+    // (sender link attach or message transfer, both already past CBS token
+    // acquisition). Azure Service Bus Topics answers these at the entity
+    // level with ordinary AMQP error conditions, so no reclassification is
+    // needed here — see MapCbsStatus for the actual not-found signal.
+    private static SnsAmqpFailureKind MapSendFailure(ServiceBusSendException exception)
+    {
+        var classified = MapKind(AmqpErrorClassifier.Classify(exception.ErrorCondition));
+        return classified == SnsAmqpFailureKind.Unknown
+            ? MapOutcome(exception.Outcome)
+            : classified;
+    }
+
+    // Azure Service Bus Topics' CBS put-token fails claim validation for a
+    // sender link against a nonexistent topic before the link ever attaches,
+    // surfacing as HTTP 404 (not 401/403) on the put-token response — see
+    // the SnsAmqpFailureKind.EntityUnavailable doc comment for the real-Azure
+    // evidence and the full-rights-credential assumption that makes this
+    // safe. Any other CBS status is a genuine authorization failure.
+    private static SnsAmqpFailureKind MapCbsStatus(int statusCode)
+        => statusCode == (int)HttpStatusCode.NotFound
+            ? SnsAmqpFailureKind.EntityUnavailable
+            : SnsAmqpFailureKind.Auth;
+
     private static SnsAmqpFailureKind MapTokenStatus(HttpStatusCode backendStatus) => backendStatus switch
     {
         HttpStatusCode.TooManyRequests => SnsAmqpFailureKind.Throttled,
@@ -393,14 +436,6 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         AmqpDispositionOutcome.Modified => SnsAmqpFailureKind.Throttled,
         _ => SnsAmqpFailureKind.Unknown,
     };
-
-    private static SnsAmqpFailureKind MapSendFailure(ServiceBusSendException exception)
-    {
-        var classified = MapKind(AmqpErrorClassifier.Classify(exception.ErrorCondition));
-        return classified == SnsAmqpFailureKind.Unknown
-            ? MapOutcome(exception.Outcome)
-            : classified;
-    }
 
     private static IAmqpTokenProvider CreateTokenProvider(EntraIdTokenProvider tokenProvider, ServiceBusTopicsCredentials credentials)
     {

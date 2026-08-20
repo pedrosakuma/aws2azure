@@ -12,6 +12,16 @@ internal static class SqsQueueMetadataCache
 {
     private const int MaxEntries = 1024;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(1);
+    // Azure Service Bus's management-plane GetQueue can briefly answer a
+    // recently-deleted queue with a 2xx response whose body isn't a
+    // well-formed Atom <entry> (the delete itself already completed, but the
+    // management-plane read view hasn't settled into a clean 404 yet). This
+    // mirrors the eventual-consistency window already handled for ListQueues
+    // in SqsRealAzureLoadQualificationTests — poll for a short bounded window
+    // before concluding the queue is gone, confirmed against real Azure by
+    // SqsRealAzureConformanceTests.SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error.
+    private static readonly TimeSpan ParseRetryWindow = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ParseRetryPollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly ConcurrentDictionary<string, CacheEntry> Entries =
         new(StringComparer.Ordinal);
 
@@ -30,32 +40,40 @@ internal static class SqsQueueMetadataCache
             return new LookupResult(true, cached, null);
         }
 
-        using var response = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        var deadline = DateTimeOffset.UtcNow + ParseRetryWindow;
+        while (true)
         {
-            return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(), SqsErrorMapping.QueueDoesNotExist());
-        }
-        if (!response.IsSuccessStatusCode)
-        {
-            return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(), SqsErrorMapping.FromServiceBus(response));
-        }
+            using var response = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(), SqsErrorMapping.QueueDoesNotExist());
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(), SqsErrorMapping.FromServiceBus(response));
+            }
 
-        var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(xml))
-        {
-            return new LookupResult(true, new SqsQueueTagStore.QueueMetadata(), null);
-        }
+            var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                return new LookupResult(true, new SqsQueueTagStore.QueueMetadata(), null);
+            }
 
-        var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
-        if (entry is null)
-        {
-            return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(),
-                SqsErrorMapping.InternalError("aws2azure: failed to parse Service Bus queue description."));
-        }
+            var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+            if (entry is not null)
+            {
+                var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
+                Set(sb.Namespace, queueName, metadata);
+                return new LookupResult(true, SqsQueueTagStore.CloneMetadata(metadata), null);
+            }
 
-        var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
-        Set(sb.Namespace, queueName, metadata);
-        return new LookupResult(true, SqsQueueTagStore.CloneMetadata(metadata), null);
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                return new LookupResult(false, new SqsQueueTagStore.QueueMetadata(), SqsErrorMapping.QueueDoesNotExist());
+            }
+
+            await Task.Delay(ParseRetryPollInterval, ct).ConfigureAwait(false);
+        }
     }
 
     internal static void Set(ServiceBusClient sb, string queueName, QueueDescriptionProperties props)

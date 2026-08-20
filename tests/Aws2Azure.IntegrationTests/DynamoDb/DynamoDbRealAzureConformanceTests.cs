@@ -1,3 +1,4 @@
+using System.Net;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
 using Xunit;
@@ -179,6 +180,143 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
                 try { await client.DeleteTableAsync(table).ConfigureAwait(false); } catch { }
             }
         }
+    }
+
+    [SkippableFact]
+    public async Task PutItem_condition_expression_failure_leaves_existing_item_unmodified()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var table = "tputcond" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var tableCreated = false;
+
+        try
+        {
+            await CreateTableAsync(client, table, timeout.Token).ConfigureAwait(false);
+            tableCreated = true;
+            await WaitForTableActiveAsync(client, table, timeout.Token).ConfigureAwait(false);
+            await client.PutItemAsync(new PutItemRequest
+            {
+                TableName = table,
+                Item = new Dictionary<string, AttributeValue>
+                {
+                    ["pk"] = new() { S = "seeded" },
+                    ["payload"] = new() { S = "original" },
+                },
+            }, timeout.Token).ConfigureAwait(false);
+
+            var exception = await Assert.ThrowsAsync<ConditionalCheckFailedException>(() =>
+                client.PutItemAsync(new PutItemRequest
+                {
+                    TableName = table,
+                    Item = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new() { S = "seeded" },
+                        ["payload"] = new() { S = "overwritten" },
+                    },
+                    ConditionExpression = "attribute_not_exists(pk)",
+                }, timeout.Token));
+            Assert.Equal("ConditionalCheckFailedException", exception.ErrorCode);
+            Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+
+            var item = await client.GetItemAsync(new GetItemRequest
+            {
+                TableName = table,
+                ConsistentRead = true,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new() { S = "seeded" } },
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal("original", item.Item["payload"].S);
+        }
+        finally
+        {
+            if (tableCreated)
+            {
+                try { await client.DeleteTableAsync(table).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var missingTable = "tmissing" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var getFailure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.GetItemAsync(new GetItemRequest
+            {
+                TableName = missingTable,
+                Key = new Dictionary<string, AttributeValue> { ["pk"] = new() { S = "any" } },
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal("ResourceNotFoundException", getFailure.ErrorCode);
+        Assert.Equal(HttpStatusCode.BadRequest, getFailure.StatusCode);
+
+        var queryFailure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.QueryAsync(new QueryRequest
+            {
+                TableName = missingTable,
+                KeyConditionExpression = "pk = :pk",
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":pk"] = new() { S = "any" },
+                },
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal("ResourceNotFoundException", queryFailure.ErrorCode);
+        Assert.Equal(HttpStatusCode.BadRequest, queryFailure.StatusCode);
+    }
+
+    [SkippableFact]
+    public async Task CreateTable_with_existing_name_returns_native_resource_in_use_error()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var table = "tinuse" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var tableCreated = false;
+
+        try
+        {
+            await CreateTableAsync(client, table, timeout.Token).ConfigureAwait(false);
+            tableCreated = true;
+            await WaitForTableActiveAsync(client, table, timeout.Token).ConfigureAwait(false);
+
+            var failure = await Assert.ThrowsAsync<ResourceInUseException>(() =>
+                CreateTableAsync(client, table, timeout.Token)).ConfigureAwait(false);
+            Assert.Equal("ResourceInUseException", failure.ErrorCode);
+            Assert.Equal(HttpStatusCode.BadRequest, failure.StatusCode);
+        }
+        finally
+        {
+            if (tableCreated)
+            {
+                try { await client.DeleteTableAsync(table).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task DeleteTable_against_nonexistent_table_returns_native_resource_not_found_error()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        var missingTable = "tnodelete" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var failure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.DeleteTableAsync(missingTable, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal("ResourceNotFoundException", failure.ErrorCode);
+        Assert.Equal(HttpStatusCode.BadRequest, failure.StatusCode);
     }
 
     private static Task<CreateTableResponse> CreateTableAsync(

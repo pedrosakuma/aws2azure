@@ -134,6 +134,41 @@ silently suppress the same divergence elsewhere — scope it with the case name:
 
 Any divergence **not** covered by a documented tag fails the Tier-1 run.
 
+## Keeping matrix/test files small
+
+Conformance case catalogs (`*HappyPathMatrix.cs`, `*ErrorMatrix.cs`) and their
+real-Azure test counterparts (`tests/Aws2Azure.IntegrationTests/**/*RealAzure*.cs`)
+grow one case/scenario at a time and are edited far more often than they are
+read end-to-end, so a single file accumulating every case for a service
+becomes hard to review and merge without conflicts. Treat **~500 lines** as a
+soft target per file; when a file materially exceeds that (roughly 700+
+lines), split it into `partial class` files grouped by feature area (e.g.
+`S3HappyPathMatrix.Core.cs`, `S3HappyPathMatrix.Tagging.cs`,
+`S3HappyPathMatrix.Multipart.cs`) rather than one case per file. Conventions
+for splitting:
+
+- Keep the original file name as the "primary" part — it should retain the
+  class-level doc comment, attributes (`[Trait]`, `[Collection]`, which can
+  only appear on one partial declaration), and (for load/qualification tests
+  built around a single large test method) the test method itself.
+- Group the remaining private helper methods by role (e.g. `.Evidence.cs` for
+  evidence publishing, `.Verification.cs` for scenario-verification steps,
+  `.Helpers.cs` for shared low-level utilities) or by feature area (e.g.
+  `.Lsi.cs` alongside a GSI-focused primary file).
+- Every part must repeat the `using` directives and `namespace` declaration it
+  needs; only one part may declare the primary constructor parameter list
+  (other parts see the same parameters as if they were fields) and only one
+  part may carry class-level attributes.
+- Splitting must not change any test/case identity: `[SkippableFact]` method
+  names, `IConformanceCase.Name` values, and `Cases` list ordering stay the
+  same, so existing goldens, evidence files, and the real-Azure conformance
+  manifest (`docs/testing/real-azure-conformance.yaml`) keep resolving
+  correctly. Verify with a targeted `dotnet test --filter` run showing the
+  same pass/skip counts before and after.
+- If a project references the split file directly via an MSBuild `<Compile
+  Include="...">` link (rather than the default glob), add a matching
+  `<Compile Include>` entry for each new part.
+
 ## Running
 
 ```bash

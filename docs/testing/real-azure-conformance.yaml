@@ -56,6 +56,51 @@ services:
         operations: [DeleteObjects]
         tests:
           - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.DeleteObjects_reports_real_blob_batch_results
+      - id: copy-object-missing-source
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: CopyObject against a nonexistent source key returns the native NoSuchKey error against real Blob Storage without creating a destination object.
+        operations: [CopyObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.CopyObject_from_nonexistent_source_key_returns_native_no_such_key_error
+      - id: get-object-missing-bucket
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetObject against a nonexistent bucket returns the native NoSuchBucket error against real Blob Storage.
+        operations: [GetObject]
+        tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureConformanceTests.GetObject_from_nonexistent_bucket_returns_native_no_such_bucket_error
+      - id: object-metadata-and-listing
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: HeadBucket, ListBuckets, ListObjects (v1 pagination), presigned GET/PUT, and CopyObject round-trip against real Blob Storage via the shared happy-path matrix.
+        operations: [HeadBucket, ListBuckets, ListObjects, PresignedUrl, CopyObject]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
+      - id: object-tagging-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Object and bucket tagging put/get/delete round-trip against real Blob Storage index tags/metadata via the shared happy-path matrix.
+        operations: [PutObjectTagging, GetObjectTagging, DeleteObjectTagging, DeleteBucketTagging]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
+      - id: multipart-upload-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Create/UploadPart/UploadPartCopy/ListParts/Complete and Abort multipart upload round-trip against real Blob Storage Put Block / Put Block List via the shared happy-path matrix.
+        operations: [CreateMultipartUpload, UploadPart, UploadPartCopy, ListParts, CompleteMultipartUpload, AbortMultipartUpload]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
       - id: write-throttled
         priority: p1
         category: throttling
@@ -132,6 +177,26 @@ services:
         operations: [CreateTable, DescribeTable, PutItem, GetItem, DeleteItem, DeleteTable]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureSmokeTests.Item_lifecycle_round_trips_against_real_cosmos_db
+      - id: tag-lifecycle
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: TagResource/ListTagsOfResource/UntagResource round-trip against a real Cosmos DB-backed table via the shared happy-path matrix (CreateTagListUntagResourceCase).
+        operations: [TagResource, UntagResource, ListTagsOfResource]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
+      - id: list-tables-pagination
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: ListTables Limit/ExclusiveStartTableName/LastEvaluatedTableName cursor pagination across two seeded tables via the shared happy-path matrix (CreateListTablesPaginationCase).
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
       - id: query-pagination
         priority: p0
         category: pagination
@@ -456,6 +521,46 @@ services:
         operations: [UpdateItem]
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.Concurrent_conditional_updates_admit_one_winner
+      - id: conditional-write-check-failure
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: PutItem with a failing ConditionExpression (attribute_not_exists on an existing key) returns a native ConditionalCheckFailedException (HTTP 400) from real Cosmos DB and leaves the existing item unmodified.
+        operations: [PutItem]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.PutItem_condition_expression_failure_leaves_existing_item_unmodified
+      - id: table-not-found
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: GetItem and Query against a nonexistent table return the native ResourceNotFoundException (HTTP 400) from real Cosmos DB.
+        operations: [GetItem, Query]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error
+      - id: table-create-conflict
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: CreateTable against an already-existing table name returns the native ResourceInUseException (HTTP 400) from real Cosmos DB.
+        operations: [CreateTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.CreateTable_with_existing_name_returns_native_resource_in_use_error
+      - id: table-delete-not-found
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: DeleteTable against a nonexistent table returns the native ResourceNotFoundException (HTTP 400) from real Cosmos DB.
+        operations: [DeleteTable]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.DeleteTable_against_nonexistent_table_returns_native_resource_not_found_error
       - id: retry-exhaustion
         priority: p1
         category: retry_exhaustion
@@ -515,6 +620,15 @@ services:
         operations: [CreateQueue, GetQueueAttributes, SetQueueAttributes, TagQueue, ListQueueTags, UntagQueue]
         tests:
           - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.Queue_metadata_and_tags_round_trip_against_real_service_bus
+      - id: send-to-deleted-queue
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: SendMessage against a queue deleted moments earlier returns the native NonExistentQueue error against real Service Bus.
+        operations: [SendMessage]
+        tests:
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error
       - id: send-throttled
         priority: p1
         category: throttling
@@ -610,6 +724,15 @@ services:
         operations: [GetShardIterator, GetRecords]
         tests:
           - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetRecords_reads_from_real_event_hubs
+      - id: shard-iterator-missing-stream
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetShardIterator against a nonexistent stream returns the native ResourceNotFoundException against real Event Hubs management.
+        operations: [GetShardIterator]
+        tests:
+          - Aws2Azure.IntegrationTests.Kinesis.KinesisRealAzureConformanceTests.GetShardIterator_against_nonexistent_stream_returns_native_resource_not_found_error
       - id: stream-topology
         priority: p0
         category: core
@@ -722,6 +845,15 @@ services:
         operations: [CreateTopic, Subscribe, Publish, ListSubscriptionsByTopic, Unsubscribe, DeleteTopic]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_subscription_lifecycle_round_trips_against_real_service_bus
+      - id: publish-missing-topic
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Publish against a topic ARN with no corresponding Service Bus topic returns the native NotFound error.
+        operations: [Publish]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error
       - id: subscription-metadata-restart
         priority: p0
         category: core
@@ -842,6 +974,15 @@ services:
         operations: [PutSecretValue, GetSecretValue]
         tests:
           - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureSmokeTests.PutSecretValue_versioning_and_idempotency_against_real_key_vault
+      - id: secret-value-missing-secret
+        priority: p1
+        category: read
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetSecretValue for a nonexistent secret returns the native ResourceNotFoundException against real Key Vault.
+        operations: [GetSecretValue]
+        tests:
+          - Aws2Azure.IntegrationTests.SecretsManager.SecretsManagerRealAzureConformanceTests.GetSecretValue_for_nonexistent_secret_returns_native_resource_not_found_error
       - id: secret-list-pagination
         priority: p1
         category: pagination

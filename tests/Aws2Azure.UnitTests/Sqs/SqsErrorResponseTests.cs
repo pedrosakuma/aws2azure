@@ -68,4 +68,39 @@ public class SqsErrorResponseTests
         Assert.Equal("com.amazonaws.sqs#MissingAction", root.GetProperty("__type").GetString());
         Assert.Equal("msg", root.GetProperty("message").GetString());
     }
+
+    [Theory]
+    [InlineData("AWS.SimpleQueueService.NonExistentQueue", "QueueDoesNotExist")]
+    [InlineData("QueueAlreadyExists", "QueueNameExists")]
+    [InlineData("AWS.SimpleQueueService.BatchEntryIdsNotDistinct", "BatchEntryIdsNotDistinct")]
+    [InlineData("AWS.SimpleQueueService.EmptyBatchRequest", "EmptyBatchRequest")]
+    public async Task WriteAsync_awsjson_translates_legacy_query_codes_to_json_shape_names(
+        string legacyCode, string expectedJsonShapeName)
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Response.Body = new MemoryStream();
+
+        await SqsErrorResponse.WriteAsync(ctx, SqsWireProtocol.AwsJson, 400, legacyCode, "msg");
+
+        ctx.Response.Body.Position = 0;
+        var body = await new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEndAsync();
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal(
+            "com.amazonaws.sqs#" + expectedJsonShapeName,
+            document.RootElement.GetProperty("__type").GetString());
+    }
+
+    [Fact]
+    public async Task WriteAsync_query_still_uses_legacy_code_verbatim_for_translated_entries()
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Response.Body = new MemoryStream();
+
+        await SqsErrorResponse.WriteAsync(
+            ctx, SqsWireProtocol.Query, 400, "AWS.SimpleQueueService.NonExistentQueue", "msg");
+
+        ctx.Response.Body.Position = 0;
+        var xml = await new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEndAsync();
+        Assert.Contains("AWS.SimpleQueueService.NonExistentQueue", xml);
+    }
 }

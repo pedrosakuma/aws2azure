@@ -41,6 +41,7 @@ public static class DynamoDbHappyPathMatrix
         CreateUpdateItemCase(),
         CreateTagListUntagResourceCase(),
         CreateDescribeUpdateTimeToLiveCase(),
+        CreateListTablesPaginationCase(),
     ];
 
     private static PlannedConformanceCase CreateRoundTripCase()
@@ -416,6 +417,48 @@ public static class DynamoDbHappyPathMatrix
                         $@"{{""TableName"":""{table}""}}")),
                     new ConformanceRequestStep("delete-table", _ => BuildRequest(context, "DeleteTable",
                         $@"{{""TableName"":""{table}""}}")),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateListTablesPaginationCase()
+        => new(
+            "list-tables-pagination",
+            "dynamodb:CreateTable/ListTables/DeleteTable",
+            ConformanceCaseExpectation.Success(
+            [
+                new(200, RequiredBodyAssertions: [new("TableDescription.TableStatus", "ACTIVE immediately; the proxy's CreateTable is synchronous.")]),
+                new(200, RequiredBodyAssertions: [new("TableDescription.TableStatus", "ACTIVE immediately; the proxy's CreateTable is synchronous.")]),
+                new(200, RequiredBodyAssertions: [new("LastEvaluatedTableName", "Present when Limit=1 truncates the first page.")]),
+                new(200, RequiredBodyAssertions: [new("TableNames", "Contains the remaining seeded table name on the follow-up page.")]),
+                new(200),
+                new(200),
+            ],
+            semanticAssertion:
+            "The union of both ListTables pages must contain each seeded table exactly once, matching the ExclusiveStartTableName/LastEvaluatedTableName cursor contract."),
+            static (context, _) =>
+            {
+                var prefix = context.GetProperty("listTablesPrefix")
+                    ?? ("conf-happy-listtables-" + Guid.NewGuid().ToString("N")[..12]);
+                var tableA = prefix + "-a";
+                var tableB = prefix + "-b";
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("create-table-a", _ => BuildRequest(context, "CreateTable",
+                        $@"{{""TableName"":""{tableA}"",""AttributeDefinitions"":[{{""AttributeName"":""pk"",""AttributeType"":""S""}}],""KeySchema"":[{{""AttributeName"":""pk"",""KeyType"":""HASH""}}],""BillingMode"":""PAY_PER_REQUEST""}}")),
+                    new ConformanceRequestStep("create-table-b", _ => BuildRequest(context, "CreateTable",
+                        $@"{{""TableName"":""{tableB}"",""AttributeDefinitions"":[{{""AttributeName"":""pk"",""AttributeType"":""S""}}],""KeySchema"":[{{""AttributeName"":""pk"",""KeyType"":""HASH""}}],""BillingMode"":""PAY_PER_REQUEST""}}")),
+                    new ConformanceRequestStep("list-tables-page-1", _ => BuildRequest(context, "ListTables",
+                        @"{""Limit"":1}")),
+                    new ConformanceRequestStep("list-tables-page-2", state =>
+                    {
+                        var lastTable = state.RequireJsonString("list-tables-page-1", "LastEvaluatedTableName");
+                        return BuildRequest(context, "ListTables",
+                            $@"{{""Limit"":1,""ExclusiveStartTableName"":""{lastTable}""}}");
+                    }),
+                    new ConformanceRequestStep("delete-table-a", _ => BuildRequest(context, "DeleteTable",
+                        $@"{{""TableName"":""{tableA}""}}")),
+                    new ConformanceRequestStep("delete-table-b", _ => BuildRequest(context, "DeleteTable",
+                        $@"{{""TableName"":""{tableB}""}}")),
                 ], Tier1SkipReason));
             });
 

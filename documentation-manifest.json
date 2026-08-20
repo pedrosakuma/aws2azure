@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:d32be829f9dd821203fbfacecd077fb70dffd11b7b8482717e746dad2c43d89f",
+  "manifest_revision": "sha256:20deee08d53fefaa71b2e9455691654368733880a2f6b0058315d2d315e9448f",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:2d602f09d84aa6398788941ac5c8bf6aa981d1daced16d8ba4330fca6032979d",
+    "canonical_inputs_revision": "sha256:f2f60e07d38ccce352123d3a7a0d7199d8c875c106087904ba6729ef2fa71dae",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
@@ -1174,7 +1174,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:cd42fd54354be464c6b987a73d21527c57a0055cb278f475e57492af67024329",
+      "revision": "sha256:3b8b25b7d3c72d811b6cb6257c6822d02a2f68afa5022d6e66424fa97c5cebc0",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1198,7 +1198,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:ed9d70c4b4b14d05d36037aa842ec74e86131e7a725f38ae26c346387c7bda91",
+      "revision": "sha256:08dcd14b275742fb6ca3117abee104886d55d19b0c326fbf3d0229a21760c52d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1210,7 +1210,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:31eac3186e0bf8f2441cfaee60ad9a5901901f830373747120caa7209ec2f6db",
+      "revision": "sha256:358070d812e1f9e9c7a3a70e604c07084f0bc1bb8137ea3d4a9f71afeb11c7de",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1246,7 +1246,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:5f8767ea152d618a11e41e52e07aa5b32744fa4cfc411291e71465b9c5a21988",
+      "revision": "sha256:27a745c1ca023bd3b47547321fbb357e8b903398c8e19c50a0bcab231b033fa0",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1282,7 +1282,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:25373f11e86a3cc9f78e2e2a5a8be159d90b1ae1c567965417e1933ff17aebc4",
+      "revision": "sha256:58c4e8d69f9b61dd1f393f88bef1aaa739765b0f5400e3aec858c6abb12c4cac",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1294,7 +1294,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:fd217d9ba45c45792cab5fd06414577ad056c32ffb17e656915ea42ae8e159b7",
+      "revision": "sha256:f20d9ef90f2e9ad11b06973dcbf257895b189e99cca2bdfe30dd5130d3e00c8c",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1450,7 +1450,7 @@
       "scope": "tests",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:a7c68625d35fc7207441529496865a7ca76d9c9f7823a6a4e210810400458a06",
+      "revision": "sha256:b0cc1f7e4cf67d2d94063b6b5e602f6c8da67bb8335d357c452682a21a8b2ffe",
       "freshness": {
         "mode": "current"
       }
@@ -1771,9 +1771,10 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "ListTagsOfResource",
-      "revision": "sha256:6cc2987b5b0a703b39c6dfc25fcb645a4b0a18019645b57cf6140c0fa1a96a09",
+      "revision": "sha256:7854ad1de105c628a69b808fc5cfb7795e7171595bfcc63dd2800d978a3b7bef",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -1786,9 +1787,10 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "ListTagsOfResource",
-      "revision": "sha256:b2a2f6e07d76330c800b2ec0adb5e76f545ac9c14e10652646f30f607c2eb24a",
+      "revision": "sha256:46db2c720b03afef7a1c00db389d7d1fd4bdebddd2f826e969910e66a99b80cd",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -1895,9 +1897,10 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "TagResource",
-      "revision": "sha256:3e467899151466c2dd310a13f7c44e103584505c07ed5c8198f14dd42c346f8d",
+      "revision": "sha256:385a04bef56d3b781791e7c9b6f6d754ba1c56602f26a5b307d6a0b822d358f2",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -1910,9 +1913,10 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "TagResource",
-      "revision": "sha256:3640f818595a692380f9e5d989b18e3e5869f052a1f25378dffe84fab096a429",
+      "revision": "sha256:fe6f945edeca9e1fbcf2ab3b5b3a03eaf6b72ed746abb486c6ce680f2008da5a",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -1989,9 +1993,10 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "UntagResource",
-      "revision": "sha256:0e562d8839150aab040c1d4cf1922c7c5a4ed0a6a22c0d83c6f5929ada689214",
+      "revision": "sha256:ebf2fffb9b5aa8870f5239588ea9cd965fcd3da9a7b3cf3c7cc92b1e4136acda",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2004,9 +2009,10 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "UntagResource",
-      "revision": "sha256:8581c7a8b960ec30b38eb0350af516a0b5011125ce6bcb4ae6ab34eac2ad2f5e",
+      "revision": "sha256:15e5e629159b88c8f2ab9092aecf5e20e4ddac23a40cd86c21cfada420e1252a",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2177,7 +2183,7 @@
       "provenance": "generated",
       "service": "kinesis",
       "operation": "GetShardIterator",
-      "revision": "sha256:2b77cd145777d53941114e60531ac4c023945422120cdbdbb65a0fba80d0f0aa",
+      "revision": "sha256:0250a7ee60f1477306f1e52329c32eda72c4eaa042e6a9c28e6b801a6142a473",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -2193,7 +2199,7 @@
       "provenance": "source",
       "service": "kinesis",
       "operation": "GetShardIterator",
-      "revision": "sha256:357292f4d8ce20988583a528df8addfe77269afa2ec16beecf4587e4491b5e37",
+      "revision": "sha256:337081aa14da4bf838d7d3c02101d5e8fd3b9c6697470b64d908f11a27be02da",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -2305,9 +2311,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "AbortMultipartUpload",
-      "revision": "sha256:3697cfb7a2a89051a0a00ab36d9d2e54fa51330c7756efdfbb20af5986b91023",
+      "revision": "sha256:1a8217636268e6cd91a126c51434c9876457ffc721ef28a47b899fd20a954755",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2320,9 +2327,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "AbortMultipartUpload",
-      "revision": "sha256:84d2789259b094ccf85760634a43af357e4a859ffcff32f244c7b3719327e542",
+      "revision": "sha256:d434d86bd5d1b25d265d45c109431188ee125719c98c697bf7045bbca97500cd",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2335,9 +2343,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CompleteMultipartUpload",
-      "revision": "sha256:82d43e0fff15c525aa60a5373ebaffc9ae96dac2204e40524f00777cca2cb98f",
+      "revision": "sha256:12a7abdaed6f0295e2c70462b72d0b5efc940a6185c13d0724ce4f2f49bc68c6",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2350,9 +2359,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CompleteMultipartUpload",
-      "revision": "sha256:a0fd0d2a536d8977d51d7798b2899525f80569726608a0c8953d4d2eace9f56a",
+      "revision": "sha256:b6a6b3c3dc93019e5619f3b294bdd958560fb619c21d43ad8738131db5aad47d",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2365,9 +2375,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CopyObject",
-      "revision": "sha256:ff2cc0bebb1d3a73793ed4f1a3174aeea44befafd136b56a1fb1a22cff6b41d1",
+      "revision": "sha256:c08519abb9e6c15d142d14136d4806596c0e6b02defbd80db6f6c7e412fbd7a3",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2380,9 +2391,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CopyObject",
-      "revision": "sha256:a31e92b9dd5e97f6b617b8576b48226f175e4c61c10d4a9a2288125e3d7695de",
+      "revision": "sha256:039d9c95a535d199e8273d9e3d0e4508c79fa481cdbc2e2d2c673cfcc2eeb2bc",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2427,9 +2439,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:c72907c6570437ce5c3f724d7d65ccdce8b79ad207157497f07cfa47ada5796a",
+      "revision": "sha256:a41ab6fad7f1063455586069a90832b09dd7af75307dd972f2871732d912eb35",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2442,9 +2455,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:a0678ef07e7a1dfeb24019a0cd9d749239b73e7bce0943ac61abb0e0b7d07729",
+      "revision": "sha256:89f5ae8ed6cd45a91bf9ddd1a004fa47efbb17c3645ee1ee86231d0f86a09141",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2669,9 +2683,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "DeleteBucketTagging",
-      "revision": "sha256:030b43fdc639064ff8fb86eda84986f1acd3ebe093ed56677d924d441a8e5d29",
+      "revision": "sha256:5c427df677ef3622e2217af6a72e95ae9dacf7f2abacf0b341afaf0325543a6f",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2684,9 +2699,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "DeleteBucketTagging",
-      "revision": "sha256:81beada676a4c3e8a91c5df4fee721d636ac66651e6c6594c9dced3cf9f89b23",
+      "revision": "sha256:063feaa9fa74897ebf9e6b9e7c1f3ce268bfe86f19e3f747f005cdb44f3f13b4",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2793,9 +2809,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "DeleteObjectTagging",
-      "revision": "sha256:25922e30cf0ebf9342a62deeda5a0877581c9b9e2f5c2951eca6d83be481769c",
+      "revision": "sha256:e935db67c756f2a4b52681ff6ccf3fd9cf120679f222ffc00f9611896c080507",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -2808,9 +2825,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "DeleteObjectTagging",
-      "revision": "sha256:4bf4de306fd0d1412256f5a7397c34292a4a4d04b159d6b8a502c133c4182cdb",
+      "revision": "sha256:3582a3aad20ace817a16c001f886df4028fbe5605d12344e4906a267f85ad42b",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3461,9 +3479,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "GetObjectTagging",
-      "revision": "sha256:8538a8f06b3266ba0b28e2e4881f6573dbc8fc22d77878e8698c890a4b9318e0",
+      "revision": "sha256:9c39364fb90401db33e1a638d092e18f852825789df45962a8fa928545ce99b5",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3476,9 +3495,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "GetObjectTagging",
-      "revision": "sha256:0a5a3fea2779517618cf4d659d18e10776b8bc14a845b9b0e02ee25e172cfaf4",
+      "revision": "sha256:a77adce938b531c253d9d1fde691b6fed8bbe8230284bb3a3463cd5affe63feb",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3551,9 +3571,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "HeadBucket",
-      "revision": "sha256:2ac5e22212619b715bff5a453c5b97960a3544b7e253cf48a4e80625ffe5ad69",
+      "revision": "sha256:7fca08a33c29b72fe3c02fe3051ee808a5ad4be844e8f5aeda7a8cdafb214eb3",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3566,9 +3587,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "HeadBucket",
-      "revision": "sha256:779abf2876b584d645f8001a3da99865184e9ed1d11602c1652f68a14d72221e",
+      "revision": "sha256:b888483047aa503f5c67052cd3281688192cd95268362666a808a29fbc3b0022",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3613,9 +3635,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListBuckets",
-      "revision": "sha256:20ee23da694ad14dea57be09fbe10355fbaa0db259e950c430330e245f8aabad",
+      "revision": "sha256:b92cad9fbffd3e188a8b6f555d149d4d3bbe5b496e0a1c2cf4f83f1a93015bf8",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3628,9 +3651,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListBuckets",
-      "revision": "sha256:3578880903e30334d8d9e26f92fdb2b0cba51d5cf310e64c3c991ea01891c3fc",
+      "revision": "sha256:80d1d075b72d99ee54a87fc612ca277e41e3f5417c4026a5acfa522a18a0fe8b",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3673,9 +3697,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListObjects",
-      "revision": "sha256:52df0e3dd7ecbaf5127a6990a9d6dd7aa9beef1ba5aa65c3a751cb12b2b548b2",
+      "revision": "sha256:0657b0a5d97b3ab073ce87356f74a9bbe2d7a19d912c25375b10ae7fdfc2bf3a",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3688,9 +3713,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListObjects",
-      "revision": "sha256:25d52d3086ea5d9d9d5e70af60578683818c3e463ed2a31e646f8e3f371493d1",
+      "revision": "sha256:83519ac05220864d4ec50ba2b98b0908e47c66a908987ee5931879d1a300d4b5",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3767,9 +3793,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListParts",
-      "revision": "sha256:65f3c21db6bf95e6654714736668068bc8bb14a04da96b8576bcdf2437c59fff",
+      "revision": "sha256:dba024bf5d2efbe518f1b2f3df05f14b4430dcdf5c8d9e24a9d6851e41481405",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3782,9 +3809,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListParts",
-      "revision": "sha256:2817ca3a53046f13e2e5251f66e9913abfa11a7c99970eab9b7463fd03147115",
+      "revision": "sha256:9953806094935ef702c8c9f45f5ff834e198d163ac7a2e2866b4581d1cdd16b6",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3797,9 +3825,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "PresignedUrl",
-      "revision": "sha256:f4bfdd24fa6db2b649590a5f478c1673789147bea119f7f90fce4157e18dc14d",
+      "revision": "sha256:b97c4c1d247d9e21dab132ee0628f8b9f54102ef18f04e31b07adb6c62f2baff",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -3812,9 +3841,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "PresignedUrl",
-      "revision": "sha256:59d425c46d3458789edd7e67d4211820e1ecbb9474ce8efa840ede2d272d508a",
+      "revision": "sha256:034a7c06f6c681816c3f28b2ade0bcfc15fb63edfd60bf258eac114fd7c12914",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4405,9 +4435,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "PutObjectTagging",
-      "revision": "sha256:02546d439548bfbe826b98d90abb2931d0a30c37e9e307b667833965e8768bb0",
+      "revision": "sha256:dd2c41277936c23ffca7107dd405b0a5d2887ab2fb215f4db00316bb169f93ae",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4420,9 +4451,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "PutObjectTagging",
-      "revision": "sha256:3dfc54af17da9c85f3ee65b1b5821f935735a834cf48928e3318d0f94ee34f03",
+      "revision": "sha256:5183ab74e9033364fb439b3580c025fd40e2a064c5378d1d05d7c8c564e0baa9",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4495,9 +4527,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "UploadPart",
-      "revision": "sha256:69f59589c0e8d20f83ff474d0b13968a2b456d04e102eba520d73514192c3fb6",
+      "revision": "sha256:188cdf3b94bc67dc04d30cd3083640c4323c492bd33d815d3a427b66b8a0af36",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4510,9 +4543,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "UploadPart",
-      "revision": "sha256:c82bda92fa7689acd05cc21d5ce061839a1b5b1bb0a68710d4bbf184fad9abae",
+      "revision": "sha256:d9780abb286fb8a192a8b417e931c0be4fc297acf51e0f9545ff8c6f76417f38",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4525,9 +4559,10 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "UploadPartCopy",
-      "revision": "sha256:978da831a9d030cd58d3a1e048c1e64ede91914d467df866f98eba8c7df7dea1",
+      "revision": "sha256:f57b3cf67465cddaa82f2032a3f5d8dee46d6d7d1c64d7793df650be3a23b5fc",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -4540,9 +4575,10 @@
       "provenance": "source",
       "service": "s3",
       "operation": "UploadPartCopy",
-      "revision": "sha256:19292b236e18ef65fa4f00f50b7493c88070719ff915ec33e6458dcc32df27f8",
+      "revision": "sha256:152a3da5cfacce95cf378ae969f1ad2f3cae49a4855719873808d78e9661567b",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -5063,7 +5099,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:bf03b093e7a3d0eb1f72b02620d67e2af5f99dae21880c49d25d0cd9295a571e",
+      "revision": "sha256:a8965ba0baaea3d72c87f5123b0c3becab8790cd2078089287322fe96af54640",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5079,7 +5115,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:642e58c2e1791b07cea87e2313b9bdf849b387ddc9cf37ca7b70145575c4b2de",
+      "revision": "sha256:91d1a90b5ca90470c597e0b4f5548753af70656dbb7388a649db4434c5c961e9",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5533,9 +5569,10 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "ListDeadLetterSourceQueues",
-      "revision": "sha256:25be1bbd8713a879bed3180b9faf98ceb516570d466b5b0ecef155fd5249cce8",
+      "revision": "sha256:254b45c4ee88e1bf0bb87f5653094433578834e44ccf2fc426a30a603f4c98af",
       "freshness": {
-        "mode": "derived-current"
+        "mode": "derived-current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -5548,9 +5585,10 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "ListDeadLetterSourceQueues",
-      "revision": "sha256:f65287ccc004bb9c6d6b3bb4853767d19f6e60a6f81df8c44b8964cdd99a9ca6",
+      "revision": "sha256:ba8f03dec813582a575e7b2bcce7d83ba1ec9ca36e8e93d7064eafb029d33682",
       "freshness": {
-        "mode": "current"
+        "mode": "current",
+        "verified_real_azure_date": "2026-08-11"
       }
     },
     {
@@ -5717,7 +5755,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "SendMessage",
-      "revision": "sha256:6af7ae337ccda37142c90a2f335cec4beacc6f1b25ab4d4c6770760cff462eb5",
+      "revision": "sha256:b120b03301ad286d89e42ceb879395247f772d0801ae80e4a973686c23584e68",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-20"
@@ -5733,7 +5771,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "SendMessage",
-      "revision": "sha256:aea7efadde7d16fb7083d8382ce2cd9f8ff5ffd82b387cbdcd86ea12f55302e2",
+      "revision": "sha256:112a607e7118075b27920167e2dccb0832eb933e7d0f9782ab36d681b54e381f",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-20"
@@ -6602,7 +6640,7 @@
       "scope": "all-services",
       "authority": "normative-input",
       "provenance": "source",
-      "revision": "sha256:9a00e602afddab39893d6088d29523b19ec5c4f49dddf876b4a5d15e4518464a",
+      "revision": "sha256:fee76bb14e16a8c2bbf1870357c7dc6abd5b440f17b855aa18243d2d97ce23a1",
       "freshness": {
         "mode": "current"
       }
@@ -6614,7 +6652,7 @@
       "scope": "all-services",
       "authority": "normative-capability",
       "provenance": "source",
-      "revision": "sha256:df9438eb2c446be52725844a29bed564da9f9cb3f09f107355079e9f4bd50569",
+      "revision": "sha256:3094aed8aee54b89c10abed587f52bcbe5923d86734c61756f6b9dcd8d3a61d6",
       "freshness": {
         "mode": "current"
       }
@@ -6749,7 +6787,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:be4c6a82cb8597eeaa911fa64bb27a72da2b0a8775b6cec6d41c7bc5af5f8e2e",
+      "revision": "sha256:2c58b7b61d20884431fff51437f661aa6376b28906e94467d1913ad51f16eb7d",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6763,7 +6801,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:bff78b39a6e6ce0e536ffdf297d28246569b4367fb6d23d191056eff883e37d4",
+      "revision": "sha256:bbf049a45c1be4c161112512b127a01cf11f1f77e9d19d54d6fe8c6999b96eb3",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6777,7 +6815,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:7a6831a599d3c323c88a2ed8ac567a9cc3138d3f897ecfd43adcad207962257b",
+      "revision": "sha256:38afcfe987dedb6b25d3103fb349fb079f9f53af8c5dffa076889f3d3849fd24",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"

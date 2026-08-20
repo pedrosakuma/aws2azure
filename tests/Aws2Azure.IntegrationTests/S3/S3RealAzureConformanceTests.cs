@@ -243,6 +243,73 @@ public sealed class S3RealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
     }
 
+    [SkippableFact]
+    public async Task CopyObject_from_nonexistent_source_key_returns_native_no_such_key_error()
+    {
+        Skip.IfNot(fixture.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 conformance.");
+
+        var bucket = "aws2azure-copy-" + Guid.NewGuid().ToString("N")[..12];
+        const string missingSourceKey = "copy/missing-source.txt";
+        const string destinationKey = "copy/destination.txt";
+        using var client = fixture.CreateS3Client();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var bucketCreated = false;
+
+        try
+        {
+            await client.PutBucketAsync(new PutBucketRequest { BucketName = bucket }, timeout.Token).ConfigureAwait(false);
+            bucketCreated = true;
+
+            var failure = await Assert.ThrowsAsync<AmazonS3Exception>(() =>
+                client.CopyObjectAsync(new CopyObjectRequest
+                {
+                    SourceBucket = bucket,
+                    SourceKey = missingSourceKey,
+                    DestinationBucket = bucket,
+                    DestinationKey = destinationKey,
+                }, timeout.Token)).ConfigureAwait(false);
+
+            Assert.Equal(HttpStatusCode.NotFound, failure.StatusCode);
+            Assert.Equal("NoSuchKey", failure.ErrorCode);
+
+            var listed = await client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = bucket,
+                Prefix = "copy/",
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.True(listed.S3Objects is null or { Count: 0 });
+        }
+        finally
+        {
+            if (bucketCreated)
+            {
+                await DeleteBucketBestEffortAsync(client, bucket, [missingSourceKey, destinationKey]).ConfigureAwait(false);
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task GetObject_from_nonexistent_bucket_returns_native_no_such_bucket_error()
+    {
+        Skip.IfNot(fixture.BlobConfigured,
+            "AZURE_BLOB_ACCOUNT/AZURE_BLOB_KEY not set — skipping real-Azure S3 conformance.");
+
+        var missingBucket = "aws2azure-nobucket-" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateS3Client();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var failure = await Assert.ThrowsAsync<AmazonS3Exception>(() =>
+            client.GetObjectAsync(new GetObjectRequest
+            {
+                BucketName = missingBucket,
+                Key = "any/key.txt",
+            }, timeout.Token)).ConfigureAwait(false);
+
+        Assert.Equal(HttpStatusCode.NotFound, failure.StatusCode);
+        Assert.Equal("NoSuchBucket", failure.ErrorCode);
+    }
+
     private static async Task DeleteBucketBestEffortAsync(
         Amazon.S3.IAmazonS3 client,
         string bucket,

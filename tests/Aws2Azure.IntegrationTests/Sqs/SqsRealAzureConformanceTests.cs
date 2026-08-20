@@ -1,3 +1,4 @@
+using Amazon.Runtime;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Azure.Messaging.ServiceBus.Administration;
@@ -231,6 +232,40 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
             }
         }
+    }
+
+    [SkippableFact]
+    public async Task SendMessage_to_deleted_queue_returns_native_nonexistent_queue_error()
+    {
+        Skip.IfNot(fixture.ServiceBusConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
+
+        var queueName = "aws2azure-gone-" + Guid.NewGuid().ToString("N")[..10];
+        using var client = fixture.CreateSqsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+        var queueUrl = (await client.CreateQueueAsync(queueName, timeout.Token).ConfigureAwait(false)).QueueUrl;
+        await client.DeleteQueueAsync(queueUrl, timeout.Token).ConfigureAwait(false);
+
+        var exception = await Assert.ThrowsAsync<QueueDoesNotExistException>(() =>
+            client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = "should-not-be-delivered",
+            }, timeout.Token));
+        // Once the SDK recognizes the shape correctly (see the AwsJson
+        // protocol-code fix in SqsErrorResponse.cs), its own ErrorCode
+        // property reflects the wire-level Smithy shape name it actually
+        // received, not the legacy Query-protocol code documented by AWS.
+        Assert.Equal("QueueDoesNotExist", exception.ErrorCode);
+        // AWSSDK.SQS only derives ErrorType from the legacy x-amzn-query-error
+        // response header (a Code;Sender|Receiver pair used for backward
+        // compatibility with pre-JSON-protocol SQS clients); the proxy doesn't
+        // emit that header, so JsonErrorResponseUnmarshaller's hardcoded
+        // ErrorType.Unknown default applies here, same as every other
+        // JSON-protocol error the proxy renders (see the analogous Kinesis
+        // real-Azure assertion).
+        Assert.Equal(ErrorType.Unknown, exception.ErrorType);
     }
 
     private static async Task<Dictionary<string, string>> ReceiveBodiesAsync(

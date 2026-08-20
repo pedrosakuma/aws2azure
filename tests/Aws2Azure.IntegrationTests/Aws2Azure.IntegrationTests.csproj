@@ -61,6 +61,14 @@
              Link="Conformance\S3\S3BackendErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.cs"
              Link="Conformance\S3\S3HappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.Core.cs"
+             Link="Conformance\S3\S3HappyPathMatrix.Core.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.Metadata.cs"
+             Link="Conformance\S3\S3HappyPathMatrix.Metadata.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.Tagging.cs"
+             Link="Conformance\S3\S3HappyPathMatrix.Tagging.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\S3\S3HappyPathMatrix.Multipart.cs"
+             Link="Conformance\S3\S3HappyPathMatrix.Multipart.cs" />
     <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbErrorMatrix.cs"
              Link="Conformance\DynamoDb\DynamoDbErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs"

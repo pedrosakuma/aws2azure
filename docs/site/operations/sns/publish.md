@@ -50,6 +50,7 @@ For Service Bus-backed topics whose SNS names end in .fifo, Publish requires Mes
 - FIFO topics are unsupported on the Event Grid backend. Publish rejects .fifo topics and FIFO-only request parameters there with InvalidParameter instead of dropping them.
 - aws2azure sets Service Bus SessionId on published FIFO messages, but the current SNS subscription-management APIs still create regular Service Bus subscriptions. Guaranteed ordered processing therefore requires consumers to use Service Bus-native session-aware subscriptions provisioned outside the SNS compatibility APIs.
 - Azure Service Bus and Event Grid message size limits differ from SNS; Event Grid classic schema also enforces 1 MB per event and 1 MB per HTTP batch.
+- Publish to a nonexistent Service Bus-backed topic: the AMQP CBS (Claims-Based Security) put-token handshake that precedes sender-link attach fails claim validation for a missing topic with HTTP 404 (Azure's own "messaging entity ... could not be found"), not a link-level amqp:unauthorized-access rejection. The proxy inspects the CBS response status code directly and renders SNS's native NotFoundException only for that 404 case; any other CBS status (401/403/etc.) is still treated as a genuine authorization failure. Confirmed against real Azure by SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error.
 
 ## References
 

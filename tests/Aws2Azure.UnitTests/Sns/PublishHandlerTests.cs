@@ -464,6 +464,41 @@ public sealed class PublishHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_maps_amqp_entity_unavailable_to_sns_not_found_error()
+    {
+        // Regression test for a real-Azure finding (PR #762): Azure Service
+        // Bus Topics' CBS put-token fails claim validation for a sender link
+        // against a nonexistent topic before the link ever attaches,
+        // surfacing as HTTP 404 (not 401/403) on the put-token response.
+        // Since this deployment always authenticates AMQP sends with a
+        // namespace-scoped, full-rights credential, that 404 at the CBS
+        // layer can only mean the topic is missing — SnsAmqpSender
+        // reclassifies it as EntityUnavailable so PublishHandler renders
+        // SNS's native NotFound shape instead of an authorization error.
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender(sendHandler: (_, _, _, _, _) => throw new SnsAmqpException(
+            "not found",
+            new InvalidOperationException(),
+            SnsAmqpFailureKind.EntityUnavailable,
+            condition: null,
+            description: "The messaging entity 'sb://ns.servicebus.windows.net/missing-topic' could not be found."));
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TopicArn", "arn:aws:sns:us-west-2:000000000000:missing-topic"), ("Message", "hello")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+             RejectingManagementClient(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Contains("NotFound", ReadBody(context));
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_amqp_send_failure_to_sns_error()
     {
         var context = NewContext();

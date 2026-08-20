@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns.Amqp;
@@ -29,6 +30,39 @@ public sealed class SnsAmqpTokenClassificationTests
         Assert.True(handled);
         Assert.Equal(expectedKind, wrapped.Kind.ToString());
         Assert.Same(token, wrapped.InnerException);
+    }
+
+    [Fact]
+    public void Sender_classifies_cbs_not_found_status_as_entity_unavailable()
+    {
+        // Real-Azure finding (PR #762): CBS put-token for a sender link
+        // against a nonexistent topic fails claim validation with HTTP 404
+        // (not 401/403) before the link ever attaches.
+        var cbsFailure = new CbsAuthenticationException(
+            "amqps://ns.servicebus.windows.net/missing-topic",
+            (int)HttpStatusCode.NotFound,
+            "The messaging entity 'sb://ns.servicebus.windows.net/missing-topic' could not be found.");
+
+        var handled = SnsAmqpSender.TryWrap(cbsFailure, out var wrapped);
+
+        Assert.True(handled);
+        Assert.Equal("EntityUnavailable", wrapped.Kind.ToString());
+        Assert.Same(cbsFailure, wrapped.InnerException);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.BadRequest)]
+    public void Sender_classifies_other_cbs_statuses_as_auth(HttpStatusCode cbsStatus)
+    {
+        var cbsFailure = new CbsAuthenticationException(
+            "amqps://ns.servicebus.windows.net/some-topic", (int)cbsStatus, "denied");
+
+        var handled = SnsAmqpSender.TryWrap(cbsFailure, out var wrapped);
+
+        Assert.True(handled);
+        Assert.Equal("Auth", wrapped.Kind.ToString());
     }
 
     [Fact]

@@ -59,12 +59,19 @@ public sealed class RealAzureTransactionWorkflowTests
         ".github",
         "workflows",
         "qualification-real-azure.yml"));
-    private static readonly string LoadProducer = File.ReadAllText(Path.Combine(
-        RepositoryRoot,
-        "tests",
-        "Aws2Azure.IntegrationTests",
-        "DynamoDb",
-        "DynamoDbRealAzureTransactionLoadQualificationTests.cs"));
+    private static readonly string LoadProducer = string.Concat(
+        new[]
+        {
+            "DynamoDbRealAzureTransactionLoadQualificationTests.cs",
+            "DynamoDbRealAzureTransactionLoadQualificationTests.Evidence.cs",
+            "DynamoDbRealAzureTransactionLoadQualificationTests.Verification.cs",
+            "DynamoDbRealAzureTransactionLoadQualificationTests.Helpers.cs",
+        }.Select(fileName => File.ReadAllText(Path.Combine(
+            RepositoryRoot,
+            "tests",
+            "Aws2Azure.IntegrationTests",
+            "DynamoDb",
+            fileName))));
     private static readonly string RollbackQualificationSource = File.ReadAllText(Path.Combine(
         RepositoryRoot,
         "tests",

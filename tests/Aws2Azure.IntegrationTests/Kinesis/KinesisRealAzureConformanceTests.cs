@@ -1,6 +1,8 @@
-using Amazon.Kinesis;
+using System.Net;
 using System.Text;
+using Amazon.Kinesis;
 using Amazon.Kinesis.Model;
+using Amazon.Runtime;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Kinesis;
@@ -56,6 +58,31 @@ public sealed class KinesisRealAzureConformanceTests(RealAzureProxyFixture fixtu
         Assert.Equal(
             expectedShardIds.Skip(1).ToArray(),
             filtered.Shards.Select(item => item.ShardId).Order(StringComparer.Ordinal));
+    }
+
+    [SkippableFact]
+    public async Task GetShardIterator_against_nonexistent_stream_returns_native_resource_not_found_error()
+    {
+        Skip.IfNot(fixture.EventHubsConfigured,
+            "AZURE_EVENTHUBS_* / AZURE_EVENTHUBS_STREAM not set — skipping real-Azure Kinesis conformance.");
+
+        using var client = fixture.CreateKinesisClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var missingStreamName = "aws2azure-missing-" + Guid.NewGuid().ToString("N")[..12];
+
+        var failure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.GetShardIteratorAsync(new GetShardIteratorRequest
+            {
+                StreamName = missingStreamName,
+                ShardId = "shardId-000000000000",
+                ShardIteratorType = "LATEST",
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.BadRequest, failure.StatusCode);
+        // AWSSDK.Kinesis's JSON-RPC error unmarshaller (JsonErrorResponseUnmarshaller)
+        // hardcodes ErrorType.Unknown for every JSON-protocol error — unlike the
+        // XML-protocol path, it never parses a Sender/Receiver classification out of
+        // the response body or headers. No wire response can make this Sender.
+        Assert.Equal(ErrorType.Unknown, failure.ErrorType);
     }
 
     [SkippableFact]

@@ -281,6 +281,18 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   `run-perf`; authentication and transport require `run-integration` plus
   `run-real-azure`; startup, packaging, and build-graph changes require
   `run-footprint`. Apply every returned required label before merge.
+- **`run-real-azure` is nightly-first; apply it to a PR only when required.**
+  `integration-real-azure.yml` provisions real, billed Azure resources (Cosmos
+  DB, Service Bus, Event Hubs, Key Vault, Blob Storage) via Bicep and enforces
+  a hard `concurrency: group: integration-real-azure, cancel-in-progress:
+  false` — only one real-Azure run executes repo-wide at a time, and its
+  orphan-resource reaper assumes a single active run when deciding what is
+  stale. Applying the label speculatively serializes behind (or blocks) every
+  other PR and nightly run that actually needs the slot, and multiplies
+  exposure to external Azure flakiness (subscription/billing issues, SDK/base
+  image drift) for no added signal. Apply `run-real-azure` (and the other
+  `run-*` labels) only when `ChangeAwareValidation` reports it as `required`
+  for the diff — never "just in case."
 - **Diagnose regressions against `main`.** Reproduce a failed gate on the
   merge-base/current `main` under the same runner, dependencies, configuration,
   and backend before calling it a PR regression. Never automatically raise a

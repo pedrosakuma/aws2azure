@@ -13,14 +13,14 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [DescribeTimeToLive](operations/dynamodb/describetimetolive.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | dynamodb | [GetItem](operations/dynamodb/getitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ implemented | — | — | — | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
-| dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ implemented | — | — | — | `Azure Cosmos DB account/resource tags (control plane)` |
+| dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [PutItem](operations/dynamodb/putitem.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](operations/dynamodb/query.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](operations/dynamodb/scan.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
-| dynamodb | [TagResource](operations/dynamodb/tagresource.md) | ✅ implemented | — | — | — | `Azure Cosmos DB account/resource tags (control plane)` |
+| dynamodb | [TagResource](operations/dynamodb/tagresource.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [TransactGetItems](operations/dynamodb/transactgetitems.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API) — single-partition read-only stored-procedure snapshot` |
 | dynamodb | [TransactWriteItems](operations/dynamodb/transactwriteitems.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API) — single-partition stored-procedure transaction` |
-| dynamodb | [UntagResource](operations/dynamodb/untagresource.md) | ✅ implemented | — | — | — | `Azure Cosmos DB account/resource tags (control plane)` |
+| dynamodb | [UntagResource](operations/dynamodb/untagresource.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB account/resource tags (control plane)` |
 | dynamodb | [UpdateItem](operations/dynamodb/updateitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [UpdateTimeToLive](operations/dynamodb/updatetimetolive.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | kinesis | [DescribeStream](operations/kinesis/describestream.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs Service Bus management REST API` |
@@ -30,11 +30,11 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | kinesis | [ListShards](operations/kinesis/listshards.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs Service Bus management REST API` |
 | kinesis | [PutRecord](operations/kinesis/putrecord.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
 | kinesis | [PutRecords](operations/kinesis/putrecords.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Event Hubs (AMQP 1.0 data plane)` |
-| s3 | [AbortMultipartUpload](operations/s3/abortmultipartupload.md) | ✅ implemented | — | — | — | `Lease state record + delete proxy-owned multipart state blob` |
-| s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ implemented | — | — | — | `Lease state record + Put Block List` |
-| s3 | [CopyObject](operations/s3/copyobject.md) | ✅ implemented | — | — | — | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
+| s3 | [AbortMultipartUpload](operations/s3/abortmultipartupload.md) | ✅ implemented | — | — | ✅ | `Lease state record + delete proxy-owned multipart state blob` |
+| s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ implemented | — | — | ✅ | `Lease state record + Put Block List` |
+| s3 | [CopyObject](operations/s3/copyobject.md) | ✅ implemented | — | — | ✅ | `PUT https://{account}.blob.core.windows.net/{container}/{blob} with x-ms-copy-source` |
 | s3 | [CreateBucket](operations/s3/createbucket.md) | ✅ implemented | — | — | ✅ | `PUT https://{account}.blob.core.windows.net/{container}?restype=container` |
-| s3 | [CreateMultipartUpload](operations/s3/createmultipartupload.md) | ✅ implemented | — | — | — | `HEAD container + proxy-owned durable multipart state record` |
+| s3 | [CreateMultipartUpload](operations/s3/createmultipartupload.md) | ✅ implemented | — | — | ✅ | `HEAD container + proxy-owned durable multipart state record` |
 | s3 | [DeleteBucket](operations/s3/deletebucket.md) | ✅ implemented | — | — | ✅ | `DELETE https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [DeleteBucketCors](operations/s3/deletebucketcors.md) | ⚪ stub | 🔵 by design | — | — | `(no equivalent — proxy treats it as a no-op)` |
 | s3 | [DeleteBucketEncryption](operations/s3/deletebucketencryption.md) | 🟡 partial | 🔵 by design | — | — | `Conditional container-metadata update` |
@@ -42,10 +42,10 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [DeleteBucketOwnershipControls](operations/s3/deletebucketownershipcontrols.md) | 🟡 partial | 🔵 by design | — | — | `Conditional container-metadata update` |
 | s3 | [DeleteBucketPolicy](operations/s3/deletebucketpolicy.md) | ⚪ stub | 🔵 by design | — | — | `(no equivalent — proxy treats it as a no-op)` |
 | s3 | [DeleteBucketReplication](operations/s3/deletebucketreplication.md) | ⚪ stub | 🔵 by design | — | — | `(no equivalent — proxy treats it as a no-op)` |
-| s3 | [DeleteBucketTagging](operations/s3/deletebuckettagging.md) | ✅ implemented | — | — | — | `Conditional GET + PUT {container}?restype=container&comp=metadata` |
+| s3 | [DeleteBucketTagging](operations/s3/deletebuckettagging.md) | ✅ implemented | — | — | ✅ | `Conditional GET + PUT {container}?restype=container&comp=metadata` |
 | s3 | [DeleteBucketWebsite](operations/s3/deletebucketwebsite.md) | ⚪ stub | 🔵 by design | — | — | `(no equivalent — proxy treats it as a no-op)` |
 | s3 | [DeleteObject](operations/s3/deleteobject.md) | ✅ implemented | — | — | ✅ | `DELETE https://{account}.blob.core.windows.net/{container}/{blob}` |
-| s3 | [DeleteObjectTagging](operations/s3/deleteobjecttagging.md) | ✅ implemented | — | — | — | `PUT {blob}?comp=tags with an empty <TagSet/>` |
+| s3 | [DeleteObjectTagging](operations/s3/deleteobjecttagging.md) | ✅ implemented | — | — | ✅ | `PUT {blob}?comp=tags with an empty <TagSet/>` |
 | s3 | [DeleteObjects](operations/s3/deleteobjects.md) | ✅ implemented | — | — | ✅ | `Multiple DELETEs against Blob (no native batch endpoint)` |
 | s3 | [DeletePublicAccessBlock](operations/s3/deletepublicaccessblock.md) | 🟡 partial | 🔵 by design | — | — | `Conditional container-metadata update` |
 | s3 | [GetBucketAccelerateConfiguration](operations/s3/getbucketaccelerateconfiguration.md) | 🟡 partial | 🔵 by design | — | — | `(no equivalent — proxy returns stable Suspended)` |
@@ -68,18 +68,18 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [GetObjectLegalHold](operations/s3/getobjectlegalhold.md) | ✅ implemented | — | — | ✅ | `Blob legal hold (HEAD blob: x-ms-legal-hold)` |
 | s3 | [GetObjectLockConfiguration](operations/s3/getobjectlockconfiguration.md) | ⛔ unsupported | 🔵 by design | — | — | `(bucket-level WORM is ARM/management-plane only; proxy returns 404 ObjectLockConfigurationNotFoundError)` |
 | s3 | [GetObjectRetention](operations/s3/getobjectretention.md) | ✅ implemented | — | — | ✅ | `Blob immutability policy (HEAD blob: x-ms-immutability-policy-mode/-until-date)` |
-| s3 | [GetObjectTagging](operations/s3/getobjecttagging.md) | ✅ implemented | — | — | — | `GET {blob}?comp=tags (Azure Blob Index Tags)` |
+| s3 | [GetObjectTagging](operations/s3/getobjecttagging.md) | ✅ implemented | — | — | ✅ | `GET {blob}?comp=tags (Azure Blob Index Tags)` |
 | s3 | [GetObjectTorrent](operations/s3/getobjecttorrent.md) | ⛔ unsupported | ⚫ non-goal | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [GetPublicAccessBlock](operations/s3/getpublicaccessblock.md) | 🟡 partial | 🔵 by design | — | — | `Container metadata (persisted compatibility intent only)` |
-| s3 | [HeadBucket](operations/s3/headbucket.md) | ✅ implemented | — | — | — | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
+| s3 | [HeadBucket](operations/s3/headbucket.md) | ✅ implemented | — | — | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](operations/s3/headobject.md) | ✅ implemented | — | — | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
-| s3 | [ListBuckets](operations/s3/listbuckets.md) | ✅ implemented | — | — | — | `GET https://{account}.blob.core.windows.net/?comp=list` |
+| s3 | [ListBuckets](operations/s3/listbuckets.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/?comp=list` |
 | s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | 🟡 partial | 🔵 by design | — | — | `Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)` |
 | s3 | [ListObjectVersions](operations/s3/listobjectversions.md) | 🟡 partial | 🔵 by design | — | ✅ | `GET {container}?restype=container&comp=list&include=versions` |
-| s3 | [ListObjects](operations/s3/listobjects.md) | ✅ implemented | — | — | — | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
+| s3 | [ListObjects](operations/s3/listobjects.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](operations/s3/listobjectsv2.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
-| s3 | [ListParts](operations/s3/listparts.md) | ✅ implemented | — | — | — | `Proxy state HEAD/verification + Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
-| s3 | [PresignedUrl](operations/s3/presignedurl.md) | ✅ implemented | — | — | — | `(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)` |
+| s3 | [ListParts](operations/s3/listparts.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Get Block List (?comp=blocklist&blocklisttype=uncommitted)` |
+| s3 | [PresignedUrl](operations/s3/presignedurl.md) | ✅ implemented | — | — | ✅ | `(no operation — feature-flag; presigned URLs reuse GetObject / PutObject / HeadObject / DeleteObject paths)` |
 | s3 | [PutBucketAccelerateConfiguration](operations/s3/putbucketaccelerateconfiguration.md) | 🟡 partial | 🔵 by design | — | — | `(no equivalent — Suspended is an accepted stable no-op)` |
 | s3 | [PutBucketAcl](operations/s3/putbucketacl.md) | 🟡 partial | 🔵 by design | — | — | `(no Azure equivalent — validates owner-only intent and replies 200)` |
 | s3 | [PutBucketCors](operations/s3/putbucketcors.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
@@ -99,11 +99,11 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [PutObjectLegalHold](operations/s3/putobjectlegalhold.md) | ✅ implemented | — | — | ✅ | `Set Blob Legal Hold (PUT blob ?comp=legalhold, x-ms-legal-hold)` |
 | s3 | [PutObjectLockConfiguration](operations/s3/putobjectlockconfiguration.md) | ⛔ unsupported | 🔵 by design | — | — | `(bucket-level WORM is ARM/management-plane only; proxy returns 501 NotImplemented)` |
 | s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ implemented | — | — | ✅ | `Set Blob Immutability Policy (PUT blob ?comp=immutabilityPolicies)` |
-| s3 | [PutObjectTagging](operations/s3/putobjecttagging.md) | ✅ implemented | — | — | — | `PUT {blob}?comp=tags` |
+| s3 | [PutObjectTagging](operations/s3/putobjecttagging.md) | ✅ implemented | — | — | ✅ | `PUT {blob}?comp=tags` |
 | s3 | [PutPublicAccessBlock](operations/s3/putpublicaccessblock.md) | 🟡 partial | 🔵 by design | — | — | `Conditional container-metadata update (persisted compatibility intent only)` |
 | s3 | [RestoreObject](operations/s3/restoreobject.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
-| s3 | [UploadPart](operations/s3/uploadpart.md) | ✅ implemented | — | — | — | `Proxy state HEAD/verification + Put Block (?comp=block&blockid=…)` |
-| s3 | [UploadPartCopy](operations/s3/uploadpartcopy.md) | ✅ implemented | — | — | — | `Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)` |
+| s3 | [UploadPart](operations/s3/uploadpart.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Put Block (?comp=block&blockid=…)` |
+| s3 | [UploadPartCopy](operations/s3/uploadpartcopy.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)` |
 | secretsmanager | [CreateSecret](operations/secretsmanager/createsecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DeleteSecret](operations/secretsmanager/deletesecret.md) | ✅ implemented | — | — | ✅ | `DELETE https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DescribeSecret](operations/secretsmanager/describesecret.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4` |
@@ -135,7 +135,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | sqs | [DeleteQueue](operations/sqs/deletequeue.md) | ✅ implemented | — | — | ✅ | `DELETE https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05` |
 | sqs | [GetQueueAttributes](operations/sqs/getqueueattributes.md) | 🟡 partial | 🔵 by design | — | — | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [GetQueueUrl](operations/sqs/getqueueurl.md) | ✅ implemented | — | — | ✅ | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
-| sqs | [ListDeadLetterSourceQueues](operations/sqs/listdeadlettersourcequeues.md) | ✅ implemented | — | — | — | `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.` |
+| sqs | [ListDeadLetterSourceQueues](operations/sqs/listdeadlettersourcequeues.md) | ✅ implemented | — | — | ✅ | `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.` |
 | sqs | [ListQueueTags](operations/sqs/listqueuetags.md) | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | `GET QueueDescription and decode aws2azure's compact metadata envelope from UserMetadata.` |
 | sqs | [ListQueues](operations/sqs/listqueues.md) | ✅ implemented | — | — | ✅ | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
 | sqs | [PurgeQueue](operations/sqs/purgequeue.md) | 🟡 partial | 🔵 by design | — | — | `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}` |

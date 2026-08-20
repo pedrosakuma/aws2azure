@@ -1,3 +1,5 @@
+using System.Net;
+using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Xunit;
 
@@ -7,6 +9,24 @@ namespace Aws2Azure.IntegrationTests.SecretsManager;
 [Collection(SecretsManagerRealAzureCollection.Name)]
 public sealed class SecretsManagerRealAzureConformanceTests(SecretsManagerRealAzureProxyFixture fixture)
 {
+    [SkippableFact]
+    public async Task GetSecretValue_for_nonexistent_secret_returns_native_resource_not_found_error()
+    {
+        Skip.If(!fixture.Configured,
+            fixture.SkipReason ?? "Key Vault real-Azure fixture is not configured.");
+
+        var missingSecretName = "aws2azure-missing-" + Guid.NewGuid().ToString("N")[..12];
+        using var client = fixture.CreateSecretsManagerClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+
+        var failure = await Assert.ThrowsAsync<ResourceNotFoundException>(() =>
+            client.GetSecretValueAsync(new GetSecretValueRequest
+            {
+                SecretId = missingSecretName,
+            }, timeout.Token)).ConfigureAwait(false);
+        Assert.Equal(HttpStatusCode.NotFound, failure.StatusCode);
+    }
+
     [SkippableFact]
     public async Task ListSecrets_paginates_against_real_key_vault()
     {

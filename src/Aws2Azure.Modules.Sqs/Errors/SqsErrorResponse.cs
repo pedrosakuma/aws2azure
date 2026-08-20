@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -40,8 +42,20 @@ public static class SqsErrorResponse
             // "message":"..."} envelope. The HTTP status code carries the
             // Sender/Receiver hint (4xx = Sender, 5xx = Receiver), so we
             // don't need to emit Type separately.
+            //
+            // The AWS-JSON protocol's error code is the Smithy exception
+            // shape name (e.g. "QueueDoesNotExist"), which for several SQS
+            // errors differs from the legacy Query-protocol code string
+            // (e.g. "AWS.SimpleQueueService.NonExistentQueue"). The modern
+            // AWS SDKs default SQS clients to the JSON protocol, so an
+            // unmapped code here silently degrades every SDK client to a
+            // generic, untyped exception. Translate known legacy codes to
+            // their JSON-protocol shape name; codes with no entry (already
+            // shape-name-shaped, or without a dedicated modeled exception)
+            // pass through unchanged.
+            var jsonCode = SqsJsonErrorCodes.LegacyCodeToJsonShapeName.GetValueOrDefault(code, code);
             var payload = JsonSerializer.Serialize(
-                new SqsJsonError("com.amazonaws.sqs#" + code, message),
+                new SqsJsonError("com.amazonaws.sqs#" + jsonCode, message),
                 SqsErrorJsonContext.Default.SqsJsonError);
             await context.Response.WriteAsync(payload).ConfigureAwait(false);
             return;
@@ -96,6 +110,27 @@ public static class SqsErrorResponse
         }
         return context.TraceIdentifier;
     }
+}
+
+internal static class SqsJsonErrorCodes
+{
+    // Confirmed against the registered exception-code checks in
+    // AWSSDK.SQS's response unmarshallers (JSON/"AwsJson" protocol): the
+    // wire error code there is the Smithy exception shape name, which for
+    // these entries differs from the legacy Query-protocol code emitted by
+    // SqsErrorMapping.
+    public static readonly FrozenDictionary<string, string> LegacyCodeToJsonShapeName =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["AWS.SimpleQueueService.NonExistentQueue"] = "QueueDoesNotExist",
+            ["AWS.SimpleQueueService.BatchEntryIdsNotDistinct"] = "BatchEntryIdsNotDistinct",
+            ["AWS.SimpleQueueService.BatchRequestTooLong"] = "BatchRequestTooLong",
+            ["AWS.SimpleQueueService.EmptyBatchRequest"] = "EmptyBatchRequest",
+            ["AWS.SimpleQueueService.InvalidBatchEntryId"] = "InvalidBatchEntryId",
+            ["AWS.SimpleQueueService.PurgeQueueInProgress"] = "PurgeQueueInProgress",
+            ["AWS.SimpleQueueService.TooManyEntriesInBatchRequest"] = "TooManyEntriesInBatchRequest",
+            ["QueueAlreadyExists"] = "QueueNameExists",
+        }.ToFrozenDictionary(StringComparer.Ordinal);
 }
 
 internal sealed record SqsJsonError(
