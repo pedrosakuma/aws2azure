@@ -106,6 +106,31 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             }, timeout.Token).ConfigureAwait(false);
             await WaitForTableActiveAsync(fixture.DynamoDb, tableName, timeout.Token).ConfigureAwait(false);
 
+            // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
+            // investigation): probe the same freshly-created table with the
+            // official AWSSDK.NET client (its own signer, not ours) to isolate
+            // whether the failure is specific to our hand-rolled signer or an
+            // environmental/IAM/eventual-consistency issue tied to the table.
+            if (Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
+            {
+                try
+                {
+                    await fixture.DynamoDb.PutItemAsync(new PutItemRequest
+                    {
+                        TableName = tableName,
+                        Item = new Dictionary<string, AttributeValue>(StringComparer.Ordinal)
+                        {
+                            ["pk"] = new AttributeValue("sdk-probe"),
+                        },
+                    }, timeout.Token).ConfigureAwait(false);
+                    Console.WriteLine("[sigv4-debug] official-sdk-putitem-probe=SUCCESS");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[sigv4-debug] official-sdk-putitem-probe=FAILED " + ex);
+                }
+            }
+
             await ExecuteServiceCasesAsync(
                 "dynamodb",
                 Enumerate(DynamoDbErrorMatrix.Cases, DynamoDbHappyPathMatrix.Cases),
