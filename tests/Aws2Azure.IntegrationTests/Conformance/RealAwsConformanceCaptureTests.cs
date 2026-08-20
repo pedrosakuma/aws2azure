@@ -468,18 +468,21 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                     }
                     catch (XunitException) when (service == "dynamodb" && attempt < maxAttempts)
                     {
-                        // TransactWriteItems/TransactGetItems can both return
-                        // 200 while the read side still observes a stale,
-                        // pre-write snapshot in the seconds after a case's
-                        // own CreateTable (see transact-get-write-items-
-                        // roundtrip's "Responses.0.Item" assertion, which can
-                        // still fail here even after the explicit
-                        // wait-for-ACTIVE below - ACTIVE table status does
-                        // not guarantee the specific write is yet visible to
-                        // an immediately-following transactional read). Retry
-                        // the step itself (not just the status-code checks
-                        // above), since the request must be re-signed fresh
-                        // each attempt.
+                        // Kept as a defensive backstop for any genuine
+                        // transient body-assertion failure in the seconds
+                        // after a case's own CreateTable. The
+                        // transact-get-write-items-roundtrip failure that
+                        // originally motivated this retry (see #818) turned
+                        // out NOT to be an AWS-side read-after-write
+                        // staleness window - it was a bug in JsonPathExists
+                        // that made any bare numeric dot-segment path (e.g.
+                        // "Responses.0.Item") fail unconditionally,
+                        // regardless of the actual response body (fixed by
+                        // treating such a segment as an array index rather
+                        // than a property-name lookup). Retry the step
+                        // itself (not just the status-code checks above),
+                        // since the request must be re-signed fresh each
+                        // attempt.
                         await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
                         continue;
                     }
@@ -505,15 +508,12 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                     // AWS - unlike the earlier ResourceInUseException/
                     // ResourceNotFoundException retries above (which catch
                     // requests that outright fail during the propagation
-                    // window), TransactWriteItems/TransactGetItems can both
-                    // succeed with 200 in that same window while still
-                    // observing a stale, pre-write snapshot (discovered via
-                    // transact-get-write-items-roundtrip failing its
-                    // "Responses.0.Item" assertion even though transact-write
-                    // itself returned 200). Block here until the table
-                    // reports ACTIVE before any subsequent step in this case
-                    // runs, mirroring the explicit wait already used for the
-                    // shared per-run table.
+                    // window), a step can still race the table's own
+                    // provisioning shortly after CreateTable returns. Block
+                    // here until the table reports ACTIVE before any
+                    // subsequent step in this case runs, mirroring the
+                    // explicit wait already used for the shared per-run
+                    // table.
                     if (service == "dynamodb" && step.Name == "create-table")
                     {
                         var tableNameMatch = TableNameFromCreateTableResponse().Match(body);
@@ -638,6 +638,29 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                 }
 
                 explicitIndex = parsedIndex;
+            }
+
+            // A bare numeric segment (e.g. the "0" in "Responses.0.Item",
+            // as opposed to the bracketed "Records[0]" form above) is itself
+            // an array index, not a property name to look up afterward.
+            // Without this, "Responses.0.Item" navigates to Responses[0] via
+            // the default-index fallback below, then still tries
+            // TryGetProperty("0") on that element and fails - even though
+            // the intended element (and its "Item" property) is genuinely
+            // present. This made every DynamoDB TransactGetItems body
+            // assertion using this path shape fail unconditionally,
+            // regardless of the actual response content.
+            if (explicitIndex is null
+                && current.ValueKind == JsonValueKind.Array
+                && int.TryParse(propertyName, out var bareIndex))
+            {
+                if (bareIndex < 0 || bareIndex >= current.GetArrayLength())
+                {
+                    return false;
+                }
+
+                current = current[bareIndex];
+                continue;
             }
 
             if (current.ValueKind == JsonValueKind.Array)

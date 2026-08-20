@@ -61,6 +61,46 @@ public sealed class RealAwsConformanceCaptureBodyAssertionTests
     }
 
     [Fact]
+    public void JsonPath_finds_bare_numeric_dot_index_field()
+    {
+        // TransactGetItems-style responses are asserted with a bare numeric
+        // dot-segment ("Responses.0.Item"), not the bracketed
+        // "Responses[0].Item" form. Root-caused via capture-real-aws.yml:
+        // this path shape previously navigated to Responses[0] via the
+        // default-index fallback, then still tried
+        // TryGetProperty("0") on that element and always failed - even
+        // though the response body was genuinely correct.
+        const string body =
+            """{"Responses":[{"Item":{"pk":{"S":"a"}}},{}]}""";
+
+        Assert.True(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Responses.0.Item"));
+    }
+
+    [Fact]
+    public void JsonPath_bare_numeric_dot_index_selects_the_correct_element()
+    {
+        const string body =
+            """{"Responses":[{"Item":{"pk":{"S":"a"}}},{}]}""";
+
+        // Responses[1] is a genuinely empty object (no "Item" property) -
+        // this must resolve to that specific element, not silently fall
+        // back to Responses[0] because of the default-index behavior used
+        // when no index is present at all.
+        Assert.False(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Responses.1.Item"));
+    }
+
+    [Fact]
+    public void JsonPath_bare_numeric_dot_index_out_of_range_fails()
+    {
+        const string body = """{"Responses":[{"Item":{}}]}""";
+
+        Assert.False(RealAwsConformanceCaptureTests.BodyAssertionSatisfied(
+            EmptyCanonical, body, "Responses.5.Item"));
+    }
+
+    [Fact]
     public void JsonPath_malformed_non_numeric_index_fails_fast()
     {
         const string body = """{"Records":[{"SequenceNumber":"1"}]}""";
