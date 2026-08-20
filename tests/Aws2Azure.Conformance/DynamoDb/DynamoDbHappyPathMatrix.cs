@@ -319,8 +319,14 @@ public static class DynamoDbHappyPathMatrix
                 [
                     new ConformanceRequestStep("put-item", _ => BuildRequest(context, "PutItem",
                         $@"{{""TableName"":""{table}"",""Item"":{{""pk"":{{""S"":""{key}""}},""payload"":{{""S"":""before""}},""counter"":{{""N"":""1""}},""stale"":{{""S"":""remove-me""}}}}}}")),
+                    // "counter" is one of DynamoDB's reserved words and can't
+                    // appear literally in an UpdateExpression - it must be
+                    // aliased through ExpressionAttributeNames (real AWS
+                    // rejects the unaliased form with a ValidationException;
+                    // root-caused via capture-real-aws.yml). The Item itself
+                    // still stores the attribute under its real name "counter".
                     new ConformanceRequestStep("update-item", _ => BuildRequest(context, "UpdateItem",
-                        $@"{{""TableName"":""{table}"",""Key"":{{""pk"":{{""S"":""{key}""}}}},""UpdateExpression"":""SET payload = :p ADD counter :i REMOVE stale"",""ExpressionAttributeValues"":{{"":p"":{{""S"":""after""}},"":i"":{{""N"":""4""}}}}}}")),
+                        $@"{{""TableName"":""{table}"",""Key"":{{""pk"":{{""S"":""{key}""}}}},""UpdateExpression"":""SET payload = :p ADD #c :i REMOVE stale"",""ExpressionAttributeNames"":{{""#c"":""counter""}},""ExpressionAttributeValues"":{{"":p"":{{""S"":""after""}},"":i"":{{""N"":""4""}}}}}}")),
                     new ConformanceRequestStep("get-item", _ => BuildRequest(context, "GetItem",
                         $@"{{""TableName"":""{table}"",""Key"":{{""pk"":{{""S"":""{key}""}}}},""ConsistentRead"":true}}")),
                     new ConformanceRequestStep("delete-item", _ => BuildRequest(context, "DeleteItem",
