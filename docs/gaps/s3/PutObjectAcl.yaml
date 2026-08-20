@@ -16,6 +16,8 @@ sub_features:
 behavior_differences:
 - The versionId selects the object existence check only; Azure stores no S3 ACL document.
 - Azure BlobVersionNotFound maps to S3 NoSuchVersion.
+- Successful PutObjectAcl responses are intent-only compatibility no-ops. After HEAD verifies the selected blob/blob version exists, the proxy performs no Azure-side ACL mutation because Blob Storage has no object ACL document compatible with S3 grants.
+- "Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the object/version existence probe already covered by real-Azure object lifecycle/versioning scenarios and NoSuchVersion error coverage."
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObjectAcl.html
 disposition: by_design

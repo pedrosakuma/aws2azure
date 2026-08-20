@@ -16,4 +16,7 @@ sub_features:
   disposition: by_design
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAcl.html
+behavior_differences:
+- Successful PutBucketAcl responses are intent-only compatibility no-ops. After the initial container existence probe, the proxy performs no Azure-side ACL mutation because Blob Storage has no bucket ACL document compatible with S3 grants.
+- "Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the bucket-existence check, which is already exercised by real-Azure bucket CRUD/read scenarios and dedicated NoSuchBucket coverage."
 disposition: by_design

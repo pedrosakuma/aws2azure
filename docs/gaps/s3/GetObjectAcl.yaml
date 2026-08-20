@@ -16,6 +16,8 @@ sub_features:
 behavior_differences:
 - The versionId selects the object existence check, but ACL grants remain synthetic owner-only state.
 - Azure BlobVersionNotFound maps to S3 NoSuchVersion.
+- Successful GetObjectAcl responses are synthetic owner-only compatibility documents returned after the selected blob/blob version existence probe; Azure never stores or returns an S3 ACL grant document here.
+- "Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the object/version existence check, while the ACL body is intentionally proxy-synthetic and identical across Azurite and real Azure."
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAcl.html
 disposition: by_design

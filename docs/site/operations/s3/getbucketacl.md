@@ -27,6 +27,8 @@ Always reports a single FULL_CONTROL grant to the owner.
 ## Behaviour differences
 
 - Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership.
+- Successful GetBucketAcl responses are synthetic owner-only compatibility documents derived from the configured Azure account identity after confirming the container exists; Azure itself exposes no S3-compatible ACL body to round-trip.
+- Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the bucket-existence probe, while the returned grant document is intentionally proxy-owned and stable across backends.
 
 ## References
 

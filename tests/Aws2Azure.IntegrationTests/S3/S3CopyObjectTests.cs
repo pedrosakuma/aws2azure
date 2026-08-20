@@ -212,6 +212,8 @@ public class S3CopyObjectTests
     [SkippableFact]
     public async Task CopyObject_with_concrete_copy_source_if_match_returns_precondition_failed()
     {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
         await PutBucket(bucket);
         await PutObject(bucket, "src.txt", Encoding.UTF8.GetBytes("hello"));
@@ -231,6 +233,8 @@ public class S3CopyObjectTests
     [SkippableFact]
     public async Task CopyObject_result_etag_matches_destination_head_etag()
     {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
         var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
         await PutBucket(bucket);
         await PutObject(bucket, "src.txt", Encoding.UTF8.GetBytes("payload"));

@@ -6,6 +6,7 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `PUT {container}?restype=container&comp=metadata`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330)
 
 ## Sub-features
 
