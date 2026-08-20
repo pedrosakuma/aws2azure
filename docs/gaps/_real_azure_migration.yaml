@@ -1,6 +1,1 @@
-services:
-  - service: dynamodb
-    tracking_issue: https://github.com/pedrosakuma/aws2azure/issues/532
-    expires_on: "2026-10-31"
-    operations:
-      - ListTables
+services: []

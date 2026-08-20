@@ -5,6 +5,7 @@
 - **Capability ID:** `operation:dynamodb:listtables`
 - **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls`
+- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/32359911854)
 
 ## Sub-features
 
@@ -28,6 +29,7 @@
 - Container names are sorted ordinally (case-sensitive). DynamoDB pagination is also ordinal so the cursor semantics match.
 - All containers in the configured database are surfaced, including sidecar-less ones. Operators using a shared database for non-DynamoDB workloads will see those container ids too.
 - Pagination is server-side: the proxy fetches all containers once and slices in-memory. For databases with thousands of containers this should be split across Cosmos result pages — tracked as a follow-up.
+- Real-Azure verification covers Limit, ExclusiveStartTableName, and LastEvaluatedTableName pagination against a live Cosmos DB database shared with other containers (see DynamoDbRealAzureConformanceTests.ListTables_paginates_with_limit_and_exclusive_start_over_real_cosmos).
 
 ## References
 

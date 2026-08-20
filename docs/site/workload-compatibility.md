@@ -12,7 +12,7 @@ Legend: ✅ supported · 🟡 conditional · ⛔ blocked
 
 | Service | Module | Implemented | Partial | Stub | Unsupported | Real-Azure sealed |
 |---|---|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | Available | 7 | 12 | 0 | 0 | 14/19 |
+| [dynamodb](dynamodb.md) | Available | 7 | 12 | 0 | 0 | 15/19 |
 | [kinesis](kinesis.md) | Available | 0 | 7 | 0 | 0 | 7/7 |
 | [s3](s3.md) | Available | 27 | 23 | 7 | 17 | 33/74 |
 | [secretsmanager](secretsmanager.md) | Available | 6 | 1 | 0 | 1 | 7/8 |
