@@ -408,7 +408,7 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 client,
                 queueUrl,
                 renewedBody,
-                TimeSpan.FromSeconds(20),
+                TimeSpan.FromSeconds(40),
                 timeout.Token).ConfigureAwait(false);
             await client.DeleteMessageAsync(queueUrl, renewedRedelivered.ReceiptHandle, timeout.Token)
                 .ConfigureAwait(false);
