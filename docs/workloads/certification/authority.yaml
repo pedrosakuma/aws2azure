@@ -1,6 +1,6 @@
 schema_version: 3
 evaluated_as_of_utc: "2026-08-18T17:30:00Z"
 source_repository: pedrosakuma/aws2azure
-expected_canonical_inputs_revision: "sha256:a795daab71cdc1c877d49dfa5a064957144e7701a57e6a1d89a6491317abba23"
+expected_canonical_inputs_revision: "sha256:ee26182023e48a1a2f271a730ea08a01dd346b18c3d07c3731d8887109488a72"
 expected_evaluator_schema_version: 3
 expected_evaluator_implementation_revision: "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
