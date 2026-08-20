@@ -106,31 +106,6 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             }, timeout.Token).ConfigureAwait(false);
             await WaitForTableActiveAsync(fixture.DynamoDb, tableName, timeout.Token).ConfigureAwait(false);
 
-            // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
-            // investigation): probe the same freshly-created table with the
-            // official AWSSDK.NET client (its own signer, not ours) to isolate
-            // whether the failure is specific to our hand-rolled signer or an
-            // environmental/IAM/eventual-consistency issue tied to the table.
-            if (Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
-            {
-                try
-                {
-                    await fixture.DynamoDb.PutItemAsync(new PutItemRequest
-                    {
-                        TableName = tableName,
-                        Item = new Dictionary<string, AttributeValue>(StringComparer.Ordinal)
-                        {
-                            ["pk"] = new AttributeValue("sdk-probe"),
-                        },
-                    }, timeout.Token).ConfigureAwait(false);
-                    Console.WriteLine("[sigv4-debug] official-sdk-putitem-probe=SUCCESS");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("[sigv4-debug] official-sdk-putitem-probe=FAILED " + ex);
-                }
-            }
-
             await ExecuteServiceCasesAsync(
                 "dynamodb",
                 Enumerate(DynamoDbErrorMatrix.Cases, DynamoDbHappyPathMatrix.Cases),
@@ -385,33 +360,22 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 var state = new ConformanceExecutionState(context, exchanges);
                 using var request = await step.BuildRequestAsync(state).ConfigureAwait(false);
 
-                // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
-                // investigation): force a fresh TCP connection per request to rule
-                // out HTTP/1.1 keep-alive desync after a deliberately-triggered 400
-                // response (from the error-matrix cases that precede the happy
-                // path in the same shared HttpClient) corrupting a later request's
-                // wire bytes despite the in-memory HttpRequestMessage being correct.
-                if (service == "dynamodb" && Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
-                {
-                    request.Headers.ConnectionClose = true;
-                }
-
-                // TEMPORARY diagnostic (DynamoDB PutItem InvalidSignatureException
-                // investigation): dump the actual HttpRequestMessage as HttpClient
-                // will see it (all headers, including any it might add/normalize),
-                // right before sending, to rule out a silent header mutation
-                // between signing and transmission.
-                if (service == "dynamodb" && Environment.GetEnvironmentVariable("AWS2AZURE_SIGV4_DEBUG") == "1")
-                {
-                    var reqHeaders = string.Join(" | ", request.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}"));
-                    var contentHeaders = request.Content is null
-                        ? "<none>"
-                        : string.Join(" | ", request.Content.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}"));
-                    var bodyText = request.Content is null
-                        ? "<none>"
-                        : await request.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    Console.WriteLine($"[sigv4-debug] wire-request step={step.Name} method={request.Method} uri={request.RequestUri} reqHeaders=[{reqHeaders}] contentHeaders=[{contentHeaders}] body={bodyText}");
-                }
+                // Force a fresh TCP connection per request. Root-caused via
+                // real-AWS diagnostic capture (2026-08-20): reusing one
+                // persistent HTTP/1.1 connection across a case sequence that
+                // deliberately provokes 400 auth-failure responses (the
+                // error-matrix cases) followed by a real write request
+                // desynchronized the connection just enough that the next
+                // request's response was misread by AWS's edge as an
+                // InvalidSignatureException, even though the signed request
+                // itself was verified byte-for-byte correct (canonical string,
+                // string-to-sign, and derived key all matched AWS's own
+                // reported expectations, and an official-AWSSDK.NET probe
+                // succeeded against the same table/credentials). Applies to
+                // all services, not just DynamoDB, since any real-AWS capture
+                // sequence that mixes deliberate-error and real cases on a
+                // shared HttpClient is susceptible to the same desync.
+                request.Headers.ConnectionClose = true;
 
                 using var response = await client.SendAsync(
                     request,

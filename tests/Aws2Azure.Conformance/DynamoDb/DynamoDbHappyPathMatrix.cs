@@ -126,12 +126,14 @@ public static class DynamoDbHappyPathMatrix
             "dynamodb:PutItem[ConditionExpression]/GetItem/DeleteItem",
             ConformanceCaseExpectation.Success(
             [
-                new(
-                    200,
-                    RequiredBodyAssertions:
-                    [
-                        new("Attributes", "Absent unless ReturnValues is requested; the write succeeds because the key was absent."),
-                    ]),
+                // No RequiredBodyAssertions here: PutItem without ReturnValues
+                // returns a bare `{}` body, so "Attributes" is genuinely absent
+                // (not merely empty) — asserting its presence would always fail
+                // against real AWS. The success intent (write succeeded because
+                // attribute_not_exists(pk) held) is captured by the status code
+                // and the semanticAssertion prose below, plus the get-item step's
+                // own body assertion re-reading the written value.
+                new(200),
                 new(200, RequiredBodyAssertions: [new("Item.payload.S", "Equals the conditionally-written payload.")]),
                 new(200),
             ],
@@ -291,12 +293,19 @@ public static class DynamoDbHappyPathMatrix
             ConformanceCaseExpectation.Success(
             [
                 new(200),
-                new(200, RequiredBodyAssertions: [new("Attributes", "Absent unless ReturnValues is requested.")]),
+                // No RequiredBodyAssertions here: UpdateItem without ReturnValues
+                // returns a bare `{}` body, so "Attributes" is genuinely absent —
+                // asserting its presence would always fail against real AWS.
+                new(200),
                 new(200, RequiredBodyAssertions:
                 [
                     new("Item.counter.N", "Incremented by the ADD clause (seed 1 + 4 = 5)."),
                     new("Item.payload.S", "Replaced by the SET clause."),
-                    new("Item.stale.S", "Absent; removed by the REMOVE clause."),
+                    // "Item.stale.S" is intentionally NOT asserted here: the
+                    // REMOVE clause deletes the attribute entirely, so its
+                    // *absence* is the correct outcome — but RequiredBodyAssertions
+                    // only checks presence, so it can't express that. The
+                    // semanticAssertion prose below documents the removal intent.
                 ]),
                 new(200),
             ],
