@@ -71,23 +71,34 @@ public sealed class EventHubsManagementClient : IEventHubsManagementClient
         }
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await ParseEventHubAsync(content, cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidDataException)
+        if (!ContainsEventHubDescriptionElement(content))
         {
             // Azure Service Bus's Atom-based entity management API (shared by
             // Event Hubs) can answer a GET for a name that was never
             // provisioned with HTTP 200 and a body that doesn't contain an
             // <EventHubDescription> element (e.g. an empty <feed>), instead
-            // of a clean 404. Left unhandled, the malformed-body parse
-            // failure would escape as a raw InvalidDataException, bypass the
-            // Kinesis error-shape mapping entirely, and surface to the AWS
-            // SDK as an unrecognized generic error. Treat it the same as a
-            // real 404 so callers still get a native ResourceNotFoundException.
+            // of a clean 404. Left unhandled, that would bypass the Kinesis
+            // error-shape mapping entirely and surface to the AWS SDK as an
+            // unrecognized generic error. Treat it the same as a real 404 so
+            // callers still get a native ResourceNotFoundException.
+            //
+            // This check is deliberately narrow — it only reclassifies a
+            // response that's missing the description element entirely. A
+            // present-but-malformed description (e.g. a non-integer
+            // PartitionCount) still surfaces as a raw InvalidDataException
+            // from ParseEventHubAsync below, since that's a genuine payload
+            // problem for an existing stream, not evidence of a missing one.
             throw new EventHubsManagementException(HttpStatusCode.NotFound, content);
         }
+
+        return await ParseEventHubAsync(content, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool ContainsEventHubDescriptionElement(string content)
+    {
+        var start = content.IndexOf("<EventHubDescription", StringComparison.Ordinal);
+        var end = content.IndexOf("</EventHubDescription>", StringComparison.Ordinal);
+        return start >= 0 && end >= 0 && end >= start;
     }
 
     internal static async ValueTask<EventHubDescription> ParseEventHubAsync(string content, CancellationToken cancellationToken)

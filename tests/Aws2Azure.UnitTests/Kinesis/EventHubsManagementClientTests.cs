@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.IO;
 using System.Text;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
@@ -95,6 +96,31 @@ public sealed class EventHubsManagementClientTests
         Assert.Equal(HttpStatusCode.NotFound, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task GetEventHubAsync_does_not_reclassify_a_present_but_malformed_description_as_not_found()
+    {
+        // A malformed field inside an EventHubDescription that IS present
+        // (e.g. a non-integer PartitionCount) means the stream exists but
+        // the payload is broken — a genuinely different problem than the
+        // "description element missing entirely" ambiguity this fix targets.
+        // It must not be silently reclassified as a 404.
+        var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(MalformedPartitionCountPayload, Encoding.UTF8, "application/atom+xml"),
+        });
+        using var httpClient = new AzureHttpClient(handler, ownsHandler: false);
+        var client = new EventHubsManagementClient(
+            httpClient,
+            new TestAuthenticator(),
+            NullLogger<EventHubsManagementClient>.Instance);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.GetEventHubAsync(
+            new EventHubsCredentials { Namespace = "myns", SasKeyName = "Root", SasKey = "secret" },
+            "myns.servicebus.windows.net",
+            "orders",
+            CancellationToken.None).AsTask());
+    }
+
     private const string EmptyFeedPayload = """
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -102,6 +128,23 @@ public sealed class EventHubsManagementClientTests
   <id>https://mynamespace.servicebus.windows.net/missing-eh</id>
   <updated>2024-06-20T08:45:00Z</updated>
 </feed>
+""";
+
+    private const string MalformedPartitionCountPayload = """
+<?xml version="1.0" encoding="utf-8"?>
+<entry xmlns="http://www.w3.org/2005/Atom">
+  <id>https://mynamespace.servicebus.windows.net/orders</id>
+  <title type="text">orders</title>
+  <updated>2024-06-20T08:45:00Z</updated>
+  <author><name>Microsoft.ServiceBus</name></author>
+  <content type="application/xml">
+    <EventHubDescription xmlns="http://schemas.microsoft.com/netservices/2010/10/servicebus/connect">
+      <MessageRetentionInDays>7</MessageRetentionInDays>
+      <PartitionCount>not-a-number</PartitionCount>
+      <CreatedAt>2024-06-20T08:45:00Z</CreatedAt>
+    </EventHubDescription>
+  </content>
+</entry>
 """;
 
     private const string SampleAtomPayload = """
