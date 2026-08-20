@@ -340,7 +340,7 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 QueueUrl = queueUrl,
                 Attributes = new Dictionary<string, string>
                 {
-                    ["VisibilityTimeout"] = "10",
+                    ["VisibilityTimeout"] = "30",
                 },
             }, timeout.Token).ConfigureAwait(false);
             await ResetSharedRestLaneQueueAsync(client, queueUrl).ConfigureAwait(false);
