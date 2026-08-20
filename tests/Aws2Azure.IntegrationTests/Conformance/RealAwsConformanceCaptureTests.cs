@@ -401,13 +401,16 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
                 // DynamoDB CreateTable is asynchronous on real AWS (the table
                 // stays in CREATING for a short window before ACTIVE), unlike
-                // our proxy's synchronous contract. A DeleteTable issued
-                // immediately after CreateTable can therefore race and get a
-                // transient ResourceInUseException ("Table is being
-                // created"). Retry with a short backoff — bounded so a
-                // genuinely stuck table still fails the case rather than
-                // hanging — mirroring the existing DeleteTableBestEffortAsync
-                // teardown retry pattern.
+                // our proxy's synchronous contract. Any step issued
+                // immediately after a case's own CreateTable can therefore
+                // race against real AWS: a DeleteTable can see a transient
+                // ResourceInUseException ("Table is being created"), and a
+                // TransactWriteItems/TransactGetItems can see a transient
+                // ResourceNotFoundException before the table's metadata has
+                // fully propagated. Retry either with a short backoff —
+                // bounded so a genuinely stuck/missing table still fails the
+                // case rather than hanging — mirroring the existing
+                // DeleteTableBestEffortAsync teardown retry pattern.
                 const int maxAttempts = 10;
                 for (var attempt = 1; ; attempt++)
                 {
@@ -444,8 +447,9 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                         if (service == "dynamodb"
                             && actualStatus == 400
                             && attempt < maxAttempts
-                            && body.Contains("ResourceInUseException", StringComparison.Ordinal)
-                            && body.Contains("being created", StringComparison.Ordinal))
+                            && ((body.Contains("ResourceInUseException", StringComparison.Ordinal)
+                                    && body.Contains("being created", StringComparison.Ordinal))
+                                || body.Contains("ResourceNotFoundException", StringComparison.Ordinal)))
                         {
                             await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
                             continue;
