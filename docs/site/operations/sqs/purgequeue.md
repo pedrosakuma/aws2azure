@@ -6,6 +6,7 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}`
+- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873)
 
 ## Sub-features
 
@@ -35,6 +36,7 @@ Returns 200 with empty body, like SQS.
 ## Behaviour differences
 
 - SB has no native purge. The proxy emulates it by draining peek-locked messages and deleting them. With a long LockDuration the drain may not be able to keep up if producers are sending faster than the proxy can delete — the 60s budget bounds wall-clock cost; the queue is therefore best-effort empty rather than guaranteed empty at the end of the call. The SQS contract guarantees a 60-second 'all messages enqueued at the time of the call will be deleted' window, which we approximate.
+- Real Azure confirmation now includes both the shared Tier-3 happy-path evidence export (`purge-queue-roundtrip`) and the dedicated `purge-queue-lifecycle` conformance scenario, which seeds multiple messages, calls PurgeQueue once, and verifies the follow-up ReceiveMessage is empty.
 - The 60-second cool-down (PurgeQueueInProgress) is in-process only. Other replicas of the proxy will not observe the cool-down — a horizontally scaled deployment could allow multiple concurrent drains. Tracked for the NFR phase (shared coordination cache).
 - Cooldown state is hard-capped and failed/nonexistent-queue attempts release their reservation. When the cap is occupied by active purges, new queue keys receive a retryable ServiceUnavailable response rather than growing process state.
 - Hard purge remains conditional: pause producers, verify the queue is quiescent, and accept that the bounded REST drain cannot guarantee the native SQS purge contract.

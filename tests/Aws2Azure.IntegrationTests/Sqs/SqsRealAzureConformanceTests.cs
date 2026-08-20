@@ -268,6 +268,175 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         Assert.Equal(ErrorType.Unknown, exception.ErrorType);
     }
 
+    [SkippableFact]
+    public async Task PurgeQueue_empties_a_real_service_bus_queue()
+    {
+        Skip.IfNot(fixture.ServiceBusConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
+
+        var queueName = "aws2azure-purge-" + Guid.NewGuid().ToString("N")[..10];
+        using var client = fixture.CreateSqsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        string? queueUrl = null;
+
+        try
+        {
+            queueUrl = (await client.CreateQueueAsync(new CreateQueueRequest
+            {
+                QueueName = queueName,
+                Attributes = new Dictionary<string, string>
+                {
+                    ["VisibilityTimeout"] = "5",
+                },
+            }, timeout.Token).ConfigureAwait(false)).QueueUrl;
+            var bodies = Enumerable.Range(0, 4)
+                .Select(i => $"purge-{Guid.NewGuid():N}-{i}")
+                .ToArray();
+            foreach (var body in bodies)
+            {
+                await client.SendMessageAsync(new SendMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MessageBody = body,
+                }, timeout.Token).ConfigureAwait(false);
+            }
+
+            await client.PurgeQueueAsync(new PurgeQueueRequest
+            {
+                QueueUrl = queueUrl,
+            }, timeout.Token).ConfigureAwait(false);
+
+            await AssertQueueEmptyAsync(client, queueUrl, TimeSpan.FromSeconds(2), timeout.Token)
+                .ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(6), timeout.Token).ConfigureAwait(false);
+            await AssertQueueEmptyAsync(client, queueUrl, TimeSpan.FromSeconds(2), timeout.Token)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (queueUrl is not null)
+            {
+                try { await client.DeleteQueueAsync(queueUrl).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task ChangeMessageVisibilityBatch_mixes_zero_timeout_lock_renewal_and_invalid_handles_against_real_service_bus()
+    {
+        Skip.IfNot(fixture.ServiceBusConfigured,
+            "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
+
+        var queueName = RealAzureProxyFixture.SqsRestLaneQueueName;
+        using var client = fixture.CreateSqsClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        string? queueUrl = null;
+
+        try
+        {
+            queueUrl = await EnsureQueueUrlAsync(client, queueName, timeout.Token).ConfigureAwait(false);
+            await client.SetQueueAttributesAsync(new SetQueueAttributesRequest
+            {
+                QueueUrl = queueUrl,
+                Attributes = new Dictionary<string, string>
+                {
+                    ["VisibilityTimeout"] = "10",
+                },
+            }, timeout.Token).ConfigureAwait(false);
+            await ResetSharedRestLaneQueueAsync(client, queueUrl).ConfigureAwait(false);
+
+            var zeroBody = "cmvb-zero-" + Guid.NewGuid().ToString("N");
+            var renewedBody = "cmvb-renewed-" + Guid.NewGuid().ToString("N");
+            await client.SendMessageAsync(queueUrl, zeroBody, timeout.Token).ConfigureAwait(false);
+            await client.SendMessageAsync(queueUrl, renewedBody, timeout.Token).ConfigureAwait(false);
+
+            var received = await ReceiveBodiesAsync(client, queueUrl, [zeroBody, renewedBody], timeout.Token)
+                .ConfigureAwait(false);
+            Assert.Equal(2, received.Count);
+
+            await Task.Delay(TimeSpan.FromSeconds(8), timeout.Token).ConfigureAwait(false);
+            var changed = await client.ChangeMessageVisibilityBatchAsync(new ChangeMessageVisibilityBatchRequest
+            {
+                QueueUrl = queueUrl,
+                Entries =
+                [
+                    new ChangeMessageVisibilityBatchRequestEntry
+                    {
+                        Id = "zero",
+                        ReceiptHandle = received[zeroBody],
+                        VisibilityTimeout = 0,
+                    },
+                    new ChangeMessageVisibilityBatchRequestEntry
+                    {
+                        Id = "renewed",
+                        ReceiptHandle = received[renewedBody],
+                        VisibilityTimeout = 30,
+                    },
+                    new ChangeMessageVisibilityBatchRequestEntry
+                    {
+                        Id = "invalid",
+                        ReceiptHandle = "not-a-real-service-bus-lock-token",
+                        VisibilityTimeout = 0,
+                    },
+                ],
+            }, timeout.Token).ConfigureAwait(false);
+
+            var successfulIds = changed.Successful.Select(entry => entry.Id).OrderBy(id => id).ToArray();
+            Assert.Equal(new[] { "renewed", "zero" }, successfulIds);
+            var failure = Assert.Single(changed.Failed);
+            Assert.Equal("invalid", failure.Id);
+            Assert.True(failure.SenderFault);
+
+            var zeroRedelivered = await ReceiveExpectedBodyAsync(
+                client,
+                queueUrl,
+                zeroBody,
+                TimeSpan.FromSeconds(3),
+                timeout.Token).ConfigureAwait(false);
+            Assert.Equal("2", zeroRedelivered.Attributes["ApproximateReceiveCount"]);
+            await client.DeleteMessageAsync(queueUrl, zeroRedelivered.ReceiptHandle, timeout.Token)
+                .ConfigureAwait(false);
+
+            await AssertNoBodyAsync(
+                client,
+                queueUrl,
+                renewedBody,
+                TimeSpan.FromSeconds(4),
+                timeout.Token).ConfigureAwait(false);
+
+            var renewedRedelivered = await ReceiveExpectedBodyAsync(
+                client,
+                queueUrl,
+                renewedBody,
+                TimeSpan.FromSeconds(20),
+                timeout.Token).ConfigureAwait(false);
+            await client.DeleteMessageAsync(queueUrl, renewedRedelivered.ReceiptHandle, timeout.Token)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (queueUrl is not null)
+            {
+                try
+                {
+                    await client.SetQueueAttributesAsync(new SetQueueAttributesRequest
+                    {
+                        QueueUrl = queueUrl,
+                        Attributes = new Dictionary<string, string>
+                        {
+                            ["VisibilityTimeout"] = "30",
+                        },
+                    }, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+
+                try { await ResetSharedRestLaneQueueAsync(client, queueUrl).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
     private static async Task<Dictionary<string, string>> ReceiveBodiesAsync(
         IAmazonSQS client,
         string queueUrl,
@@ -294,5 +463,141 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
 
         return received;
+    }
+
+    private static async Task<Message> ReceiveExpectedBodyAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        string expectedBody,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var response = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 1,
+                WaitTimeSeconds = 1,
+                MessageSystemAttributeNames = ["ApproximateReceiveCount"],
+            }, cancellationToken).ConfigureAwait(false);
+            if (response.Messages is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            var message = Assert.Single(response.Messages);
+            Assert.Equal(expectedBody, message.Body);
+            return message;
+        }
+
+        throw new TimeoutException($"Timed out waiting to receive '{expectedBody}'.");
+    }
+
+    private static async Task AssertNoBodyAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        string unexpectedBody,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var response = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 1,
+                WaitTimeSeconds = 1,
+            }, cancellationToken).ConfigureAwait(false);
+            if (response.Messages is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            var message = Assert.Single(response.Messages);
+            Assert.NotEqual(unexpectedBody, message.Body);
+        }
+    }
+
+    private static async Task AssertQueueEmptyAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var response = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 10,
+                WaitTimeSeconds = 1,
+            }, cancellationToken).ConfigureAwait(false);
+            Assert.Empty(response.Messages);
+        }
+    }
+
+    private static async Task<string> EnsureQueueUrlAsync(
+        IAmazonSQS client,
+        string queueName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var created = await client.CreateQueueAsync(new CreateQueueRequest
+            {
+                QueueName = queueName,
+            }, cancellationToken).ConfigureAwait(false);
+            return created.QueueUrl;
+        }
+        catch (QueueNameExistsException)
+        {
+            var existing = await client.GetQueueUrlAsync(new GetQueueUrlRequest
+            {
+                QueueName = queueName,
+            }, cancellationToken).ConfigureAwait(false);
+            return existing.QueueUrl;
+        }
+    }
+
+    private static async Task DrainQueueAsync(
+        IAmazonSQS client,
+        string queueUrl,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var response = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MaxNumberOfMessages = 10,
+                WaitTimeSeconds = 1,
+            }, cancellationToken).ConfigureAwait(false);
+            if (response.Messages is not { Count: > 0 } messages)
+            {
+                return;
+            }
+
+            foreach (var message in messages)
+            {
+                await client.DeleteMessageAsync(new DeleteMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    ReceiptHandle = message.ReceiptHandle,
+                }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task ResetSharedRestLaneQueueAsync(
+        IAmazonSQS client,
+        string queueUrl)
+    {
+        await DrainQueueAsync(client, queueUrl, CancellationToken.None).ConfigureAwait(false);
+        await Task.Delay(TimeSpan.FromSeconds(31)).ConfigureAwait(false);
+        await DrainQueueAsync(client, queueUrl, CancellationToken.None).ConfigureAwait(false);
     }
 }
