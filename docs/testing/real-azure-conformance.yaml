@@ -881,6 +881,15 @@ services:
         operations: [PublishBatch]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.PublishBatch_reports_real_service_bus_results
+      - id: topic-attributes-lifecycle
+        priority: p0
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: GetTopicAttributes projects real Service Bus topic state and metadata, and SetTopicAttributes persists mutable metadata-backed attributes back to the live topic description.
+        operations: [GetTopicAttributes, SetTopicAttributes]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Topic_metadata_attributes_round_trip_against_real_service_bus
       - id: publish-event-grid
         priority: p0
         category: core

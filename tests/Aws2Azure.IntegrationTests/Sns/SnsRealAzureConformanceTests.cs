@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Xunit;
@@ -429,6 +430,7 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
 
         using var client = fixture.CreateSnsClient();
+        var admin = new ServiceBusAdministrationClient(fixture.CreateServiceBusConnectionString());
         var topicName = SnsQueryApiClient.CreateTopicName("sns-real-topicattrs");
         string? topicArn = null;
 
@@ -451,9 +453,26 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 [new("TopicArn", topicArn)]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(getAfterCreate, HttpStatusCode.OK, "GetTopicAttributes[after create]");
             var createdAttributes = SnsQueryApiClient.ReadAttributes(getAfterCreate);
+            var azureAfterCreate = (await admin.GetTopicAsync(topicName).ConfigureAwait(false)).Value;
+            using var createdMetadata = JsonDocument.Parse(azureAfterCreate.UserMetadata);
+            Assert.Equal(topicArn, createdAttributes["TopicArn"]);
+            Assert.Equal("000000000000", createdAttributes["Owner"]);
             Assert.Equal("Orders", createdAttributes["DisplayName"]);
             Assert.Equal("{\"Statement\":[]}", createdAttributes["Policy"]);
             Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", createdAttributes["DeliveryPolicy"]);
+            Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", createdAttributes["EffectiveDeliveryPolicy"]);
+            Assert.Equal("0", createdAttributes["SubscriptionsConfirmed"]);
+            Assert.Equal("0", createdAttributes["SubscriptionsPending"]);
+            Assert.Equal("0", createdAttributes["SubscriptionsDeleted"]);
+            Assert.Equal(string.Empty, createdAttributes["KmsMasterKeyId"]);
+            Assert.Equal("false", createdAttributes["FifoTopic"]);
+            Assert.Equal("false", createdAttributes["ContentBasedDeduplication"]);
+            Assert.Equal("Orders", createdMetadata.RootElement.GetProperty("displayName").GetString());
+            Assert.Equal("{\"Statement\":[]}", createdMetadata.RootElement.GetProperty("policyJson").GetString());
+            Assert.Equal(
+                "{\"healthyRetryPolicy\":{\"numRetries\":3}}",
+                createdMetadata.RootElement.GetProperty("deliveryPolicyJson").GetString());
+            Assert.False(azureAfterCreate.RequiresDuplicateDetection);
 
             var set = await SendAsync(client, "SetTopicAttributes",
             [
@@ -467,8 +486,19 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 [new("TopicArn", topicArn)]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(getAfterSet, HttpStatusCode.OK, "GetTopicAttributes[after set]");
             var updatedAttributes = SnsQueryApiClient.ReadAttributes(getAfterSet);
+            var azureAfterSet = (await admin.GetTopicAsync(topicName).ConfigureAwait(false)).Value;
+            using var updatedMetadata = JsonDocument.Parse(azureAfterSet.UserMetadata);
+            Assert.Equal(topicArn, updatedAttributes["TopicArn"]);
             Assert.Equal("Orders v2", updatedAttributes["DisplayName"]);
             Assert.Equal("{\"Statement\":[]}", updatedAttributes["Policy"]);
+            Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", updatedAttributes["DeliveryPolicy"]);
+            Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", updatedAttributes["EffectiveDeliveryPolicy"]);
+            Assert.Equal("Orders v2", updatedMetadata.RootElement.GetProperty("displayName").GetString());
+            Assert.Equal("{\"Statement\":[]}", updatedMetadata.RootElement.GetProperty("policyJson").GetString());
+            Assert.Equal(
+                "{\"healthyRetryPolicy\":{\"numRetries\":3}}",
+                updatedMetadata.RootElement.GetProperty("deliveryPolicyJson").GetString());
+            Assert.False(azureAfterSet.RequiresDuplicateDetection);
         }
         finally
         {

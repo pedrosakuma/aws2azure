@@ -6,6 +6,7 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic description`
+- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873)
 
 ## Sub-features
 
@@ -37,6 +38,7 @@ Reads the current Service Bus topic description and rejects attempts to change R
 - EffectiveDeliveryPolicy, KmsMasterKeyId, SignatureVersion, and TracingConfig remain no-ops because the Service Bus-backed profile has no faithful equivalent AWS topic-level behavior to apply.
 - Updates whose serialized topic metadata would exceed the Azure Service Bus UserMetadata 1024-character limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
+- Real-Azure verification confirms mutable metadata-backed DisplayName updates persist onto the live Service Bus topic description and are observable through a follow-up GetTopicAttributes call (see SnsRealAzureConformanceTests.Topic_metadata_attributes_round_trip_against_real_service_bus).
 
 ## References
 
