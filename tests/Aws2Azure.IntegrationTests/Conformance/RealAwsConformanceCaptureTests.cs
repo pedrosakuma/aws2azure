@@ -577,8 +577,15 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
             {
                 if (!BodyAssertionSatisfied(canonical, body, assertion.Path))
                 {
+                    // Include the raw body: unlike the status-code/error-code
+                    // failure branches above, an unmet body assertion never
+                    // otherwise surfaces what AWS actually returned, making a
+                    // real-AWS-only divergence (e.g. a transactional
+                    // read-after-write staleness) unactionable from CI logs
+                    // alone.
                     throw new XunitException(
-                        $"Conformance case '{testCase.Name}' step '{stepName}' did not satisfy required body assertion '{assertion.Path}'.");
+                        $"Conformance case '{testCase.Name}' step '{stepName}' did not satisfy required body assertion " +
+                        $"'{assertion.Path}'. Body: {body}");
                 }
             }
         }
