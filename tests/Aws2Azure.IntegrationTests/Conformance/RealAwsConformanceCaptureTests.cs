@@ -26,7 +26,7 @@ namespace Aws2Azure.IntegrationTests.Conformance;
 
 [Trait("Category", "RealAws")]
 [Collection(RealAwsConformanceCaptureCollection.Name)]
-public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixture fixture)
+public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixture fixture)
 {
     [SkippableFact]
     public async Task S3_happy_path_cases_capture_real_aws_goldens()
@@ -478,11 +478,42 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                         actualStatus,
                         headers,
                         body));
+
+                    // A case's own CreateTable step returning 200 does not
+                    // mean the table is immediately ACTIVE/consistent on real
+                    // AWS - unlike the earlier ResourceInUseException/
+                    // ResourceNotFoundException retries above (which catch
+                    // requests that outright fail during the propagation
+                    // window), TransactWriteItems/TransactGetItems can both
+                    // succeed with 200 in that same window while still
+                    // observing a stale, pre-write snapshot (discovered via
+                    // transact-get-write-items-roundtrip failing its
+                    // "Responses.0.Item" assertion even though transact-write
+                    // itself returned 200). Block here until the table
+                    // reports ACTIVE before any subsequent step in this case
+                    // runs, mirroring the explicit wait already used for the
+                    // shared per-run table.
+                    if (service == "dynamodb" && step.Name == "create-table")
+                    {
+                        var tableNameMatch = TableNameFromCreateTableResponse().Match(body);
+                        if (tableNameMatch.Success)
+                        {
+                            using var waitTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+                            await WaitForTableActiveAsync(
+                                fixture.DynamoDb,
+                                tableNameMatch.Groups[1].Value,
+                                waitTimeout.Token).ConfigureAwait(false);
+                        }
+                    }
+
                     break;
                 }
             }
         }
     }
+
+    [System.Text.RegularExpressions.GeneratedRegex("\"TableName\"\\s*:\\s*\"([^\"]+)\"")]
+    private static partial System.Text.RegularExpressions.Regex TableNameFromCreateTableResponse();
 
     private static void AssertStepMatchesExpected(
         IConformanceCase testCase,
