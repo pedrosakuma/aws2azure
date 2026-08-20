@@ -384,61 +384,86 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
             for (var index = 0; index < plan.Steps.Count; index++)
             {
                 var step = plan.Steps[index];
-                var state = new ConformanceExecutionState(context, exchanges);
-                using var request = await step.BuildRequestAsync(state).ConfigureAwait(false);
-
-                // Force a fresh TCP connection per request. Root-caused via
-                // real-AWS diagnostic capture (2026-08-20): reusing one
-                // persistent HTTP/1.1 connection across a case sequence that
-                // deliberately provokes 400 auth-failure responses (the
-                // error-matrix cases) followed by a real write request
-                // desynchronized the connection just enough that the next
-                // request's response was misread by AWS's edge as an
-                // InvalidSignatureException, even though the signed request
-                // itself was verified byte-for-byte correct (canonical string,
-                // string-to-sign, and derived key all matched AWS's own
-                // reported expectations, and an official-AWSSDK.NET probe
-                // succeeded against the same table/credentials). Applies to
-                // all services, not just DynamoDB, since any real-AWS capture
-                // sequence that mixes deliberate-error and real cases on a
-                // shared HttpClient is susceptible to the same desync.
-                request.Headers.ConnectionClose = true;
-
-                using var response = await client.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
-                var body = response.Content is null
-                    ? string.Empty
-                    : await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
                 var expectedStep = testCase.Expected.Steps[index];
-                var actualStatus = (int)response.StatusCode;
                 var expectedStatus = expectedStep.ExpectedStatus;
-                if (actualStatus != expectedStatus)
+
+                // DynamoDB CreateTable is asynchronous on real AWS (the table
+                // stays in CREATING for a short window before ACTIVE), unlike
+                // our proxy's synchronous contract. A DeleteTable issued
+                // immediately after CreateTable can therefore race and get a
+                // transient ResourceInUseException ("Table is being
+                // created"). Retry with a short backoff — bounded so a
+                // genuinely stuck table still fails the case rather than
+                // hanging — mirroring the existing DeleteTableBestEffortAsync
+                // teardown retry pattern.
+                const int maxAttempts = 10;
+                for (var attempt = 1; ; attempt++)
                 {
-                    throw new XunitException(
-                        $"Conformance case '{service}/{testCase.Name}' step '{step.Name}' returned " +
-                        $"{actualStatus} instead of {expectedStatus}. Body: {body}");
+                    var state = new ConformanceExecutionState(context, exchanges);
+                    using var request = await step.BuildRequestAsync(state).ConfigureAwait(false);
+
+                    // Force a fresh TCP connection per request. Root-caused via
+                    // real-AWS diagnostic capture (2026-08-20): reusing one
+                    // persistent HTTP/1.1 connection across a case sequence that
+                    // deliberately provokes 400 auth-failure responses (the
+                    // error-matrix cases) followed by a real write request
+                    // desynchronized the connection just enough that the next
+                    // request's response was misread by AWS's edge as an
+                    // InvalidSignatureException, even though the signed request
+                    // itself was verified byte-for-byte correct (canonical string,
+                    // string-to-sign, and derived key all matched AWS's own
+                    // reported expectations, and an official-AWSSDK.NET probe
+                    // succeeded against the same table/credentials). Applies to
+                    // all services, not just DynamoDB, since any real-AWS capture
+                    // sequence that mixes deliberate-error and real cases on a
+                    // shared HttpClient is susceptible to the same desync.
+                    request.Headers.ConnectionClose = true;
+
+                    using var response = await client.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
+                    var body = response.Content is null
+                        ? string.Empty
+                        : await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                    var actualStatus = (int)response.StatusCode;
+                    if (actualStatus != expectedStatus)
+                    {
+                        if (service == "dynamodb"
+                            && actualStatus == 400
+                            && attempt < maxAttempts
+                            && body.Contains("ResourceInUseException", StringComparison.Ordinal)
+                            && body.Contains("being created", StringComparison.Ordinal))
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        throw new XunitException(
+                            $"Conformance case '{service}/{testCase.Name}' step '{step.Name}' returned " +
+                            $"{actualStatus} instead of {expectedStatus}. Body: {body}");
+                    }
+
+                    var headers = CollectHeaders(response);
+                    var canonical = AwsErrorCanonicalizer.Canonicalize(actualStatus, headers, body);
+                    AssertStepMatchesExpected(testCase, step.Name, expectedStep, response, body, canonical);
+                    store.SaveStep(
+                        testCase.Name,
+                        step.Name,
+                        canonical,
+                        new GoldenProvenance(
+                            GoldenProvenance.SourceRealAws,
+                            testCase.Operation,
+                            DateTimeOffset.UtcNow,
+                            "Captured from real AWS by capture-real-aws.yml"));
+
+                    exchanges.Add(new ConformanceObservedExchange(
+                        step.Name,
+                        actualStatus,
+                        headers,
+                        body));
+                    break;
                 }
-
-                var headers = CollectHeaders(response);
-                var canonical = AwsErrorCanonicalizer.Canonicalize(actualStatus, headers, body);
-                AssertStepMatchesExpected(testCase, step.Name, expectedStep, response, body, canonical);
-                store.SaveStep(
-                    testCase.Name,
-                    step.Name,
-                    canonical,
-                    new GoldenProvenance(
-                        GoldenProvenance.SourceRealAws,
-                        testCase.Operation,
-                        DateTimeOffset.UtcNow,
-                        "Captured from real AWS by capture-real-aws.yml"));
-
-                exchanges.Add(new ConformanceObservedExchange(
-                    step.Name,
-                    actualStatus,
-                    headers,
-                    body));
             }
         }
     }
