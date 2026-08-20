@@ -6,6 +6,7 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Azure Service Bus topic description`
+- **Real-Azure verified:** ✅ 2026-08-20 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/32322056873)
 
 ## Sub-features
 
@@ -24,6 +25,7 @@ Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader
 - KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
 - FifoTopic is surfaced only for SNS topic names ending in .fifo. ContentBasedDeduplication is read from aws2azure metadata stored at create time; legacy FIFO topics without that metadata fall back to the raw Service Bus RequiresDuplicateDetection flag for backward compatibility.
 - AWS-only attributes such as SignatureVersion and TracingConfig are omitted.
+- Real-Azure verification covers the live Service Bus-backed TopicArn / Owner / subscription-count projection plus metadata-backed DisplayName / Policy / DeliveryPolicy round-trip (see SnsRealAzureConformanceTests.Topic_metadata_attributes_round_trip_against_real_service_bus).
 
 ## References
 

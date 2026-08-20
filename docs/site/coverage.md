@@ -116,14 +116,14 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | sns | [CreateTopic](operations/sns/createtopic.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](operations/sns/deletetopic.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [GetSubscriptionAttributes](operations/sns/getsubscriptionattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus subscription description` |
-| sns | [GetTopicAttributes](operations/sns/gettopicattributes.md) | 🟡 partial | 🔵 by design | — | — | `Azure Service Bus topic description` |
+| sns | [GetTopicAttributes](operations/sns/gettopicattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic description` |
 | sns | [ListSubscriptions](operations/sns/listsubscriptions.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [ListSubscriptionsByTopic](operations/sns/listsubscriptionsbytopic.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [ListTopics](operations/sns/listtopics.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](operations/sns/publish.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [PublishBatch](operations/sns/publishbatch.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) | 🟡 partial | 🛠️ feasible backlog | [#691](https://github.com/pedrosakuma/aws2azure/issues/691) | ✅ | `Azure Service Bus subscription description` |
-| sns | [SetTopicAttributes](operations/sns/settopicattributes.md) | 🟡 partial | 🔵 by design | — | — | `Azure Service Bus topic description` |
+| sns | [SetTopicAttributes](operations/sns/settopicattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic description` |
 | sns | [Subscribe](operations/sns/subscribe.md) | 🟡 partial | ⚫ non-goal | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [Unsubscribe](operations/sns/unsubscribe.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sqs | [AddPermission](operations/sqs/addpermission.md) | ⚪ stub | 🔵 by design | — | — | `No native Service Bus equivalent — validates queue existence and returns success.` |
