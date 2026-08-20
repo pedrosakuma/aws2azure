@@ -113,16 +113,16 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | secretsmanager | [RotateSecret](operations/secretsmanager/rotatesecret.md) | ⛔ unsupported | ⚫ non-goal | — | — | `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive` |
 | secretsmanager | [UpdateSecret](operations/secretsmanager/updatesecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
 | sns | [ConfirmSubscription](operations/sns/confirmsubscription.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
-| sns | [CreateTopic](operations/sns/createtopic.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
-| sns | [DeleteTopic](operations/sns/deletetopic.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
+| sns | [CreateTopic](operations/sns/createtopic.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus Topics management REST API` |
+| sns | [DeleteTopic](operations/sns/deletetopic.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [GetSubscriptionAttributes](operations/sns/getsubscriptionattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus subscription description` |
 | sns | [GetTopicAttributes](operations/sns/gettopicattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic description` |
 | sns | [ListSubscriptions](operations/sns/listsubscriptions.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [ListSubscriptionsByTopic](operations/sns/listsubscriptionsbytopic.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
-| sns | [ListTopics](operations/sns/listtopics.md) | 🟡 partial | 🛠️ feasible backlog | [#692](https://github.com/pedrosakuma/aws2azure/issues/692) | ✅ | `Azure Service Bus Topics management REST API` |
+| sns | [ListTopics](operations/sns/listtopics.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [Publish](operations/sns/publish.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
 | sns | [PublishBatch](operations/sns/publishbatch.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus Topics / Azure Event Grid` |
-| sns | [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) | 🟡 partial | 🛠️ feasible backlog | [#691](https://github.com/pedrosakuma/aws2azure/issues/691) | ✅ | `Azure Service Bus subscription description` |
+| sns | [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus subscription description` |
 | sns | [SetTopicAttributes](operations/sns/settopicattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic description` |
 | sns | [Subscribe](operations/sns/subscribe.md) | 🟡 partial | ⚫ non-goal | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [Unsubscribe](operations/sns/unsubscribe.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
@@ -136,7 +136,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | sqs | [GetQueueAttributes](operations/sqs/getqueueattributes.md) | 🟡 partial | 🔵 by design | — | — | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (Atom QueueDescription)` |
 | sqs | [GetQueueUrl](operations/sqs/getqueueurl.md) | ✅ implemented | — | — | ✅ | `GET https://{namespace}.servicebus.windows.net/{queue}?api-version=2021-05 (existence probe)` |
 | sqs | [ListDeadLetterSourceQueues](operations/sqs/listdeadlettersourcequeues.md) | ✅ implemented | — | — | ✅ | `Page through SB management GET /$Resources/queues?api-version=2021-05 and filter entries whose ForwardDeadLetteredMessagesTo equals the requested queue.` |
-| sqs | [ListQueueTags](operations/sqs/listqueuetags.md) | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | `GET QueueDescription and decode aws2azure's compact metadata envelope from UserMetadata.` |
+| sqs | [ListQueueTags](operations/sqs/listqueuetags.md) | 🟡 partial | 🛠️ feasible backlog | [#801](https://github.com/pedrosakuma/aws2azure/issues/801) | — | `GET QueueDescription and decode aws2azure's compact metadata envelope from UserMetadata.` |
 | sqs | [ListQueues](operations/sqs/listqueues.md) | ✅ implemented | — | — | ✅ | `GET https://{namespace}.servicebus.windows.net/$Resources/queues?api-version=2021-05&$skip=N&$top=M` |
 | sqs | [PurgeQueue](operations/sqs/purgequeue.md) | 🟡 partial | 🔵 by design | — | — | `Azure Service Bus queue runtime REST API — emulated via drain-loop of POST /{queue}/messages/head + DELETE /{queue}/messages/{id}/{lockToken}` |
 | sqs | [ReceiveMessage](operations/sqs/receivemessage.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus queue runtime REST API — POST /{queue}/messages/head?timeout={waitSeconds}&api-version=2021-05 (peek-lock semantics)` |
@@ -144,5 +144,5 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | sqs | [SendMessage](operations/sqs/sendmessage.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus queue runtime REST API — POST /{queue}/messages?api-version=2021-05` |
 | sqs | [SendMessageBatch](operations/sqs/sendmessagebatch.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus queue runtime REST API — POST /{queue}/messages with Content-Type: application/vnd.microsoft.servicebus.json` |
 | sqs | [SetQueueAttributes](operations/sqs/setqueueattributes.md) | 🟡 partial | 🔵 by design | — | — | `Azure Service Bus management REST API — PUT /{queue}?api-version=2021-05 with If-Match: * (whole-entity replace)` |
-| sqs | [TagQueue](operations/sqs/tagqueue.md) | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.` |
-| sqs | [UntagQueue](operations/sqs/untagqueue.md) | 🟡 partial | 🛠️ feasible backlog | [#693](https://github.com/pedrosakuma/aws2azure/issues/693) | — | `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.` |
+| sqs | [TagQueue](operations/sqs/tagqueue.md) | 🟡 partial | 🛠️ feasible backlog | [#801](https://github.com/pedrosakuma/aws2azure/issues/801) | — | `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.` |
+| sqs | [UntagQueue](operations/sqs/untagqueue.md) | 🟡 partial | 🛠️ feasible backlog | [#801](https://github.com/pedrosakuma/aws2azure/issues/801) | — | `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.` |

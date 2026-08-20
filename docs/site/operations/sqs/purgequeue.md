@@ -21,7 +21,7 @@ Peek-locks messages in bursts and DELETEs them; bounded by a 60s wall-clock budg
 - **Capability ID:** `sub-feature:sqs:purgequeue:60s-cool-down--purgequeueinprogress`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- **Tracking issue:** [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
 
 Enforced by a bounded in-process tracker keyed by namespace+queue. Expired and failed attempts are removed opportunistically; cross-replica coordination remains unsupported.
 

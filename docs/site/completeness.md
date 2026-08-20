@@ -27,8 +27,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Feasible backlog
 
-- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-update) / Update — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
-- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-returnvaluesonconditioncheckfailure) / ReturnValuesOnConditionCheckFailure — [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
+- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-update) / Update — [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
+- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-returnvaluesonconditioncheckfailure) / ReturnValuesOnConditionCheckFailure — [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
 
 ### Workload maturity
 
@@ -125,7 +125,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [CreateMultipartUpload](operations/s3/createmultipartupload.md#sub-feature-object-tagging) / object-tagging — [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
+- Sub-feature [CreateMultipartUpload](operations/s3/createmultipartupload.md#sub-feature-object-tagging) / object-tagging — [#799](https://github.com/pedrosakuma/aws2azure/issues/799)
 
 ### Workload maturity
 
@@ -297,12 +297,12 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Operation [CreateTopic](operations/sns/createtopic.md) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
-- Operation [DeleteTopic](operations/sns/deletetopic.md) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
-- Operation [ListTopics](operations/sns/listtopics.md) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
-- Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
-- Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
-- Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
+- Operation [CreateTopic](operations/sns/createtopic.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Operation [DeleteTopic](operations/sns/deletetopic.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Operation [ListTopics](operations/sns/listtopics.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 
 ### Workload maturity
 
@@ -337,10 +337,10 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Operation [ListQueueTags](operations/sqs/listqueuetags.md) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Operation [TagQueue](operations/sqs/tagqueue.md) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Operation [UntagQueue](operations/sqs/untagqueue.md) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
-- Sub-feature [PurgeQueue](operations/sqs/purgequeue.md#sub-feature-60s-cool-down--purgequeueinprogress) / 60s cool-down (PurgeQueueInProgress) — [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- Operation [ListQueueTags](operations/sqs/listqueuetags.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
+- Operation [TagQueue](operations/sqs/tagqueue.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
+- Operation [UntagQueue](operations/sqs/untagqueue.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
+- Sub-feature [PurgeQueue](operations/sqs/purgequeue.md#sub-feature-60s-cool-down--purgequeueinprogress) / 60s cool-down (PurgeQueueInProgress) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
 
 ### Workload maturity
 

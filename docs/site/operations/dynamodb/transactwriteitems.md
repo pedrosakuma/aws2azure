@@ -53,7 +53,7 @@ A failed condition returns exactly one aligned reason per TransactItem. Only Non
 - **Capability ID:** `sub-feature:dynamodb:transactwriteitems:update`
 - **Status:** ⛔ unsupported
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
+- **Tracking issue:** [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
 
 Atomic transactional UpdateExpression is rejected with ValidationException. Use Put to replace the complete item.
 
@@ -99,7 +99,7 @@ Account topology is resolved before transaction stored-procedure provisioning/ex
 - **Capability ID:** `sub-feature:dynamodb:transactwriteitems:returnvaluesonconditioncheckfailure`
 - **Status:** ⛔ unsupported
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#687](https://github.com/pedrosakuma/aws2azure/issues/687)
+- **Tracking issue:** [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
 
 Any use is rejected with ValidationException. The certified `atomicTransactWrite_v5` payload returns only positional cancellation codes; faithfully returning ALL_OLD images would require a new stored-procedure identity that persists those pre-write snapshots atomically with the cancellation outcome. The proxy intentionally does not race a post-failure GET to fabricate potentially newer items.
 
