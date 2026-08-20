@@ -4,13 +4,11 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **85**, implemented-but-unsealed: **1**
+- Operations: **142** — real-Azure verified: **86**, implemented-but-unsealed: **0**
 
 ## Implemented without a real-Azure seal
 
-| Service | Operation | Tracking issue | Expires |
-|---|---|---|---|
-| dynamodb | [ListTables](operations/dynamodb/listtables.md) | [issue](https://github.com/pedrosakuma/aws2azure/issues/532) | 2026-10-31 |
+_None — every implemented operation carries a real-Azure seal._
 
 ## Documented behaviour differences
 
@@ -66,9 +64,10 @@ the documented behaviour differences and the real-Azure seal state.
 | dynamodb | [GetItem](operations/dynamodb/getitem.md) | ✅ | Cosmos binary JSON response bodies are supported only when explicitly enabled with `DynamoDb.CosmosBinaryResponses=true`; the proxy sends `x-ms-cosmos-supported-serialization-formats: CosmosBinary`, decodes `0x80` CosmosBinary bodies back to JSON before the normal DynamoDB response transform, and falls back to the unchanged text path whenever Cosmos returns text. For GetItem the binary body is streamed straight into the response envelope via `CosmosBinaryReader` (a forward-only `ITokenReader` over the binary format), skipping the intermediate decode-to-text materialization; output is byte-identical to the decode-then-text path (pinned by a full-marker-surface differential corpus and randomized fuzz tests), and any marker the streaming reader does not fast-path falls back to the proven decode-to-text path before any byte is emitted. The decode path taken per request is observable via the `aws2azure_dynamodb_getitem_decode_path_total{path="fused\|fallback\|text"}` Prometheus counter, so an operator can confirm the fast path is active in their topology. Emulator-unverified: the Cosmos DB Linux emulator used by CI does not emit CosmosBinary bodies, so the fused path is exercised only against real Azure (the `run-real-azure` integration job asserts the `path="fused"` counter increments on a binary GetItem round-trip). |
 | dynamodb | [GetItem](operations/dynamodb/getitem.md) | ✅ | Cosmos 429 on metadata read surfaces as ProvisionedThroughputExceededException (not a fake ResourceNotFoundException). |
 | dynamodb | [GetItem](operations/dynamodb/getitem.md) | ✅ | Smoke-verified against the Cosmos DB Linux emulator (vNext preview) via Testcontainers; the CosmosBinary fused path is additionally validated against real Azure Cosmos DB by the `run-real-azure` integration job (decode-path counter assertion). The text/fallback decode-path tagging is covered by unit tests. |
-| dynamodb | [ListTables](operations/dynamodb/listtables.md) | — | Container names are sorted ordinally (case-sensitive). DynamoDB pagination is also ordinal so the cursor semantics match. |
-| dynamodb | [ListTables](operations/dynamodb/listtables.md) | — | All containers in the configured database are surfaced, including sidecar-less ones. Operators using a shared database for non-DynamoDB workloads will see those container ids too. |
-| dynamodb | [ListTables](operations/dynamodb/listtables.md) | — | Pagination is server-side: the proxy fetches all containers once and slices in-memory. For databases with thousands of containers this should be split across Cosmos result pages — tracked as a follow-up. |
+| dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ | Container names are sorted ordinally (case-sensitive). DynamoDB pagination is also ordinal so the cursor semantics match. |
+| dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ | All containers in the configured database are surfaced, including sidecar-less ones. Operators using a shared database for non-DynamoDB workloads will see those container ids too. |
+| dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ | Pagination is server-side: the proxy fetches all containers once and slices in-memory. For databases with thousands of containers this should be split across Cosmos result pages — tracked as a follow-up. |
+| dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ | Real-Azure verification covers Limit, ExclusiveStartTableName, and LastEvaluatedTableName pagination against a live Cosmos DB database shared with other containers (see DynamoDbRealAzureConformanceTests.ListTables_paginates_with_limit_and_exclusive_start_over_real_cosmos). |
 | dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ | Tags are stored in the aws2azure TableMetadata sidecar document inside the table's Cosmos container, not as Azure control-plane resource tags. |
 | dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ | Persisted tags have no effect on Azure billing, routing, Azure Policy, or Azure-native tag queries. |
 | dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ | Acceptance has unit-test coverage against the Cosmos REST test double; real-Azure validation is pending. |

@@ -198,6 +198,16 @@ services:
         operations: [ListTables]
         tests:
           - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.DynamoDb_happy_path_cases_emit_real_azure_evidence
+      - id: list-tables-cursor-conformance
+        priority: p1
+        category: pagination
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-basic-crud]
+        description: ListTables Limit, ExclusiveStartTableName, and LastEvaluatedTableName cursor pagination against a real, shared Cosmos DB database containing containers from other concurrently-running tests.
+        operations: [ListTables]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureConformanceTests.ListTables_paginates_with_limit_and_exclusive_start_over_real_cosmos
       - id: query-pagination
         priority: p0
         category: pagination

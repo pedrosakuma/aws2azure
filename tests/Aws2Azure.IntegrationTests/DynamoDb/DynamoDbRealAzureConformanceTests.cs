@@ -240,6 +240,69 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
     }
 
     [SkippableFact]
+    public async Task ListTables_paginates_with_limit_and_exclusive_start_over_real_cosmos()
+    {
+        Skip.IfNot(fixture.CosmosConfigured,
+            "AZURE_COSMOS_ENDPOINT/KEY/DATABASE not set — skipping real-Azure DynamoDB conformance.");
+
+        // Distinct random prefix so this test's containers sort contiguously
+        // among whatever other containers already live in the shared
+        // database, without requiring exclusive ownership of the database.
+        var prefix = "tlist" + Guid.NewGuid().ToString("N")[..12];
+        var tableNames = new[] { $"{prefix}-0", $"{prefix}-1", $"{prefix}-2" };
+        using var client = fixture.CreateDynamoDbClient();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var createdTables = new List<string>();
+
+        try
+        {
+            foreach (var table in tableNames)
+            {
+                await CreateTableAsync(client, table, timeout.Token).ConfigureAwait(false);
+                createdTables.Add(table);
+                await WaitForTableActiveAsync(client, table, timeout.Token).ConfigureAwait(false);
+            }
+
+            // Limit: a single page covering exactly our three tables, anchored
+            // by ExclusiveStartTableName just below the prefix range (the
+            // prefix itself sorts before any "{prefix}-N" suffix ordinally).
+            var fullPage = await client.ListTablesAsync(new ListTablesRequest
+            {
+                ExclusiveStartTableName = prefix,
+                Limit = 3,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(tableNames, fullPage.TableNames);
+
+            // LastEvaluatedTableName pagination: a smaller Limit forces a
+            // cursor even though we know a further page exists (prefix-2).
+            var firstPage = await client.ListTablesAsync(new ListTablesRequest
+            {
+                ExclusiveStartTableName = prefix,
+                Limit = 2,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(tableNames[..2], firstPage.TableNames);
+            Assert.Equal(tableNames[1], firstPage.LastEvaluatedTableName);
+
+            // ExclusiveStartTableName cursor: resuming from the previous
+            // page's cursor must yield prefix-2 as the very first result,
+            // never repeating prefix-1.
+            var secondPage = await client.ListTablesAsync(new ListTablesRequest
+            {
+                ExclusiveStartTableName = firstPage.LastEvaluatedTableName,
+                Limit = 2,
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(tableNames[2], secondPage.TableNames[0]);
+        }
+        finally
+        {
+            foreach (var table in createdTables)
+            {
+                try { await client.DeleteTableAsync(table).ConfigureAwait(false); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
     public async Task GetItem_and_Query_against_nonexistent_table_return_native_resource_not_found_error()
     {
         Skip.IfNot(fixture.CosmosConfigured,
