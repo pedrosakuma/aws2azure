@@ -21,7 +21,7 @@ Complete acquires the multipart state's 60-second lease before committing the bl
 - **Capability ID:** `sub-feature:s3:completemultipartupload:metadata-fidelity`
 - **Status:** ✅ implemented
 
-Headers captured at CreateMultipartUpload (Content-Type/Encoding/Language/Disposition/Cache-Control and x-amz-meta-*) are replayed onto Put Block List so the completed blob preserves the documented metadata surface.
+Headers captured at CreateMultipartUpload (Content-Type/Encoding/Language/Disposition/Cache-Control and x-amz-meta-*) are replayed onto Put Block List so the completed blob preserves the documented metadata surface. The proxy also writes one reserved hidden metadata key with the committed part count so subsequent GetObject/HeadObject reads can preserve the multipart ETag dash suffix for AWS SDK compatibility; client-supplied metadata using that reserved name is ignored.
 
 ### part-ordering {#sub-feature-part-ordering}
 
@@ -48,6 +48,7 @@ CompleteMultipartUpload resolves the staged Azure block list and rejects any non
 ## Behaviour differences
 
 - Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart.
+- Subsequent GetObject/HeadObject reads reuse the reserved hidden part-count metadata marker to keep the multipart-shaped ETag; without that marker AWSSDK.S3 4.x would treat the object as a single-part MD5 ETag and incorrectly hash-validate the response body.
 - Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList).
 - Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart.
 - Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release.

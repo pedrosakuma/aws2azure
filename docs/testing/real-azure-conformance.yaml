@@ -88,8 +88,8 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
-        description: Object and bucket tagging put/get/delete round-trip against real Blob Storage index tags/metadata via the shared happy-path matrix.
-        operations: [PutObjectTagging, GetObjectTagging, DeleteObjectTagging, DeleteBucketTagging]
+        description: Object and bucket tagging put/get/delete round-trip against real Blob Storage index tags and container metadata via the shared happy-path matrix.
+        operations: [PutObjectTagging, GetObjectTagging, DeleteObjectTagging, PutBucketTagging, GetBucketTagging, DeleteBucketTagging]
         tests:
           - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
       - id: multipart-upload-lifecycle
@@ -97,9 +97,10 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
-        description: Create/UploadPart/UploadPartCopy/ListParts/Complete and Abort multipart upload round-trip against real Blob Storage Put Block / Put Block List via the shared happy-path matrix.
-        operations: [CreateMultipartUpload, UploadPart, UploadPartCopy, ListParts, CompleteMultipartUpload, AbortMultipartUpload]
+        description: Create/UploadPart/UploadPartCopy/ListMultipartUploads/ListParts/Complete and Abort multipart upload round-trip against real Blob Storage Put Block / Put Block List, with restart-stable in-progress upload enumeration covered by a dedicated real-Azure smoke.
+        operations: [CreateMultipartUpload, UploadPart, UploadPartCopy, ListMultipartUploads, ListParts, CompleteMultipartUpload, AbortMultipartUpload]
         tests:
+          - Aws2Azure.IntegrationTests.S3.S3RealAzureSmokeTests.Multipart_upload_lists_across_restart_and_completes_against_real_blob_storage
           - Aws2Azure.IntegrationTests.Conformance.RealAzureConformanceEvidenceTests.S3_happy_path_cases_emit_real_azure_evidence
       - id: write-throttled
         priority: p1

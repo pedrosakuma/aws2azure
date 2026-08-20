@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using Aws2Azure.Modules.S3.Errors;
+using Aws2Azure.Modules.S3.Internal;
 using Aws2Azure.Modules.S3.Operations;
 using Microsoft.AspNetCore.Http;
 
@@ -85,7 +86,7 @@ public sealed class MultipartHandlersHelperTests
     [InlineData("\"1234567890abcdef1234567890abcdefEXTRA\"", 2, "\"1234567890abcdef1234567890abcdef-2\"")]
     public void Synthesize_multipart_etag_pads_or_truncates_to_s3_shape(string azureEtag, int partCount, string expected)
     {
-        var etag = Invoke<string>("SynthesizeMultipartEtag", azureEtag, partCount);
+        var etag = "\"" + HeaderForwarding.TranslateAzureMultipartEtagToS3(azureEtag, partCount) + "\"";
 
         Assert.Equal(expected, etag);
     }

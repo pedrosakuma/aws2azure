@@ -4,7 +4,7 @@ Emulators are a necessary, not sufficient, signal: nothing is trusted as
 `implemented` without ≥1 recorded real-Azure validation. This report aggregates
 the documented behaviour differences and the real-Azure seal state.
 
-- Operations: **142** — real-Azure verified: **82**, implemented-but-unsealed: **1**
+- Operations: **142** — real-Azure verified: **85**, implemented-but-unsealed: **1**
 
 ## Implemented without a real-Azure seal
 
@@ -201,6 +201,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [AbortMultipartUpload](operations/s3/abortmultipartupload.md) | ✅ | Abort does not delete Azure's uncommitted blocks eagerly; removing the durable state record is what invalidates the UploadId immediately. Azure later garbage-collects the abandoned blocks on its normal schedule. |
 | s3 | [AbortMultipartUpload](operations/s3/abortmultipartupload.md) | ✅ | Subsequent UploadPart/ListParts/CompleteMultipartUpload calls on the same UploadId return NoSuchUpload because the proxy state record is gone, even if Azure still retains the uncommitted blocks temporarily. |
 | s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ | Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart. |
+| s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ | Subsequent GetObject/HeadObject reads reuse the reserved hidden part-count metadata marker to keep the multipart-shaped ETag; without that marker AWSSDK.S3 4.x would treat the object as a single-part MD5 ETag and incorrectly hash-validate the response body. |
 | s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ | Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList). |
 | s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ | Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart. |
 | s3 | [CompleteMultipartUpload](operations/s3/completemultipartupload.md) | ✅ | Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release. |
@@ -232,6 +233,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [DeletePublicAccessBlock](operations/s3/deletepublicaccessblock.md) | — | The operation clears persisted proxy intent only. |
 | s3 | [GetBucketAccelerateConfiguration](operations/s3/getbucketaccelerateconfiguration.md) | — | GET returns an explicit Suspended state rather than a topology-dependent acceleration claim. |
 | s3 | [GetBucketAcl](operations/s3/getbucketacl.md) | — | Azure Blob Storage's authorisation model (RBAC + Shared Key + SAS) does not map onto S3 canonical-user grants. The proxy reports the ownership-only shape that matches BucketOwnerEnforced ObjectOwnership. |
+| s3 | [GetBucketAcl](operations/s3/getbucketacl.md) | — | Successful GetBucketAcl responses are synthetic owner-only compatibility documents derived from the configured Azure account identity after confirming the container exists; Azure itself exposes no S3-compatible ACL body to round-trip. |
+| s3 | [GetBucketAcl](operations/s3/getbucketacl.md) | — | Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the bucket-existence probe, while the returned grant document is intentionally proxy-owned and stable across backends. |
 | s3 | [GetBucketCors](operations/s3/getbucketcors.md) | — | GET returns HTTP 404 with code NoSuchCORSConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | [GetBucketEncryption](operations/s3/getbucketencryption.md) | — | AES256 is compatibility intent only. Azure encrypts data at rest according to storage-account settings, not this metadata value. |
 | s3 | [GetBucketEncryption](operations/s3/getbucketencryption.md) | — | When no explicit intent is stored, the response reports the AWS default SSE-S3 AES256 configuration. |
@@ -243,7 +246,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [GetBucketPolicyStatus](operations/s3/getbucketpolicystatus.md) | — | GET returns HTTP 404 with code NoSuchBucketPolicy so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | [GetBucketReplication](operations/s3/getbucketreplication.md) | — | GET returns HTTP 404 with code ReplicationConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | [GetBucketRequestPayment](operations/s3/getbucketrequestpayment.md) | — | GET deterministically returns 200 with <Payer>BucketOwner</Payer>; Requester Pays is never activated. |
-| s3 | [GetBucketTagging](operations/s3/getbuckettagging.md) | — | Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key. |
+| s3 | [GetBucketTagging](operations/s3/getbuckettagging.md) | ✅ | Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key. |
 | s3 | [GetBucketVersioning](operations/s3/getbucketversioning.md) | ✅ | GET returns the per-bucket toggle persisted by PutBucketVersioning. Azure Blob versioning itself is account-scoped: actual version retention requires account-level versioning enabled out-of-band by the operator. |
 | s3 | [GetBucketVersioning](operations/s3/getbucketversioning.md) | ✅ | MFADelete is never reported (not supported). |
 | s3 | [GetBucketWebsite](operations/s3/getbucketwebsite.md) | — | GET returns HTTP 404 with code NoSuchWebsiteConfiguration so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
@@ -251,6 +254,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing. |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | The default object Content-Type when Azure has none is binary/octet-stream to match observed S3 behavior. |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline. |
+| s3 | [GetObject](operations/s3/getobject.md) | ✅ | Completed multipart objects carry a proxy-reserved hidden metadata marker recording the committed part count so later GetObject/HeadObject responses can keep the multipart-shaped ETag dash suffix, including one-part completes; the marker is not surfaced back as x-amz-meta-* and client writes using that reserved metadata name are ignored. |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme] |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host. |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2] |
@@ -260,6 +264,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ | PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition] |
 | s3 | [GetObjectAcl](operations/s3/getobjectacl.md) | — | The versionId selects the object existence check, but ACL grants remain synthetic owner-only state. |
 | s3 | [GetObjectAcl](operations/s3/getobjectacl.md) | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
+| s3 | [GetObjectAcl](operations/s3/getobjectacl.md) | — | Successful GetObjectAcl responses are synthetic owner-only compatibility documents returned after the selected blob/blob version existence probe; Azure never stores or returns an S3 ACL grant document here. |
+| s3 | [GetObjectAcl](operations/s3/getobjectacl.md) | — | Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the object/version existence check, while the ACL body is intentionally proxy-synthetic and identical across Azurite and real Azure. |
 | s3 | [GetObjectLegalHold](operations/s3/getobjectlegalhold.md) | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | [GetObjectLockConfiguration](operations/s3/getobjectlockconfiguration.md) | — | GET returns HTTP 404 with code ObjectLockConfigurationNotFoundError so clients receive the same shape as a never-configured S3 bucket instead of InternalError. |
 | s3 | [GetObjectRetention](operations/s3/getobjectretention.md) | ✅ | Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE. |
@@ -274,8 +280,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [HeadObject](operations/s3/headobject.md) | ✅ | Presigned HEAD is accepted (see PresignedUrl.yaml). |
 | s3 | [ListBuckets](operations/s3/listbuckets.md) | ✅ | CreationDate is populated from the container Last-Modified header — close enough for S3 SDKs but not strictly equivalent. |
 | s3 | [ListBuckets](operations/s3/listbuckets.md) | ✅ | Single fixed storage account per process (BlobCredentials); cross-account listing is out of scope. |
-| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | — | Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API. |
-| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | — | Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path. |
+| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | ✅ | Enumeration is implemented by the proxy's hidden state container, not by an Azure storage primitive; Azure Blob Storage has no cross-blob multipart-upload listing API. |
+| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | ✅ | Expired-record cleanup is bounded per request (small bound on CreateMultipartUpload, larger bound on ListMultipartUploads) so abandoned uploads are eventually reclaimed without unbounded work on the request path. |
 | s3 | [ListObjectVersions](operations/s3/listobjectversions.md) | ✅ | VersionId 'null' is used when account versioning is off (the blob has no version id). |
 | s3 | [ListObjectVersions](operations/s3/listobjectversions.md) | ✅ | Owner element omitted. |
 | s3 | [ListObjects](operations/s3/listobjects.md) | ✅ | Legacy V1 listing kept alongside V2 for SDKs that have not migrated. |
@@ -295,6 +301,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [PresignedUrl](operations/s3/presignedurl.md) | ✅ | Tampering with any signed query parameter (including X-Amz-Date, X-Amz-Expires, X-Amz-Credential, X-Amz-SignedHeaders, or the path/method) yields 403 SignatureDoesNotMatch. |
 | s3 | [PresignedUrl](operations/s3/presignedurl.md) | ✅ | Expired URLs (now > X-Amz-Date + X-Amz-Expires) yield 403 AccessDenied (mirrors S3's 'Request has expired' error). |
 | s3 | [PutBucketAccelerateConfiguration](operations/s3/putbucketaccelerateconfiguration.md) | — | Suspended is stable but not persisted because it is the only representable state. |
+| s3 | [PutBucketAcl](operations/s3/putbucketacl.md) | — | Successful PutBucketAcl responses are intent-only compatibility no-ops. After the initial container existence probe, the proxy performs no Azure-side ACL mutation because Blob Storage has no bucket ACL document compatible with S3 grants. |
+| s3 | [PutBucketAcl](operations/s3/putbucketacl.md) | — | Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the bucket-existence check, which is already exercised by real-Azure bucket CRUD/read scenarios and dedicated NoSuchBucket coverage. |
 | s3 | [PutBucketCors](operations/s3/putbucketcors.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | [PutBucketEncryption](operations/s3/putbucketencryption.md) | — | The AES256 document records application intent only and does not alter Azure Storage encryption configuration. |
 | s3 | [PutBucketLifecycleConfiguration](operations/s3/putbucketlifecycleconfiguration.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
@@ -304,7 +312,7 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [PutBucketPolicy](operations/s3/putbucketpolicy.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | [PutBucketReplication](operations/s3/putbucketreplication.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | [PutBucketRequestPayment](operations/s3/putbucketrequestpayment.md) | — | BucketOwner is stable but not persisted because it is the only representable state. |
-| s3 | [PutBucketTagging](operations/s3/putbuckettagging.md) | — | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and re-merges every attempt so unrelated Azure metadata and other proxy intents are preserved. |
+| s3 | [PutBucketTagging](operations/s3/putbuckettagging.md) | ✅ | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and re-merges every attempt so unrelated Azure metadata and other proxy intents are preserved. |
 | s3 | [PutBucketVersioning](operations/s3/putbucketversioning.md) | ✅ | Stores the S3 bucket-level intent only; does not toggle account-level Azure Blob versioning (no control-plane). Operators must enable account versioning out-of-band for versionId retention to function (opt-in, documented per topology). |
 | s3 | [PutBucketVersioning](operations/s3/putbucketversioning.md) | ✅ | Container metadata updates use bounded ETag/If-Match retry and re-merge fresh metadata on conflict so concurrent tagging/versioning/compatibility-intent updates do not silently clobber unrelated entries. |
 | s3 | [PutBucketWebsite](operations/s3/putbucketwebsite.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
@@ -317,6 +325,8 @@ the documented behaviour differences and the real-Azure seal state.
 | s3 | [PutObject](operations/s3/putobject.md) | ✅ | Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics. |
 | s3 | [PutObjectAcl](operations/s3/putobjectacl.md) | — | The versionId selects the object existence check only; Azure stores no S3 ACL document. |
 | s3 | [PutObjectAcl](operations/s3/putobjectacl.md) | — | Azure BlobVersionNotFound maps to S3 NoSuchVersion. |
+| s3 | [PutObjectAcl](operations/s3/putobjectacl.md) | — | Successful PutObjectAcl responses are intent-only compatibility no-ops. After HEAD verifies the selected blob/blob version exists, the proxy performs no Azure-side ACL mutation because Blob Storage has no object ACL document compatible with S3 grants. |
+| s3 | [PutObjectAcl](operations/s3/putobjectacl.md) | — | Real-Azure evidence is therefore not a distinct verification target for the 200 path: live Azure only contributes the object/version existence probe already covered by real-Azure object lifecycle/versioning scenarios and NoSuchVersion error coverage. |
 | s3 | [PutObjectLegalHold](operations/s3/putobjectlegalhold.md) | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | [PutObjectLockConfiguration](operations/s3/putobjectlockconfiguration.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ | Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3. |

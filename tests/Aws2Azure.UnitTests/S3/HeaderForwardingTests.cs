@@ -140,6 +140,58 @@ public class HeaderForwardingTests
         Assert.Equal(expected, s3Etag);
     }
 
+    [Fact]
+    public void ForwardMetadata_strips_reserved_internal_multipart_marker()
+    {
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Request.Headers["x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName] = "7";
+        context.Request.Headers["x-amz-meta-user-visible"] = "yes";
+        using var target = new System.Net.Http.HttpRequestMessage();
+
+        HeaderForwarding.ForwardMetadata(context.Request, target);
+
+        Assert.False(target.Headers.Contains("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+        Assert.True(target.Headers.TryGetValues("x-ms-meta-user-visible", out var values));
+        Assert.Equal("yes", Assert.Single(values));
+    }
+
+    [Fact]
+    public void CopyFromAzureResponse_preserves_single_part_multipart_etag_shape_and_hides_reserved_metadata()
+    {
+        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.ByteArrayContent("multipart-body"u8.ToArray()),
+        };
+        azure.Headers.TryAddWithoutValidation("ETag", "\"0x8DCC8B5F1A2B6C0\"");
+        azure.Headers.TryAddWithoutValidation("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName, "1");
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.CopyFromAzureResponse(azure, target);
+
+        Assert.EndsWith("-1\"", target.Headers["ETag"].ToString(), StringComparison.Ordinal);
+        Assert.False(target.Headers.ContainsKey("x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+    }
+
+    [Fact]
+    public void CopyFromAzureResponse_uses_internal_multipart_marker_for_etag_and_hides_reserved_metadata()
+    {
+        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.ByteArrayContent("multipart-body"u8.ToArray()),
+        };
+        azure.Headers.TryAddWithoutValidation("ETag", "\"0x8DCC8B5F1A2B6C0\"");
+        azure.Headers.TryAddWithoutValidation("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName, "2");
+        azure.Headers.TryAddWithoutValidation("x-ms-meta-user-visible", "yes");
+        azure.Content.Headers.TryAddWithoutValidation("Content-MD5", "1B2M2Y8AsgTpgAmY7PhCfg==");
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.CopyFromAzureResponse(azure, target);
+
+        Assert.EndsWith("-2\"", target.Headers["ETag"].ToString(), StringComparison.Ordinal);
+        Assert.Equal("yes", target.Headers["x-amz-meta-user-visible"]);
+        Assert.False(target.Headers.ContainsKey("x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+    }
+
     // --- EvaluateEtagConditionals ---
 
     private static Microsoft.AspNetCore.Http.HttpRequest MakeRequest(params (string, string)[] headers)

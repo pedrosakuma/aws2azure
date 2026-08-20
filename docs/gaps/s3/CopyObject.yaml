@@ -15,7 +15,7 @@ sub_features:
   notes: Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated proxy-side and then guarded on the Azure copy request; concrete if-none-match is supported when the source is version-pinned (explicit versionId or Azure current-version pinning), otherwise the proxy returns NotImplemented rather than risk a wrong-source copy.
 - name: x-amz-metadata-directive=COPY (default)
   status: implemented
-  gap: Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics.
+  gap: Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics. The proxy strips its own hidden multipart part-count marker from the copied metadata so destination HEAD/GET/CopyObjectResult do not inherit a stale multipart-shaped ETag.
 - name: x-amz-metadata-directive=REPLACE
   status: implemented
   gap: Request's metadata + Content-Type override source via standard header forwarding.

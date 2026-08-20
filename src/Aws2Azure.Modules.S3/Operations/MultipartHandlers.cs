@@ -526,6 +526,11 @@ internal static class MultipartHandlers
 
                 stateAcquire.Record!.Value.Headers.ApplyHeaders(azureReq);
             }
+            var multipartPartCountMetadataHeader = "x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName;
+            azureReq.Headers.Remove(multipartPartCountMetadataHeader);
+            azureReq.Headers.TryAddWithoutValidation(
+                multipartPartCountMetadataHeader,
+                parsed.Parts.Count.ToString(CultureInfo.InvariantCulture));
 
             using var azureResp = await blob.SendBlobRequestAsync(azureReq, deadlineCts.Token).ConfigureAwait(false);
             if (!azureResp.IsSuccessStatusCode)
@@ -579,7 +584,7 @@ internal static class MultipartHandlers
             }
 
             var azureEtag = ReadHeader(azureResp, "ETag") ?? string.Empty;
-            var synth = SynthesizeMultipartEtag(azureEtag, parsed.Parts.Count);
+            var synth = "\"" + HeaderForwarding.TranslateAzureMultipartEtagToS3(azureEtag, parsed.Parts.Count) + "\"";
             var location = blob.BuildBlobUri(bucket, key).AbsoluteUri;
             var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
             await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
@@ -1045,21 +1050,7 @@ internal static class MultipartHandlers
     }
 
     private static string? TranslateResponseEtagForS3(HttpResponseMessage response)
-    {
-        var raw = ReadHeader(response, "ETag");
-        if (string.IsNullOrEmpty(raw))
-        {
-            return null;
-        }
-
-        string? md5Base64 = null;
-        if (response.Content?.Headers.ContentMD5 is { Length: 16 } md5Bytes)
-        {
-            md5Base64 = Convert.ToBase64String(md5Bytes);
-        }
-
-        return "\"" + HeaderForwarding.TranslateAzureEtagToS3(raw, md5Base64) + "\"";
-    }
+        => HeaderForwarding.TranslateAzureResponseEtagToS3(response);
 
     private static S3ErrorMapping.Mapping NoSuchUpload() =>
         new(404, "NoSuchUpload",
@@ -1276,34 +1267,6 @@ internal static class MultipartHandlers
 
         var value = values[0];
         return string.IsNullOrEmpty(value) ? null : value;
-    }
-
-    /// <summary>
-    /// Builds an S3-style multipart ETag of the form <c>"{hash}-{count}"</c>.
-    /// We don't have the per-part MD5s after the fact (CompleteMultipart
-    /// happens long after UploadPart) so the hash component is derived from
-    /// the Azure blob ETag — opaque but stable per commit. The dash-suffix
-    /// is what SDKs use to detect a multipart object.
-    /// </summary>
-    private static string SynthesizeMultipartEtag(string azureEtag, int partCount)
-    {
-        var stripped = azureEtag.Trim('"');
-        // 0x-prefixed hex from Azure -> drop the prefix so we look more like md5hex
-        if (stripped.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        {
-            stripped = stripped[2..];
-        }
-        // Pad/truncate to 32 hex chars so the shape matches MD5hex.
-        if (stripped.Length < 32)
-        {
-            stripped = stripped.PadRight(32, '0');
-        }
-        else if (stripped.Length > 32)
-        {
-            stripped = stripped[..32];
-        }
-        return "\"" + stripped.ToLowerInvariant() + "-" +
-            partCount.ToString(CultureInfo.InvariantCulture) + "\"";
     }
 
     /// <summary>

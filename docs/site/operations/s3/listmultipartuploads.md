@@ -6,6 +6,7 @@
 - **Status:** 🟡 partial
 - **Disposition:** 🔵 by design
 - **Azure equivalent:** `Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)`
+- **Real-Azure verified:** ✅ 2026-08-11 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330)
 
 ## Sub-features
 

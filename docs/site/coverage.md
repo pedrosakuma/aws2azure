@@ -60,7 +60,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [GetBucketPolicyStatus](operations/s3/getbucketpolicystatus.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 404 NoSuchBucketPolicy)` |
 | s3 | [GetBucketReplication](operations/s3/getbucketreplication.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 404 ReplicationConfigurationNotFoundError)` |
 | s3 | [GetBucketRequestPayment](operations/s3/getbucketrequestpayment.md) | 🟡 partial | 🔵 by design | — | — | `(no equivalent — proxy returns the S3 default body)` |
-| s3 | [GetBucketTagging](operations/s3/getbuckettagging.md) | 🟡 partial | 🔵 by design | — | — | `GET {container}?restype=container&comp=metadata (single opaque metadata blob)` |
+| s3 | [GetBucketTagging](operations/s3/getbuckettagging.md) | 🟡 partial | 🔵 by design | — | ✅ | `GET {container}?restype=container&comp=metadata (single opaque metadata blob)` |
 | s3 | [GetBucketVersioning](operations/s3/getbucketversioning.md) | 🟡 partial | 🔵 by design | — | ✅ | `Container metadata (per-bucket toggle); reflects stored PutBucketVersioning intent` |
 | s3 | [GetBucketWebsite](operations/s3/getbucketwebsite.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 404 NoSuchWebsiteConfiguration)` |
 | s3 | [GetObject](operations/s3/getobject.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/{container}/{blob}` |
@@ -74,7 +74,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [HeadBucket](operations/s3/headbucket.md) | ✅ implemented | — | — | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}?restype=container` |
 | s3 | [HeadObject](operations/s3/headobject.md) | ✅ implemented | — | — | ✅ | `HEAD https://{account}.blob.core.windows.net/{container}/{blob}` |
 | s3 | [ListBuckets](operations/s3/listbuckets.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/?comp=list` |
-| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | 🟡 partial | 🔵 by design | — | — | `Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)` |
+| s3 | [ListMultipartUploads](operations/s3/listmultipartuploads.md) | 🟡 partial | 🔵 by design | — | ✅ | `Proxy-owned multipart state container (Azure has no native cross-blob MPU enumeration primitive)` |
 | s3 | [ListObjectVersions](operations/s3/listobjectversions.md) | 🟡 partial | 🔵 by design | — | ✅ | `GET {container}?restype=container&comp=list&include=versions` |
 | s3 | [ListObjects](operations/s3/listobjects.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
 | s3 | [ListObjectsV2](operations/s3/listobjectsv2.md) | ✅ implemented | — | — | ✅ | `GET https://{account}.blob.core.windows.net/{container}?restype=container&comp=list` |
@@ -91,7 +91,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [PutBucketPolicy](operations/s3/putbucketpolicy.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutBucketReplication](operations/s3/putbucketreplication.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutBucketRequestPayment](operations/s3/putbucketrequestpayment.md) | 🟡 partial | 🔵 by design | — | — | `(no equivalent — BucketOwner is an accepted stable no-op)` |
-| s3 | [PutBucketTagging](operations/s3/putbuckettagging.md) | 🟡 partial | 🔵 by design | — | — | `PUT {container}?restype=container&comp=metadata` |
+| s3 | [PutBucketTagging](operations/s3/putbuckettagging.md) | 🟡 partial | 🔵 by design | — | ✅ | `PUT {container}?restype=container&comp=metadata` |
 | s3 | [PutBucketVersioning](operations/s3/putbucketversioning.md) | 🟡 partial | 🔵 by design | — | ✅ | `Container metadata (per-bucket toggle); account-level Blob versioning assumed pre-enabled` |
 | s3 | [PutBucketWebsite](operations/s3/putbucketwebsite.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [PutObject](operations/s3/putobject.md) | ✅ implemented | — | — | ✅ | `PUT https://{account}.blob.core.windows.net/{container}/{blob}` |

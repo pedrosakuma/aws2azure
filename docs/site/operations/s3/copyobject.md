@@ -28,7 +28,7 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 - **Capability ID:** `sub-feature:s3:copyobject:x-amz-metadata-directivecopy--default`
 - **Status:** ✅ implemented
 
-**Gap.** Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics.
+**Gap.** Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics. The proxy strips its own hidden multipart part-count marker from the copied metadata so destination HEAD/GET/CopyObjectResult do not inherit a stale multipart-shaped ETag.
 
 ### x-amz-metadata-directive=REPLACE {#sub-feature-x-amz-metadata-directivereplace}
 
