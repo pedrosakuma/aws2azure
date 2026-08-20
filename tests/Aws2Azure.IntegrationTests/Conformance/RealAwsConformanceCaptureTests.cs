@@ -7,6 +7,8 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
+using Amazon.SQS;
+using Amazon.SQS.Model;
 using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.Conformance.DynamoDb;
@@ -181,6 +183,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
 
         const int topicCount = 101;
         var seededTopicArns = new List<string>(topicCount);
+        string? subscriptionQueueUrl = null;
 
         try
         {
@@ -194,6 +197,9 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 seededTopicArns.Add(response.TopicArn);
             }
 
+            var (queueUrl, queueArn) = await fixture.CreateSnsAutoConfirmQueueAsync("snssubqueue").ConfigureAwait(false);
+            subscriptionQueueUrl = queueUrl;
+
             await ExecuteServiceCasesAsync(
                 "sns",
                 Enumerate(SnsErrorMatrix.Cases, SnsHappyPathMatrix.Cases),
@@ -202,6 +208,7 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                     new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["topicName"] = fixture.CreateEphemeralName("snstopic"),
+                        ["subscriptionEndpoint"] = queueArn,
                     })).ConfigureAwait(false);
         }
         finally
@@ -210,6 +217,11 @@ public sealed class RealAwsConformanceCaptureTests(RealAwsConformanceCaptureFixt
                 seededTopicArns,
                 fixture.DeleteTopicBestEffortAsync,
                 batchSize: 8).ConfigureAwait(false);
+
+            if (subscriptionQueueUrl is not null)
+            {
+                await fixture.DeleteQueueBestEffortAsync(subscriptionQueueUrl).ConfigureAwait(false);
+            }
         }
     }
 
@@ -676,6 +688,8 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
     public IAmazonSimpleNotificationService Sns { get; private set; } = null!;
 
+    public IAmazonSQS Sqs { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
@@ -696,6 +710,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         DynamoDb = new AmazonDynamoDBClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Kinesis = new AmazonKinesisClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Sns = new AmazonSimpleNotificationServiceClient(_credentials, Amazon.RegionEndpoint.USEast1);
+        Sqs = new AmazonSQSClient(_credentials, Amazon.RegionEndpoint.USEast1);
         IsConfigured = true;
         return Task.CompletedTask;
     }
@@ -707,6 +722,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         (DynamoDb as IDisposable)?.Dispose();
         (Kinesis as IDisposable)?.Dispose();
         (Sns as IDisposable)?.Dispose();
+        (Sqs as IDisposable)?.Dispose();
         return Task.CompletedTask;
     }
 
@@ -819,6 +835,69 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
             await Sns.DeleteTopicAsync(topicArn).ConfigureAwait(false);
         }
         catch (NotFoundException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Creates a real SQS queue with a policy allowing any SNS topic in this
+    /// account to deliver to it, so that a real-AWS Subscribe(sqs) call
+    /// auto-confirms immediately (real AWS - unlike the proxy - only
+    /// auto-confirms an sqs-protocol subscription once it can actually
+    /// deliver the confirmation handshake to the endpoint; a stub/foreign
+    /// ARN leaves the subscription stuck in "PendingConfirmation" forever).
+    /// This is purely a real-AWS capture-harness prerequisite: aws2azure
+    /// itself never dispatches to subscribers (see docs/gaps/sns/Subscribe.yaml)
+    /// and always auto-confirms unconditionally as opaque metadata, so this
+    /// queue exists only to let real AWS's own golden response be captured.
+    /// </summary>
+    public async Task<(string QueueUrl, string QueueArn)> CreateSnsAutoConfirmQueueAsync(string suffix)
+    {
+        var queueName = CreateEphemeralName(suffix);
+        var createResponse = await Sqs.CreateQueueAsync(new CreateQueueRequest
+        {
+            QueueName = queueName,
+            Tags = CreateStringTagDictionary(),
+        }).ConfigureAwait(false);
+
+        var attributes = await Sqs.GetQueueAttributesAsync(new GetQueueAttributesRequest
+        {
+            QueueUrl = createResponse.QueueUrl,
+            AttributeNames = ["QueueArn"],
+        }).ConfigureAwait(false);
+        var queueArn = attributes.QueueARN;
+        var accountId = queueArn.Split(':')[4];
+
+        var policy = $$"""
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Service": "sns.amazonaws.com" },
+                  "Action": "sqs:SendMessage",
+                  "Resource": "{{queueArn}}",
+                  "Condition": { "StringEquals": { "aws:SourceAccount": "{{accountId}}" } }
+                }
+              ]
+            }
+            """;
+        await Sqs.SetQueueAttributesAsync(new SetQueueAttributesRequest
+        {
+            QueueUrl = createResponse.QueueUrl,
+            Attributes = new Dictionary<string, string>(StringComparer.Ordinal) { ["Policy"] = policy },
+        }).ConfigureAwait(false);
+
+        return (createResponse.QueueUrl, queueArn);
+    }
+
+    public async Task DeleteQueueBestEffortAsync(string queueUrl)
+    {
+        try
+        {
+            await Sqs.DeleteQueueAsync(queueUrl).ConfigureAwait(false);
+        }
+        catch (QueueDoesNotExistException)
         {
         }
     }
