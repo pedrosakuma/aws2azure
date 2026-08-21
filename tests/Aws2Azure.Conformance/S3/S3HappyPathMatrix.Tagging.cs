@@ -241,6 +241,13 @@ public static partial class S3HappyPathMatrix
             request.Content = new ByteArrayContent(body);
             request.Content.Headers.ContentLength = body.Length;
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+            // Content-MD5 is a content header, not a request header: setting it
+            // via request.Headers.TryAddWithoutValidation silently fails (returns
+            // false) and the header is never sent. Real AWS rejects bucket
+            // subresource PUTs with a body (e.g. PutBucketTagging) that omit it:
+            // "Missing required header for this request: Content-MD5 OR
+            // x-amz-checksum-*".
+            request.Content.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(body)));
         }
 
         ConformanceSigV4Signer.SignHeader(
