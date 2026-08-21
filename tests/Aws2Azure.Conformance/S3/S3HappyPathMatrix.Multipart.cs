@@ -391,6 +391,7 @@ public static partial class S3HappyPathMatrix
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
+            extraSignedHeaders: ["x-amz-copy-source"],
             sessionToken: context.SessionToken);
         return request;
     }
@@ -495,6 +496,7 @@ public static partial class S3HappyPathMatrix
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
+            extraSignedHeaders: ["x-amz-copy-source"],
             sessionToken: context.SessionToken);
         return request;
     }

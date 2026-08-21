@@ -863,7 +863,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
             {
                 BucketName = bucket,
             }).ConfigureAwait(false);
-            foreach (var obj in listing.S3Objects)
+            foreach (var obj in listing.S3Objects ?? [])
             {
                 await client.DeleteObjectAsync(bucket, obj.Key).ConfigureAwait(false);
             }
