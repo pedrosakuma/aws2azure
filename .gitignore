@@ -36,6 +36,9 @@ __pycache__/
 # Local-only spikes / experiments (build artifacts, not tracked)
 experiments/
 
+# Default env file emitted by eng/repro-real-azure.sh (contains live secrets)
+.local/
+
 # Perf — locally-generated cumulative history (artifact uploaded by perf workflow; not committed)
 docs/perf/history.csv
 # Perf — machine-readable per-run results consumed by the relative gate (fresh each run; not committed)
