@@ -154,15 +154,26 @@ public static partial class S3HappyPathMatrix
     private static HttpRequestMessage BuildBucketRequest(
         ConformanceCaseContext context,
         HttpMethod method,
-        string bucket)
+        string bucket,
+        bool objectLockEnabled = false)
     {
         var request = new HttpRequestMessage(method, new Uri(ResolveBaseAddress(context), $"/{bucket}"));
+        if (objectLockEnabled)
+        {
+            // Object Lock can only be enabled at bucket-creation time (real AWS
+            // rejects any later PutObjectLockConfiguration on a bucket created
+            // without it), and PutObjectLegalHold/PutObjectRetention both
+            // require it. This also implicitly enables bucket versioning.
+            request.Headers.TryAddWithoutValidation("x-amz-bucket-object-lock-enabled", "true");
+        }
+
         ConformanceSigV4Signer.SignHeader(
             request,
             Array.Empty<byte>(),
             context.AccessKeyId,
             context.SecretAccessKey,
             region: context.Region,
+            extraSignedHeaders: objectLockEnabled ? ["x-amz-bucket-object-lock-enabled"] : null,
             sessionToken: context.SessionToken);
         return request;
     }

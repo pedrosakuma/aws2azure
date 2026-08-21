@@ -155,7 +155,7 @@ public static partial class S3HappyPathMatrix
                 var legalHoldOff = Encoding.UTF8.GetBytes("<LegalHold><Status>OFF</Status></LegalHold>");
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
-                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket, objectLockEnabled: true)),
                     new ConformanceRequestStep("seed-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("put-object-legal-hold-on", _ => BuildObjectSubresourceRequest(context, HttpMethod.Put, bucket, key, "legal-hold", legalHoldOn)),
                     new ConformanceRequestStep("get-object-legal-hold-on", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "legal-hold", Array.Empty<byte>())),
@@ -193,7 +193,7 @@ public static partial class S3HappyPathMatrix
                     $"<Retention><Mode>GOVERNANCE</Mode><RetainUntilDate>{retainUntil}</RetainUntilDate></Retention>");
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
-                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket)),
+                    new ConformanceRequestStep("create-bucket", _ => BuildBucketRequest(context, HttpMethod.Put, bucket, objectLockEnabled: true)),
                     new ConformanceRequestStep("seed-object", _ => BuildObjectRequest(context, HttpMethod.Put, bucket, key, body)),
                     new ConformanceRequestStep("put-object-retention", _ => BuildObjectSubresourceRequest(context, HttpMethod.Put, bucket, key, "retention", retentionBody)),
                     new ConformanceRequestStep("get-object-retention", _ => BuildObjectSubresourceRequest(context, HttpMethod.Get, bucket, key, "retention", Array.Empty<byte>())),

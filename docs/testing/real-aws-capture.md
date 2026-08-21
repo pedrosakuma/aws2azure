@@ -137,15 +137,22 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
       "Effect": "Allow",
       "Action": [
         "s3:DeleteBucket",
+        "s3:DeleteBucketTagging",
         "s3:DeleteObject",
         "s3:DeleteObjects",
         "s3:DeleteObjectVersion",
+        "s3:GetBucketTagging",
         "s3:GetObject",
+        "s3:GetObjectLegalHold",
+        "s3:GetObjectRetention",
         "s3:HeadBucket",
         "s3:ListBucket",
         "s3:ListBucketVersions",
+        "s3:PutBucketTagging",
         "s3:PutBucketVersioning",
-        "s3:PutObject"
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention"
       ],
       "Resource": [
         "arn:aws:s3:::aws2azure-it-*",
