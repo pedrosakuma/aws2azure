@@ -3,16 +3,19 @@ name: codeql
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   schedule:
     # Weekly scan to catch newly published CodeQL query updates even without
     # code changes (Monday 06:00 UTC).
     - cron: '0 6 * * 1'
+  workflow_dispatch:
 
+# Deliberately NOT triggered on pull_request: CodeQL C# analysis has shown
+# timeout-prone/slow behavior in other repos, and we don't want it adding
+# wait time (or noise in the checks list) to the critical PR merge path.
+# It scans main after merge and weekly regardless.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
