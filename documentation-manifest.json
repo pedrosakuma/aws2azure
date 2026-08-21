@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:db1da008d12f50349f3417cfbd24ad01cd292961369a41c629abd6e03a8dc1af",
+  "manifest_revision": "sha256:97163a8f34310fc2164913810e1994835e3a4531226d76d8dcdede5c459ae070",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1312,6 +1312,18 @@
       }
     },
     {
+      "id": "documentation:docs-testing-local-real-azure-repro",
+      "path": "docs/testing/local-real-azure-repro.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:7ee4c187ca311de9943665e9072ed231f7907ea82ddc3eed9a1bab0274d7be39",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-testing-operational-qualification",
       "path": "docs/testing/operational-qualification.md",
       "type": "documentation-guide",
@@ -1354,7 +1366,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:022affa9cd25fa9a347a2da2648fed773b422158f6ad232aa95b70c92484c3ce",
+      "revision": "sha256:faf5516ce8e17714199532a267b8241014080f692afbb42702b40f38e749080c",
       "freshness": {
         "mode": "current"
       }
