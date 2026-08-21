@@ -836,17 +836,45 @@ jobs:
         if: always()
         run: |
           failed=0
+          # Test steps above run with `if: always()` and only capture their exit
+          # code (not fail the job outright) so that the mandatory teardown steps
+          # (Deallocate ephemeral Azure backends / Remove downloaded sealed
+          # runtime bytes) still run even when a test fails — this step is the
+          # single place that turns a captured failure back into a failed job,
+          # once cleanup is done. Because of that indirection, the exit code
+          # alone loses which test(s) actually failed; extract failed test names
+          # from each step's TRX so the job's ::error:: annotation — the only
+          # thing surfaced in the PR checks list — names the actual failure
+          # instead of only the meta-step that noticed it.
+          # This shell runs with `-e -o pipefail` (GitHub Actions' default for
+          # `run:` steps), and `grep` exits non-zero when it finds no match
+          # (e.g. a step's own .trx exists but recorded no `Failed` outcome).
+          # `|| true` keeps that a soft "no matches" instead of aborting the
+          # whole reporting step before later checks/exit run.
+          failed_tests() {
+            trx="$1"
+            [ -f "$trx" ] || return 0
+            { grep -o '<UnitTestResult[^>]*>' "$trx" \
+              | grep 'outcome="Failed"' \
+              | grep -oP 'testName="\K[^"]*'; } || true
+          }
           check() {
             name="$1"
             value="$2"
+            trx="$3"
             if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -ne 0 ]; then
-              echo "::error::$name failed or did not execute (exit code: ${value:-missing})."
+              detail=""
+              if [ -n "$trx" ]; then
+                names="$(failed_tests "$trx" | paste -sd '|' - || true)"
+                [ -n "$names" ] && detail=" Failed test(s): ${names//|/ ;; }."
+              fi
+              echo "::error::$name failed or did not execute (exit code: ${value:-missing}).$detail"
               failed=1
             fi
           }
-          check "Planned unit tests" "${{ steps.unit_tests.outputs.exit_code }}"
-          check "Planned integration tests" "${{ steps.integration_tests.outputs.exit_code }}"
-          check "Shared happy-path case evidence export" "${{ steps.case_evidence.outputs.exit_code }}"
+          check "Planned unit tests" "${{ steps.unit_tests.outputs.exit_code }}" "$TEST_RESULTS_DIR/matrix-unit.trx"
+          check "Planned integration tests" "${{ steps.integration_tests.outputs.exit_code }}" "$TEST_RESULTS_DIR/matrix-integration.trx"
+          check "Shared happy-path case evidence export" "${{ steps.case_evidence.outputs.exit_code }}" "$TEST_RESULTS_DIR/conformance-case-evidence.trx"
           check "Evidence/report generation" "${{ steps.reports.outputs.exit_code }}"
           check "Workload correctness candidate generation" "${{ steps.qualification.outputs.exit_code }}"
           exit "$failed"
