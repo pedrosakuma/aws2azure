@@ -41,6 +41,16 @@ gap — provisioning a personal, least-privilege IAM identity and turning it
 into the short-lived session credentials the fixture requires — rather than
 on infrastructure provisioning.
 
+> **Incident note.** An early draft of this local script was accidentally
+> exercised against a real AWS account while its `down` subcommand was still
+> being tested, under credentials that turned out to be the account **root
+> user**, and using a teardown mode that scanned the whole account by age
+> rather than by what that specific local run had created. Nothing was
+> ultimately lost, but both gaps were real design flaws, not just bad luck:
+> nothing stopped `up`/`down` from running as root, and the default teardown
+> had account-wide blast radius. `eng/repro-real-aws.sh` now closes both
+> gaps directly — see "Identity safety check" and "Teardown / cleanup" below.
+
 ## Prerequisites
 
 - AWS CLI (`aws`) v2, `jq`, and .NET SDK matching the repo (`dotnet build -c
@@ -124,6 +134,27 @@ credentials to a sourceable, `chmod 0600`, git-ignored env file (default
 same reason `eng/repro-real-azure.sh`'s env file is: an unquoted value with a
 shell metacharacter would be mishandled by `source`.
 
+## Identity safety check
+
+Every subcommand that can mint session credentials or delete resources
+(`up`, `down`, `sweep-all-orphans`) starts by calling
+`aws sts get-caller-identity` and inspecting the returned `Arn`:
+
+- If the `Arn` ends in `:root` (the account root user), the script **refuses
+  to continue** with an error explaining why and how to fix it (run
+  `setup-iam` once, then let `up` read that IAM user's credentials, or export
+  the least-privilege IAM user's own keys yourself). This is the exact
+  guard the incident above was missing. Pass `--allow-root` only if you
+  deliberately intend to proceed as root (rare — e.g. a one-off manual
+  cleanup where the scoped IAM user has already been torn down).
+- If the `Arn` doesn't look like the `setup-iam`-created identity (i.e. does
+  not contain `aws2azure`), the script prints a warning but does **not**
+  block — you may legitimately be using `--role-arn` with a differently
+  named role, or a hand-created IAM user.
+- `setup-iam` and `teardown-iam` use the same check in **advisory** mode
+  only: they warn (not block) on root, since creating/deleting the IAM user
+  itself plausibly requires an administrator identity in the account.
+
 ## Run the capture
 
 ```bash
@@ -153,22 +184,62 @@ credentials configured.
 The capture tests create and delete their own `aws2azure-it-*` resources on
 the happy path — there is no separate resource group or deployment to
 delete, unlike the real-Azure side. The remaining risk is a resource orphaned
-by an interrupted or cancelled local run (e.g. `Ctrl-C` mid-test). For that,
-`eng/repro-real-aws.sh down` reuses the exact same
-[`cleanup-real-aws-resources.sh`](../../.github/scripts/cleanup-real-aws-resources.sh)
-script the CI `capture-real-aws.yml` job and the standalone
-[`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml) both use
-(never reimplemented here):
+by an interrupted or cancelled local run (e.g. `Ctrl-C` mid-test). There are
+now two, deliberately distinct, teardown subcommands — **`down` is the safe
+default; `sweep-all-orphans` is the dangerous, account-wide one.** This split
+exists specifically because of the incident noted above: the original single
+`down` reused the CI reaper's account-wide, age-based scan unconditionally,
+which is exactly what put resources belonging to *other* runs at risk of
+deletion from a local invocation.
+
+### `down` — session-scoped (default, safe)
 
 ```bash
 eng/repro-real-aws.sh down
 ```
 
-By default this passes `AWS_REGION=us-east-1` and `MAX_AGE_HOURS=6` — the
-same age threshold `real-aws-reaper.yml` uses, so a still-in-progress run's
-resources are not swept mid-test. Pass `--max-age-hours 0` to reap
-everything under the `aws2azure-it-*` prefix immediately, e.g. right after
-you know a specific local run was cancelled.
+`aws2azure-it-*` resource names embed their creation time
+(`aws2azure-it-<unix-epoch>-<suffix>`). `eng/repro-real-aws.sh up` records the
+epoch it started at as `AWS2AZURE_REPRO_SESSION_START` in the same env file it
+writes session credentials to (default `.local/real-aws.env`). `down` reads
+that value back (or accepts an explicit `--since <epoch|ISO8601>` if you
+don't have the env file, e.g. after the shell that ran `up` is long gone),
+does a **read-only** listing of S3/DynamoDB/Kinesis/SNS/SQS, keeps only the
+`aws2azure-it-*` resources whose embedded epoch is at/after that timestamp,
+prints the resulting list for review, and only then deletes each one —
+by delegating to the shared
+[`cleanup-real-aws-resources.sh`](../../.github/scripts/cleanup-real-aws-resources.sh)
+script per matched resource (`NAME_PREFIX=<exact resource name>
+MAX_AGE_HOURS=0`), so the nontrivial per-service deletion logic (S3 object
+versions, multipart uploads, etc.) is never reimplemented, only scoped down
+to one resource at a time.
+
+Because this matches by embedded timestamp rather than a unique per-run ID,
+a concurrent run (local or CI) that happened to start *after* your session
+began could, in principle, also match. `down` prints the full list of
+resources it is about to reap before deleting anything so you can review it;
+if anything looks unexpected, abort and cross-check for a concurrent run
+before proceeding.
+
+### `sweep-all-orphans` — account-wide, age-based (dangerous, opt-in)
+
+```bash
+eng/repro-real-aws.sh sweep-all-orphans --max-age-hours 6
+```
+
+This is the old, unscoped `down` behavior, kept as an explicitly separate,
+clearly-labeled subcommand: it reuses
+`cleanup-real-aws-resources.sh` exactly as
+[`real-aws-reaper.yml`](../../.github/workflows/real-aws-reaper.yml) does —
+scanning the **entire account** for any `aws2azure-it-*` resource older than
+`--max-age-hours` (default 6, matching the reaper) and reaping it, regardless
+of which run (local or CI, yours or someone else's) created it. Because of
+that blast radius, it requires typing the exact confirmation phrase
+`REAP-ALL-ORPHANS` on top of the usual cost-warning confirmation (the global
+`--yes` flag does **not** skip this; only the explicit `--force-sweep-all`
+flag does, for scripted/CI-adjacent use). Only reach for this if you know
+there is no other run concurrently using the account and you specifically
+want reaper-equivalent, account-wide behavior — otherwise prefer `down`.
 
 ## Cost expectations
 
@@ -191,6 +262,13 @@ env files as cheap insurance, but this has not been observed to matter in
 practice for a native `aws` CLI installation. If you do hit an equivalent
 issue (e.g. a Windows-native `aws.exe` resolved under WSL), the fix pattern
 is identical to the one documented for the Azure script.
+
+The one real sharp edge found on this side was not a CLI encoding quirk but a
+process one: nothing stopped an AWS-touching subcommand from running under
+ambient root credentials, and the default teardown scanned the whole account
+by age instead of by what the local run actually created (see the incident
+note above). Both are now closed by the identity safety check and the
+session-scoped `down` default, respectively — not worked around, fixed.
 
 ## Related documents
 
