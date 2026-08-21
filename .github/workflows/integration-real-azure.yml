@@ -648,6 +648,7 @@ jobs:
             kinesis) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Kinesis_happy_path_cases_emit_real_azure_evidence" ;;
             sns) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Sns_happy_path_cases_emit_real_azure_evidence" ;;
             sqs) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.Sqs_happy_path_cases_emit_real_azure_evidence" ;;
+            secretsmanager) filter="FullyQualifiedName~RealAzureConformanceEvidenceTests.SecretsManager_happy_path_cases_emit_real_azure_evidence" ;;
             *)
               echo "::notice::Selected service has no shared happy-path conformance evidence cases."
               echo "exit_code=0" >> "$GITHUB_OUTPUT"

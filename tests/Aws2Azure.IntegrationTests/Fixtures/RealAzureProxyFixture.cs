@@ -109,6 +109,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     private string? _ehSasKeyName;
     private string? _ehSasKey;
 
+    private string? _keyVaultUrl;
+
     private string? _eventGridTopicEndpoint;
     private string? _eventGridTopicKey;
     private string? _eventGridEvidenceQueueName;
@@ -169,6 +171,17 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     /// (namespace + stream present and federation configured).
     /// </summary>
     public bool EventHubsWorkloadIdentityConfigured { get; private set; }
+
+    /// <summary>
+    /// Secrets Manager → Key Vault reachable via the Workload-Identity credential
+    /// entry (vault URL present and federation configured). Key Vault has no
+    /// shared-key auth mode analogous to Blob/Cosmos/Service Bus/Event Hubs, so
+    /// this is the only way this shared fixture can enable "secretsmanager"
+    /// (issue #835 — the dedicated <see cref="SecretsManagerRealAzureProxyFixture"/>
+    /// remains the smoke/qualification-tier fixture; this property only feeds the
+    /// shared happy-path conformance-evidence matrix).
+    /// </summary>
+    public bool SecretsManagerConfigured { get; private set; }
 
     /// <summary>
     /// Pre-existing Cosmos database (the DynamoDB module creates containers but
@@ -277,9 +290,11 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             && !string.IsNullOrWhiteSpace(_cosmosEndpoint) && !string.IsNullOrWhiteSpace(_cosmosDatabase);
         EventHubsWorkloadIdentityConfigured = WorkloadIdentityConfigured
             && !string.IsNullOrWhiteSpace(_ehNamespace) && !string.IsNullOrWhiteSpace(EventHubStream);
+        SecretsManagerConfigured = WorkloadIdentityConfigured && !string.IsNullOrWhiteSpace(_keyVaultUrl);
 
         if (!BlobConfigured && !CosmosConfigured && !ServiceBusConfigured && !EventHubsConfigured
-            && !CosmosWorkloadIdentityConfigured && !EventHubsWorkloadIdentityConfigured)
+            && !CosmosWorkloadIdentityConfigured && !EventHubsWorkloadIdentityConfigured
+            && !SecretsManagerConfigured)
         {
             // No real-Azure backend configured — every tagged test skips.
             return;
@@ -592,6 +607,8 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
             out var eventHubPartitionCount);
         EventHubPartitionCount = eventHubPartitionCount;
 
+        _keyVaultUrl = Env("AZURE_KEYVAULT_URL");
+
         _eventGridTopicEndpoint = Env("AZURE_EVENTGRID_TOPIC_ENDPOINT");
         _eventGridTopicKey = Env("AZURE_EVENTGRID_TOPIC_KEY");
         _eventGridEvidenceQueueName = Env("AZURE_EVENTGRID_EVIDENCE_QUEUE_NAME");
@@ -613,6 +630,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         AppendService(services, "sqs", ServiceBusConfigured);
         AppendService(services, "sns", ServiceBusConfigured);
         AppendService(services, "kinesis", EventHubsConfigured || EventHubsWorkloadIdentityConfigured);
+        AppendService(services, "secretsmanager", SecretsManagerConfigured);
 
         if (BlobConfigured)
         {
@@ -665,6 +683,13 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         {
             AppendAzure(wiAzure, $$"""
                 "kinesis": { "kind": "eventHubs", "target": { "namespace": "{{JsonEscape(_ehNamespace!)}}" }, "auth": { "mode": "workloadIdentity" }, "shardIteratorSigningKey": "{{KinesisShardIteratorSigningKey}}" }
+                """);
+        }
+
+        if (SecretsManagerConfigured)
+        {
+            AppendAzure(wiAzure, $$"""
+                "secretsmanager": { "kind": "keyVault", "target": { "vaultUrl": "{{JsonEscape(_keyVaultUrl!)}}" }, "auth": { "mode": "workloadIdentity" } }
                 """);
         }
 

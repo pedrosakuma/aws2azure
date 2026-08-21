@@ -7,6 +7,7 @@ using Aws2Azure.Conformance.DynamoDb;
 using Aws2Azure.Conformance.Evidence;
 using Aws2Azure.Conformance.Kinesis;
 using Aws2Azure.Conformance.S3;
+using Aws2Azure.Conformance.SecretsManager;
 using Aws2Azure.Conformance.Sns;
 using Aws2Azure.Conformance.Sqs;
 using Xunit;
@@ -145,6 +146,26 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
             CreateContext("sqs")).ConfigureAwait(false);
     }
 
+    [SkippableFact]
+    public async Task SecretsManager_happy_path_cases_emit_real_azure_evidence()
+    {
+        Skip.IfNot(fixture.SecretsManagerConfigured,
+            "AZURE_KEYVAULT_URL / workload identity env vars not set — skipping real-Azure Secrets Manager conformance.");
+
+        // Unlike the shared-key-backed services above, Key Vault has no
+        // shared-key auth mode: the "secretsmanager" backend in
+        // RealAzureProxyFixture is only ever bound to the Workload-Identity AWS
+        // credential entry, so this case must sign with WiAwsAccessKey/Secret
+        // rather than the default AwsAccessKey/Secret CreateContext() uses.
+        await ExecuteServiceCasesAsync(
+            "secretsmanager",
+            SecretsManagerHappyPathMatrix.Cases,
+            CreateContext(
+                "secretsmanager",
+                accessKeyId: RealAzureProxyFixture.WiAwsAccessKey,
+                secretAccessKey: RealAzureProxyFixture.WiAwsSecret)).ConfigureAwait(false);
+    }
+
     private static ConformanceEvidenceStore CreateEvidenceStore()
         => new(
             ConformanceEvidenceStore.ResolveRoot(
@@ -152,10 +173,12 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
     private ConformanceCaseContext CreateContext(
         string service,
-        IReadOnlyDictionary<string, string>? properties = null)
+        IReadOnlyDictionary<string, string>? properties = null,
+        string? accessKeyId = null,
+        string? secretAccessKey = null)
         => new(
-            RealAzureProxyFixture.AwsAccessKey,
-            RealAzureProxyFixture.AwsSecret,
+            accessKeyId ?? RealAzureProxyFixture.AwsAccessKey,
+            secretAccessKey ?? RealAzureProxyFixture.AwsSecret,
             new Uri(fixture.GetServiceUrl(service)),
             Properties: properties);
 
