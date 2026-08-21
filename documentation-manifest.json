@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:db1da008d12f50349f3417cfbd24ad01cd292961369a41c629abd6e03a8dc1af",
+  "manifest_revision": "sha256:8208fcfff8dffa4dcd27afe745e00e8572c96fc3ac0d9808c1f8c7439935e1cf",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:621ad196523a450d77e45517a34f0375975d87dc9dcacf17174ab1825a4a0923",
+    "canonical_inputs_revision": "sha256:49af347fb75d4ce9d6017fd07679ae427aab32ee1742e9e8b08cb6c6f79c34d8",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
@@ -1198,7 +1198,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:729515db5b41003527099cc65501e8bdc554bb028e77cdca529898c3e452d936",
+      "revision": "sha256:860d6f9b0b3030214937b390f6e5320964e6913700d376609475f52543dd3cd1",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1741,7 +1741,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "ListTables",
-      "revision": "sha256:a53e4dc694ca294155988872b37fe26958a300d5453893791b232750ce06f2ce",
+      "revision": "sha256:6695907b25778cb4baea7fc8a9ca9079012765c024dfa18ae9ac4674f493a6bc",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-20"
@@ -1757,7 +1757,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "ListTables",
-      "revision": "sha256:0923d82b3e5660327fb6bf979eee0a7656aed80164f03fa4fc16296b528ce690",
+      "revision": "sha256:e4ffd3aefabb3afffbc4ec2873bf16fdfc53f07576562507b43802693d833d36",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-20"
@@ -6652,7 +6652,7 @@
       "scope": "all-services",
       "authority": "normative-input",
       "provenance": "source",
-      "revision": "sha256:79b685608e230e11d9239b8897b1a36ab05cb484c46b03a48be9db4d715229d8",
+      "revision": "sha256:2004eb39c498c70ac8306e0f3ae554b8800f5f8519aa4c6131fcf4ff5eaf5dc9",
       "freshness": {
         "mode": "current"
       }
@@ -6799,7 +6799,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:e93cbeba25bebcd70adfb4b3c88c612b035d2f8b741a98c778d0c271e670eef4",
+      "revision": "sha256:a37b7ccafb2493270f42c038423e0b9cb960935d52eb53dbdebf49ae9acef6fa",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6813,7 +6813,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:af0c847e5fbb30a224939c53103cc4101228e4fa92a5869cd0fdea73d99c682c",
+      "revision": "sha256:10dd3620ffda41a83acf94c43be134a434ae9818c610620e8061bec0dcf0ff1d",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
@@ -6827,7 +6827,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:c40be7e664c1773dc7e55b002d063d2ae780bf5eb7bab03e831a8d897cf9269d",
+      "revision": "sha256:eed5c1ae76b6b5744ddd1e1f4bbfdef26b44e8feb805175c0a896e5986636627",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
