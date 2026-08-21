@@ -171,6 +171,7 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "dynamodb:DeleteItem",
         "dynamodb:DeleteTable",
         "dynamodb:DescribeTable",
+        "dynamodb:DescribeTimeToLive",
         "dynamodb:GetItem",
         "dynamodb:ListTagsOfResource",
         "dynamodb:PutItem",
@@ -180,7 +181,8 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "dynamodb:TransactGetItems",
         "dynamodb:TransactWriteItems",
         "dynamodb:UntagResource",
-        "dynamodb:UpdateItem"
+        "dynamodb:UpdateItem",
+        "dynamodb:UpdateTimeToLive"
       ],
       "Resource": "arn:aws:dynamodb:*:*:table/aws2azure-it-*"
     },
