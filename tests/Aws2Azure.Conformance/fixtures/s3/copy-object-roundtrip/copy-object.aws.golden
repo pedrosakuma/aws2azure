@@ -1,0 +1,19 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:PutObject/CopyObject/GetObject
+# captured: 2026-08-21T17:47:18.6202759+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/xml
+[header] x-amz-copy-source-version-id: iPzKT0D.bEHdBwlq6E5WSQjt4TkzpFwi
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[header] x-amz-server-side-encryption: AES256
+[header] x-amz-version-id: 5KH6f8s05UfPLgztOGrAyM_TgQrOFo4t
+[body:xml-error]
+  (root): CopyObjectResult
+  ChecksumCRC64NVME: uw4Ye3cfRcc=
+  ChecksumType: FULL_OBJECT
+  ETag: "b6fffb88028e09688b29803e41c95dde"
+  LastModified: 2026-08-21T17:47:19.000Z

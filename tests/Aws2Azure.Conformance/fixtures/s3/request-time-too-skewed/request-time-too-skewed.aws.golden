@@ -1,0 +1,19 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:RequestTimeTooSkewed
+# captured: 2026-08-21T17:46:59.3395547+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 403
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): Error
+  Code: RequestTimeTooSkewed
+  HostId: <MASKED>
+  MaxAllowedSkewMilliseconds: 900000
+  Message: <MASKED>
+  RequestId: <MASKED>
+  RequestTime: 20260820T174659Z
+  ServerTime: 2026-08-21T17:46:59Z

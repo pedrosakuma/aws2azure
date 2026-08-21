@@ -1,12 +1,12 @@
 # aws2azure conformance golden
 # source: aws
 # operation: kinesis:PutRecord/GetShardIterator/GetRecords
-# captured: 2026-08-07T23:53:31.3032968+00:00
+# captured: 2026-08-21T17:44:58.1596900+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
 [header] content-type: application/x-amz-json-1.1
 [header] x-amz-id-2: <MASKED>
 [body:json-error]
-  SequenceNumber: 49677175783272502945035836203254190287540259140399005746
+  SequenceNumber: 49677599492435908102405614197941143578241401118823284786
   ShardId: shardId-000000000003

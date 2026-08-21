@@ -1,0 +1,23 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:CreateMultipartUpload/UploadPart/UploadPartCopy/ListParts/CompleteMultipartUpload/GetObject
+# captured: 2026-08-21T17:47:13.3855924+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): ListPartsResult
+  Bucket: aws2azure-it-1787334418-288841-s3bucket
+  Initiator: <nested>
+  IsTruncated: false
+  Key: multipart/final.txt
+  MaxParts: 1000
+  NextPartNumberMarker: 2
+  Owner: <nested>
+  Part: <nested>
+  PartNumberMarker: 1
+  StorageClass: STANDARD
+  UploadId: dIMVSPD.ttoXOaKrF99qau1qoq_rNda6mqXdfPeKjzHZQeuA1LswMuJjxAnr9NXuN9QZkmQPL7MgMdHX4GMQBKqyTOOuOWhpvuydEuBlFK48xKj0PJ1CjfgtvG2Okl6a5Tt_oGder_nozVxq02iqzQ--

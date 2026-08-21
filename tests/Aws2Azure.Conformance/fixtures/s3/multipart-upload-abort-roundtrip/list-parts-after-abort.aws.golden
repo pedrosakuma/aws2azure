@@ -1,0 +1,17 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:CreateMultipartUpload/UploadPart/AbortMultipartUpload/ListParts/GetObject
+# captured: 2026-08-21T17:47:17.2939931+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 404
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): Error
+  Code: NoSuchUpload
+  HostId: <MASKED>
+  Message: <MASKED>
+  RequestId: <MASKED>
+  UploadId: CW3S.6JcvmcPk0Ap3HstVK33KKMK_4CmnL_8XLaflVubbjytQ.4MB5VT4m3HrD.R0E0ZUpI6A5OZNrISQ6eYRAFYtFizdnr.X3WDCg4K8GHVukpeuE9usKhAZPD5_Rks4jNgMWYJq0OLXYLTp8caKA--

@@ -1,0 +1,20 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:CreateMultipartUpload/UploadPart/UploadPartCopy/ListParts/CompleteMultipartUpload/GetObject
+# captured: 2026-08-21T17:47:13.7205111+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[header] x-amz-server-side-encryption: AES256
+[header] x-amz-version-id: L6mDVJ3vwoj5N7nA0UIA_92jvuKhS2pW
+[body:xml-error]
+  (root): CompleteMultipartUploadResult
+  Bucket: aws2azure-it-1787334418-288841-s3bucket
+  ChecksumCRC64NVME: 5sTE8QH1aRE=
+  ChecksumType: FULL_OBJECT
+  ETag: "f3b950384ad460ec8c348278b620c9e7-2"
+  Key: multipart/final.txt
+  Location: https://s3.us-east-1.amazonaws.com/aws2azure-it-1787334418-288841-s3bucket/multipart%2Ffinal.txt

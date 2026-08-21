@@ -1,0 +1,14 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sns:CreateTopic/Subscribe/GetSubscriptionAttributes/SetSubscriptionAttributes/GetSubscriptionAttributes/Unsubscribe/GetSubscriptionAttributes/DeleteTopic
+# captured: 2026-08-21T17:45:44.4975700+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 404
+[header] content-type: text/xml
+[body:xml-error]
+  (root): ErrorResponse
+  Code: NotFound
+  Message: <MASKED>
+  RequestId: <MASKED>
+  Type: Sender

@@ -1,0 +1,12 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sns:CreateTopic/Subscribe/ListSubscriptions/ListSubscriptionsByTopic/Unsubscribe/DeleteTopic
+# captured: 2026-08-21T17:45:45.6741965+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: text/xml
+[body:xml-error]
+  (root): SubscribeResponse
+  ResponseMetadata: <nested>
+  SubscribeResult: <nested>

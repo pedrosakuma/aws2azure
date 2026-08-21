@@ -1,0 +1,15 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sqs:InvalidAction
+# captured: 2026-08-21T17:45:00.7459840+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 400
+[header] content-type: text/xml
+[body:xml-error]
+  (root): ErrorResponse
+  Code: InvalidAction
+  Detail: 
+  Message: <MASKED>
+  RequestId: <MASKED>
+  Type: Sender
