@@ -46,6 +46,14 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                     // (the real-AWS least-privilege policy only allows
                     // s3:CreateBucket on arn:aws:s3:::aws2azure-it-*).
                     ["bucketPrefix"] = fixture.CreateEphemeralName("s3listbuckets"),
+                    // object-legal-hold-roundtrip and object-retention-roundtrip
+                    // each create their bucket with x-amz-bucket-object-lock-enabled,
+                    // which can only be set at CreateBucket time. Reusing bucketName
+                    // above (already created without it by an earlier case in this
+                    // shared run) fails with 409 BucketAlreadyOwnedByYou, so each
+                    // needs its own ephemeral bucket name.
+                    ["legalHoldBucketName"] = fixture.CreateEphemeralName("s3legalhold"),
+                    ["retentionBucketName"] = fixture.CreateEphemeralName("s3retention"),
                 })).ConfigureAwait(false);
     }
 
