@@ -227,7 +227,7 @@ case "$action" in
   down)
     [ -n "$resource_group" ] || fail "--resource-group is required for 'down'"
     echo "repro-real-azure: deleting resource group $resource_group (this reuses the CI cleanup script)" >&2
-    "$repo_root/.github/scripts/cleanup-real-azure-resource-groups.sh" "$resource_group"
+    bash "$repo_root/.github/scripts/cleanup-real-azure-resource-groups.sh" "$resource_group"
     ;;
 
   *)
