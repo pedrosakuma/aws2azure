@@ -148,7 +148,7 @@ public static partial class S3HappyPathMatrix
             "GetObjectLegalHold must reflect ON immediately after PutObjectLegalHold(ON) and OFF immediately after PutObjectLegalHold(OFF). Per docs/gaps/s3/PutObjectLegalHold.yaml and GetObjectLegalHold.yaml, this is verified_real_azure only (Azurite does not support blob legal hold), so this case carries the same Tier1SkipReason as every other happy-path case in this matrix and is intended for the real-AWS/real-Azure Tier-3 differential once wired. DeleteBucket is not asserted: bucket cleanup is left to the nightly reaper."),
             static (context, _) =>
             {
-                var bucket = context.GetProperty("bucketName") ?? ("conf-legal-hold-bucket-" + Guid.NewGuid().ToString("N")[..12]);
+                var bucket = context.GetProperty("legalHoldBucketName") ?? context.GetProperty("bucketName") ?? ("conf-legal-hold-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var key = "legal-hold/object.txt";
                 var body = Encoding.UTF8.GetBytes("aws2azure legal hold roundtrip payload");
                 var legalHoldOn = Encoding.UTF8.GetBytes("<LegalHold><Status>ON</Status></LegalHold>");
@@ -185,7 +185,7 @@ public static partial class S3HappyPathMatrix
             "GetObjectRetention must echo the mode and retain-until timestamp written by PutObjectRetention. Per docs/gaps/s3/PutObjectRetention.yaml and GetObjectRetention.yaml, this is verified_real_azure only (Azurite does not support blob immutability policies) and GOVERNANCE-mode Azure unlocked policies are extend-only for the lifetime of the retention window, so this case intentionally does not attempt to delete the object or bucket — that is left entirely to the nightly reaper once the retention window elapses. This case carries the same Tier1SkipReason as every other happy-path case in this matrix and is intended for the real-AWS/real-Azure Tier-3 differential once wired."),
             static (context, _) =>
             {
-                var bucket = context.GetProperty("bucketName") ?? ("conf-retention-bucket-" + Guid.NewGuid().ToString("N")[..12]);
+                var bucket = context.GetProperty("retentionBucketName") ?? context.GetProperty("bucketName") ?? ("conf-retention-bucket-" + Guid.NewGuid().ToString("N")[..12]);
                 var key = "retention/object.txt";
                 var body = Encoding.UTF8.GetBytes("aws2azure retention roundtrip payload");
                 var retainUntil = DateTimeOffset.UtcNow.AddMinutes(1).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
