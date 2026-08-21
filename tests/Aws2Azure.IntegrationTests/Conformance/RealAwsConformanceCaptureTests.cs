@@ -407,10 +407,15 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                 // ResourceInUseException ("Table is being created"), and a
                 // TransactWriteItems/TransactGetItems can see a transient
                 // ResourceNotFoundException before the table's metadata has
-                // fully propagated. Retry either with a short backoff —
-                // bounded so a genuinely stuck/missing table still fails the
-                // case rather than hanging — mirroring the existing
-                // DeleteTableBestEffortAsync teardown retry pattern.
+                // fully propagated. TagResource/UntagResource are likewise
+                // asynchronous: a DeleteTable issued right after a tag
+                // mutation can see a transient ResourceInUseException
+                // ("Table tags are being updated"), even though the table
+                // itself is ACTIVE and otherwise unused. Retry any of these
+                // with a short backoff — bounded so a genuinely stuck/missing
+                // table still fails the case rather than hanging — mirroring
+                // the existing DeleteTableBestEffortAsync teardown retry
+                // pattern.
                 const int maxAttempts = 10;
                 for (var attempt = 1; ; attempt++)
                 {
@@ -448,7 +453,8 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                             && actualStatus == 400
                             && attempt < maxAttempts
                             && ((body.Contains("ResourceInUseException", StringComparison.Ordinal)
-                                    && body.Contains("being created", StringComparison.Ordinal))
+                                    && (body.Contains("being created", StringComparison.Ordinal)
+                                        || body.Contains("being updated", StringComparison.Ordinal)))
                                 || body.Contains("ResourceNotFoundException", StringComparison.Ordinal)))
                         {
                             await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
