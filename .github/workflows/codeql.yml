@@ -1,0 +1,47 @@
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan to catch newly published CodeQL query updates even without
+    # code changes (Monday 06:00 UTC).
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6d786de4d6f3531a740e445b53a42b622bbbace8 # v3
+        with:
+          languages: csharp
+          build-mode: manual
+
+      # Manual build scoped to the shipping entry point only (Proxy pulls in
+      # Core + all service modules transitively). Building the full solution
+      # (tests/tools/benchmarks included) roughly triples CodeQL's C#
+      # extraction time for no extra security signal on shipping code.
+      - name: Build for analysis
+        run: dotnet build src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj --configuration Release
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@6d786de4d6f3531a740e445b53a42b622bbbace8 # v3
+        with:
+          category: "/language:csharp"
