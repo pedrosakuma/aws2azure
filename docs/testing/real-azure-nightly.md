@@ -296,7 +296,17 @@ unique name immediately rather than leaking a reserved name.
 
 ## Running locally
 
-You can run the same flow on a workstation with the Azure CLI logged in:
+The fastest path is
+[`eng/repro-real-azure.sh`](../../eng/repro-real-azure.sh), which drives the
+same `deploy/realazure/main.bicep` deployment as this workflow, exports the
+exact environment variables `RealAzureProxyFixture.cs` expects into a
+safely-quoted, sourceable env file, and tears the resource group down again.
+See [Local real-Azure/real-AWS reproduction](local-real-azure-repro.md) for
+the full walkthrough, prerequisites, cost expectations, and the sharp edges
+(Windows `az` CLI CRLF under WSL, semicolon-unsafe env files) it papers over.
+
+The commands below are the equivalent manual steps, kept here as a reference
+for what the script automates:
 
 ```bash
 RG=aws2azure-it-local
