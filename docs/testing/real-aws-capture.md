@@ -167,14 +167,19 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
       "Action": [
         "dynamodb:BatchGetItem",
         "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
         "dynamodb:DeleteItem",
         "dynamodb:DeleteTable",
         "dynamodb:DescribeTable",
         "dynamodb:GetItem",
+        "dynamodb:ListTagsOfResource",
         "dynamodb:PutItem",
         "dynamodb:Query",
         "dynamodb:Scan",
         "dynamodb:TagResource",
+        "dynamodb:TransactGetItems",
+        "dynamodb:TransactWriteItems",
+        "dynamodb:UntagResource",
         "dynamodb:UpdateItem"
       ],
       "Resource": "arn:aws:dynamodb:*:*:table/aws2azure-it-*"
