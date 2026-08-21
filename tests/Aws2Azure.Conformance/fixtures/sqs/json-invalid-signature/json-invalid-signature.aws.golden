@@ -1,0 +1,11 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sqs:InvalidSignatureException
+# captured: 2026-08-21T17:45:01.5875299+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 403
+[header] content-type: application/x-amz-json-1.0
+[body:json-error]
+  Code: InvalidSignatureException
+  Message: <MASKED>

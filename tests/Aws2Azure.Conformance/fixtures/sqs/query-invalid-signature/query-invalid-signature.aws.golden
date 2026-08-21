@@ -1,0 +1,15 @@
+# aws2azure conformance golden
+# source: aws
+# operation: sqs:SignatureDoesNotMatch
+# captured: 2026-08-21T17:45:01.0289656+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 403
+[header] content-type: text/xml
+[body:xml-error]
+  (root): ErrorResponse
+  Code: SignatureDoesNotMatch
+  Detail: 
+  Message: <MASKED>
+  RequestId: <MASKED>
+  Type: Sender

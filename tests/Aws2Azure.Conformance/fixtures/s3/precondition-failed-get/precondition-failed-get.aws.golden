@@ -1,0 +1,17 @@
+# aws2azure conformance golden
+# source: aws
+# operation: precondition-failed-get
+# captured: 2026-08-21T17:47:33.7912255+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 412
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): Error
+  Code: PreconditionFailed
+  Condition: If-Match
+  HostId: <MASKED>
+  Message: <MASKED>
+  RequestId: <MASKED>

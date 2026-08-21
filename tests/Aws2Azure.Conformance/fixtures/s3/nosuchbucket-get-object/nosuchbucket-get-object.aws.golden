@@ -1,0 +1,17 @@
+# aws2azure conformance golden
+# source: aws
+# operation: nosuchbucket-get-object
+# captured: 2026-08-21T17:47:33.3405239+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 404
+[header] content-type: application/xml
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): Error
+  BucketName: aws2azure-it-1787334451-222284-s3backenderr-missing
+  Code: NoSuchBucket
+  HostId: <MASKED>
+  Message: <MASKED>
+  RequestId: <MASKED>

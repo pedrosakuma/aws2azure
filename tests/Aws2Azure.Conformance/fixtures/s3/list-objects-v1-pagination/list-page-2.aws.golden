@@ -1,0 +1,21 @@
+# aws2azure conformance golden
+# source: aws
+# operation: s3:ListObjects
+# captured: 2026-08-21T17:47:24.3540870+00:00
+# note: Captured from real AWS by capture-real-aws.yml
+# ---
+HTTP 200
+[header] content-type: application/xml
+[header] x-amz-bucket-region: us-east-1
+[header] x-amz-id-2: <MASKED>
+[header] x-amz-request-id: <MASKED>
+[body:xml-error]
+  (root): ListBucketResult
+  CommonPrefixes: <nested>
+  Delimiter: /
+  IsTruncated: true
+  Marker: page/a/
+  MaxKeys: 1
+  Name: aws2azure-it-1787334418-288841-s3bucket
+  NextMarker: page/b/
+  Prefix: page/

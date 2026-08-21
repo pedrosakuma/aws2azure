@@ -1,11 +1,11 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:PutItem/GetItem/DeleteItem
-# captured: 2026-08-07T23:53:58.9853286+00:00
+# captured: 2026-08-21T17:46:00.4515882+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
 [header] content-type: application/x-amz-json-1.0
-[header] x-amz-crc32: 3987754228
+[header] x-amz-crc32: 124833746
 [body:json-error]
   Item: <nested>
