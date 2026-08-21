@@ -846,12 +846,17 @@ jobs:
           # from each step's TRX so the job's ::error:: annotation — the only
           # thing surfaced in the PR checks list — names the actual failure
           # instead of only the meta-step that noticed it.
+          # This shell runs with `-e -o pipefail` (GitHub Actions' default for
+          # `run:` steps), and `grep` exits non-zero when it finds no match
+          # (e.g. a step's own .trx exists but recorded no `Failed` outcome).
+          # `|| true` keeps that a soft "no matches" instead of aborting the
+          # whole reporting step before later checks/exit run.
           failed_tests() {
             trx="$1"
             [ -f "$trx" ] || return 0
-            grep -o '<UnitTestResult[^>]*>' "$trx" \
+            { grep -o '<UnitTestResult[^>]*>' "$trx" \
               | grep 'outcome="Failed"' \
-              | grep -oP 'testName="\K[^"]*'
+              | grep -oP 'testName="\K[^"]*'; } || true
           }
           check() {
             name="$1"
@@ -860,8 +865,8 @@ jobs:
             if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -ne 0 ]; then
               detail=""
               if [ -n "$trx" ]; then
-                names="$(failed_tests "$trx" | paste -sd ';' -)"
-                [ -n "$names" ] && detail=" Failed test(s): ${names//;/; }."
+                names="$(failed_tests "$trx" | paste -sd '|' - || true)"
+                [ -n "$names" ] && detail=" Failed test(s): ${names//|/ ;; }."
               fi
               echo "::error::$name failed or did not execute (exit code: ${value:-missing}).$detail"
               failed=1
