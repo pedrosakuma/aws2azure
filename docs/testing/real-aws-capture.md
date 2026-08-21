@@ -148,6 +148,7 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
         "s3:HeadBucket",
         "s3:ListBucket",
         "s3:ListBucketVersions",
+        "s3:PutBucketObjectLockConfiguration",
         "s3:PutBucketTagging",
         "s3:PutBucketVersioning",
         "s3:PutObject",
