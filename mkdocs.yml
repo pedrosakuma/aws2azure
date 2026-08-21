@@ -117,6 +117,7 @@ nav:
       - SLO qualification: testing/slo-qualification.md
       - Real-Azure validation: testing/real-azure-nightly.md
       - Real-AWS differential capture: testing/real-aws-capture.md
+      - Local real-AWS reproduction: testing/local-real-aws-repro.md
       - Documentation retrieval evaluation: testing/retrieval-eval.md
       - Documentation quality suite: testing/documentation-quality.md
       - Performance and footprint:
