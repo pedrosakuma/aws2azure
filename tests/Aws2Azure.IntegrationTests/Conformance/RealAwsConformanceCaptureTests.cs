@@ -131,6 +131,7 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                         ["transactTableName"] = fixture.CreateEphemeralName("dynamodbtransact"),
                         ["tagTableName"] = fixture.CreateEphemeralName("dynamodbtag"),
                         ["ttlTableName"] = fixture.CreateEphemeralName("dynamodbttl"),
+                        ["listTablesPrefix"] = fixture.CreateEphemeralName("dynamodblisttables"),
                     })).ConfigureAwait(false);
         }
         finally
