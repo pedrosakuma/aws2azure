@@ -9,12 +9,14 @@ using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Amazon.SecretsManager;
 using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.Canonicalization;
 using Aws2Azure.Conformance.DynamoDb;
 using Aws2Azure.Conformance.Goldens;
 using Aws2Azure.Conformance.Kinesis;
 using Aws2Azure.Conformance.S3;
+using Aws2Azure.Conformance.SecretsManager;
 using Aws2Azure.Conformance.Sns;
 using Aws2Azure.Conformance.Sqs;
 using System.Text.Json;
@@ -262,6 +264,16 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                     ["dlqQueueName"] = fixture.CreateEphemeralName("sqsqueuedlq"),
                     ["dlqSourceQueueName"] = fixture.CreateEphemeralName("sqsqueuedlqsrc"),
                 })).ConfigureAwait(false);
+    }
+
+    [SkippableFact]
+    public async Task SecretsManager_happy_path_cases_capture_real_aws_goldens()
+    {
+        Skip.IfNot(fixture.IsConfigured, fixture.SkipReason);
+        await ExecuteServiceCasesAsync(
+            "secretsmanager",
+            SecretsManagerHappyPathMatrix.Cases,
+            CreateContext("secretsmanager")).ConfigureAwait(false);
     }
 
     private ConformanceCaseContext CreateContext(
@@ -793,6 +805,8 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
 
     public IAmazonSQS Sqs { get; private set; } = null!;
 
+    public IAmazonSecretsManager SecretsManager { get; private set; } = null!;
+
     public Task InitializeAsync()
     {
         var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
@@ -814,6 +828,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         Kinesis = new AmazonKinesisClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Sns = new AmazonSimpleNotificationServiceClient(_credentials, Amazon.RegionEndpoint.USEast1);
         Sqs = new AmazonSQSClient(_credentials, Amazon.RegionEndpoint.USEast1);
+        SecretsManager = new AmazonSecretsManagerClient(_credentials, Amazon.RegionEndpoint.USEast1);
         IsConfigured = true;
         return Task.CompletedTask;
     }
@@ -826,6 +841,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
         (Kinesis as IDisposable)?.Dispose();
         (Sns as IDisposable)?.Dispose();
         (Sqs as IDisposable)?.Dispose();
+        (SecretsManager as IDisposable)?.Dispose();
         return Task.CompletedTask;
     }
 
@@ -837,6 +853,7 @@ public sealed class RealAwsConformanceCaptureFixture : IAsyncLifetime
             "kinesis" => new Uri("https://kinesis.us-east-1.amazonaws.com/"),
             "sns" => new Uri("https://sns.us-east-1.amazonaws.com/"),
             "sqs" => new Uri("https://sqs.us-east-1.amazonaws.com/"),
+            "secretsmanager" => new Uri("https://secretsmanager.us-east-1.amazonaws.com/"),
             _ => throw new ArgumentOutOfRangeException(nameof(service), service, "Unknown service."),
         };
 
