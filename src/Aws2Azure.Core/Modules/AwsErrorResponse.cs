@@ -40,6 +40,33 @@ public static class AwsErrorResponse
         }
     }
 
+    /// <summary>
+    /// Writes an AWS-JSON <em>frontend-rejection</em> error whose <c>message</c>
+    /// field must be omitted to match real AWS behaviour (issue #854). Real AWS
+    /// Kinesis / DynamoDB return
+    /// <c>{"__type":"SerializationException"}</c> or
+    /// <c>{"__type":"UnknownOperationException"}</c> with no <c>message</c>
+    /// field when the AWS-JSON frontend rejects the request before dispatch
+    /// (malformed body, unknown <c>X-Amz-Target</c>). Handler-level
+    /// <c>SerializationException</c> emitted from an operation after
+    /// dispatch still carries a message and must use
+    /// <see cref="WriteAsync(HttpContext, AwsErrorFormat, int, string, string, string?, string, string)"/>.
+    /// </summary>
+    public static async Task WriteJsonWithoutMessageAsync(
+        HttpContext context,
+        int statusCode,
+        string code,
+        string jsonContentType = "application/x-amz-json-1.0",
+        string requestIdHeaderName = "x-amz-request-id")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestIdHeaderName);
+        context.Response.StatusCode = statusCode;
+        var requestId = ResolveRequestId(context, requestIdHeaderName);
+        context.Response.Headers[requestIdHeaderName] = requestId;
+        context.Response.ContentType = jsonContentType;
+        await context.Response.WriteAsync(BuildJsonWithoutMessage(code));
+    }
+
     public static string BuildXml(string code, string message, string? resource, string requestId)
     {
         // Use XmlWriter directly (AOT-safe; XmlSerializer is banned).
@@ -79,6 +106,15 @@ public static class AwsErrorResponse
             new AwsJsonError(code, message),
             AwsErrorJsonContext.Default.AwsJsonError);
 
+    /// <summary>
+    /// Renders <c>{"__type":"&lt;code&gt;"}</c> with no <c>message</c> field.
+    /// See <see cref="WriteJsonWithoutMessageAsync"/> for when to use this.
+    /// </summary>
+    public static string BuildJsonWithoutMessage(string code)
+        => JsonSerializer.Serialize(
+            new AwsJsonError(code, Message: null),
+            AwsErrorJsonContext.Default.AwsJsonError);
+
     private static string ResolveRequestId(HttpContext context, string requestIdHeaderName)
     {
         if (context.Response.Headers.TryGetValue(requestIdHeaderName, out var existing)
@@ -92,8 +128,9 @@ public static class AwsErrorResponse
 
 internal sealed record AwsJsonError(
     [property: JsonPropertyName("__type")] string Type,
-    [property: JsonPropertyName("message")] string Message);
+    [property: JsonPropertyName("message")] string? Message);
 
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(AwsJsonError))]
 internal sealed partial class AwsErrorJsonContext : JsonSerializerContext
 {

@@ -32,15 +32,17 @@ public static class DynamoDbErrorResponse
         int statusCode,
         string code,
         string message,
-        bool isProtocolLevel = false)
+        bool isProtocolLevel = false,
+        bool omitMessage = false)
     {
         context.Response.StatusCode = statusCode;
         context.Response.Headers["x-amzn-requestid"] = ResolveRequestId(context);
         context.Response.ContentType = "application/x-amz-json-1.0";
 
         var prefix = isProtocolLevel ? CoralTypePrefix : ServiceTypePrefix;
+        var wireType = prefix + code;
         var payload = JsonSerializer.Serialize(
-            new DynamoDbJsonError(prefix + code, message),
+            new DynamoDbJsonError(wireType, omitMessage ? null : message),
             DynamoDbErrorJsonContext.Default.DynamoDbJsonError);
         context.Response.Headers["x-amz-crc32"] = ComputeAwsCrc32Decimal(payload);
         await context.Response.WriteAsync(payload).ConfigureAwait(false);
@@ -107,8 +109,9 @@ public static class DynamoDbErrorResponse
 
 internal sealed record DynamoDbJsonError(
     [property: JsonPropertyName("__type")] string Type,
-    [property: JsonPropertyName("message")] string Message);
+    [property: JsonPropertyName("message")] string? Message);
 
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(DynamoDbJsonError))]
 internal sealed partial class DynamoDbErrorJsonContext : JsonSerializerContext
 {

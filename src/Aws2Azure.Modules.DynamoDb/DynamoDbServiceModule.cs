@@ -110,9 +110,16 @@ public sealed class DynamoDbServiceModule : IServiceModule
 
         if (parsed.Error is not null)
         {
+            // Frontend-rejection message-omission is scoped to exactly the two
+            // codes real AWS DynamoDB is documented to emit without a message
+            // field (issue #854). Other parser-stage codes returned via
+            // parsed.Error — InvalidAction, MissingActionException,
+            // RequestEntityTooLarge — retain their message on the wire.
+            var omitMessage = parsed.Error.Code is "SerializationException"
+                or "UnknownOperationException";
             await DynamoDbErrorResponse.WriteAsync(context,
                 parsed.Error.StatusCode, parsed.Error.Code, parsed.Error.Message,
-                isProtocolLevel: true).ConfigureAwait(false);
+                isProtocolLevel: true, omitMessage: omitMessage).ConfigureAwait(false);
             return;
         }
 

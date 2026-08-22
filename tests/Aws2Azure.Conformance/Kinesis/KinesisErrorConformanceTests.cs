@@ -58,7 +58,19 @@ public sealed class KinesisErrorConformanceTests : IClassFixture<KinesisConforma
         // and that the content type is the AWS-JSON media type SDKs expect.
         Assert.Equal(expectedOutcome.ExpectedStatus, canonical.StatusCode);
         Assert.Equal(CanonicalResponse.BodyKindJsonError, canonical.BodyKind);
-        Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
+        // Real AWS Kinesis omits the Message field for the frontend-rejection
+        // codes SerializationException and UnknownOperationException (issue #854);
+        // all other error codes carry a Message.
+        var expectMessage = expectedOutcome.ExpectedErrorCode is not "SerializationException"
+            and not "UnknownOperationException";
+        if (expectMessage)
+        {
+            Assert.Contains(canonical.BodyFields, f => f.Name == "Message");
+        }
+        else
+        {
+            Assert.DoesNotContain(canonical.BodyFields, f => f.Name == "Message");
+        }
         var code = canonical.BodyFields.FirstOrDefault(f => f.Name == "Code");
         Assert.Equal(expectedOutcome.ExpectedErrorCode, code.Value);
 

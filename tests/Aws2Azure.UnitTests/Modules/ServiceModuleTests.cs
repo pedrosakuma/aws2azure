@@ -66,6 +66,61 @@ public class AwsErrorResponseTests
         Assert.Equal("no such queue", doc.RootElement.GetProperty("message").GetString());
     }
 
+    // Real AWS Kinesis / DynamoDB return {"__type": "SerializationException"} with
+    // no "message" field on frontend-rejection paths (issue #854). The proxy uses
+    // a dedicated writer to emit that shape; regular AWS-JSON error paths still
+    // carry a message field.
+    [Theory]
+    [InlineData("SerializationException")]
+    [InlineData("UnknownOperationException")]
+    [InlineData("com.amazon.coral.service#SerializationException")]
+    [InlineData("com.amazonaws.dynamodb.v20120810#UnknownOperationException")]
+    public void BuildJsonWithoutMessage_omits_message_field(string code)
+    {
+        var json = AwsErrorResponse.BuildJsonWithoutMessage(code);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(code, doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(
+            doc.RootElement.TryGetProperty("message", out _),
+            $"expected no 'message' property for {code}");
+    }
+
+    // Guardrail: BuildJson preserves the message field for every code.
+    [Theory]
+    [InlineData("SerializationException")]
+    [InlineData("UnknownOperationException")]
+    [InlineData("ValidationException")]
+    [InlineData("AccessDeniedException")]
+    [InlineData("MissingAuthenticationTokenException")]
+    public void BuildJson_preserves_message_field(string code)
+    {
+        var json = AwsErrorResponse.BuildJson(code, "diagnostic text");
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("diagnostic text", doc.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task WriteJsonWithoutMessageAsync_writes_envelope_with_no_message_field()
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "req-fr" };
+        ctx.Response.Body = new MemoryStream();
+
+        await AwsErrorResponse.WriteJsonWithoutMessageAsync(
+            ctx,
+            StatusCodes.Status400BadRequest,
+            "SerializationException",
+            jsonContentType: "application/x-amz-json-1.1",
+            requestIdHeaderName: "x-amzn-requestid");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Equal("application/x-amz-json-1.1", ctx.Response.ContentType);
+        ctx.Response.Body.Position = 0;
+        var body = await new StreamReader(ctx.Response.Body).ReadToEndAsync();
+        using var doc = JsonDocument.Parse(body);
+        Assert.Equal("SerializationException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("message", out _));
+    }
+
     [Fact]
     public async Task WriteAsync_preserves_default_json_header_and_content_type()
     {
