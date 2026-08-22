@@ -5,6 +5,17 @@ name: workload-load-real-azure
 # scheduled/PR runs remain explicit source validation. Manual runs can select S3,
 # Secrets Manager, SQS, DynamoDB, DynamoDB transactions, Kinesis, or all
 # profiles. Emulator and A/B artifacts are never consumed.
+#
+# mode: promote (default) qualifies a genuinely new sealed candidate against the
+# profile's currently approved runtime as the rollback baseline; candidate_run_id
+# and candidate_run_attempt select that new candidate. mode: reaffirm re-validates
+# the already-approved runtime itself (no new sealed-runtime build) to renew
+# qualification evidence freshness -- e.g. because AWS/Azure-side behavior may
+# have drifted since the last promotion, not because the code changed. It ignores
+# any supplied candidate_* inputs, resolves the candidate directly from the
+# current approved-runtime ledger, and resolves the rollback baseline from the
+# ledger's trusted qualification.rollback_target (not the current ledger, which
+# would equal the candidate itself) -- see #803.
 on:
   schedule:
     - cron: '15 6 * * *'
@@ -23,17 +34,25 @@ on:
           - sqs-standard-messaging
           - kinesis-single-consumer-per-shard
           - all
-      candidate_run_id:
-        description: Exact successful sealed-runtime producer run id
+      mode:
+        description: promote a new sealed candidate, or reaffirm the already-approved runtime
         required: true
+        default: promote
+        type: choice
+        options:
+          - promote
+          - reaffirm
+      candidate_run_id:
+        description: Exact successful sealed-runtime producer run id (promote mode only)
+        required: false
         type: string
       candidate_run_attempt:
-        description: Exact sealed-runtime producer attempt
-        required: true
+        description: Exact sealed-runtime producer attempt (promote mode only)
+        required: false
         default: '1'
         type: string
       candidate_artifact_id:
-        description: Optional exact sealed artifact id (normally inferred unambiguously)
+        description: Optional exact sealed artifact id (promote mode only; normally inferred unambiguously)
         required: false
         type: string
   pull_request:
@@ -129,14 +148,22 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
+          REQUALIFICATION_MODE: ${{ inputs.mode }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
         run: |
           set -euo pipefail
           qualification_sha="$(git rev-parse HEAD)"
+          requalification_mode="${REQUALIFICATION_MODE:-promote}"
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-               [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            if [ "$requalification_mode" = reaffirm ]; then
+              if [ -n "$CANDIDATE_RUN_ID" ] || [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+                echo "::error::mode=reaffirm resolves the candidate from the approved-runtime ledger; candidate_* inputs must be left blank."
+                exit 1
+              fi
+            elif [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+                 [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
               echo "::error::Manual qualification requires numeric candidate run id and attempt."
               exit 1
             fi
@@ -151,10 +178,12 @@ jobs:
           else
             qualifying=false
             runtime_mode=source_validation
+            requalification_mode=promote
           fi
           {
             echo "qualifying=$qualifying"
             echo "qualification_sha=$qualification_sha"
+            echo "requalification_mode=$requalification_mode"
           } >> "$GITHUB_OUTPUT"
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
@@ -268,6 +297,7 @@ jobs:
         if: steps.mode.outputs.qualifying == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUALIFICATION_MODE: ${{ steps.mode.outputs.requalification_mode }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
@@ -278,28 +308,70 @@ jobs:
           install -d -m 0700 "$identity_dir"
           gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
           prior_ledger="$identity_dir/prior-ledger.json"
-          dotnet exec "$gap_docs" export-approved-runtime \
-            --profile "$PROFILE" \
-            --output "$prior_ledger"
-          chmod 0600 "$prior_ledger"
 
-          candidate_args=(
-            --repository "$GITHUB_REPOSITORY"
-            --run-id "$CANDIDATE_RUN_ID"
-            --run-attempt "$CANDIDATE_RUN_ATTEMPT"
-            --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
-            --expected-ref "$GITHUB_REF"
-            --profile "$PROFILE"
-            --profile-version 1
-            --role candidate
-            --destination "$PRIVATE_DIR/sealed-candidate"
-            --identity-output "$identity_dir/candidate-runtime.json"
-            --github-env "$GITHUB_ENV"
-          )
-          if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
-            candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+          if [ "$REQUALIFICATION_MODE" = reaffirm ]; then
+            # Reaffirmation re-validates the already-approved runtime itself: the
+            # candidate is resolved from the current ledger (not from candidate_*
+            # inputs), and the rollback baseline must come from the ledger's fixed
+            # qualification.rollback_target -- re-exporting the *current* ledger as
+            # "prior" would just return the candidate again, since the candidate
+            # already is the current approved runtime.
+            current_ledger="$identity_dir/current-ledger.json"
+            dotnet exec "$gap_docs" export-approved-runtime \
+              --profile "$PROFILE" \
+              --output "$current_ledger"
+            chmod 0600 "$current_ledger"
+
+            candidate_run_id="$(jq -er '.record.producer.run_id' "$current_ledger")"
+            candidate_attempt="$(jq -er '.record.producer.run_attempt' "$current_ledger")"
+            candidate_sha="$(jq -er '.record.runtime.source_sha' "$current_ledger")"
+            candidate_ref="$(jq -er '.record.attestation.source_ref' "$current_ledger")"
+            candidate_artifact_id="$(jq -er '.record.artifact.id' "$current_ledger")"
+            ./eng/resolve-sealed-runtime.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$candidate_run_id" \
+              --run-attempt "$candidate_attempt" \
+              --expected-sha "$candidate_sha" \
+              --expected-ref "$candidate_ref" \
+              --profile "$PROFILE" \
+              --profile-version 1 \
+              --role candidate \
+              --artifact-id "$candidate_artifact_id" \
+              --destination "$PRIVATE_DIR/sealed-candidate" \
+              --identity-output "$identity_dir/candidate-runtime.json" \
+              --github-env "$GITHUB_ENV"
+
+            dotnet exec "$gap_docs" export-approved-runtime \
+              --profile "$PROFILE" \
+              --rollback-target \
+              --candidate "$identity_dir/candidate-runtime.json" \
+              --ledger-json "$current_ledger" \
+              --output "$prior_ledger"
+            chmod 0600 "$prior_ledger"
+          else
+            dotnet exec "$gap_docs" export-approved-runtime \
+              --profile "$PROFILE" \
+              --output "$prior_ledger"
+            chmod 0600 "$prior_ledger"
+
+            candidate_args=(
+              --repository "$GITHUB_REPOSITORY"
+              --run-id "$CANDIDATE_RUN_ID"
+              --run-attempt "$CANDIDATE_RUN_ATTEMPT"
+              --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
+              --expected-ref "$GITHUB_REF"
+              --profile "$PROFILE"
+              --profile-version 1
+              --role candidate
+              --destination "$PRIVATE_DIR/sealed-candidate"
+              --identity-output "$identity_dir/candidate-runtime.json"
+              --github-env "$GITHUB_ENV"
+            )
+            if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+              candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+            fi
+            ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
           fi
-          ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
 
           prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
           prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
