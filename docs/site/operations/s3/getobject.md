@@ -66,8 +66,10 @@ response-content-type / response-content-disposition / response-content-encoding
 - Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2]
 - Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId]
 - NoSuchBucket envelopes omit the informational <BucketName> element real S3 includes. [conformance:nosuchbucket-get-object::missing-field:BucketName]
-- NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key]
+- NoSuchKey envelopes omit the informational <Key> element real S3 includes. [conformance:nosuchkey-get-object::missing-field:Key] [conformance:multipart-upload-abort-roundtrip::missing-field:Key]
 - PreconditionFailed envelopes omit the informational <Condition> element (e.g. <Condition>If-Match</Condition>) real S3 includes. [conformance:precondition-failed-get::missing-field:Condition]
+- InvalidBucketName responses emitted by the S3 request-validation stage (before Azure is called) omit the informational <BucketName> element real S3 includes; the proxy's shared error envelope helper does not carry the offending name into the XML body. [conformance:invalid-bucket-name::missing-field:BucketName]
+- NoSuchBucket responses short-circuited for length-legal but Azure-illegal container names (e.g. names containing an underscore) omit the informational <BucketName> element real S3 includes; same shared error envelope path as the invalid-bucket-name case. [conformance:azure-illegal-bucket-name-is-nosuchbucket::missing-field:BucketName]
 
 ## References
 

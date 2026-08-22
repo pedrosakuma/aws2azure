@@ -35,6 +35,7 @@ Azure has no native bucket-tagging surface to enforce these; tags are pure metad
 ## Behaviour differences
 
 - Bucket tags survive process restarts because they live on the container metadata, but they are invisible to any Azure-native tooling that does not know about the aws2azurebuckettags key.
+- Real S3 omits the Content-Type header on GetBucketTagging 200 responses despite the XML body; the proxy's XML response writer path sets Content-Type application/xml because Kestrel's default XML content negotiation adds it. AWS SDKs read the body via the operation-specific unmarshaller regardless of Content-Type, so the extra header does not affect deserialization. [conformance:bucket-tagging-roundtrip::extra-header:content-type]
 
 ## References
 

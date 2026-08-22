@@ -40,6 +40,7 @@ All STREAMING-* chunked payload variants already supported by the proxy are deco
 
 - Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's block-ID uniformity rule.
 - Part numbers must be in [1, 10000] (S3 limit). Azure's higher block-count ceiling is intentionally unused.
+- x-amz-server-side-encryption is not emitted on the UploadPart response; Azure Blob Storage's Put Block response reports encryption state via x-ms-server-encrypted rather than an equivalent AWS-style header the proxy mirrors onto UploadPart 200s. [conformance:multipart-upload-abort-roundtrip::missing-header:x-amz-server-side-encryption] [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
 
 ## References
 

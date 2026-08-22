@@ -28,6 +28,7 @@ Maps the opaque S3 versionId to Azure versionid. Unqualified requests HEAD and p
 - Returns an empty TagSet (200) when no tags are set, matching Azure's behaviour. Azure surfaces 'no tags' as an empty set rather than a NoSuchTagSet error.
 - Version selection depends on Azure Blob versioning being enabled by the operator.
 - Azure BlobVersionNotFound maps to S3 NoSuchVersion.
+- Real S3 omits the Content-Type header on GetObjectTagging 200 responses despite the XML body; the proxy's XML response writer path sets Content-Type application/xml because Kestrel's default XML content negotiation adds it. AWS SDKs read the body via the operation-specific unmarshaller regardless of Content-Type, so the extra header does not affect deserialization. [conformance:object-tagging-roundtrip::extra-header:content-type]
 
 ## References
 
