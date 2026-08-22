@@ -1,0 +1,181 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3CreateAndDiscover",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:GetBucketLocation",
+        "s3:ListAllMyBuckets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3PrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteBucket",
+        "s3:DeleteBucketTagging",
+        "s3:DeleteObject",
+        "s3:DeleteObjects",
+        "s3:DeleteObjectVersion",
+        "s3:GetBucketTagging",
+        "s3:GetObject",
+        "s3:GetObjectLegalHold",
+        "s3:GetObjectRetention",
+        "s3:HeadBucket",
+        "s3:ListBucket",
+        "s3:ListBucketVersions",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutObject",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aws2azure-it-*",
+        "arn:aws:s3:::aws2azure-it-*/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDbCreateAndDiscover",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:ListTables"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DynamoDbPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DeleteTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:GetItem",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:TagResource",
+        "dynamodb:TransactGetItems",
+        "dynamodb:TransactWriteItems",
+        "dynamodb:UntagResource",
+        "dynamodb:UpdateItem",
+        "dynamodb:UpdateTimeToLive"
+      ],
+      "Resource": "arn:aws:dynamodb:*:*:table/aws2azure-it-*"
+    },
+    {
+      "Sid": "KinesisCreateAndDiscover",
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:CreateStream",
+        "kinesis:ListStreams"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KinesisPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:AddTagsToStream",
+        "kinesis:DeleteStream",
+        "kinesis:DescribeStream",
+        "kinesis:DescribeStreamSummary",
+        "kinesis:GetRecords",
+        "kinesis:GetShardIterator",
+        "kinesis:ListShards",
+        "kinesis:PutRecord",
+        "kinesis:PutRecords"
+      ],
+      "Resource": "arn:aws:kinesis:*:*:stream/aws2azure-it-*"
+    },
+    {
+      "Sid": "SnsCreateAndDiscover",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:ListTopics",
+        "sns:Subscribe",
+        "sns:Unsubscribe"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SnsPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:Publish",
+        "sns:PublishBatch",
+        "sns:TagResource"
+      ],
+      "Resource": "arn:aws:sns:*:*:aws2azure-it-*"
+    },
+    {
+      "Sid": "SqsCreateAndDiscover",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:ListQueues"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SqsPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:DeleteMessage",
+        "sqs:DeleteMessageBatch",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:PurgeQueue",
+        "sqs:ReceiveMessage",
+        "sqs:SendMessage",
+        "sqs:SendMessageBatch",
+        "sqs:SetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:*:*:aws2azure-it-*"
+    },
+    {
+      "Sid": "SecretsManagerPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:TagResource",
+        "secretsmanager:UpdateSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:aws2azure-it-*"
+    },
+    {
+      "Sid": "SecretsManagerListDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:ListSecrets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadOnlyDiscoveryForReaper",
+      "Effect": "Allow",
+      "Action": [
+        "tag:GetResources"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

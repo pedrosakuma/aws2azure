@@ -118,189 +118,11 @@ aws iam create-role \
 #    Resource-level scoping is used wherever the AWS service supports it; any
 #    remaining create/list APIs stay tightly action-limited and rely on the
 #    fixed aws2azure-it-* naming contract.
-cat > aws2azure-real-aws-policy.json <<'JSON'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "S3CreateAndDiscover",
-      "Effect": "Allow",
-      "Action": [
-        "s3:CreateBucket",
-        "s3:GetBucketLocation",
-        "s3:ListAllMyBuckets"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "S3PrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "s3:DeleteBucket",
-        "s3:DeleteBucketTagging",
-        "s3:DeleteObject",
-        "s3:DeleteObjects",
-        "s3:DeleteObjectVersion",
-        "s3:GetBucketTagging",
-        "s3:GetObject",
-        "s3:GetObjectLegalHold",
-        "s3:GetObjectRetention",
-        "s3:HeadBucket",
-        "s3:ListBucket",
-        "s3:ListBucketVersions",
-        "s3:PutBucketObjectLockConfiguration",
-        "s3:PutBucketTagging",
-        "s3:PutBucketVersioning",
-        "s3:PutObject",
-        "s3:PutObjectLegalHold",
-        "s3:PutObjectRetention"
-      ],
-      "Resource": [
-        "arn:aws:s3:::aws2azure-it-*",
-        "arn:aws:s3:::aws2azure-it-*/*"
-      ]
-    },
-    {
-      "Sid": "DynamoDbCreateAndDiscover",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:CreateTable",
-        "dynamodb:ListTables"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "DynamoDbPrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:BatchGetItem",
-        "dynamodb:BatchWriteItem",
-        "dynamodb:ConditionCheckItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:DeleteTable",
-        "dynamodb:DescribeTable",
-        "dynamodb:DescribeTimeToLive",
-        "dynamodb:GetItem",
-        "dynamodb:ListTagsOfResource",
-        "dynamodb:PutItem",
-        "dynamodb:Query",
-        "dynamodb:Scan",
-        "dynamodb:TagResource",
-        "dynamodb:TransactGetItems",
-        "dynamodb:TransactWriteItems",
-        "dynamodb:UntagResource",
-        "dynamodb:UpdateItem",
-        "dynamodb:UpdateTimeToLive"
-      ],
-      "Resource": "arn:aws:dynamodb:*:*:table/aws2azure-it-*"
-    },
-    {
-      "Sid": "KinesisCreateAndDiscover",
-      "Effect": "Allow",
-      "Action": [
-        "kinesis:CreateStream",
-        "kinesis:ListStreams"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "KinesisPrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "kinesis:AddTagsToStream",
-        "kinesis:DeleteStream",
-        "kinesis:DescribeStream",
-        "kinesis:DescribeStreamSummary",
-        "kinesis:GetRecords",
-        "kinesis:GetShardIterator",
-        "kinesis:ListShards",
-        "kinesis:PutRecord",
-        "kinesis:PutRecords"
-      ],
-      "Resource": "arn:aws:kinesis:*:*:stream/aws2azure-it-*"
-    },
-    {
-      "Sid": "SnsCreateAndDiscover",
-      "Effect": "Allow",
-      "Action": [
-        "sns:CreateTopic",
-        "sns:ListTopics",
-        "sns:Subscribe",
-        "sns:Unsubscribe"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "SnsPrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "sns:DeleteTopic",
-        "sns:GetTopicAttributes",
-        "sns:ListSubscriptionsByTopic",
-        "sns:Publish",
-        "sns:PublishBatch",
-        "sns:TagResource"
-      ],
-      "Resource": "arn:aws:sns:*:*:aws2azure-it-*"
-    },
-    {
-      "Sid": "SqsCreateAndDiscover",
-      "Effect": "Allow",
-      "Action": [
-        "sqs:CreateQueue",
-        "sqs:ListQueues"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "SqsPrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "sqs:DeleteMessage",
-        "sqs:DeleteMessageBatch",
-        "sqs:DeleteQueue",
-        "sqs:GetQueueAttributes",
-        "sqs:GetQueueUrl",
-        "sqs:PurgeQueue",
-        "sqs:ReceiveMessage",
-        "sqs:SendMessage",
-        "sqs:SendMessageBatch",
-        "sqs:SetQueueAttributes"
-      ],
-      "Resource": "arn:aws:sqs:*:*:aws2azure-it-*"
-    },
-    {
-      "Sid": "SecretsManagerPrefixScopedData",
-      "Effect": "Allow",
-      "Action": [
-        "secretsmanager:CreateSecret",
-        "secretsmanager:DeleteSecret",
-        "secretsmanager:DescribeSecret",
-        "secretsmanager:GetSecretValue",
-        "secretsmanager:TagResource",
-        "secretsmanager:UpdateSecret"
-      ],
-      "Resource": "arn:aws:secretsmanager:*:*:secret:aws2azure-it-*"
-    },
-    {
-      "Sid": "SecretsManagerListDiscovery",
-      "Effect": "Allow",
-      "Action": [
-        "secretsmanager:ListSecrets"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "ReadOnlyDiscoveryForReaper",
-      "Effect": "Allow",
-      "Action": [
-        "tag:GetResources"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-JSON
+#    The full JSON is kept as a single shared source of truth in
+#    eng/aws-least-privilege-policy.json (also read by
+#    eng/repro-real-aws.sh's `setup-iam` subcommand) rather than
+#    duplicated inline here — copy it directly:
+cp "$(git rev-parse --show-toplevel)/eng/aws-least-privilege-policy.json" aws2azure-real-aws-policy.json
 
 aws iam put-role-policy \
   --role-name "$ROLE_NAME" \
@@ -368,9 +190,22 @@ when goldens change, uploads them as an artifact and opens or updates the
 `automation/real-aws-goldens` pull request. Review that PR before merging the
 new oracle data.
 
+## Running locally
+
+CI authenticates via GitHub OIDC `AssumeRoleWithWebIdentity`, which cannot be
+minted outside GitHub Actions. To reproduce the same
+`dotnet test --filter "Category=RealAws"` capture on a workstation, see
+[Local real-AWS reproduction](./local-real-aws-repro.md), which walks through
+provisioning a personal, `aws2azure-it-*`-scoped IAM user with this exact
+policy, minting short-lived session credentials
+(`RealAwsConformanceCaptureFixture` requires `AWS_SESSION_TOKEN`, not just a
+long-lived access key), running the capture, and tearing everything down.
+[`eng/repro-real-aws.sh`](../../eng/repro-real-aws.sh) scripts that flow.
+
 ## Related documents
 
 - [Nightly real-Azure integration tests](./real-azure-nightly.md)
+- [Local real-AWS reproduction](./local-real-aws-repro.md)
 - [`integration-real-azure.yml`](../../.github/workflows/integration-real-azure.yml)
 - [`real-azure-reaper.yml`](../../.github/workflows/real-azure-reaper.yml)
 - [`capture-real-aws.yml`](../../.github/workflows/capture-real-aws.yml)
@@ -378,4 +213,7 @@ new oracle data.
 - [`tier3-real-diff.yml`](../../.github/workflows/tier3-real-diff.yml)
 - [`OfflineConformanceDiffRunner.cs`](../../tests/Aws2Azure.Conformance/Diff/OfflineConformanceDiffRunner.cs)
 - [`tests/Aws2Azure.Conformance/README.md`](../../tests/Aws2Azure.Conformance/README.md)
+- [`eng/aws-least-privilege-policy.json`](../../eng/aws-least-privilege-policy.json)
+- [`eng/repro-real-aws.sh`](../../eng/repro-real-aws.sh)
 - Issue [#708](https://github.com/pedrosakuma/aws2azure/issues/708)
+- Issue [#842](https://github.com/pedrosakuma/aws2azure/issues/842)
