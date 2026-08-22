@@ -13,7 +13,7 @@ sub_features:
 - name: Service Bus rule translation for supported filter policies
   status: partial
   disposition: feasible_backlog
-  tracking_issue: '#691'
+  tracking_issue: '#800'
   notes: MessageAttributes scope translates supported SNS operators onto Service Bus SQL filters over mirrored application properties. MessageBody scope translates supported nested JSON object paths onto reserved application properties stamped during Publish / PublishBatch.
   gap: Body-array matching and unsupported SNS operators such as suffix, equals-ignore-case, CIDR, and more complex anything-but forms are rejected with InvalidParameter because this slice only translates the Service Bus SQL-filter subset it can enforce correctly.
 - name: Compatibility no-ops
@@ -33,4 +33,4 @@ references:
 - https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
 disposition: feasible_backlog
-tracking_issue: '#691'
+tracking_issue: '#800'

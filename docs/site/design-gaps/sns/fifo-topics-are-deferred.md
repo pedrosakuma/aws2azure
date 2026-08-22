@@ -5,7 +5,7 @@
 - **Capability ID:** `design-gap:sns:fifo-topics-are-deferred`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#692](https://github.com/pedrosakuma/aws2azure/issues/692)
+- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 
 aws2azure now supports a bounded Service Bus subset for SNS .fifo topics. On the Service Bus backend, MessageGroupId maps to SessionId (AMQP group-id), MessageDeduplicationId maps to broker MessageId, and ContentBasedDeduplication=true falls back to SHA-256(message body) when no dedup id is supplied. Event Grid still cannot honor FIFO semantics and rejects them.
 
