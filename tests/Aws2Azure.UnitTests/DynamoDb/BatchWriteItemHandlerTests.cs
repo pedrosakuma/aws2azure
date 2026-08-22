@@ -130,6 +130,39 @@ public class BatchWriteItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchWrite_unprocessed_items_is_empty_object_when_nothing_throttled()
+    {
+        // Real AWS DynamoDB always emits UnprocessedItems as a JSON object
+        // (empty `{}` when everything was processed), never as `null` and
+        // never absent. Regression guard for tier3 real-Azure diff C1.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaHashOnly),
+                CosmosCreated(),
+                CosmosCreated(),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"RequestItems\":{\"orders\":["
+                  + "{\"PutRequest\":{\"Item\":{\"pk\":{\"S\":\"a\"}}}},"
+                  + "{\"PutRequest\":{\"Item\":{\"pk\":{\"S\":\"b\"}}}}]}}";
+        await BatchWriteItemHandler.HandleBatchWriteItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var raw = ReadResponse(body);
+        Assert.Contains("\"UnprocessedItems\":{}", raw);
+        Assert.DoesNotContain("\"UnprocessedItems\":null", raw);
+        using var resp = JsonDocument.Parse(raw);
+        Assert.True(resp.RootElement.TryGetProperty("UnprocessedItems", out var u));
+        Assert.Equal(JsonValueKind.Object, u.ValueKind);
+        Assert.False(u.EnumerateObject().MoveNext());
+    }
+
+    [Fact]
     public async Task BatchWrite_deletes_via_delete_method()
     {
         var (ctx, body) = NewCtx();

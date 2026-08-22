@@ -244,7 +244,10 @@ internal static class BatchWriteItemHandler
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
-        Dictionary<string, List<JsonElement>>? unprocessed = null;
+        // Always initialise so the JSON field is emitted as `{}` when nothing was
+        // throttled — real AWS DynamoDB always includes UnprocessedItems as an object
+        // (empty when everything was processed), never as `null` or omitted.
+        var unprocessed = new Dictionary<string, List<JsonElement>>(StringComparer.Ordinal);
         for (int i = 0; i < work.Count; i++)
         {
             var r = results[i];
@@ -257,7 +260,6 @@ internal static class BatchWriteItemHandler
             }
             if (r.Throttled)
             {
-                unprocessed ??= new Dictionary<string, List<JsonElement>>(StringComparer.Ordinal);
                 if (!unprocessed.TryGetValue(unit.Table, out var list))
                 {
                     list = new List<JsonElement>();

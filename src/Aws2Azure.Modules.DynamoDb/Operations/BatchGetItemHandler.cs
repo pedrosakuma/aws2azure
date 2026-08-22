@@ -263,7 +263,10 @@ internal static class BatchGetItemHandler
         // Cosmos error on any item fails the whole batch (matches
         // DynamoDB: only throttling lands in UnprocessedKeys).
         var responses = new Dictionary<string, List<BatchGetResponseItem>>(StringComparer.Ordinal);
-        Dictionary<string, BatchGetUnprocessedTable>? unprocessed = null;
+        // Always initialise so the JSON field is emitted as `{}` when nothing was
+        // throttled — real AWS DynamoDB always includes UnprocessedKeys as an object
+        // (empty when everything was processed), never as `null` or omitted.
+        var unprocessed = new Dictionary<string, BatchGetUnprocessedTable>(StringComparer.Ordinal);
         for (int i = 0; i < work.Count; i++)
         {
             var r = results[i];
@@ -278,7 +281,6 @@ internal static class BatchGetItemHandler
             }
             if (r.Throttled)
             {
-                unprocessed ??= new Dictionary<string, BatchGetUnprocessedTable>(StringComparer.Ordinal);
                 if (!unprocessed.TryGetValue(unit.Table, out var u))
                 {
                     u = new BatchGetUnprocessedTable
