@@ -199,7 +199,10 @@ internal static class BucketCrudHandlers
         }
 
         context.Response.StatusCode = StatusCodes.Status204NoContent;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, bucket);
+        // Real S3 does not emit x-amz-bucket-region/x-amz-bucket-arn on DeleteBucket
+        // responses (those headers are HeadBucket-scoped). Omit the bucket name so
+        // only x-amz-request-id is written.
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentLength = 0;
     }
 

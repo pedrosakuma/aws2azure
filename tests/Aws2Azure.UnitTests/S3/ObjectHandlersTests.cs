@@ -192,6 +192,40 @@ public sealed class ObjectHandlersTests
         Assert.Contains("versionid=ver-1", Assert.Single(handler.Requests[1].Headers["x-ms-copy-source"]), StringComparison.Ordinal);
         Assert.DoesNotContain("x-ms-source-if-match", handler.Requests[1].Headers.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.Equal("CopyObjectResult", XDocument.Parse(await TestHttpContext.ReadBodyAsync(context)).Root!.Name.LocalName);
+        // Regression guard for #857 (B4): CopyObject 200 must not carry
+        // x-amz-bucket-region / x-amz-bucket-arn — those are HeadBucket-scoped
+        // on real S3.
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+    }
+
+    [Fact]
+    public async Task CopyObject_success_does_not_emit_bucket_region_or_arn_headers()
+    {
+        var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
+        handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/src-bucket/src.txt")
+            ]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.CopyObject, "dest-bucket", "dest.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
     }
 
     [Fact]
