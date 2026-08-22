@@ -13,21 +13,6 @@ public static class SnsResponseWriter
     public const string XmlNamespace = "http://sns.amazonaws.com/doc/2010-03-31/";
     public const string XmlContentType = "text/xml; charset=utf-8";
 
-    public static Task WriteEmptyResponseAsync(HttpContext context, string operationName)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentException.ThrowIfNullOrEmpty(operationName);
-
-        return WriteResponseAsync(context, writer =>
-        {
-            writer.WriteStartElement(operationName + "Response", XmlNamespace);
-            writer.WriteStartElement(operationName + "Result", XmlNamespace);
-            writer.WriteEndElement();
-            WriteResponseMetadata(writer, ResolveRequestId(context));
-            writer.WriteEndElement();
-        });
-    }
-
     public static Task WriteCreateTopicResponseAsync(HttpContext context, string topicArn)
     {
         ArgumentNullException.ThrowIfNull(context);
