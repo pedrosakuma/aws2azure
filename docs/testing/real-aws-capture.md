@@ -270,6 +270,27 @@ cat > aws2azure-real-aws-policy.json <<'JSON'
       "Resource": "arn:aws:sqs:*:*:aws2azure-it-*"
     },
     {
+      "Sid": "SecretsManagerPrefixScopedData",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:TagResource",
+        "secretsmanager:UpdateSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:aws2azure-it-*"
+    },
+    {
+      "Sid": "SecretsManagerListDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:ListSecrets"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "ReadOnlyDiscoveryForReaper",
       "Effect": "Allow",
       "Action": [
