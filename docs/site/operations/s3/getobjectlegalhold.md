@@ -20,7 +20,6 @@ Reads x-ms-legal-hold from HEAD; true->ON, absent/false->OFF.
 ## Behaviour differences
 
 - Verified against real Azure only - Azurite does not support legal hold.
-- Real S3 omits the Content-Type header on GetObjectLegalHold 200 responses despite the XML body; the proxy's XML response writer path sets Content-Type application/xml because Kestrel's default XML content negotiation adds it. AWS SDKs read the body via the operation-specific unmarshaller regardless of Content-Type, so the extra header does not affect deserialization. [conformance:object-legal-hold-roundtrip::extra-header:content-type]
 
 ## References
 
