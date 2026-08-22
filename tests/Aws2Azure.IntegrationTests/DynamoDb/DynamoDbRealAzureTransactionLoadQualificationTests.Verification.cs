@@ -401,7 +401,7 @@ public sealed partial class DynamoDbRealAzureTransactionLoadQualificationTests
                 return false;
             }
         })).ConfigureAwait(false);
-        Assert.Single(outcomes.Where(outcome => outcome));
+        Assert.Single(outcomes, outcome => outcome);
         var query = await client.QueryAsync(
             new QueryRequest
             {

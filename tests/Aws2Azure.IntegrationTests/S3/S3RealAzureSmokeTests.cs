@@ -150,7 +150,7 @@ public sealed class S3RealAzureSmokeTests
                 BucketName = bucket,
                 Prefix = "multipart/",
             }).ConfigureAwait(false);
-            var entry = Assert.Single(listed.MultipartUploads.Where(u => string.Equals(u.Key, key, StringComparison.Ordinal)));
+            var entry = Assert.Single(listed.MultipartUploads, u => string.Equals(u.Key, key, StringComparison.Ordinal));
             Assert.Equal(uploadId, entry.UploadId);
 
             var completedUpload = await client.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest

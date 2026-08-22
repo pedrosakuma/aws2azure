@@ -162,7 +162,7 @@ public sealed class DynamoDbRealAzureConformanceTests(RealAzureProxyFixture fixt
                 .Select(i => TryConditionalUpdateAsync(client, table, $"contender-{i}", timeout.Token))
                 .ToArray();
             var outcomes = await Task.WhenAll(contenders).ConfigureAwait(false);
-            Assert.Single(outcomes.Where(won => won));
+            Assert.Single(outcomes, won => won);
 
             var item = await client.GetItemAsync(new GetItemRequest
             {
