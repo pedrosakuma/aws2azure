@@ -246,15 +246,20 @@ public sealed class MultipartHandlersTests
         var body = await TestHttpContext.ReadBodyAsync(complete);
         var location = ElementValue(body, "Location");
 
-        // Expected: '/' between bucket and key path preserved; space -> %20;
+        // Expected: only the '/' between bucket and key is a real path
+        // separator; the internal '/' inside the key itself is ALSO
+        // percent-encoded (real AWS treats the key portion of <Location> as
+        // one opaque token, unlike ordinary object URLs). space -> %20;
         // '+' -> %2B; '#' -> %23; 'ç' (U+00E7) -> UTF-8 C3 A7 -> %C3%A7.
         Assert.Equal(
-            "https://s3.us-east-1.amazonaws.com/bucket/sub%20dir/my%20file%2Bname%23%C3%A7.txt",
+            "https://s3.us-east-1.amazonaws.com/bucket/sub%20dir%2Fmy%20file%2Bname%23%C3%A7.txt",
             location);
         // Sanity: the raw decoded characters MUST NOT appear in the URL.
         Assert.DoesNotContain(" ", location, StringComparison.Ordinal);
         Assert.DoesNotContain("#", location, StringComparison.Ordinal);
         Assert.DoesNotContain("ç", location, StringComparison.Ordinal);
+        // The key's internal '/' must not survive as a raw path separator.
+        Assert.DoesNotContain("dir/my", location, StringComparison.Ordinal);
         // Location must round-trip as a valid absolute URI.
         Assert.True(Uri.TryCreate(location, UriKind.Absolute, out _));
     }

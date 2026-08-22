@@ -595,7 +595,7 @@ internal static class MultipartHandlers
             // style the caller used (bucket + key are already encoded in
             // Request.Path for path-style; the bucket sits in Request.Host
             // and the key is Request.Path for virtual-hosted).
-            var location = BuildS3ResponseLocation(ctx.Request);
+            var location = BuildS3ResponseLocation(ctx.Request, bucket, key);
             var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
             await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
             return;
@@ -1271,16 +1271,28 @@ internal static class MultipartHandlers
     //
     // HttpRequest.Path is already percent-DECODED by Kestrel, so a raw key
     // like "my file+name.txt" arrives here as "/bucket/my file+name.txt".
-    // Real S3 emits a properly percent-encoded URL, so we re-encode the
-    // path through S3ObjectKey.EncodeForBlobUrl — the same helper the Azure
-    // client uses to build blob URIs — which preserves '/' separators and
-    // %HH-escapes everything else from UTF-8.
-    private static string BuildS3ResponseLocation(HttpRequest request)
+    // Real S3 emits a properly percent-encoded URL — but unlike ordinary
+    // object URLs, the <Location> field treats the whole key as an opaque
+    // token: internal '/' characters from virtual-folder-style keys are
+    // ALSO percent-encoded (e.g. key "multipart/final.txt" → Location key
+    // segment "multipart%2Ffinal.txt"), not preserved as path separators.
+    // S3ObjectKey.EncodeForBlobUrl deliberately preserves '/' (correct for
+    // Azure blob URLs) so it must not be reused here; Uri.EscapeDataString
+    // percent-encodes every RFC 3986 reserved character including '/',
+    // matching this field's real-AWS shape exactly. The bucket segment
+    // (only present for path-style addressing) is encoded the same way,
+    // though bucket names cannot legally contain characters that would be
+    // affected by this distinction.
+    private static string BuildS3ResponseLocation(HttpRequest request, string bucket, string key)
     {
         var scheme = string.IsNullOrEmpty(request.Scheme) ? "https" : request.Scheme;
         var host = request.Host.HasValue ? request.Host.Value : string.Empty;
         var path = request.Path.HasValue ? request.Path.Value! : "/";
-        return scheme + "://" + host + S3ObjectKey.EncodeForBlobUrl(path);
+        var bucketPrefix = "/" + bucket + "/";
+        var keyPath = path.StartsWith(bucketPrefix, StringComparison.Ordinal)
+            ? "/" + Uri.EscapeDataString(bucket) + "/" + Uri.EscapeDataString(key)
+            : "/" + Uri.EscapeDataString(key);
+        return scheme + "://" + host + keyPath;
     }
 
     private static string? ReadHeader(HttpResponseMessage resp, string name)
