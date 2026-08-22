@@ -1268,12 +1268,19 @@ internal static class MultipartHandlers
     // virtual-hosted ("https://bucket.host/key"). Query is deliberately
     // dropped — <Location> is the object's canonical URL, not the request
     // URL that carried ?uploadId=…
+    //
+    // HttpRequest.Path is already percent-DECODED by Kestrel, so a raw key
+    // like "my file+name.txt" arrives here as "/bucket/my file+name.txt".
+    // Real S3 emits a properly percent-encoded URL, so we re-encode the
+    // path through S3ObjectKey.EncodeForBlobUrl — the same helper the Azure
+    // client uses to build blob URIs — which preserves '/' separators and
+    // %HH-escapes everything else from UTF-8.
     private static string BuildS3ResponseLocation(HttpRequest request)
     {
         var scheme = string.IsNullOrEmpty(request.Scheme) ? "https" : request.Scheme;
         var host = request.Host.HasValue ? request.Host.Value : string.Empty;
-        var path = request.Path.HasValue ? request.Path.Value : "/";
-        return scheme + "://" + host + path;
+        var path = request.Path.HasValue ? request.Path.Value! : "/";
+        return scheme + "://" + host + S3ObjectKey.EncodeForBlobUrl(path);
     }
 
     private static string? ReadHeader(HttpResponseMessage resp, string name)

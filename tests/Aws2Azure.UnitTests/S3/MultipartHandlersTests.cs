@@ -193,6 +193,72 @@ public sealed class MultipartHandlersTests
         Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CompleteMultipartUpload_location_percent_encodes_key_needing_escaping()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        // Key with characters needing percent-encoding: space, '+', '#', non-ASCII.
+        const string rawKey = "sub dir/my file+name#ç.txt";
+        var upload = await InitiateAsync(handler, blob, "bucket", rawKey);
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "x",
+            method: HttpMethods.Put,
+            path: "/bucket/" + rawKey,
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", rawKey), blob, CancellationToken.None);
+        var partEtag = uploadPart.Response.Headers.ETag.ToString();
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        // HttpRequest.Path is percent-DECODED by ASP.NET Core — mimic that
+        // shape by assigning the raw decoded path directly.
+        var complete = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/" + rawKey,
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        complete.Request.Scheme = "https";
+        complete.Request.Host = new HostString("s3.us-east-1.amazonaws.com");
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", rawKey), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        var body = await TestHttpContext.ReadBodyAsync(complete);
+        var location = ElementValue(body, "Location");
+
+        // Expected: '/' between bucket and key path preserved; space -> %20;
+        // '+' -> %2B; '#' -> %23; 'ç' (U+00E7) -> UTF-8 C3 A7 -> %C3%A7.
+        Assert.Equal(
+            "https://s3.us-east-1.amazonaws.com/bucket/sub%20dir/my%20file%2Bname%23%C3%A7.txt",
+            location);
+        // Sanity: the raw decoded characters MUST NOT appear in the URL.
+        Assert.DoesNotContain(" ", location, StringComparison.Ordinal);
+        Assert.DoesNotContain("#", location, StringComparison.Ordinal);
+        Assert.DoesNotContain("ç", location, StringComparison.Ordinal);
+        // Location must round-trip as a valid absolute URI.
+        Assert.True(Uri.TryCreate(location, UriKind.Absolute, out _));
+    }
+
     // ── B6: CreateMultipartUpload response must NOT emit Content-Type;
     // Complete/ListParts/ListMultipartUploads/UploadPartCopy must keep it.
 
