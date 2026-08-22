@@ -518,10 +518,10 @@ services:
         profiles:
           - dynamodb-basic-crud
           - dynamodb-query-scan-indexes
-        description: An isolated binding sends a deterministic invalid primary key to real Cosmos DB and verifies the native non-retryable DynamoDB error without revoking shared credentials.
+        description: An isolated binding sends a deterministic invalid primary key to real Cosmos DB without revoking shared credentials. Confirmed against real Azure (issue #838) that Cosmos DB's Gateway returns a genuine HTTP 500/InternalServerError for a bad master key on this request shape (no x-ms-substatus signal to distinguish auth failure from a transient error), which the AWS SDK retries once before surfacing InternalServerErrorException; this diverges from real AWS DynamoDB's clean, non-retryable 400 AccessDeniedException and is documented in docs/gaps/dynamodb/ListTables.yaml.
         operations: [ListTables]
         tests:
-          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.DynamoDb_invalid_primary_key_returns_native_non_retryable_error
+          - Aws2Azure.IntegrationTests.FailureConformance.RealAzureInvalidCredentialConformanceTests.DynamoDb_invalid_primary_key_surfaces_as_retryable_internal_server_error
       - id: conditional-write-concurrency
         priority: p0
         category: concurrency

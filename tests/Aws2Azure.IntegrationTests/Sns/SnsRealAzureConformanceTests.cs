@@ -453,7 +453,7 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 [new("TopicArn", topicArn)]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(getAfterCreate, HttpStatusCode.OK, "GetTopicAttributes[after create]");
             var createdAttributes = SnsQueryApiClient.ReadAttributes(getAfterCreate);
-            var azureAfterCreate = (await admin.GetTopicAsync(topicName).ConfigureAwait(false)).Value;
+            var azureAfterCreate = await GetTopicEventuallyAsync(admin, topicName, "Orders").ConfigureAwait(false);
             using var createdMetadata = JsonDocument.Parse(azureAfterCreate.UserMetadata);
             Assert.Equal(topicArn, createdAttributes["TopicArn"]);
             Assert.Equal("000000000000", createdAttributes["Owner"]);
@@ -486,7 +486,7 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 [new("TopicArn", topicArn)]).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(getAfterSet, HttpStatusCode.OK, "GetTopicAttributes[after set]");
             var updatedAttributes = SnsQueryApiClient.ReadAttributes(getAfterSet);
-            var azureAfterSet = (await admin.GetTopicAsync(topicName).ConfigureAwait(false)).Value;
+            var azureAfterSet = await GetTopicEventuallyAsync(admin, topicName, "Orders v2").ConfigureAwait(false);
             using var updatedMetadata = JsonDocument.Parse(azureAfterSet.UserMetadata);
             Assert.Equal(topicArn, updatedAttributes["TopicArn"]);
             Assert.Equal("Orders v2", updatedAttributes["DisplayName"]);
@@ -711,6 +711,42 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             parameters,
             RealAzureProxyFixture.AwsAccessKey,
             RealAzureProxyFixture.AwsSecret);
+
+    /// <summary>
+    /// Polls <see cref="ServiceBusAdministrationClient.GetTopicAsync"/> until its
+    /// <c>UserMetadata</c> reflects <paramref name="expectedDisplayName"/> or a bounded
+    /// deadline elapses. Confirmed against real Azure (issue #838, 2026-08-21): the proxy's
+    /// CreateTopic/SetTopicAttributes REST call to the Service Bus management plane commits
+    /// synchronously (the SNS-facing GetTopicAttributes call the test makes immediately
+    /// beforehand always observes the fresh value), but the test's own, independent
+    /// <see cref="ServiceBusAdministrationClient"/> read can occasionally observe a
+    /// momentarily stale management-plane cache. Mirrors the SecretsManager real-Azure
+    /// fixture's <c>GetSecretValueEventuallyAsync</c> bounded-retry pattern.
+    /// </summary>
+    private static async Task<TopicProperties> GetTopicEventuallyAsync(
+        ServiceBusAdministrationClient admin,
+        string topicName,
+        string expectedDisplayName)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        var delay = TimeSpan.FromMilliseconds(250);
+        var maxDelay = TimeSpan.FromSeconds(2);
+        while (true)
+        {
+            var topic = (await admin.GetTopicAsync(topicName).ConfigureAwait(false)).Value;
+            var matches = !string.IsNullOrEmpty(topic.UserMetadata)
+                && JsonDocument.Parse(topic.UserMetadata).RootElement
+                    .TryGetProperty("displayName", out var displayName)
+                && displayName.GetString() == expectedDisplayName;
+            if (matches || DateTime.UtcNow >= deadline)
+            {
+                return topic;
+            }
+
+            await Task.Delay(delay).ConfigureAwait(false);
+            delay = delay < maxDelay ? delay + delay : maxDelay;
+        }
+    }
 
     private static async Task RunBatchesAsync<T>(
         IReadOnlyList<T> items,

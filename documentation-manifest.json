@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:9d1ef8fdd71ca695cf70bd9c7650f95116a2a6a429ca7862bdf026b01aaf60d6",
+  "manifest_revision": "sha256:3532bbf72da8a798eb00fd58879f64eab3ecc4a542cc4b5391493cb58e80326e",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -34,9 +34,9 @@
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
     "contract_path": "docs/workloads/certification/authority.yaml",
-    "evaluated_as_of_utc": "2026-08-20T13:00:00Z",
+    "evaluated_as_of_utc": "2026-08-22T00:46:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:4a6ce45340d184b95fa06e9964526ccee5285d457b2c4154ed2893c523d62aa9",
+    "canonical_inputs_revision": "sha256:c802b53d546fbc979fd5eb5fd86d3f7050b7d9f493adb6015cef8fd581d4e6fe",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
@@ -1198,7 +1198,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:729515db5b41003527099cc65501e8bdc554bb028e77cdca529898c3e452d936",
+      "revision": "sha256:860d6f9b0b3030214937b390f6e5320964e6913700d376609475f52543dd3cd1",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1765,7 +1765,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "ListTables",
-      "revision": "sha256:a53e4dc694ca294155988872b37fe26958a300d5453893791b232750ce06f2ce",
+      "revision": "sha256:6695907b25778cb4baea7fc8a9ca9079012765c024dfa18ae9ac4674f493a6bc",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-20"
@@ -1781,7 +1781,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "ListTables",
-      "revision": "sha256:0923d82b3e5660327fb6bf979eee0a7656aed80164f03fa4fc16296b528ce690",
+      "revision": "sha256:e4ffd3aefabb3afffbc4ec2873bf16fdfc53f07576562507b43802693d833d36",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-20"
@@ -6676,7 +6676,7 @@
       "scope": "all-services",
       "authority": "normative-input",
       "provenance": "source",
-      "revision": "sha256:79b685608e230e11d9239b8897b1a36ab05cb484c46b03a48be9db4d715229d8",
+      "revision": "sha256:2004eb39c498c70ac8306e0f3ae554b8800f5f8519aa4c6131fcf4ff5eaf5dc9",
       "freshness": {
         "mode": "current"
       }
@@ -6823,10 +6823,10 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:5de68f9863909c536ac41d07b4a1a876005d86597dc648ef8706e97508708f49",
+      "revision": "sha256:3db22377ce787682828f313304d7f33047ddbd06be3f4f28d1ee0e3893aeac48",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
+        "evaluated_as_of_utc": "2026-08-22T00:46:00Z"
       }
     },
     {
@@ -6837,10 +6837,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:18ae706bc78622fc4bd199007a36fcd80999accd6e68736523a4f3a4b5143093",
+      "revision": "sha256:d287937c6c8eac89722babbdda5a04a3d22c0c6c1b3eb309050ea2c4bf8538ba",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
+        "evaluated_as_of_utc": "2026-08-22T00:46:00Z"
       }
     },
     {
@@ -6851,10 +6851,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:d664d1fc3fe603c9f30c422c35b31afcf9d91736b487da369bdbbb830089cde5",
+      "revision": "sha256:bff509dc6b542fb5c494b497124d979e0ac202f54580166adf92913117a879dd",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
+        "evaluated_as_of_utc": "2026-08-22T00:46:00Z"
       }
     },
     {
