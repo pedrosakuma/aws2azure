@@ -108,7 +108,7 @@ internal static class MultipartHandlers
         }
 
         var xml = S3XmlWriter.InitiateMultipartUploadResult(bucket, key, token.Encoded);
-        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct, includeContentType: false).ConfigureAwait(false);
     }
 
     // ---------- UploadPart ----------
@@ -585,7 +585,17 @@ internal static class MultipartHandlers
 
             var azureEtag = ReadHeader(azureResp, "ETag") ?? string.Empty;
             var synth = "\"" + HeaderForwarding.TranslateAzureMultipartEtagToS3(azureEtag, parsed.Parts.Count) + "\"";
-            var location = blob.BuildBlobUri(bucket, key).AbsoluteUri;
+            // Real S3 emits <Location> shaped as the S3 URL the client hit
+            // (e.g. https://{bucket}.s3.{region}.amazonaws.com/{key} for
+            // virtual-hosted, https://s3.{region}.amazonaws.com/{bucket}/{key}
+            // for path-style). The proxy's raw Azure blob URL leaked the
+            // underlying storage account and confused clients that treated
+            // <Location> as an S3 endpoint. Echo the inbound request's
+            // scheme + host + path so the value matches whichever addressing
+            // style the caller used (bucket + key are already encoded in
+            // Request.Path for path-style; the bucket sits in Request.Host
+            // and the key is Request.Path for virtual-hosted).
+            var location = BuildS3ResponseLocation(ctx.Request);
             var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
             await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
             return;
@@ -1235,14 +1245,42 @@ internal static class MultipartHandlers
         _ = await stateStore.ReleaseAsync(bucket, uploadId, leaseId, releaseCts.Token).ConfigureAwait(false);
     }
 
-    private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct)
+    private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct, bool includeContentType = true)
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(xml);
         ctx.Response.StatusCode = status;
         HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
-        ctx.Response.ContentType = "application/xml";
+        // Real S3 omits Content-Type on CreateMultipartUpload 200 responses
+        // even though the body is XML; other multipart XML responses
+        // (Complete/ListParts/ListMultipartUploads/UploadPartCopy) do emit it.
+        if (includeContentType)
+        {
+            ctx.Response.ContentType = "application/xml";
+        }
         ctx.Response.ContentLength = bytes.Length;
         await ctx.Response.Body.WriteAsync(bytes, ct).ConfigureAwait(false);
+    }
+
+    // Rebuilds the inbound S3 request's URL — scheme + host + path — so the
+    // proxy can echo it back in a response body (currently only used for
+    // CompleteMultipartUpload's <Location>). Preserves whichever addressing
+    // style the caller used: path-style ("https://host/bucket/key") or
+    // virtual-hosted ("https://bucket.host/key"). Query is deliberately
+    // dropped — <Location> is the object's canonical URL, not the request
+    // URL that carried ?uploadId=…
+    //
+    // HttpRequest.Path is already percent-DECODED by Kestrel, so a raw key
+    // like "my file+name.txt" arrives here as "/bucket/my file+name.txt".
+    // Real S3 emits a properly percent-encoded URL, so we re-encode the
+    // path through S3ObjectKey.EncodeForBlobUrl — the same helper the Azure
+    // client uses to build blob URIs — which preserves '/' separators and
+    // %HH-escapes everything else from UTF-8.
+    private static string BuildS3ResponseLocation(HttpRequest request)
+    {
+        var scheme = string.IsNullOrEmpty(request.Scheme) ? "https" : request.Scheme;
+        var host = request.Host.HasValue ? request.Host.Value : string.Empty;
+        var path = request.Path.HasValue ? request.Path.Value! : "/";
+        return scheme + "://" + host + S3ObjectKey.EncodeForBlobUrl(path);
     }
 
     private static string? ReadHeader(HttpResponseMessage resp, string name)
