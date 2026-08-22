@@ -36,7 +36,7 @@ x-amz-server-side-encryption* request headers are ignored. Encryption remains go
 - **Capability ID:** `sub-feature:s3:createmultipartupload:object-tagging`
 - **Status:** ⛔ unsupported
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#690](https://github.com/pedrosakuma/aws2azure/issues/690)
+- **Tracking issue:** [#799](https://github.com/pedrosakuma/aws2azure/issues/799)
 
 x-amz-tagging is ignored on initiate.
 

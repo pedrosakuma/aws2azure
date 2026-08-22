@@ -20,4 +20,4 @@ references:
 - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ListQueueTags.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-xml-management-api
 disposition: feasible_backlog
-tracking_issue: '#693'
+tracking_issue: '#801'

@@ -13,7 +13,7 @@ design_gaps:
   impact: The proxy can approximate SNS FIFO only within the Service Bus backend's native limits. Deduplication is broker-windowed rather than a portable SNS guarantee, no SNS-compatible SequenceNumber is returned, and the built-in SNS subscription-management APIs still create regular (non-session-aware) Service Bus subscriptions.
   workaround: Use the Service Bus backend for FIFO topics, keep publish retries within the topic's duplicate-detection window, and provision session-aware Service Bus subscriptions with Azure-native tooling when guaranteed ordered processing matters.
   disposition: feasible_backlog
-  tracking_issue: '#692'
+  tracking_issue: '#800'
 - area: No AWS region / account namespace
   status: by_design
   summary: Topic and subscription ARNs are synthesised as arn:aws:sns:{sigv4-region}:000000000000:{name}; the account id is a stable placeholder because the proxy is not backed by an AWS account namespace.

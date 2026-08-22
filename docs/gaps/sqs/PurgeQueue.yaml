@@ -10,7 +10,7 @@ sub_features:
   status: partial
   notes: Enforced by a bounded in-process tracker keyed by namespace+queue. Expired and failed attempts are removed opportunistically; cross-replica coordination remains unsupported.
   disposition: feasible_backlog
-  tracking_issue: '#693'
+  tracking_issue: '#801'
 - name: Idempotency on empty queue
   status: implemented
   notes: Returns 200 with empty body, like SQS.

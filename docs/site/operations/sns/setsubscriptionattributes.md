@@ -5,7 +5,7 @@
 - **Capability ID:** `operation:sns:setsubscriptionattributes`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
+- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 - **Azure equivalent:** `Azure Service Bus subscription description`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
@@ -23,7 +23,7 @@ Performs a GET → merge → conditional PUT cycle against the Service Bus subsc
 - **Capability ID:** `sub-feature:sns:setsubscriptionattributes:service-bus-rule-translation-for-supported-filter-policies`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#691](https://github.com/pedrosakuma/aws2azure/issues/691)
+- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 
 MessageAttributes scope translates supported SNS operators onto Service Bus SQL filters over mirrored application properties. MessageBody scope translates supported nested JSON object paths onto reserved application properties stamped during Publish / PublishBatch.
 

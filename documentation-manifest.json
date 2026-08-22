@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:97163a8f34310fc2164913810e1994835e3a4531226d76d8dcdede5c459ae070",
+  "manifest_revision": "sha256:318b424c17d593f2e17575c221b02801e890d299407b8ef032c1d664c6fa2d4e",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -34,9 +34,9 @@
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
     "contract_path": "docs/workloads/certification/authority.yaml",
-    "evaluated_as_of_utc": "2026-08-18T17:30:00Z",
+    "evaluated_as_of_utc": "2026-08-20T13:00:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:621ad196523a450d77e45517a34f0375975d87dc9dcacf17174ab1825a4a0923",
+    "canonical_inputs_revision": "sha256:4a6ce45340d184b95fa06e9964526ccee5285d457b2c4154ed2893c523d62aa9",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:86b081925c5f3e1de2e195a5b82e8925357a0d17907c2466c815d207dac2a235"
@@ -546,7 +546,7 @@
       "authority": "normative-capability",
       "provenance": "generated",
       "service": "sns",
-      "revision": "sha256:655a8a532288cfe3f7316d148d487f6dd1ed6713d951e62cee98d0cb732bd4e1",
+      "revision": "sha256:4ebbd8eadd36d31bc3129a1d1974db070d923c9f9c10aca853faee2a25e01c89",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1162,7 +1162,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:81d92af5cd1c9f231d71471e72c5dc63b6618c626cd5ed2ba56a0815a69dcb18",
+      "revision": "sha256:e673053b55317e1c3eb1c27eff6395aca823c5f25607ce5efb69bf0e6d9124fe",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1174,7 +1174,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:39c8c6aadc1f1c1613163f9cbca49e8b12c6243d4d9ce4ace8f015e47725a2ce",
+      "revision": "sha256:1ce7c34ce72fcdfeff1c2e7a44648726b2d0024949bb13bdc66e4f196912a94d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1186,7 +1186,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:8d36c9f5b05891b21cb2e617b9629fc7cfd90f8090a0e08939bca82e00d2e323",
+      "revision": "sha256:c3e186901d61fa2aee7c23c602465a333f91571070ad77276fd1beb2551ca307",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1975,7 +1975,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "TransactWriteItems",
-      "revision": "sha256:838c24d9b76528601fd4babbc0741c980f4fe8d145b835943d3bd8fa73584f4c",
+      "revision": "sha256:689f3da14b1487e273368c2375b82dd0b8951aa46548d777ce132f5b0f78fe8b",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-27"
@@ -1991,7 +1991,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "TransactWriteItems",
-      "revision": "sha256:9007f94613d1c76e790a509f5038bc79531b0e94b2417b910e30ad597d5cfd7e",
+      "revision": "sha256:04a4826dd69a7cbb285989bf5cde1050f0252ed51c0872c42df1d873492024bc",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-27"
@@ -2453,7 +2453,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:a41ab6fad7f1063455586069a90832b09dd7af75307dd972f2871732d912eb35",
+      "revision": "sha256:1989811bd6b511e0054dd2f806257496e0dbe95fdd7c76c14ca3cccd8be1c9cb",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-11"
@@ -2469,7 +2469,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:89f5ae8ed6cd45a91bf9ddd1a004fa47efbb17c3645ee1ee86231d0f86a09141",
+      "revision": "sha256:9ee2c74b945473cbac1afd0b81813037e13e32299d232a3ba281530a512fb678",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-11"
@@ -4897,7 +4897,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "CreateTopic",
-      "revision": "sha256:190afa5f62162ccf123e61e72069c5c6e286f5cc3bb5ab7705d471d73cb32905",
+      "revision": "sha256:2f2d89af7001f546fd6efe5108b292a71cda06832f0c3e4439ee1bdf807a6fb6",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -4913,7 +4913,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "CreateTopic",
-      "revision": "sha256:20126cabd61b918264730c37548a269bbcaa2c8043dc58565b09e5bc481464d4",
+      "revision": "sha256:61b946352c348ce89279589ca857404d89b8ba8a70a9efaa2c86be1e8bcc50b9",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -4929,7 +4929,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "DeleteTopic",
-      "revision": "sha256:f810387aa1eae2eb3a722d8aab5999eba276a45b23ef735f15203ece145544cf",
+      "revision": "sha256:63cbc6063ea7e9aaec509aaad12d4ac4c7be1980bcb248dd33e31743190d6f79",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -4945,7 +4945,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "DeleteTopic",
-      "revision": "sha256:f27bc9809a8d1efc79e96a94f5c3052bc0f491e892a6b47f1f449b63ea97e9e4",
+      "revision": "sha256:efcab2894eee9a434fdfbb955e5c9c3eb48c6306db8bb286037a16bfe337451b",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5089,7 +5089,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "ListTopics",
-      "revision": "sha256:1678f28731f17673726335c858994df06496d5d9f255b5ce02d9a7fa90f51bb9",
+      "revision": "sha256:662f21c76d95875ecd39f1277083b60861dfdb595dcf841ed193ed43e5dcb123",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5105,7 +5105,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "ListTopics",
-      "revision": "sha256:a45864b3571f8388f92fd82bf953c71a7289cdfb3649b1ed11b9dbc73cf7ea58",
+      "revision": "sha256:5aea81cdae5edf3603228982517542dddb3fbc1deffca641ed307ee2d828c018",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5185,7 +5185,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:9e9d8d9741fbf30199053cfe90a97e4050a730968799cac56828802132948cb7",
+      "revision": "sha256:b70dda7bb0dae906141259945c9f4330502e11db9e5fce4a8cf3d8e7ae701242",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-22"
@@ -5201,7 +5201,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:6309eeb8ad46d2b6c2ddb9ee687384044ef8db4567e054f25125a400b29cc31b",
+      "revision": "sha256:c608b670983a63ea358576c6b5e49664d5bde3016e3734a551edf2c77bfff3e1",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-22"
@@ -5657,7 +5657,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "ListQueueTags",
-      "revision": "sha256:9889e7e67524aac559fcf92d0577986c54eca658cdc69a75b5dc40a04dd3f580",
+      "revision": "sha256:c519abab6a8f9042e292b3b91e1d7bdbca33d37d4990fb68ab334b2ca11c165d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5672,7 +5672,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "ListQueueTags",
-      "revision": "sha256:1cf2a712f5ac2b5c518343a24b59976d5db5a338861896925a1ef766a2352b82",
+      "revision": "sha256:744316b2171e6b3922dbba065bc847d0cfcf3670c202ba177bd21722a4773301",
       "freshness": {
         "mode": "current"
       }
@@ -5687,7 +5687,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "PurgeQueue",
-      "revision": "sha256:dbe90159bfc5e27751608ec3b94b27bbdc6c4d4aa4aa743f947f27aab90b97a5",
+      "revision": "sha256:bbea2367570a97caeb42e2dd4ec0df1dbb3c8924a2c78d39a88dc5643b9ef669",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5702,7 +5702,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "PurgeQueue",
-      "revision": "sha256:6b86add0db2e046d131e9bd27fbf4c4d5b168c1de9b548a7ca7265082f70a633",
+      "revision": "sha256:77f1453489de181e872c3641ad7751b662ad548c666ff1b17ebe15475007e39a",
       "freshness": {
         "mode": "current"
       }
@@ -5873,7 +5873,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "TagQueue",
-      "revision": "sha256:107c4cb976e107a64c5dc3f78ff5cd62921a74aef03183392f540ecb3abafc0b",
+      "revision": "sha256:92a606d0bb49b60933095ad1c7c1092e4e492f05e5044bd5b28627e669cc2843",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5888,7 +5888,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "TagQueue",
-      "revision": "sha256:55530081d851c51abfad0d85a2fa90e5ef0aea433ae0edc1b49b2659aaa2fc7c",
+      "revision": "sha256:814495cedf57552af4dfee82bf20656467216404d6905814b19334e28f2ca125",
       "freshness": {
         "mode": "current"
       }
@@ -5903,7 +5903,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "UntagQueue",
-      "revision": "sha256:5de0e51c19b9d53f283fcae253a37e5802104f18f19b9b505a5aed255afa6c90",
+      "revision": "sha256:759a3cf9a1c623e4e93e872d82f5e9dc3f1abb4beb7eaf568ff878bf5317ea50",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5918,7 +5918,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "UntagQueue",
-      "revision": "sha256:25d4b2d4aacf74850a999a8bf56747257f16bea3eb98b98984333139cf9b5fb5",
+      "revision": "sha256:f0c846a58755e167341fc76537550c5e20106ceacb1358cd224abfb45e2463e3",
       "freshness": {
         "mode": "current"
       }
@@ -6785,7 +6785,7 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "sns",
-      "revision": "sha256:1c62118dd0e42450681851bba05f9319f1dacf6b5a73bd4bdce2a2e3b8e37e95",
+      "revision": "sha256:dc52a6b5d35847d5c43263cf7be071cff54df803d98c9fa3810066370371bdbe",
       "freshness": {
         "mode": "current"
       }
@@ -6811,10 +6811,10 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:e93cbeba25bebcd70adfb4b3c88c612b035d2f8b741a98c778d0c271e670eef4",
+      "revision": "sha256:5de68f9863909c536ac41d07b4a1a876005d86597dc648ef8706e97508708f49",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
+        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
       }
     },
     {
@@ -6825,10 +6825,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:af0c847e5fbb30a224939c53103cc4101228e4fa92a5869cd0fdea73d99c682c",
+      "revision": "sha256:18ae706bc78622fc4bd199007a36fcd80999accd6e68736523a4f3a4b5143093",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
+        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
       }
     },
     {
@@ -6839,10 +6839,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:c40be7e664c1773dc7e55b002d063d2ae780bf5eb7bab03e831a8d897cf9269d",
+      "revision": "sha256:d664d1fc3fe603c9f30c422c35b31afcf9d91736b487da369bdbbb830089cde5",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-18T17:30:00Z"
+        "evaluated_as_of_utc": "2026-08-20T13:00:00Z"
       }
     },
     {
