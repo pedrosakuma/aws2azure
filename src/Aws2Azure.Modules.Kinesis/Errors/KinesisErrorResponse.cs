@@ -40,4 +40,25 @@ public static class KinesisErrorResponse
             jsonContentType: ContentType,
             requestIdHeaderName: RequestIdHeaderName);
     }
+
+    /// <summary>
+    /// Writes the AWS-JSON frontend-rejection envelope
+    /// <c>{"__type":"&lt;code&gt;"}</c> with no <c>message</c> field. Real AWS
+    /// Kinesis emits this shape for <c>SerializationException</c> and
+    /// <c>UnknownOperationException</c> raised by the AWS-JSON parser before
+    /// dispatch (issue #854).
+    /// </summary>
+    public static Task WriteFrontendRejectionAsync(
+        HttpContext context,
+        int statusCode,
+        string code)
+    {
+        context.Response.Headers[ExtendedRequestIdHeaderName] = context.TraceIdentifier;
+        return AwsErrorResponse.WriteJsonWithoutMessageAsync(
+            context,
+            statusCode,
+            code,
+            jsonContentType: ContentType,
+            requestIdHeaderName: RequestIdHeaderName);
+    }
 }

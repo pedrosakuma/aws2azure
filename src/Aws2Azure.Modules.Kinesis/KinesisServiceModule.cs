@@ -91,8 +91,12 @@ public sealed class KinesisServiceModule : IServiceModule
 
         if (parsed.Error is not null)
         {
-            await KinesisErrorResponse.WriteAsync(context,
-                parsed.Error.StatusCode, parsed.Error.Code, parsed.Error.Message)
+            // Frontend-rejection path: real AWS Kinesis emits
+            // {"__type":"<code>"} with no message field for
+            // SerializationException / UnknownOperationException raised by the
+            // AWS-JSON parser before dispatch (issue #854).
+            await KinesisErrorResponse.WriteFrontendRejectionAsync(context,
+                parsed.Error.StatusCode, parsed.Error.Code)
                 .ConfigureAwait(false);
             return;
         }

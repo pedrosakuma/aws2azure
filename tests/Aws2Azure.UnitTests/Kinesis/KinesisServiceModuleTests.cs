@@ -205,6 +205,52 @@ public class KinesisServiceModuleTests
         return new StaticCredentialResolver(config);
     }
 
+    // Real AWS Kinesis returns {"__type":"UnknownOperationException"} and
+    // {"__type":"SerializationException"} with NO "message" field on these
+    // frontend-rejection paths (issue #854). MissingAuthenticationTokenException
+    // and other auth codes are not in scope — they still carry a message field.
+    [Fact]
+    public async Task Unknown_operation_envelope_omits_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.NotARealOp", body: "{}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("UnknownOperationException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("message", out _));
+    }
+
+    [Fact]
+    public async Task Serialization_exception_envelope_omits_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.DescribeStreamSummary", body: "this is not json");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("SerializationException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("message", out _));
+    }
+
+    [Fact]
+    public async Task Missing_auth_token_envelope_still_carries_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{}");
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("MissingAuthenticationTokenException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
     private static void AssertJsonProperty(DefaultHttpContext ctx, string propertyName)
     {
         using var document = JsonDocument.Parse(ReadBody(ctx));

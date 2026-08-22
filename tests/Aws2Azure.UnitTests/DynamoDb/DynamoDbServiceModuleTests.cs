@@ -200,3 +200,67 @@ public class DynamoDbServiceModuleTests
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }
 }
+
+/// <summary>
+/// Envelope-shape checks for <see cref="DynamoDbErrorResponse"/>. Real AWS
+/// DynamoDB returns <c>{"__type":"…#SerializationException"}</c> and
+/// <c>{"__type":"com.amazon.coral.service#UnknownOperationException"}</c>
+/// with no <c>message</c> field on frontend-rejection paths — see issue #854.
+/// </summary>
+public class DynamoDbErrorResponseEnvelopeTests
+{
+    [Theory]
+    [InlineData("SerializationException", false)]
+    [InlineData("SerializationException", true)]
+    [InlineData("UnknownOperationException", true)]
+    public async Task Frontend_rejection_writer_omits_message_field(string code, bool isProtocolLevel)
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "req-x" };
+        ctx.Response.Body = new MemoryStream();
+
+        await DynamoDbErrorResponse.WriteAsync(
+            ctx, 400, code, "diagnostic text",
+            isProtocolLevel: isProtocolLevel, omitMessage: true);
+
+        var body = ReadBody(ctx);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var expectedPrefix = isProtocolLevel
+            ? DynamoDbErrorResponse.CoralTypePrefix
+            : DynamoDbErrorResponse.ServiceTypePrefix;
+        Assert.Equal(expectedPrefix + code, doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(
+            doc.RootElement.TryGetProperty("message", out _),
+            $"expected no 'message' property for {code}");
+
+        // CRC32 header must still match the emitted body byte-for-byte.
+        Assert.True(ctx.Response.Headers.TryGetValue("x-amz-crc32", out var crc));
+        Assert.Equal(DynamoDbErrorResponse.ComputeAwsCrc32Decimal(body), crc.ToString());
+    }
+
+    // Guardrail: handler-level SerializationException (post-parse) still
+    // carries its message field — real AWS only strips it on the frontend
+    // rejection path. Callers control the behaviour via the omitMessage flag.
+    [Theory]
+    [InlineData("SerializationException")]
+    [InlineData("ValidationException")]
+    [InlineData("ResourceNotFoundException")]
+    [InlineData("MissingAuthenticationTokenException")]
+    [InlineData("AccessDeniedException")]
+    public async Task Default_writer_preserves_message_field(string code)
+    {
+        var ctx = new DefaultHttpContext { TraceIdentifier = "req-y" };
+        ctx.Response.Body = new MemoryStream();
+
+        await DynamoDbErrorResponse.WriteAsync(ctx, 400, code, "diagnostic text");
+
+        var body = ReadBody(ctx);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        Assert.Equal("diagnostic text", doc.RootElement.GetProperty("message").GetString());
+    }
+
+    private static string ReadBody(HttpContext ctx)
+    {
+        ctx.Response.Body.Position = 0;
+        return new StreamReader(ctx.Response.Body, Encoding.UTF8).ReadToEnd();
+    }
+}
