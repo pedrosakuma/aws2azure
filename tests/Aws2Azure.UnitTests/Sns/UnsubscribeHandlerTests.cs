@@ -36,7 +36,30 @@ public sealed class UnsubscribeHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains("<UnsubscribeResponse", SnsManagementClientTestSupport.ReadBody(context));
+        var body = SnsManagementClientTestSupport.ReadBody(context);
+        Assert.Contains("<UnsubscribeResponse", body);
+        // Real AWS SNS Unsubscribe emits <UnsubscribeResponse> containing only
+        // <ResponseMetadata> — no <UnsubscribeResult/> wrapper. Regression guard
+        // for https://github.com/pedrosakuma/aws2azure/issues/855.
+        Assert.DoesNotContain("UnsubscribeResult", body);
+        Assert.Contains("<ResponseMetadata", body);
+    }
+
+    [Fact]
+    public async Task SubscribeResponse_still_emits_result_wrapper()
+    {
+        // Regression guard: the wrapper-omission fix for Unsubscribe (#855) must
+        // NOT strip result wrappers from other SNS operations. Subscribe's real
+        // AWS response includes <SubscribeResult><SubscriptionArn>…</SubscriptionArn></SubscribeResult>.
+        var context = SnsManagementClientTestSupport.NewContext();
+        await Aws2Azure.Modules.Sns.Xml.SnsResponseWriter
+            .WriteSubscribeResponseAsync(context, "arn:aws:sns:us-west-2:000000000000:orders:sub123");
+
+        var body = SnsManagementClientTestSupport.ReadBody(context);
+        Assert.Contains("<SubscribeResponse", body);
+        Assert.Contains("<SubscribeResult", body);
+        Assert.Contains("<SubscriptionArn", body);
+        Assert.Contains("</SubscribeResult>", body);
     }
 
     [Fact]

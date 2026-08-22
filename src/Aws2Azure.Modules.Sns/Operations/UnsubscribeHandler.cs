@@ -43,6 +43,6 @@ internal static class UnsubscribeHandler
             return;
         }
 
-        await SnsResponseWriter.WriteEmptyResponseAsync(context, "Unsubscribe").ConfigureAwait(false);
+        await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "Unsubscribe").ConfigureAwait(false);
     }
 }
