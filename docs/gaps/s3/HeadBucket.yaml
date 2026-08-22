@@ -11,6 +11,8 @@ sub_features:
   status: implemented
 behavior_differences:
 - '404 responses include x-amz-error-code: NoSuchBucket so SDKs can map the error without a body (HEAD has none).'
+- Real S3 HeadBucket 200 responses set Content-Type; application/xml even for an empty body; the Azure Get Container Properties response body is truly empty and Kestrel does not synthesize a Content-Type for a HEAD 200 without a body, so the proxy omits the header. Clients read only the status + x-amz-* headers on HEAD, so this makes no functional difference. [conformance:head-bucket-object-roundtrip::missing-header:content-type]
+- x-amz-access-point-alias is not emitted because Azure Blob Storage has no equivalent of S3 Access Points; the proxy does not model access-point aliases, so a "true"/"false" value cannot be surfaced. [conformance:head-bucket-object-roundtrip::missing-header:x-amz-access-point-alias]
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html
 - https://learn.microsoft.com/rest/api/storageservices/get-container-properties
