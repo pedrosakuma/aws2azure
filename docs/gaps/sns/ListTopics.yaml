@@ -19,4 +19,4 @@ references:
 - https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html
 - https://learn.microsoft.com/en-us/rest/api/servicebus/list-topics
 disposition: feasible_backlog
-tracking_issue: '#692'
+tracking_issue: '#800'

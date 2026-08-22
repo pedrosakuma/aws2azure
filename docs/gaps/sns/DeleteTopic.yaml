@@ -18,4 +18,4 @@ references:
 - https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html
 - https://learn.microsoft.com/en-us/rest/api/servicebus/delete-topic
 disposition: feasible_backlog
-tracking_issue: '#692'
+tracking_issue: '#800'

@@ -220,7 +220,7 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal(1, root.GetProperty("schema_version").GetInt32());
         Assert.False(root.TryGetProperty("profile", out _));
         Assert.Equal(
-            "2026-08-18T17:30:00Z",
+            "2026-08-20T13:00:00Z",
             root.GetProperty("evaluation").GetProperty("evaluated_as_of_utc").GetString());
         Assert.Equal(
             "pedrosakuma/aws2azure",
@@ -297,12 +297,12 @@ public sealed class WorkloadGaCertificationTests
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
             EvaluationContract,
-            UtcInstant(2026, 8, 18, 17, 30, 0),
+            UtcInstant(2026, 8, 20, 13, 0, 0),
             WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot)));
         Assert.Equal(
-            UtcInstant(2026, 8, 18, 17, 30, 0),
+            UtcInstant(2026, 8, 20, 13, 0, 0),
             WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(EvaluationContract));
     }
 
@@ -339,9 +339,9 @@ public sealed class WorkloadGaCertificationTests
     }
 
     [Theory]
-    [InlineData("2026-08-18T17:29:59Z", false)]
-    [InlineData("2026-08-18T17:30:00Z", false)]
-    [InlineData("2026-08-18T17:30:01Z", true)]
+    [InlineData("2026-08-20T12:59:59Z", false)]
+    [InlineData("2026-08-20T13:00:00Z", false)]
+    [InlineData("2026-08-20T13:00:01Z", true)]
     public void Evaluation_contract_rejects_only_instants_after_trusted_utc_now(
         string evaluatedAsOfUtc,
         bool rejected)
@@ -359,7 +359,7 @@ public sealed class WorkloadGaCertificationTests
 
         var errors = WorkloadGaEvaluationContractValidator.Validate(
             contract,
-            UtcInstant(2026, 8, 18, 17, 30, 0));
+            UtcInstant(2026, 8, 20, 13, 0, 0));
 
         Assert.Equal(
             rejected,
@@ -372,7 +372,7 @@ public sealed class WorkloadGaCertificationTests
         var contract = new WorkloadGaEvaluationContract
         {
             SchemaVersion = WorkloadGaEvaluationContractValidator.CurrentSchemaVersion,
-            EvaluatedAsOfUtc = "2026-08-18T17:30:00Z",
+            EvaluatedAsOfUtc = "2026-08-20T13:00:00Z",
             SourceRepository = "pedrosakuma/aws2azure",
             ExpectedCanonicalInputsRevision = Digest('a'),
             ExpectedEvaluatorSchemaVersion = 1,
@@ -381,7 +381,7 @@ public sealed class WorkloadGaCertificationTests
 
         var errors = WorkloadGaEvaluationContractValidator.Validate(
             contract,
-            UtcInstant(2026, 8, 18, 17, 30, 0),
+            UtcInstant(2026, 8, 20, 13, 0, 0),
             Digest('c'),
             Digest('d'));
 
@@ -948,15 +948,15 @@ public sealed class WorkloadGaCertificationTests
             File.WriteAllText(
                 authorityPath,
                 File.ReadAllText(authorityPath).Replace(
-                    "2026-08-18T17:30:00Z",
-                    "2026-08-18T17:45:00Z",
+                    "2026-08-20T13:00:00Z",
+                    "2026-08-20T13:15:00Z",
                     StringComparison.Ordinal));
 
             Assert.Equal(
                 "status: implemented\n",
                 File.ReadAllText(snapshot.GetPath("docs/gaps/PutObject.yaml")));
             Assert.Equal(initialRevision, snapshot.CanonicalInputsRevision);
-            Assert.Equal("2026-08-18T17:30:00Z", snapshot.Contract.EvaluatedAsOfUtc);
+            Assert.Equal("2026-08-20T13:00:00Z", snapshot.Contract.EvaluatedAsOfUtc);
             Assert.NotEqual(
                 initialRevision,
                 WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(tempRoot));
@@ -1106,7 +1106,7 @@ public sealed class WorkloadGaCertificationTests
             Assert.Equal("s3-basic-object-crud", legacy[0].ProfileId);
             var markdown = File.ReadAllText(markdownPath);
             Assert.Contains(
-                "Current adoption authority (as of `2026-08-18T17:30:00Z`)",
+                "Current adoption authority (as of `2026-08-20T13:00:00Z`)",
                 markdown,
                 StringComparison.Ordinal);
             Assert.Contains("| 4 | Release notes | Immutable historical record |", markdown, StringComparison.Ordinal);
@@ -2101,7 +2101,7 @@ public sealed class WorkloadGaCertificationTests
         new()
         {
             SchemaVersion = WorkloadGaEvaluationContractValidator.CurrentSchemaVersion,
-            EvaluatedAsOfUtc = "2026-08-18T17:30:00Z",
+            EvaluatedAsOfUtc = "2026-08-20T13:00:00Z",
             SourceRepository = "pedrosakuma/aws2azure",
             ExpectedCanonicalInputsRevision = expectedCanonicalInputsRevision,
             ExpectedEvaluatorSchemaVersion =
@@ -2125,7 +2125,7 @@ public sealed class WorkloadGaCertificationTests
             authorityPath,
             """
             schema_version: 3
-            evaluated_as_of_utc: "2026-08-18T17:30:00Z"
+            evaluated_as_of_utc: "2026-08-20T13:00:00Z"
             source_repository: pedrosakuma/aws2azure
             expected_canonical_inputs_revision: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             expected_evaluator_schema_version: 3

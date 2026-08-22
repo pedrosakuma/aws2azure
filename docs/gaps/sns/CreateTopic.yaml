@@ -31,4 +31,4 @@ references:
 - https://learn.microsoft.com/en-us/rest/api/servicebus/create-topic
 - https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection
 disposition: feasible_backlog
-tracking_issue: '#692'
+tracking_issue: '#800'
