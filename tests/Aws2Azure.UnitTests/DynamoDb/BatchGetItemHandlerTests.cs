@@ -456,6 +456,37 @@ public class BatchGetItemHandlerTests
     }
 
     [Fact]
+    public async Task BatchGet_unprocessed_keys_is_empty_object_when_nothing_throttled()
+    {
+        // Real AWS DynamoDB always emits UnprocessedKeys as a JSON object
+        // (empty `{}` when everything was processed), never as `null` and
+        // never absent. Regression guard for tier3 real-Azure diff C1.
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaHashOnly),
+                CosmosOk(ItemDoc("a", "a", "{\"pk\":{\"S\":\"a\"}}")),
+                CosmosOk(ItemDoc("b", "b", "{\"pk\":{\"S\":\"b\"}}")),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"RequestItems\":{\"orders\":{\"Keys\":[{\"pk\":{\"S\":\"a\"}},{\"pk\":{\"S\":\"b\"}}]}}}";
+
+        await BatchGetItemHandler.HandleBatchGetItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        var raw = ReadResponse(body);
+        Assert.Contains("\"UnprocessedKeys\":{}", raw);
+        Assert.DoesNotContain("\"UnprocessedKeys\":null", raw);
+        using var resp = JsonDocument.Parse(raw);
+        Assert.True(resp.RootElement.TryGetProperty("UnprocessedKeys", out var uk));
+        Assert.Equal(JsonValueKind.Object, uk.ValueKind);
+        Assert.False(uk.EnumerateObject().MoveNext());
+    }
+
+    [Fact]
     public async Task BatchGet_throttled_keys_go_to_unprocessed_keys()
     {
         var (ctx, body) = NewCtx();
