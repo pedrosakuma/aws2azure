@@ -78,7 +78,7 @@ jobs:
           fi
 
       - name: Checkout exact protected image workflow
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -138,7 +138,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload exact validated RC image inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
           path: |
@@ -176,14 +176,14 @@ jobs:
       packages: write
     steps:
       - name: Checkout exact protected image workflow
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Download exact validated RC inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.resolve.outputs.artifact_name }}
           path: artifacts/validated
@@ -224,10 +224,10 @@ jobs:
           esac
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -301,7 +301,7 @@ jobs:
           fi
 
       - name: Build exact binary-only image locally
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: artifacts/build-context
           file: artifacts/build-context/Dockerfile
@@ -545,7 +545,7 @@ jobs:
 
       - name: Attest newly-pushed platform image provenance
         if: steps.preflight.outputs.exists == 'false'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ steps.image.outputs.repository }}
           subject-digest: ${{ steps.result.outputs.digest }}
@@ -553,7 +553,7 @@ jobs:
 
       - name: Attest recovered platform image materials
         if: steps.preflight.outputs.exists == 'true'
-        uses: actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.image.outputs.repository }}
           subject-digest: ${{ steps.result.outputs.digest }}
@@ -562,7 +562,7 @@ jobs:
           push-to-registry: true
 
       - name: Upload exact platform image result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rc-image-platform-${{ matrix.arch }}-${{ needs.resolve.outputs.archive_content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: artifacts/platform-result/
@@ -583,30 +583,30 @@ jobs:
       packages: write
     steps:
       - name: Checkout exact protected image workflow
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Download exact validated RC inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.resolve.outputs.artifact_name }}
           path: artifacts/validated
 
       - name: Download exact platform image results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: rc-image-platform-*-${{ needs.resolve.outputs.archive_content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: artifacts/results
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -786,7 +786,7 @@ jobs:
       - name: Attest exact multi-architecture index
         id: attest_index
         if: steps.index.outputs.all_existing == 'false'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ steps.index.outputs.repository }}
           subject-digest: ${{ steps.manifest.outputs.index_digest }}
@@ -794,7 +794,7 @@ jobs:
 
       - name: Attest exact index materials
         id: attest_materials
-        uses: actions/attest@daf44fb950173508f38bd2406030372c1d1162b1 # v3
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ steps.index.outputs.repository }}
           subject-digest: ${{ steps.manifest.outputs.index_digest }}
@@ -804,14 +804,14 @@ jobs:
 
       - name: Attest canonical GHCR manifest input
         id: attest_input
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             artifacts/ghcr-inputs/release-candidate-ghcr-inputs.json
             artifacts/ghcr-inputs/SHA256SUMS
 
       - name: Upload immutable GHCR manifest inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aws2azure-rc-ghcr-${{ inputs.candidate }}-${{ steps.manifest.outputs.content_hex }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: artifacts/ghcr-inputs/
