@@ -43,7 +43,7 @@ internal static class MultipartHandlers
             S3Operation.CreateMultipartUpload => CreateAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.UploadPart            => UploadPartAsync(context, blob, route.Bucket!, route.Key!, credentials, ct),
             S3Operation.UploadPartCopy        => UploadPartCopyAsync(context, blob, route.Bucket!, route.Key!, ct),
-            S3Operation.CompleteMultipartUpload => CompleteAsync(context, blob, route.Bucket!, route.Key!, ct),
+            S3Operation.CompleteMultipartUpload => CompleteAsync(context, blob, route.Bucket!, route.Key!, route.VirtualHosted, ct),
             S3Operation.AbortMultipartUpload  => AbortAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.ListParts             => ListPartsAsync(context, blob, route.Bucket!, route.Key!, ct),
             S3Operation.ListMultipartUploads  => ListMultipartUploadsAsync(context, blob, route.Bucket!, ct),
@@ -411,7 +411,7 @@ internal static class MultipartHandlers
 
     // ---------- CompleteMultipartUpload ----------
 
-    private static async Task CompleteAsync(HttpContext ctx, BlobClient blob, string bucket, string key, CancellationToken ct)
+    private static async Task CompleteAsync(HttpContext ctx, BlobClient blob, string bucket, string key, bool virtualHosted, CancellationToken ct)
     {
         if (S3ErrorMapping.ClassifyLookupBucketName(bucket) is { } bucketError)
         {
@@ -591,11 +591,10 @@ internal static class MultipartHandlers
             // for path-style). The proxy's raw Azure blob URL leaked the
             // underlying storage account and confused clients that treated
             // <Location> as an S3 endpoint. Echo the inbound request's
-            // scheme + host + path so the value matches whichever addressing
-            // style the caller used (bucket + key are already encoded in
-            // Request.Path for path-style; the bucket sits in Request.Host
-            // and the key is Request.Path for virtual-hosted).
-            var location = BuildS3ResponseLocation(ctx.Request, bucket, key);
+            // scheme + host + the router-resolved addressing style (not a
+            // re-derived guess) so the value matches whichever style the
+            // caller used.
+            var location = BuildS3ResponseLocation(ctx.Request, bucket, key, virtualHosted);
             var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
             await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
             return;
@@ -1269,8 +1268,6 @@ internal static class MultipartHandlers
     // dropped — <Location> is the object's canonical URL, not the request
     // URL that carried ?uploadId=…
     //
-    // HttpRequest.Path is already percent-DECODED by Kestrel, so a raw key
-    // like "my file+name.txt" arrives here as "/bucket/my file+name.txt".
     // Real S3 emits a properly percent-encoded URL — but unlike ordinary
     // object URLs, the <Location> field treats the whole key as an opaque
     // token: internal '/' characters from virtual-folder-style keys are
@@ -1279,19 +1276,20 @@ internal static class MultipartHandlers
     // S3ObjectKey.EncodeForBlobUrl deliberately preserves '/' (correct for
     // Azure blob URLs) so it must not be reused here; Uri.EscapeDataString
     // percent-encodes every RFC 3986 reserved character including '/',
-    // matching this field's real-AWS shape exactly. The bucket segment
-    // (only present for path-style addressing) is encoded the same way,
-    // though bucket names cannot legally contain characters that would be
-    // affected by this distinction.
-    private static string BuildS3ResponseLocation(HttpRequest request, string bucket, string key)
+    // matching this field's real-AWS shape exactly. Addressing style
+    // (path-style vs. virtual-hosted) is taken from the router's own
+    // S3RouteResult.VirtualHosted flag rather than re-derived by pattern-
+    // matching the decoded request path against the bucket name — a key
+    // that happens to start with "<bucket>/" would otherwise be
+    // misclassified as path-style and get a spuriously duplicated bucket
+    // segment.
+    private static string BuildS3ResponseLocation(HttpRequest request, string bucket, string key, bool virtualHosted)
     {
         var scheme = string.IsNullOrEmpty(request.Scheme) ? "https" : request.Scheme;
         var host = request.Host.HasValue ? request.Host.Value : string.Empty;
-        var path = request.Path.HasValue ? request.Path.Value! : "/";
-        var bucketPrefix = "/" + bucket + "/";
-        var keyPath = path.StartsWith(bucketPrefix, StringComparison.Ordinal)
-            ? "/" + Uri.EscapeDataString(bucket) + "/" + Uri.EscapeDataString(key)
-            : "/" + Uri.EscapeDataString(key);
+        var keyPath = virtualHosted
+            ? "/" + Uri.EscapeDataString(key)
+            : "/" + Uri.EscapeDataString(bucket) + "/" + Uri.EscapeDataString(key);
         return scheme + "://" + host + keyPath;
     }
 

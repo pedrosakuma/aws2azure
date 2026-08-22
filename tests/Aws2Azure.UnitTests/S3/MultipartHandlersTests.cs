@@ -184,13 +184,78 @@ public sealed class MultipartHandlersTests
             queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
         complete.Request.Scheme = "https";
         complete.Request.Host = new HostString("bucket.s3.us-east-1.amazonaws.com");
-        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+        await MultipartHandlers.HandleAsync(
+            complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt", virtualHosted: true), blob, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
         var body = await TestHttpContext.ReadBodyAsync(complete);
         var location = ElementValue(body, "Location");
         Assert.Equal("https://bucket.s3.us-east-1.amazonaws.com/object.txt", location);
         Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompleteMultipartUpload_location_virtual_hosted_key_starting_with_bucket_name_is_not_duplicated()
+    {
+        // Regression guard: a virtual-hosted request whose *key* happens to
+        // start with "<bucket>/" (e.g. a folder named like the bucket) must
+        // not be misclassified as path-style and get a spurious duplicate
+        // bucket segment in <Location>. Addressing style must come from the
+        // router's resolved S3RouteResult.VirtualHosted flag, not from
+        // re-deriving it by string-matching the decoded request path.
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        const string bucket = "bucket";
+        const string key = "bucket/foo.txt";
+        var upload = await InitiateAsync(handler, blob, bucket, key);
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "hello multipart",
+            method: HttpMethods.Put,
+            path: "/" + key,
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, bucket, key), blob, CancellationToken.None);
+        var partEtag = uploadPart.Response.Headers.ETag.ToString();
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        // Virtual-hosted style: bucket lives on the host only; the path is
+        // just "/" + key, and here the key itself starts with "bucket/".
+        var complete = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/" + key,
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        complete.Request.Scheme = "https";
+        complete.Request.Host = new HostString("bucket.s3.us-east-1.amazonaws.com");
+        await MultipartHandlers.HandleAsync(
+            complete, Route(S3Operation.CompleteMultipartUpload, bucket, key, virtualHosted: true), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        var body = await TestHttpContext.ReadBodyAsync(complete);
+        var location = ElementValue(body, "Location");
+        // Expected: only the key (with its internal '/' percent-encoded),
+        // no duplicated/extra "bucket" path segment.
+        Assert.Equal("https://bucket.s3.us-east-1.amazonaws.com/bucket%2Ffoo.txt", location);
     }
 
     [Fact]
@@ -973,6 +1038,9 @@ public sealed class MultipartHandlersTests
 
     private static S3RouteResult Route(S3Operation operation, string? bucket, string? key) =>
         new(operation, bucket, key, VirtualHosted: false);
+
+    private static S3RouteResult Route(S3Operation operation, string? bucket, string? key, bool virtualHosted) =>
+        new(operation, bucket, key, VirtualHosted: virtualHosted);
 
     private static async Task<CapturedUpload> InitiateAsync(ScriptedHandler handler, BlobClient blob, string bucket, string key)
     {
