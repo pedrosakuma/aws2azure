@@ -3,9 +3,9 @@ operation: CompleteMultipartUpload
 azure_equivalent: Lease state record + Put Block List
 status: implemented
 verified_real_azure:
-  date: '2026-08-11'
-  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
-  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/31447675330
+  date: '2026-08-22'
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/32600417556
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/32600417556
 sub_features:
 - name: lease-based-convergence
   status: implemented
