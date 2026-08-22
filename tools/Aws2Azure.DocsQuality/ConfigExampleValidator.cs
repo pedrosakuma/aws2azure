@@ -122,7 +122,9 @@ internal static class ConfigExampleValidator
 
     private static IEnumerable<string> DescribeErrors(JsonSchema schema, JsonNode? document)
     {
-        var result = schema.Evaluate(document, EvaluationOptions);
+        // JsonSchema.Net 9.x evaluates against JsonElement rather than JsonNode.
+        var element = JsonSerializer.SerializeToElement(document);
+        var result = schema.Evaluate(element, EvaluationOptions);
         if (result.IsValid)
         {
             yield break;
@@ -147,7 +149,7 @@ internal static class ConfigExampleValidator
     private static IEnumerable<EvaluationResults> Flatten(EvaluationResults result)
     {
         yield return result;
-        foreach (var detail in result.Details)
+        foreach (var detail in result.Details ?? [])
         {
             foreach (var nested in Flatten(detail))
             {
