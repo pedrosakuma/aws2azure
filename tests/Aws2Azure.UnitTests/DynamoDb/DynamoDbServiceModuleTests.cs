@@ -63,6 +63,96 @@ public class DynamoDbServiceModuleTests
         Assert.Contains("com.amazon.coral.service#UnknownOperationException", body);
     }
 
+    // Issue #854: real AWS DynamoDB emits SerializationException and
+    // UnknownOperationException with NO "message" field on the frontend
+    // parser-rejection path.
+    [Fact]
+    public async Task HandleAsync_unknown_op_envelope_omits_message_field()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.NotARealOp", body: "{}");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal(
+            "com.amazon.coral.service#UnknownOperationException",
+            doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("message", out _));
+    }
+
+    [Fact]
+    public async Task HandleAsync_serialization_exception_envelope_omits_message_field()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.GetItem", body: "this is not json");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal(
+            "com.amazon.coral.service#SerializationException",
+            doc.RootElement.GetProperty("__type").GetString());
+        Assert.False(doc.RootElement.TryGetProperty("message", out _));
+    }
+
+    // Regression guard for the PR #863 code-review finding: the parser also
+    // returns InvalidAction, MissingActionException, RequestEntityTooLarge
+    // through the same parsed.Error branch — they must retain their message
+    // field on the wire.
+    [Fact]
+    public async Task HandleAsync_non_post_returns_invalid_action_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.PutItem", body: "{}");
+        ctx.Request.Method = HttpMethods.Get;
+
+        await module.HandleAsync(ctx);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal(
+            "com.amazon.coral.service#InvalidAction",
+            doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
+    [Fact]
+    public async Task HandleAsync_missing_target_returns_missing_action_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("does-not-matter", body: "{}");
+        ctx.Request.Headers.Remove("X-Amz-Target");
+
+        await module.HandleAsync(ctx);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal(
+            "com.amazon.coral.service#MissingActionException",
+            doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
+    [Fact]
+    public async Task HandleAsync_oversized_body_returns_request_entity_too_large_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = NewCtx("DynamoDB_20120810.PutItem", body: "{}");
+        ctx.Request.ContentLength = long.MaxValue;
+
+        await module.HandleAsync(ctx);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal(
+            "com.amazon.coral.service#RequestEntityTooLarge",
+            doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
     [Fact]
     public async Task HandleAsync_requires_aws_access_key_in_items()
     {

@@ -251,6 +251,57 @@ public class KinesisServiceModuleTests
         Assert.False(string.IsNullOrEmpty(msg.GetString()));
     }
 
+    // Regression guard for the message-omission scope-leak the code review of
+    // PR #863 caught. The wire-protocol parser also returns InvalidAction,
+    // MissingActionException, and RequestEntityTooLarge via the same
+    // parsed.Error branch. Real AWS emits these with a message field — only
+    // SerializationException and UnknownOperationException omit it.
+    [Fact]
+    public async Task Non_post_method_returns_invalid_action_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{}");
+        ctx.Request.Method = HttpMethods.Get;
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("InvalidAction", doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
+    [Fact]
+    public async Task Missing_target_header_returns_missing_action_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("does-not-matter", body: "{}");
+        ctx.Request.Headers.Remove("X-Amz-Target");
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("MissingActionException", doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
+    [Fact]
+    public async Task Oversized_body_returns_request_entity_too_large_with_message_field()
+    {
+        var module = NewModule();
+        var ctx = CreateAwsJsonContext("Kinesis_20131202.PutRecord", body: "{}");
+        // Force the parser's declared-length short-circuit for oversized bodies.
+        ctx.Request.ContentLength = long.MaxValue;
+
+        await module.HandleAsync(ctx);
+
+        using var doc = JsonDocument.Parse(ReadBody(ctx));
+        Assert.Equal("RequestEntityTooLarge", doc.RootElement.GetProperty("__type").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("message", out var msg));
+        Assert.False(string.IsNullOrEmpty(msg.GetString()));
+    }
+
     private static void AssertJsonProperty(DefaultHttpContext ctx, string propertyName)
     {
         using var document = JsonDocument.Parse(ReadBody(ctx));

@@ -91,13 +91,24 @@ public sealed class KinesisServiceModule : IServiceModule
 
         if (parsed.Error is not null)
         {
-            // Frontend-rejection path: real AWS Kinesis emits
-            // {"__type":"<code>"} with no message field for
-            // SerializationException / UnknownOperationException raised by the
-            // AWS-JSON parser before dispatch (issue #854).
-            await KinesisErrorResponse.WriteFrontendRejectionAsync(context,
-                parsed.Error.StatusCode, parsed.Error.Code)
-                .ConfigureAwait(false);
+            // Frontend-rejection message-omission is scoped to exactly the two
+            // codes real AWS Kinesis is documented to emit without a message
+            // field (issue #854). Other parser-stage codes returned via
+            // parsed.Error — InvalidAction, MissingActionException,
+            // RequestEntityTooLarge — retain their message on the wire.
+            if (parsed.Error.Code is "SerializationException"
+                or "UnknownOperationException")
+            {
+                await KinesisErrorResponse.WriteFrontendRejectionAsync(context,
+                    parsed.Error.StatusCode, parsed.Error.Code)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await KinesisErrorResponse.WriteAsync(context,
+                    parsed.Error.StatusCode, parsed.Error.Code, parsed.Error.Message)
+                    .ConfigureAwait(false);
+            }
             return;
         }
 
