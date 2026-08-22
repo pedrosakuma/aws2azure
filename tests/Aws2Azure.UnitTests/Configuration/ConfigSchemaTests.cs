@@ -793,7 +793,7 @@ public sealed class ConfigSchemaTests
             RequireFormatValidation = false,
         };
 
-        Assert.False(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        Assert.False(Schema.Evaluate(ToElement(instance), annotationOnlyOptions).IsValid);
         Assert.Throws<ProxyConfigException>(() => ValidateRuntime(instance));
     }
 
@@ -824,7 +824,7 @@ public sealed class ConfigSchemaTests
             RequireFormatValidation = false,
         };
 
-        Assert.True(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        Assert.True(Schema.Evaluate(ToElement(instance), annotationOnlyOptions).IsValid);
         ValidateRuntime(instance);
     }
 
@@ -855,7 +855,7 @@ public sealed class ConfigSchemaTests
             RequireFormatValidation = false,
         };
 
-        Assert.True(Schema.Evaluate(instance, annotationOnlyOptions).IsValid);
+        Assert.True(Schema.Evaluate(ToElement(instance), annotationOnlyOptions).IsValid);
         ValidateRuntime(instance);
     }
 
@@ -1169,7 +1169,11 @@ public sealed class ConfigSchemaTests
     }
 
     private static EvaluationResults Evaluate(JsonNode instance) =>
-        Schema.Evaluate(instance, EvaluationOptions);
+        Schema.Evaluate(ToElement(instance), EvaluationOptions);
+
+    // JsonSchema.Net 9.x evaluates against JsonElement rather than JsonNode.
+    private static JsonElement ToElement(JsonNode instance) =>
+        JsonSerializer.SerializeToElement(instance);
 
     private static JsonTypeInfo[] ConfigContractTypes() =>
     [
