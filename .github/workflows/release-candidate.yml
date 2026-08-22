@@ -67,7 +67,7 @@ jobs:
           fi
 
       - name: Checkout exact protected orchestration source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           path: orchestration
@@ -129,7 +129,7 @@ jobs:
           echo "candidate_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
       - name: Checkout exact candidate source separately
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ steps.trust.outputs.candidate_sha }}
           path: candidate-source
@@ -262,7 +262,7 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable linux-x64 inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identities.outputs.artifact_name }}
           path: artifacts/rc-x64/
@@ -279,7 +279,7 @@ jobs:
       artifact_name: ${{ steps.identities.outputs.artifact_name }}
     steps:
       - name: Checkout exact protected orchestration source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           path: orchestration
@@ -287,7 +287,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout exact candidate source separately
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ needs.linux-x64.outputs.candidate_sha }}
           path: candidate-source
@@ -383,7 +383,7 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable linux-arm64 inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.identities.outputs.artifact_name }}
           path: artifacts/rc-arm64/
@@ -398,7 +398,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout exact protected orchestration source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ github.sha }}
           path: orchestration
@@ -416,13 +416,13 @@ jobs:
           fi
 
       - name: Download exact linux-x64 inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.linux-x64.outputs.artifact_name }}
           path: artifacts/release-candidate
 
       - name: Download exact linux-arm64 inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.linux-arm64.outputs.artifact_name }}
           path: artifacts/release-candidate
@@ -443,7 +443,7 @@ jobs:
 
       - name: Attest exact executables manifests checksums and archives
         id: attest_payload
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             artifacts/release-candidate/context/*.json
@@ -490,7 +490,7 @@ jobs:
 
       - name: Attest archive-input manifest and complete checksums
         id: attest_inputs
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             artifacts/release-candidate/release-candidate-archive-inputs.json
@@ -513,7 +513,7 @@ jobs:
 
       - name: Upload immutable release-candidate archive bundle
         id: upload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.final.outputs.artifact_name }}
           path: artifacts/release-candidate/
