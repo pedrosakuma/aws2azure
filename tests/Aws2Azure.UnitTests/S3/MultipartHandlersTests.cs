@@ -84,6 +84,192 @@ public sealed class MultipartHandlersTests
             XDocument.Parse(handler.Requests[16].Body!).Root!.Elements("Latest").Select(static e => e.Value).ToArray());
     }
 
+    // ── B5: CompleteMultipartUpload <Location> must be S3-shaped (echo the
+    // inbound request URL), not the raw Azure blob URL.
+
+    [Fact]
+    public async Task CompleteMultipartUpload_location_echoes_inbound_request_url_not_azure_blob_url()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "hello multipart",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+        var partEtag = uploadPart.Response.Headers.ETag.ToString();
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        var complete = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        complete.Request.Scheme = "https";
+        complete.Request.Host = new HostString("s3.us-east-1.amazonaws.com");
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        var body = await TestHttpContext.ReadBodyAsync(complete);
+        var location = ElementValue(body, "Location");
+        Assert.Equal("https://s3.us-east-1.amazonaws.com/bucket/object.txt", location);
+        Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccountName + ".blob", location, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompleteMultipartUpload_location_preserves_virtual_hosted_style()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "hello multipart",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+        var partEtag = uploadPart.Response.Headers.ETag.ToString();
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        // Virtual-hosted style: bucket lives on the host, only /key on the path.
+        var complete = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        complete.Request.Scheme = "https";
+        complete.Request.Host = new HostString("bucket.s3.us-east-1.amazonaws.com");
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        var body = await TestHttpContext.ReadBodyAsync(complete);
+        var location = ElementValue(body, "Location");
+        Assert.Equal("https://bucket.s3.us-east-1.amazonaws.com/object.txt", location);
+        Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
+    }
+
+    // ── B6: CreateMultipartUpload response must NOT emit Content-Type;
+    // Complete/ListParts/ListMultipartUploads/UploadPartCopy must keep it.
+
+    [Fact]
+    public async Task CreateMultipartUpload_response_omits_content_type_header()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateContainerCreated());
+        handler.Enqueue(InternalStateContainerHead());
+        handler.Enqueue(BlobList());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+
+        var create = TestHttpContext.CreateContext(
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploads");
+        await MultipartHandlers.HandleAsync(create, Route(S3Operation.CreateMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, create.Response.StatusCode);
+        Assert.True(string.IsNullOrEmpty(create.Response.ContentType));
+        Assert.False(string.IsNullOrEmpty(create.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task CompleteMultipartUpload_response_still_emits_content_type_application_xml()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "x",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+        var partEtag = uploadPart.Response.Headers.ETag.ToString();
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        var complete = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        complete.Request.Scheme = "https";
+        complete.Request.Host = new HostString("s3.us-east-1.amazonaws.com");
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        Assert.Equal("application/xml", complete.Response.ContentType);
+    }
+
     [Fact]
     public async Task Upload_part_copy_forwards_range_and_returns_synthetic_etag_when_azure_omits_md5()
     {

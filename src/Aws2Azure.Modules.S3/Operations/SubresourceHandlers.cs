@@ -284,7 +284,7 @@ internal static partial class SubresourceHandlers
         var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var tags = SafeParseTagSet(xml) ?? Array.Empty<S3XmlWriter.Tag>();
         SetVersionIdHeader(context, response, versionId);
-        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags)).ConfigureAwait(false);
+        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags), includeContentType: false).ConfigureAwait(false);
     }
 
     private static async Task PutObjectTaggingAsync(
@@ -314,6 +314,7 @@ internal static partial class SubresourceHandlers
             return;
         }
         SetVersionIdHeader(context, response, versionId);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 
@@ -337,6 +338,7 @@ internal static partial class SubresourceHandlers
             return;
         }
         SetVersionIdHeader(context, response, versionId);
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -375,7 +377,7 @@ internal static partial class SubresourceHandlers
         }
 
         var mode = string.Equals(azureMode, "locked", StringComparison.OrdinalIgnoreCase) ? "COMPLIANCE" : "GOVERNANCE";
-        await WriteXmlAsync(context, S3XmlWriter.ObjectRetention(mode, retainUntil)).ConfigureAwait(false);
+        await WriteXmlAsync(context, S3XmlWriter.ObjectRetention(mode, retainUntil), includeContentType: false).ConfigureAwait(false);
     }
 
     private static async Task PutObjectRetentionAsync(
@@ -397,6 +399,7 @@ internal static partial class SubresourceHandlers
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectRetention)).ConfigureAwait(false);
             return;
         }
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 
@@ -413,7 +416,7 @@ internal static partial class SubresourceHandlers
 
         var hold = FirstHeader(response, LegalHoldHeader);
         var on = string.Equals(hold, "true", StringComparison.OrdinalIgnoreCase);
-        await WriteXmlAsync(context, S3XmlWriter.ObjectLegalHold(on)).ConfigureAwait(false);
+        await WriteXmlAsync(context, S3XmlWriter.ObjectLegalHold(on), includeContentType: false).ConfigureAwait(false);
     }
 
     private static async Task PutObjectLegalHoldAsync(
@@ -433,6 +436,7 @@ internal static partial class SubresourceHandlers
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectLegalHold)).ConfigureAwait(false);
             return;
         }
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status200OK;
     }
 
@@ -562,7 +566,7 @@ internal static partial class SubresourceHandlers
             return;
         }
 
-        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags)).ConfigureAwait(false);
+        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags), includeContentType: false).ConfigureAwait(false);
     }
 
     private static async Task PutBucketTaggingAsync(
@@ -587,6 +591,7 @@ internal static partial class SubresourceHandlers
         if (!await MutateContainerMetadataAsync(
                 context, blob, bucket, S3Operation.PutBucketTagging, BucketTagsMetadataKey, b64, ct)
             .ConfigureAwait(false)) return;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -598,6 +603,7 @@ internal static partial class SubresourceHandlers
         if (!await MutateContainerMetadataAsync(
                 context, blob, bucket, S3Operation.DeleteBucketTagging, BucketTagsMetadataKey, null, ct)
             .ConfigureAwait(false)) return;
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.StatusCode = StatusCodes.Status204NoContent;
     }
 
@@ -1008,11 +1014,19 @@ internal static partial class SubresourceHandlers
         return false;
     }
 
-    private static async Task WriteXmlAsync(HttpContext context, string xml)
+    private static async Task WriteXmlAsync(HttpContext context, string xml, bool includeContentType = true)
     {
         context.Response.StatusCode = StatusCodes.Status200OK;
         HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
-        context.Response.ContentType = "application/xml";
+        // Real S3 omits Content-Type on Get{Object,Bucket}Tagging /
+        // GetObjectRetention / GetObjectLegalHold 200 responses even though
+        // the body is XML; other subresource GETs (versioning, logging, ACL,
+        // request-payment, notification, accelerate) do emit application/xml.
+        // Callers pass includeContentType:false for the parity-sensitive ops.
+        if (includeContentType)
+        {
+            context.Response.ContentType = "application/xml";
+        }
         var bytes = Encoding.UTF8.GetBytes(xml);
         context.Response.ContentLength = bytes.LongLength;
         await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);

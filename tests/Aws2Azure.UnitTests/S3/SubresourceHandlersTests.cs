@@ -1068,6 +1068,191 @@ public sealed class SubresourceHandlersTests
         }
     }
 
+    // ── B3 / B6: response-header + content-type parity guard-rails ────
+
+    [Fact]
+    public async Task PutObjectTagging_response_carries_x_amz_request_id()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            body: BucketTaggingXml(("k", "v")),
+            method: HttpMethods.Put,
+            path: "/bucket/key.txt",
+            queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.PutObjectTagging, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task DeleteObjectTagging_response_carries_x_amz_request_id_on_204()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Delete,
+            path: "/bucket/key.txt",
+            queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.DeleteObjectTagging, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task PutBucketTagging_response_carries_x_amz_request_id_on_204()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+        var ctx = TestHttpContext.CreateContext(
+            body: BucketTaggingXml(("env", "prod")),
+            method: HttpMethods.Put,
+            path: "/bucket",
+            queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.PutBucketTagging, "bucket"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task DeleteBucketTagging_response_carries_x_amz_request_id_on_204()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Delete,
+            path: "/bucket",
+            queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.DeleteBucketTagging, "bucket"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task PutObjectRetention_response_carries_x_amz_request_id()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            body: RetentionXml("GOVERNANCE", "2030-01-02T03:04:05Z"),
+            method: HttpMethods.Put,
+            path: "/bucket/key.txt",
+            queryString: "?retention");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.PutObjectRetention, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    [Fact]
+    public async Task PutObjectLegalHold_response_carries_x_amz_request_id()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            body: LegalHoldXml("ON"),
+            method: HttpMethods.Put,
+            path: "/bucket/key.txt",
+            queryString: "?legal-hold");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.PutObjectLegalHold, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
+    }
+
+    // B6: real S3 does NOT emit Content-Type on these 4 XML-body GETs.
+    // Other subresource GETs (versioning/ACL/logging/…) MUST keep emitting it.
+
+    [Fact]
+    public async Task GetObjectTagging_omits_content_type_header()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.GetObjectTagging, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
+    }
+
+    [Fact]
+    public async Task GetBucketTagging_omits_content_type_header()
+    {
+        var backend = new FakeBlobBackend();
+        // Seed a bucket-tag entry so the handler follows the 200 path (not
+        // NoSuchTagSet, which is an error path with its own Content-Type
+        // semantics).
+        var tagXml = BucketTaggingXml(("env", "prod"));
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(tagXml));
+        backend.AddContainer("bucket", new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["aws2azurebuckettags"] = b64
+        });
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Get, path: "/bucket", queryString: "?tagging");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.GetBucketTagging, "bucket"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
+    }
+
+    [Fact]
+    public async Task GetObjectLegalHold_omits_content_type_header()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?legal-hold");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.GetObjectLegalHold, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
+    }
+
+    [Fact]
+    public async Task GetObjectRetention_omits_content_type_header()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddBlob("bucket", "key.txt");
+        backend.Blobs[("bucket", "key.txt")].ImmutabilityMode = "unlocked";
+        backend.Blobs[("bucket", "key.txt")].ImmutabilityUntilRfc1123 = "Wed, 02 Jan 2030 03:04:05 GMT";
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?retention");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.GetObjectRetention, "bucket", "key.txt"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
+    }
+
+    [Fact]
+    public async Task GetBucketVersioning_still_emits_content_type_application_xml()
+    {
+        var backend = new FakeBlobBackend();
+        backend.AddContainer("bucket");
+        var ctx = TestHttpContext.CreateContext(
+            method: HttpMethods.Get, path: "/bucket", queryString: "?versioning");
+        await SubresourceHandlers.HandleAsync(
+            ctx, Route(S3Operation.GetBucketVersioning, "bucket"),
+            backend.Client, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal("application/xml", ctx.Response.ContentType);
+    }
+
     private sealed class BlobState
     {
         public string TagsXml { get; set; } = "<Tags><TagSet /></Tags>";
