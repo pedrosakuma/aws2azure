@@ -21,7 +21,7 @@ sub_features:
   status: unsupported
   notes: x-amz-tagging is ignored on initiate.
   disposition: feasible_backlog
-  tracking_issue: '#690'
+  tracking_issue: '#799'
 - name: object-lock
   status: unsupported
   disposition: by_design

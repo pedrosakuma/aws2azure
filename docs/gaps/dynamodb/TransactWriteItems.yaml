@@ -39,7 +39,7 @@ sub_features:
   status: unsupported
   notes: Atomic transactional UpdateExpression is rejected with ValidationException. Use Put to replace the complete item.
   disposition: feasible_backlog
-  tracking_issue: '#687'
+  tracking_issue: '#798'
 - name: 100-item-per-call cap
   status: implemented
   notes: Requests over 100 items are rejected with ValidationException.
@@ -65,7 +65,7 @@ sub_features:
   status: unsupported
   notes: Any use is rejected with ValidationException. The certified `atomicTransactWrite_v5` payload returns only positional cancellation codes; faithfully returning ALL_OLD images would require a new stored-procedure identity that persists those pre-write snapshots atomically with the cancellation outcome. The proxy intentionally does not race a post-failure GET to fabricate potentially newer items.
   disposition: feasible_backlog
-  tracking_issue: '#687'
+  tracking_issue: '#798'
 - name: ReturnConsumedCapacity / ReturnItemCollectionMetrics
   status: unsupported
   notes: Omitted or NONE is accepted. Other values are rejected with ValidationException rather than silently dropping response fields.

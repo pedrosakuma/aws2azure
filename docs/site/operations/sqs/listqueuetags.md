@@ -5,7 +5,7 @@
 - **Capability ID:** `operation:sqs:listqueuetags`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#693](https://github.com/pedrosakuma/aws2azure/issues/693)
+- **Tracking issue:** [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
 - **Azure equivalent:** `GET QueueDescription and decode aws2azure's compact metadata envelope from UserMetadata.`
 
 ## Sub-features
