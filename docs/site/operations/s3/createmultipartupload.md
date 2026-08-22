@@ -59,6 +59,8 @@ x-amz-storage-class is ignored; Azure uses the account/container defaults.
 - UploadId remains a 32-byte base64url token HMAC-bound to (account, bucket, key) and expiring after 7 days, but multipart is no longer purely stateless: a proxy-owned durable index record is also created so in-progress uploads can be enumerated and later completed with the original metadata.
 - Initiation fails with InvalidArgument when the captured metadata/property headers would exceed the 16 KiB durable-state cap.
 - The hidden multipart-state container is internal-only and not reachable through S3 bucket routes or copy-source headers.
+- x-amz-server-side-encryption is not emitted on the CreateMultipartUpload response; Azure Blob Storage's HEAD container response reports encryption state via x-ms-server-encrypted rather than a header the proxy currently mirrors onto initiate 200s, and no request-time server-side-encryption headers are honoured (see sub_features). [conformance:multipart-upload-abort-roundtrip::missing-header:x-amz-server-side-encryption] [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
+- Echoed <Bucket> and <UploadId> in the initiate response are the destination container name and the proxy-issued opaque UploadId token; the offline Tier-3 diff compares captures against independently seeded buckets and independently issued upload ids, so those echoed values cannot match byte-for-byte across capture runs. [conformance:multipart-upload-abort-roundtrip::field-value:Bucket] [conformance:multipart-upload-abort-roundtrip::field-value:UploadId] [conformance:multipart-upload-copy-complete-roundtrip::field-value:Bucket] [conformance:multipart-upload-copy-complete-roundtrip::field-value:UploadId]
 
 ## References
 

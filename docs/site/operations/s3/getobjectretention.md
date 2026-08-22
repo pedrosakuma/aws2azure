@@ -21,6 +21,7 @@ Reads the blob immutability policy via HEAD: x-ms-immutability-policy-mode (lock
 
 - Mode mapping: GOVERNANCE<->unlocked, COMPLIANCE<->locked. Azure locked is irreversible and extend-only, like S3 COMPLIANCE.
 - Verified against real Azure only - Azurite does not support immutability policies.
+- RetainUntilDate reflects the Azure blob's x-ms-immutability-policy-until-date the proxy read at request time. The offline Tier-3 diff compares captures produced at different wall-clock times whose PutObjectRetention step set 'now + N seconds' as the retain-until value, so the two envelopes carry different absolute timestamps even though the retention policy round-tripped correctly on each backend. [conformance:object-retention-roundtrip::field-value:RetainUntilDate]
 
 ## References
 

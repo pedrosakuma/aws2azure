@@ -47,11 +47,13 @@ CompleteMultipartUpload resolves the staged Azure block list and rejects any non
 
 ## Behaviour differences
 
-- Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart.
+- Response ETag has the S3 multipart shape "{hash}-{count}" but {hash} is derived from the Azure blob ETag, not from concatenated per-part MD5s. SDKs that only pattern-match the dash-suffix accept it as multipart. [conformance:multipart-upload-copy-complete-roundtrip::field-value:ETag]
 - Subsequent GetObject/HeadObject reads reuse the reserved hidden part-count metadata marker to keep the multipart-shaped ETag; without that marker AWSSDK.S3 4.x would treat the object as a single-part MD5 ETag and incorrectly hash-validate the response body.
 - Missing/unknown PartNumbers surface as InvalidPart (mapped from Azure's InvalidBlockList).
 - Client-supplied per-part <ETag> values are not validated. If a PartNumber was re-uploaded with different bytes, Complete commits the most recently staged block for that number; AWS would reject the stale ETag with InvalidPart.
 - Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release.
+- x-amz-server-side-encryption is not emitted on the CompleteMultipartUpload response; Azure Blob Storage's Put Block List response reports encryption state via x-ms-server-encrypted rather than an AWS-style header the proxy mirrors onto CompleteMultipartUpload 200s. [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
+- ChecksumCRC64NVME / ChecksumType are omitted from CompleteMultipartUploadResult; Azure Blob Storage does not compute a CRC64NVME checksum or expose an AWS-shaped ChecksumType (FULL_OBJECT / COMPOSITE) on the committed blob. [conformance:multipart-upload-copy-complete-roundtrip::missing-field:ChecksumCRC64NVME] [conformance:multipart-upload-copy-complete-roundtrip::missing-field:ChecksumType]
 
 ## References
 

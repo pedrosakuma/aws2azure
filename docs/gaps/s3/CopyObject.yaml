@@ -32,6 +32,10 @@ sub_features:
 behavior_differences:
 - Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200.
 - ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object.
+- x-amz-copy-source-version-id is not emitted on the CopyObject response; Azure's Copy Blob response does not surface the source blob's version id (Azure returns x-ms-copy-source but no source-version header), so the proxy has no equivalent value to translate back to S3's per-copy header. [conformance:copy-object-roundtrip::missing-header:x-amz-copy-source-version-id]
+- x-amz-server-side-encryption is not emitted on the CopyObject response; Azure's Copy Blob response reports encryption state via x-ms-server-encrypted rather than a header the proxy currently mirrors onto CopyObject 200s. [conformance:copy-object-roundtrip::missing-header:x-amz-server-side-encryption]
+- ChecksumCRC64NVME / ChecksumType are omitted from CopyObjectResult; Azure Blob does not compute a CRC64NVME checksum or expose an AWS-shaped ChecksumType (FULL_OBJECT / COMPOSITE) for a copied blob. [conformance:copy-object-roundtrip::missing-field:ChecksumCRC64NVME] [conformance:copy-object-roundtrip::missing-field:ChecksumType]
+- CopyObjectResult.LastModified reflects the Azure blob's actual write time on the proxy side. When the offline Tier-3 diff compares captures recorded at different wall-clock times against separately seeded backends (real AWS golden vs real-Azure evidence), the two LastModified values will differ; the field itself round-trips correctly for each backend. [conformance:copy-object-roundtrip::field-value:LastModified]
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
 - https://learn.microsoft.com/rest/api/storageservices/copy-blob
