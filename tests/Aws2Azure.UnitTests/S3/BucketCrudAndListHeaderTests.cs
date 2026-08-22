@@ -37,6 +37,52 @@ public sealed class BucketCrudAndListHeaderTests
     }
 
     [Fact]
+    public async Task DeleteBucket_does_not_emit_bucket_region_or_arn_headers()
+    {
+        var handler = new ScriptedHandler();
+        // GetContainerPropertiesAsync probe
+        handler.Enqueue(ContainerHeadWithGeneration());
+        // DeleteContainerAsync response
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Accepted));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Delete, path: "/bucket");
+
+        await BucketCrudHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.DeleteBucket, "bucket", null, VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        // Regression guard for #857 (B4): DeleteBucket 204 must not carry
+        // x-amz-bucket-region / x-amz-bucket-arn — those are HeadBucket-scoped
+        // on real S3.
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
+    }
+
+    [Fact]
+    public async Task HeadBucket_still_emits_bucket_region_and_arn_headers()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(ContainerHeadWithGeneration());
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Head, path: "/bucket");
+
+        await BucketCrudHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.HeadBucket, "bucket", null, VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("us-east-1", context.Response.Headers["x-amz-bucket-region"]);
+        Assert.Equal("arn:aws:s3:::bucket", context.Response.Headers["x-amz-bucket-arn"]);
+    }
+
+    [Fact]
     public async Task ListObjectsV2_emits_bucket_region_header_without_bucket_arn()
     {
         var handler = new ScriptedHandler();

@@ -391,7 +391,10 @@ internal static class ObjectHandlers
         var body = Xml.S3XmlWriter.CopyObjectResult(lastModified, etag);
 
         context.Response.StatusCode = StatusCodes.Status200OK;
-        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response, destBucket);
+        // Real S3 does not emit x-amz-bucket-region/x-amz-bucket-arn on CopyObject
+        // responses (those headers are HeadBucket-scoped). Omit the bucket name so
+        // only x-amz-request-id is written, matching the PutObject/GetObject shape.
+        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         context.Response.ContentType = "application/xml; charset=utf-8";
         // Expose x-amz-version-id / x-amz-server-side-encryption equivalents
         // in the future via HeaderForwarding if needed. For this slice we
