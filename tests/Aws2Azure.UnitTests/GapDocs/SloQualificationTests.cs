@@ -368,6 +368,109 @@ public sealed class SloQualificationTests
         Assert.Contains(errors, error => error.Contains("failure rate", StringComparison.Ordinal));
     }
 
+    private const string CurrentHeadSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string HistoricalApprovedSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private const string SomeOtherSha = "cccccccccccccccccccccccccccccccccccccccc";
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_accepts_promote_mode_matching_current_head()
+    {
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = CurrentHeadSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "promote",
+            CurrentHeadSha);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_rejects_promote_mode_sha_mismatch()
+    {
+        // Regression lock: promote mode must keep rejecting a candidate whose
+        // embedded SHA does not equal the checked-out commit -- this is the
+        // existing, security-relevant anti-tamper guarantee and must not weaken.
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = HistoricalApprovedSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "promote",
+            CurrentHeadSha);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("does not match the promote expected SHA", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_accepts_reaffirm_mode_matching_ledger_sha()
+    {
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = HistoricalApprovedSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "reaffirm",
+            HistoricalApprovedSha);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_rejects_reaffirm_mode_sha_not_matching_ledger()
+    {
+        // Reaffirm mode still performs a real check -- it is not a bypass -- it
+        // just checks against the ledger-recorded historical SHA instead of
+        // $GITHUB_SHA. A candidate embedding some third, unrelated SHA (neither
+        // the ledger's approved SHA nor current HEAD) must still be rejected.
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = SomeOtherSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "reaffirm",
+            HistoricalApprovedSha);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("does not match the reaffirm expected SHA", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_fails_closed_for_unrecognized_mode()
+    {
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = CurrentHeadSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "rollback",
+            CurrentHeadSha);
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("qualification_mode 'rollback' is not recognized", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidateExpectedCandidateSha_rejects_malformed_expected_sha()
+    {
+        var document = Valid("real_azure_workload_qualification", "candidate");
+        document.Candidate.GitSha = CurrentHeadSha;
+
+        var errors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            document,
+            "promote",
+            "not-a-sha");
+
+        Assert.Contains(
+            errors,
+            error => error.Contains("must be a full 40-character hex SHA", StringComparison.Ordinal));
+    }
+
     private static SloQualificationDocument Valid(string artifactKind, string verdict)
     {
         var document = new SloQualificationDocument

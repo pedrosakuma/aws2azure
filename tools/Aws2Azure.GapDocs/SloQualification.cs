@@ -188,6 +188,54 @@ public static class SloQualificationValidator
 {
     public const int CurrentSchemaVersion = 1;
 
+    // qualification_mode distinguishes *why* an expected candidate SHA is being
+    // enforced, mirroring SealedRuntimeLauncher's AWS2AZURE_QUALIFICATION_MODE
+    // (see #875): "promote" (the default) qualifies a genuinely new candidate
+    // built from the commit currently under test, so expectedGitSha is that
+    // commit's SHA. "reaffirm" re-validates the already-approved *historical*
+    // runtime from a newer checkout, so expectedGitSha is instead the SHA
+    // recorded in the profile's approved-runtime ledger
+    // (docs/workloads/approved-runtimes/<profile>.yaml, via
+    // `export-approved-runtime`). Both modes still require an exact match
+    // against whichever SHA is expected -- only the *source* of that
+    // expectation differs. Any other mode value fails closed.
+    public static IReadOnlyList<string> ValidateExpectedCandidateSha(
+        SloQualificationDocument document,
+        string qualificationMode,
+        string expectedGitSha,
+        string? displayPath = null)
+    {
+        var source = !string.IsNullOrWhiteSpace(displayPath)
+            ? displayPath
+            : string.IsNullOrWhiteSpace(document.SourceFile)
+                ? "SLO qualification artifact"
+                : document.SourceFile;
+        var errors = new List<string>();
+        void Err(string message) => errors.Add($"{source}: {message}");
+
+        if (qualificationMode is not ("promote" or "reaffirm"))
+        {
+            Err(
+                $"qualification_mode '{qualificationMode}' is not recognized; " +
+                "expected promote or reaffirm");
+            return errors;
+        }
+        if (string.IsNullOrWhiteSpace(expectedGitSha)
+            || expectedGitSha.Length != 40
+            || !expectedGitSha.All(Uri.IsHexDigit))
+        {
+            Err("expected candidate git_sha must be a full 40-character hex SHA");
+            return errors;
+        }
+        if (!string.Equals(document.Candidate.GitSha, expectedGitSha, StringComparison.Ordinal))
+        {
+            Err(
+                $"candidate.git_sha '{document.Candidate.GitSha}' does not match the " +
+                $"{qualificationMode} expected SHA '{expectedGitSha}'");
+        }
+        return errors;
+    }
+
     public static IReadOnlyList<string> Validate(
         SloQualificationDocument document,
         DateTimeOffset nowUtc,
