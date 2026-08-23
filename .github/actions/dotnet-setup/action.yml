@@ -4,7 +4,7 @@ inputs:
   dotnet-version:
     description: .NET SDK version passed to actions/setup-dotnet.
     required: false
-    default: 10.0.302
+    default: 10.0.400
   cache-prefix:
     description: Optional cache-key segment for jobs that need isolation.
     required: false
