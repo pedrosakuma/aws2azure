@@ -261,6 +261,130 @@ public sealed class SnsSubscriptionFilterSupportTests
         Assert.Equal(167772165u, applicationProperties["aws2azure_sns_attr_636c69656e744970_ip"]);
     }
 
+    [Theory]
+    [InlineData("10.0.5")]          // legacy BSD-style 3-part shorthand
+    [InlineData("10.5")]            // legacy BSD-style 2-part shorthand
+    [InlineData("167772165")]       // plain decimal integer form of 10.0.0.5
+    [InlineData("0x0A000005")]      // hex form of 10.0.0.5
+    [InlineData("010.0.0.5")]       // octal-via-leading-zero first octet
+    [InlineData("42")]              // plain small integer
+    [InlineData("1234")]            // plain integer
+    [InlineData("300")]             // plain integer, out of single-octet range
+    [InlineData("1.2.3.256")]       // octet out of byte range
+    [InlineData("1.2.3")]           // only 3 dotted parts
+    [InlineData("1.2.3.4.5")]       // too many dotted parts
+    [InlineData("")]                // empty
+    [InlineData("1..2.3")]          // empty octet
+    public void AddFilterProperties_rejects_non_canonical_ipv4_forms(string value)
+    {
+        var applicationProperties = new Dictionary<string, object?>();
+        var attributes = new List<SnsMessageAttribute>
+        {
+            new("clientIp", "String", value, null),
+        };
+
+        SnsSubscriptionFilterSupport.AddFilterProperties(applicationProperties, attributes, string.Empty);
+
+        // None of these non-canonical forms should be silently normalized into a stamped IPv4
+        // companion property: doing so would let a plain numeric/legacy-shorthand attribute value
+        // spuriously match a CIDR filter policy.
+        Assert.False(applicationProperties.ContainsKey("aws2azure_sns_attr_636c69656e744970_ip"));
+    }
+
+    [Fact]
+    public void AddFilterProperties_rejects_ipv4_octet_with_leading_zero_but_not_zero_itself()
+    {
+        var applicationProperties = new Dictionary<string, object?>();
+        var attributes = new List<SnsMessageAttribute>
+        {
+            new("clientIp", "String", "0.0.0.0", null),
+        };
+
+        SnsSubscriptionFilterSupport.AddFilterProperties(applicationProperties, attributes, string.Empty);
+
+        // The literal single-digit "0" octet is canonical and must still be accepted.
+        Assert.Equal(0u, applicationProperties["aws2azure_sns_attr_636c69656e744970_ip"]);
+    }
+
+    [Fact]
+    public void TryBuildRuleDescription_rejects_cidr_literal_with_octal_leading_zero()
+    {
+        var metadata = new SnsSubscriptionMetadata
+        {
+            FilterPolicyJson = "{\"clientIp\":[{\"cidr\":\"010.0.0.0/24\"}]}",
+            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
+        };
+
+        var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out _, out var error);
+
+        // Must not silently reinterpret "010" as octal 8; the CIDR literal is rejected instead of
+        // producing the wrong network range.
+        Assert.False(success);
+        Assert.Contains("cidr", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryBuildRuleDescription_prefix_array_fallback_json_escapes_special_characters()
+    {
+        const string prefixValue = "a\"b\\c";
+        var metadata = new SnsSubscriptionMetadata
+        {
+            FilterPolicyJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["tags"] = new[] { new Dictionary<string, string> { ["prefix"] = prefixValue } },
+            }),
+            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
+        };
+
+        var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var rule, out var error);
+
+        Assert.True(success, error);
+
+        // The array-fallback LIKE fragment must be built from the JSON-encoded form of the value
+        // (quote and backslash escaped), matching how TryNormalizeStringArray serializes stamped
+        // array elements at publish time -- not a raw/LIKE-only-escaped copy.
+        var jsonEncodedFragment = System.Text.Json.JsonEncodedText.Encode(prefixValue).ToString();
+        Assert.Contains($"%\"{jsonEncodedFragment}%", rule.SqlExpression);
+    }
+
+    [Fact]
+    public void TryBuildRuleDescription_suffix_array_fallback_json_escapes_special_characters()
+    {
+        const string suffixValue = "a\"b\\c";
+        var metadata = new SnsSubscriptionMetadata
+        {
+            FilterPolicyJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["tags"] = new[] { new Dictionary<string, string> { ["suffix"] = suffixValue } },
+            }),
+            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
+        };
+
+        var success = SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var rule, out var error);
+
+        Assert.True(success, error);
+
+        var jsonEncodedFragment = System.Text.Json.JsonEncodedText.Encode(suffixValue).ToString();
+        Assert.Contains($"%{jsonEncodedFragment}\"", rule.SqlExpression);
+    }
+
+    [Fact]
+    public void AddFilterProperties_stamps_string_array_value_containing_quote_and_backslash()
+    {
+        var applicationProperties = new Dictionary<string, object?>();
+        var arrayValue = System.Text.Json.JsonSerializer.Serialize(new[] { "a\"b\\c" });
+        var attributes = new List<SnsMessageAttribute>
+        {
+            new("tags", "String.Array", arrayValue, null),
+        };
+
+        SnsSubscriptionFilterSupport.AddFilterProperties(applicationProperties, attributes, string.Empty);
+
+        // Confirms the array is stamped verbatim as JSON text (the same text a prefix/suffix
+        // array-fallback LIKE pattern must be built against).
+        Assert.Equal(arrayValue, applicationProperties["aws2azure_sns_attr_74616773"]);
+    }
+
     [Fact]
     public void TryBuildRuleDescription_uses_true_filter_when_policy_absent()
     {

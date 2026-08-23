@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns.Management;
@@ -391,10 +390,11 @@ internal static class SnsSubscriptionFilterSupport
                 return false;
             }
 
-            compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral(EscapeLikePattern(prefix.GetString()!) + "%")}");
+            var prefixValue = prefix.GetString()!;
+            compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral(EscapeLikePattern(prefixValue) + "%")}");
             if (IsArrayFallbackPropertyName(scalarPropertyName))
             {
-                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%\"" + EscapeLikePattern(prefix.GetString()!) + "%")})";
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%\"" + EscapeJsonEncodedLikeFragment(prefixValue) + "%")})";
             }
             error = null;
             return true;
@@ -412,7 +412,7 @@ internal static class SnsSubscriptionFilterSupport
             compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral("%" + EscapeLikePattern(suffixValue))}");
             if (IsArrayFallbackPropertyName(scalarPropertyName))
             {
-                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%" + EscapeLikePattern(suffixValue) + "\"")})";
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%" + EscapeJsonEncodedLikeFragment(suffixValue) + "\"")})";
             }
             error = null;
             return true;
@@ -729,10 +729,17 @@ internal static class SnsSubscriptionFilterSupport
             .Replace("_", "[_]", StringComparison.Ordinal);
 
     private static string BuildJsonStringArrayLikePattern(string value)
-    {
-        var jsonEscapedValue = JsonEncodedText.Encode(value).ToString();
-        return "%\"" + EscapeLikePattern(jsonEscapedValue) + "\"%";
-    }
+        => "%\"" + EscapeJsonEncodedLikeFragment(value) + "\"%";
+
+    /// <summary>
+    /// JSON-encodes <paramref name="value"/> the same way <see cref="TryNormalizeStringArray(JsonElement, out string)"/>
+    /// serializes stamped string-array properties, then LIKE-escapes the result. Array-fallback LIKE
+    /// patterns must be built through this helper (never <see cref="EscapeLikePattern"/> alone) so the
+    /// pattern matches the actual JSON text stored in the array property, including values containing
+    /// characters that require JSON escaping (quotes, backslashes, control characters).
+    /// </summary>
+    private static string EscapeJsonEncodedLikeFragment(string value)
+        => EscapeLikePattern(JsonEncodedText.Encode(value).ToString());
 
     private static bool TryGetNumericLiteral(JsonElement element, out string numericLiteral)
     {
@@ -838,21 +845,45 @@ internal static class SnsSubscriptionFilterSupport
     {
         address = 0;
 
-        // Only accept strict dotted-quad IPv4 text; reject IPv6 and any other shape so the
-        // stamped property never silently mismatches what a CIDR matcher expects to compare against.
-        if (!IPAddress.TryParse(value, out var parsed)
-            || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        // Deliberately do NOT delegate to IPAddress.TryParse: it accepts legacy BSD-style
+        // shorthand ("10.0.5"), pure decimal integers ("167772165"), hex ("0x0A000005"), and
+        // octal-via-leading-zeros ("010.0.0.5" => 8.0.0.5) none of which are canonical IPv4
+        // dotted-quad text. Accepting those would let plain numeric attribute values (e.g. "42")
+        // silently masquerade as IP addresses and produce false CIDR matches. Require exactly
+        // four dot-separated decimal octets, each 0-255 with no leading zeros (other than the
+        // literal single digit "0").
+        var parts = value.Split('.');
+        if (parts.Length != 4)
         {
             return false;
         }
 
-        Span<byte> bytes = stackalloc byte[4];
-        if (!parsed.TryWriteBytes(bytes, out var written) || written != 4)
+        Span<byte> octets = stackalloc byte[4];
+        for (var i = 0; i < 4; i++)
         {
-            return false;
+            var part = parts[i];
+            if (part.Length == 0 || part.Length > 3 || (part.Length > 1 && part[0] == '0'))
+            {
+                return false;
+            }
+
+            foreach (var ch in part)
+            {
+                if (ch is < '0' or > '9')
+                {
+                    return false;
+                }
+            }
+
+            if (!byte.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var octet))
+            {
+                return false;
+            }
+
+            octets[i] = octet;
         }
 
-        address = ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+        address = ((uint)octets[0] << 24) | ((uint)octets[1] << 16) | ((uint)octets[2] << 8) | octets[3];
         return true;
     }
 
