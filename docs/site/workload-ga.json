@@ -57,7 +57,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -156,7 +156,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -345,7 +345,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -438,7 +438,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -555,7 +555,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -678,7 +678,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -825,7 +825,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -930,7 +930,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -1035,7 +1035,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -1170,7 +1170,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -1305,7 +1305,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -1398,7 +1398,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
@@ -1539,7 +1539,7 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
+      "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
