@@ -501,6 +501,32 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
                             continue;
                         }
 
+                        // Real S3 documents PutBucketVersioning as taking up to
+                        // ~15 minutes to fully propagate: a GetObject issued
+                        // shortly after a bucket's versioning status changes can
+                        // transiently see 404 NoSuchKey for an object that was
+                        // just PUT successfully (this is called out as more
+                        // likely for *conditional* GETs specifically, e.g.
+                        // If-Match/If-None-Match, than for plain GETs — see
+                        // AWS's PutBucketVersioning API docs and the S3
+                        // Versioning architectural-patterns blog post). This
+                        // repo's own capture matrices call PutBucketVersioning
+                        // once per happy-path case against a shared bucket
+                        // (idempotently re-asserting "Enabled"), so a
+                        // conditional-get shortly after can race that window.
+                        // Retry with a short backoff, bounded so a genuinely
+                        // missing/mis-keyed object still fails the case rather
+                        // than hanging.
+                        if (service == "s3"
+                            && actualStatus == 404
+                            && expectedStatus == 200
+                            && attempt < maxAttempts
+                            && body.Contains("NoSuchKey", StringComparison.Ordinal))
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                            continue;
+                        }
+
                         throw new XunitException(
                             $"Conformance case '{service}/{testCase.Name}' step '{step.Name}' returned " +
                             $"{actualStatus} instead of {expectedStatus}. Body: {body}");

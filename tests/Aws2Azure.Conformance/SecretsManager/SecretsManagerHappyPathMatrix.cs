@@ -59,7 +59,16 @@ public static class SecretsManagerHappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-secret", _ => BuildRequest(context, "CreateSecret",
-                        $$"""{"Name":"{{secretName}}","SecretString":"conformance-initial-value"}""")),
+                        // Real AWS strictly requires ClientRequestToken on
+                        // CreateSecret for a non-SDK caller (the SDKs auto-fill
+                        // it as an idempotency token; this harness sends raw
+                        // wire-protocol JSON, so nothing does that for us). A
+                        // fresh UUID is generated per invocation (not hoisted
+                        // to a case-level constant) so a retried/re-captured
+                        // request never replays a stale token that could
+                        // collide with AWS-side idempotency caching across
+                        // real-AWS runs.
+                        $$"""{"Name":"{{secretName}}","SecretString":"conformance-initial-value","ClientRequestToken":"{{Guid.NewGuid()}}"}""")),
                     new ConformanceRequestStep("get-secret-value-initial", _ => BuildRequest(context, "GetSecretValue",
                         $$"""{"SecretId":"{{secretName}}"}""")),
                     new ConformanceRequestStep("update-secret", _ => BuildRequest(context, "UpdateSecret",
@@ -100,7 +109,9 @@ public static class SecretsManagerHappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-secret", _ => BuildRequest(context, "CreateSecret",
-                        $$"""{"Name":"{{secretName}}","SecretString":"conformance-describe-value"}""")),
+                        // See CreateRoundTripCase above: real AWS requires
+                        // ClientRequestToken on a raw (non-SDK) CreateSecret call.
+                        $$"""{"Name":"{{secretName}}","SecretString":"conformance-describe-value","ClientRequestToken":"{{Guid.NewGuid()}}"}""")),
                     new ConformanceRequestStep("describe-secret", _ => BuildRequest(context, "DescribeSecret",
                         $$"""{"SecretId":"{{secretName}}"}""")),
                     new ConformanceRequestStep("delete-secret", _ => BuildRequest(context, "DeleteSecret",
@@ -132,9 +143,11 @@ public static class SecretsManagerHappyPathMatrix
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-secret-1", _ => BuildRequest(context, "CreateSecret",
-                        $$"""{"Name":"{{secretNameOne}}","SecretString":"conformance-list-value-1"}""")),
+                        // See CreateRoundTripCase above: real AWS requires
+                        // ClientRequestToken on a raw (non-SDK) CreateSecret call.
+                        $$"""{"Name":"{{secretNameOne}}","SecretString":"conformance-list-value-1","ClientRequestToken":"{{Guid.NewGuid()}}"}""")),
                     new ConformanceRequestStep("create-secret-2", _ => BuildRequest(context, "CreateSecret",
-                        $$"""{"Name":"{{secretNameTwo}}","SecretString":"conformance-list-value-2"}""")),
+                        $$"""{"Name":"{{secretNameTwo}}","SecretString":"conformance-list-value-2","ClientRequestToken":"{{Guid.NewGuid()}}"}""")),
                     new ConformanceRequestStep("list-secrets-page-1", _ => BuildRequest(context, "ListSecrets",
                         """{"MaxResults":1}""")),
                     new ConformanceRequestStep("list-secrets-page-2", state =>
