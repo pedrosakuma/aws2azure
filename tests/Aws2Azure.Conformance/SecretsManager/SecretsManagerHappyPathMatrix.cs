@@ -72,7 +72,12 @@ public static class SecretsManagerHappyPathMatrix
                     new ConformanceRequestStep("get-secret-value-initial", _ => BuildRequest(context, "GetSecretValue",
                         $$"""{"SecretId":"{{secretName}}"}""")),
                     new ConformanceRequestStep("update-secret", _ => BuildRequest(context, "UpdateSecret",
-                        $$"""{"SecretId":"{{secretName}}","SecretString":"conformance-updated-value"}""")),
+                        // Real AWS also strictly requires ClientRequestToken on
+                        // UpdateSecret for a raw (non-SDK) caller, same as
+                        // CreateSecret above. A fresh UUID per invocation, never
+                        // a fixed constant, avoids idempotency collisions on
+                        // repeated real-AWS captures.
+                        $$"""{"SecretId":"{{secretName}}","SecretString":"conformance-updated-value","ClientRequestToken":"{{Guid.NewGuid()}}"}""")),
                     new ConformanceRequestStep("get-secret-value-updated", _ => BuildRequest(context, "GetSecretValue",
                         $$"""{"SecretId":"{{secretName}}"}""")),
                     new ConformanceRequestStep("delete-secret", _ => BuildRequest(context, "DeleteSecret",
