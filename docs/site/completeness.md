@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 1 | 0 | 121 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 0 | 0 | 121 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
 | [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
@@ -125,7 +125,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [CreateMultipartUpload](operations/s3/createmultipartupload.md#sub-feature-object-tagging) / object-tagging — [#799](https://github.com/pedrosakuma/aws2azure/issues/799)
+_No remaining feasible backlog is documented for this service._
 
 ### Workload maturity
 

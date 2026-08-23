@@ -109,6 +109,7 @@ internal sealed class MultipartUploadStateStore
         DateTimeOffset initiated,
         string containerGeneration,
         HttpRequest request,
+        IReadOnlyList<S3XmlWriter.Tag> tags,
         CancellationToken cancellationToken)
     {
         if (await EnsureStateContainerExistsAsync(cancellationToken).ConfigureAwait(false) is { } ensureError)
@@ -117,7 +118,7 @@ internal sealed class MultipartUploadStateStore
         }
         await CleanupExpiredRecordsAsync(bucket, CreateCleanupDeleteLimit, cancellationToken).ConfigureAwait(false);
 
-        var body = SerializeCapturedHeaders(request);
+        var body = SerializeCapturedHeaders(request, tags);
         var recordName = BuildRecordName(bucket, initiated, uploadId);
         using var put = new HttpRequestMessage(HttpMethod.Put, _blob.BuildBlobUri(_blob.MultipartStateContainerName, recordName))
         {
@@ -930,7 +931,7 @@ internal sealed class MultipartUploadStateStore
                 uploadId.AsSpan().CopyTo(span[index..]);
             });
 
-    private static byte[] SerializeCapturedHeaders(HttpRequest request)
+    private static byte[] SerializeCapturedHeaders(HttpRequest request, IReadOnlyList<S3XmlWriter.Tag> tags)
     {
         var contentType = HeaderForwarding.ReadFirstHeader(request, HeaderNames.ContentType);
         var contentEncoding = HeaderForwarding.ReadFirstHeader(request, HeaderNames.ContentEncoding);
@@ -980,6 +981,20 @@ internal sealed class MultipartUploadStateStore
             WriteUtf8String(stream, entry.Value);
         }
 
+        // Tags captured from x-amz-tagging on initiate (issue #799), applied
+        // to the committed blob via Set Blob Tags once CompleteMultipartUpload
+        // finalizes it. Always written (even when empty) as a trailing
+        // section so older, pre-#799 records — read while this section is
+        // absent — still deserialize cleanly (see TryDeserializeCapturedHeaders).
+        Span<byte> tagCountBytes = stackalloc byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(tagCountBytes, checked((ushort)tags.Count));
+        stream.Write(tagCountBytes);
+        foreach (var tag in tags)
+        {
+            WriteUtf8String(stream, tag.Key);
+            WriteUtf8String(stream, tag.Value);
+        }
+
         if (stream.Length > MaxRecordBytes)
         {
             throw new InvalidOperationException("Multipart upload initiation headers exceeded the 16 KiB state cap.");
@@ -1027,7 +1042,30 @@ internal sealed class MultipartUploadStateStore
             metadata[key] = value;
         }
 
-        headers = new CapturedHeaders(contentType, contentEncoding, contentLanguage, contentDisposition, cacheControl, metadata);
+        // Trailing tags section (issue #799). Absent on records written
+        // before this change — treat that as "no tags" rather than a
+        // deserialization failure.
+        var tags = new List<S3XmlWriter.Tag>();
+        if (offset < span.Length)
+        {
+            if (offset + 2 > span.Length) return false;
+            var tagCount = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(offset, 2));
+            offset += 2;
+            for (var i = 0; i < tagCount; i++)
+            {
+                if (!TryReadUtf8String(span, ref offset, out var tagKey)
+                    || !TryReadUtf8String(span, ref offset, out var tagValue)
+                    || tagKey is null
+                    || tagValue is null)
+                {
+                    return false;
+                }
+
+                tags.Add(new S3XmlWriter.Tag(tagKey, tagValue));
+            }
+        }
+
+        headers = new CapturedHeaders(contentType, contentEncoding, contentLanguage, contentDisposition, cacheControl, metadata, tags);
         return offset == span.Length;
     }
 
@@ -1261,7 +1299,8 @@ internal sealed class MultipartUploadStateStore
         string? ContentLanguage,
         string? ContentDisposition,
         string? CacheControl,
-        IReadOnlyDictionary<string, string> Metadata)
+        IReadOnlyDictionary<string, string> Metadata,
+        IReadOnlyList<S3XmlWriter.Tag> Tags)
     {
         public void ApplyHeaders(HttpRequestMessage request)
         {

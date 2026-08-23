@@ -68,6 +68,46 @@ public class S3MultipartUploadTests
     }
 
     [SkippableFact]
+    public async Task Multipart_x_amz_tagging_on_initiate_applies_to_completed_blob()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-" + Guid.NewGuid().ToString("N")[..10];
+        await PutBucket(bucket);
+        var key = "multipart/tagged-object.bin";
+
+        // 1) Initiate with x-amz-tagging (issue #799): tags must be
+        //    persisted in the durable state record and applied to the
+        //    destination blob once CompleteMultipartUpload finalizes it.
+        using var initResp = await SendAsync(HttpMethod.Post, $"/{bucket}/{key}?uploads", Array.Empty<byte>(),
+            extraHeaders: [("x-amz-tagging", "env=prod&owner=team-a")]);
+        Assert.Equal(HttpStatusCode.OK, initResp.StatusCode);
+        var initDoc = XDocument.Parse(await initResp.Content.ReadAsStringAsync());
+        var uploadId = initDoc.Root!.Element(S3Ns + "UploadId")!.Value;
+
+        // 2) Single small part is enough to exercise tag application.
+        var part = MakePart('x', 512);
+        var etag = await UploadPart(bucket, key, uploadId, 1, part);
+        Assert.False(string.IsNullOrEmpty(etag));
+
+        // 3) Complete
+        var completeBody = BuildCompleteXml(new[] { (1, etag!) });
+        using var compResp = await SendAsync(HttpMethod.Post, $"/{bucket}/{key}?uploadId={uploadId}",
+            completeBody, contentType: "application/xml");
+        Assert.Equal(HttpStatusCode.OK, compResp.StatusCode);
+
+        // 4) Tags must be visible via GetObjectTagging once the multipart
+        //    upload has completed.
+        using var tagsResp = await SendAsync(HttpMethod.Get, $"/{bucket}/{key}?tagging", Array.Empty<byte>());
+        Assert.Equal(HttpStatusCode.OK, tagsResp.StatusCode);
+        var tagsDoc = XDocument.Parse(await tagsResp.Content.ReadAsStringAsync());
+        var tags = tagsDoc.Root!.Element(S3Ns + "TagSet")!.Elements(S3Ns + "Tag")
+            .Select(t => (t.Element(S3Ns + "Key")!.Value, t.Element(S3Ns + "Value")!.Value))
+            .OrderBy(t => t.Item1).ToList();
+        Assert.Equal(new[] { ("env", "prod"), ("owner", "team-a") }, tags);
+    }
+
+    [SkippableFact]
     public async Task UploadPart_with_unknown_uploadId_returns_NoSuchUpload()
     {
         Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
@@ -231,7 +271,8 @@ public class S3MultipartUploadTests
         HttpMethod method,
         string pathAndQuery,
         byte[] body,
-        string? contentType = null)
+        string? contentType = null,
+        IReadOnlyList<(string Name, string Value)>? extraHeaders = null)
     {
         var absolute = new Uri(_fx.Client.BaseAddress!, pathAndQuery);
         var req = new HttpRequestMessage(method, absolute);
@@ -242,6 +283,13 @@ public class S3MultipartUploadTests
             if (contentType is not null)
             {
                 req.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
+            }
+        }
+        if (extraHeaders is not null)
+        {
+            foreach (var (name, value) in extraHeaders)
+            {
+                req.Headers.TryAddWithoutValidation(name, value);
             }
         }
         TestSigV4Signer.SignHeader(req, body, _fx.AccessKeyId, _fx.Secret);
