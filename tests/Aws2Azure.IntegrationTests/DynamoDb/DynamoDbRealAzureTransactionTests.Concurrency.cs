@@ -35,7 +35,7 @@ public sealed partial class DynamoDbRealAzureTransactionTests
                 .ToArray();
             var outcomes = await Task.WhenAll(contenders);
 
-            Assert.Single(outcomes.Where(outcome => outcome));
+            Assert.Single(outcomes, outcome => outcome);
             var gate = await client.GetItemAsync(new GetItemRequest
             {
                 TableName = table,

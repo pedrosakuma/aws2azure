@@ -49,7 +49,7 @@ public sealed class PerfReportMergeTests
         Assert.Equal(4, lines.Length);
         Assert.StartsWith("timestamp_utc,scenario", lines[0]);
         Assert.Equal(2, lines.Skip(1).Count(l => l.Contains(",scenarioA,")));
-        Assert.Single(lines.Skip(1).Where(l => l.Contains(",scenarioB,")));
+        Assert.Single(lines.Skip(1), l => l.Contains(",scenarioB,"));
     }
 
     [Fact]
