@@ -13,6 +13,7 @@ public sealed class SealedRuntimeLauncherTests
     [
         "AWS2AZURE_SEALED_RUNTIME_MODE",
         "AWS2AZURE_QUALIFICATION_SHA",
+        "AWS2AZURE_QUALIFICATION_MODE",
         "AWS2AZURE_SEALED_CANDIDATE_EXECUTABLE",
         "AWS2AZURE_SEALED_CANDIDATE_MANIFEST",
         "AWS2AZURE_SEALED_CANDIDATE_IDENTITY",
@@ -161,6 +162,102 @@ public sealed class SealedRuntimeLauncherTests
         {
             Directory.Delete(scratch, recursive: true);
         }
+    }
+
+    [Fact]
+    public void Promote_mode_rejects_a_candidate_whose_source_sha_does_not_match_the_checkout()
+    {
+        using var environment = PreserveEnvironment();
+        var scratch = CreateScratch();
+        try
+        {
+            var candidate = WriteRuntime(
+                scratch,
+                "candidate",
+                "0123456789abcdef0123456789abcdef01234567",
+                aggregateCharacter: 'a',
+                runId: 42);
+            ConfigureCandidate(candidate);
+            Environment.SetEnvironmentVariable("AWS2AZURE_SEALED_RUNTIME_MODE", "candidate");
+            Environment.SetEnvironmentVariable("AWS2AZURE_QUALIFICATION_MODE", "promote");
+            // Different from the candidate's own recorded source SHA: simulates a
+            // checkout that is not the commit the sealed candidate was built from.
+            Environment.SetEnvironmentVariable(
+                "AWS2AZURE_QUALIFICATION_SHA",
+                "89abcdef0123456789abcdef0123456789abcdef");
+
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                SealedRuntimeSelection.Load("s3-basic-object-crud", 1));
+
+            Assert.Contains(
+                "does not match the checked-out qualification SHA",
+                exception.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Reaffirm_mode_accepts_a_candidate_whose_source_sha_predates_the_checkout()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var environment = PreserveEnvironment();
+        var scratch = CreateScratch();
+        try
+        {
+            var candidate = WriteRuntime(
+                scratch,
+                "candidate",
+                "0123456789abcdef0123456789abcdef01234567",
+                aggregateCharacter: 'a',
+                runId: 42);
+            ConfigureCandidate(candidate);
+            Environment.SetEnvironmentVariable("AWS2AZURE_SEALED_RUNTIME_MODE", "candidate");
+            Environment.SetEnvironmentVariable("AWS2AZURE_QUALIFICATION_MODE", "reaffirm");
+            // Reaffirmation intentionally re-validates an already-approved historical
+            // runtime from a newer checkout, so the checked-out SHA is expected to
+            // differ from the candidate's own recorded source SHA -- this must not throw.
+            Environment.SetEnvironmentVariable(
+                "AWS2AZURE_QUALIFICATION_SHA",
+                "89abcdef0123456789abcdef0123456789abcdef");
+
+            var selection = SealedRuntimeSelection.Load("s3-basic-object-crud", 1);
+
+            Assert.True(selection.IsSealed);
+            Assert.Equal(
+                candidate.Identity.Source.Sha,
+                selection.GetTarget(SealedRuntimeRole.Candidate).Identity.Source.Sha);
+        }
+        finally
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_fails_closed_on_an_unknown_qualification_mode()
+    {
+        using var environment = PreserveEnvironment();
+        Environment.SetEnvironmentVariable("AWS2AZURE_SEALED_RUNTIME_MODE", "rollback");
+        Environment.SetEnvironmentVariable(
+            "AWS2AZURE_QUALIFICATION_SHA",
+            "0123456789abcdef0123456789abcdef01234567");
+        Environment.SetEnvironmentVariable("AWS2AZURE_QUALIFICATION_MODE", "bogus");
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            SealedRuntimeSelection.Load("s3-basic-object-crud", 1));
+
+        Assert.Contains(
+            "AWS2AZURE_QUALIFICATION_MODE must be promote or reaffirm",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

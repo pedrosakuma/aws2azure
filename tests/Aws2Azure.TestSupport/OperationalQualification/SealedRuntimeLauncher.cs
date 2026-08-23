@@ -158,11 +158,32 @@ public sealed partial class SealedRuntimeSelection
             throw new InvalidDataException("AWS2AZURE_QUALIFICATION_SHA is not a full Git SHA.");
         }
 
+        // AWS2AZURE_QUALIFICATION_MODE distinguishes *why* a sealed runtime is being
+        // exercised, independent of AWS2AZURE_SEALED_RUNTIME_MODE (which only says
+        // whether a candidate/prior pair is involved at all). In "promote" (the
+        // default, used by ordinary qualification runs), the candidate runtime was
+        // built from the commit currently checked out, so its declared source SHA
+        // must equal AWS2AZURE_QUALIFICATION_SHA -- that equality is an anti-tamper
+        // guard against loading a stale/mismatched identity file. In "reaffirm", the
+        // candidate is deliberately the already-approved *historical* runtime,
+        // re-validated from a newer checkout, so the two SHAs are expected to
+        // differ; the equivalent anti-tamper property (the loaded identity really is
+        // the ledger-approved runtime) is already enforced upstream, by
+        // eng/resolve-sealed-runtime.sh passing the ledger's recorded SHA as
+        // --expected-sha when it downloads the candidate artifact. See #803.
+        var qualificationMode =
+            Environment.GetEnvironmentVariable("AWS2AZURE_QUALIFICATION_MODE") ?? "promote";
+        if (qualificationMode is not ("promote" or "reaffirm"))
+        {
+            throw new InvalidDataException(
+                "AWS2AZURE_QUALIFICATION_MODE must be promote or reaffirm.");
+        }
+
         var candidate = LoadTarget(
             SealedRuntimeRole.Candidate,
             profileId,
             profileVersion,
-            qualificationSha);
+            qualificationMode == "reaffirm" ? null : qualificationSha);
         SealedRuntimeLaunchTarget? prior = null;
         if (mode == "rollback")
         {
