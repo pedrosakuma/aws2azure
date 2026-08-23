@@ -688,6 +688,153 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
+    public async Task Complete_multipart_validates_parts_against_both_committed_and_uncommitted_blocks()
+    {
+        // Regression test for a retry-after-partial-success bug: once Put
+        // Block List has committed a part's block on a prior attempt, Azure
+        // moves it out of the "uncommitted" block list and into "committed".
+        // A retried CompleteMultipartUpload (e.g. because a later step like
+        // tag application failed and left the state record leased for
+        // retry) must not spuriously reject those already-committed parts
+        // as InvalidPart just because they no longer appear "uncommitted".
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <CommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>5242880</Size></Block>
+                  </CommittedBlocks>
+                  <UncommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 2)}}</Name><Size>1</Size></Block>
+                  </UncommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateDeleted());
+
+        var complete = TestHttpContext.CreateContext(
+            body: """
+                   <CompleteMultipartUpload>
+                     <Part><PartNumber>1</PartNumber></Part>
+                     <Part><PartNumber>2</PartNumber></Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
+        Assert.EndsWith(
+            "blocklisttype=all",
+            handler.Requests.Single(r => r.Method == HttpMethod.Get && r.RequestUri!.PathAndQuery.Contains("comp=blocklist", StringComparison.Ordinal)).RequestUri!.PathAndQuery,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Complete_multipart_retry_after_tag_application_failure_reapplies_tags_without_invalid_part()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        var completeBody = """
+            <CompleteMultipartUpload>
+              <Part><PartNumber>1</PartNumber></Part>
+              <Part><PartNumber>2</PartNumber></Part>
+            </CompleteMultipartUpload>
+            """;
+
+        // ── First attempt: blocks are still uncommitted, Put Block List
+        // commits them successfully, but Set Blob Tags fails. The handler
+        // must surface the error WITHOUT retiring the state record.
+        handler.Enqueue(StateGetWithTags(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <UncommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>5242880</Size></Block>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 2)}}</Name><Size>1</Size></Block>
+                  </UncommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Forbidden));
+        // Best-effort lease release in CompleteAsync's `finally` block,
+        // since the state record was deliberately not retired.
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var firstAttempt = TestHttpContext.CreateContext(
+            body: completeBody,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(firstAttempt, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, firstAttempt.Response.StatusCode);
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Delete);
+
+        // ── Retry: the same blocks are now reported as *committed* (Azure
+        // moved them there when the prior Put Block List succeeded), and
+        // the state record is still present (not retired). The retry must
+        // recognize the parts as already-uploaded via the committed list,
+        // re-commit (idempotent Put Block List with <Latest>), and succeed
+        // in re-applying tags this time — never hitting InvalidPart.
+        handler.Enqueue(StateGetWithTags(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($$"""
+                <?xml version="1.0" encoding="utf-8"?>
+                <BlockList>
+                  <CommittedBlocks>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 1)}}</Name><Size>5242880</Size></Block>
+                    <Block><Name>{{UploadIdCodec.BlockId(upload.Token.NonceHex, 2)}}</Name><Size>1</Size></Block>
+                  </CommittedBlocks>
+                </BlockList>
+                """))
+        });
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+        handler.Enqueue(StateDeleted());
+
+        var retry = TestHttpContext.CreateContext(
+            body: completeBody,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(retry, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        var retryBody = await TestHttpContext.ReadBodyAsync(retry);
+        Assert.Equal(StatusCodes.Status200OK, retry.Response.StatusCode);
+        Assert.DoesNotContain("InvalidPart", retryBody, StringComparison.Ordinal);
+        Assert.Contains(handler.Requests, r => r.Method == HttpMethod.Delete);
+    }
+
+    [Fact]
     public async Task Abort_multipart_upload_deletes_state_and_future_use_returns_no_such_upload()
     {
         var handler = new ScriptedHandler();
@@ -1152,6 +1299,13 @@ public sealed class MultipartHandlersTests
         return response;
     }
 
+    private static HttpResponseMessage StateGetWithTags(CapturedUpload upload, string? containerGeneration = null)
+    {
+        var response = StateHead(upload, containerGeneration);
+        response.Content = new ByteArrayContent(SerializeStateBodyWithTags());
+        return response;
+    }
+
     private static HttpResponseMessage BlobList(params BlobListEntry[] entries)
     {
         var xml = new StringBuilder();
@@ -1209,6 +1363,23 @@ public sealed class MultipartHandlersTests
         stream.WriteByte(1); // metadata count = 1 (big-endian ushort)
         WriteUtf8String(stream, "owner");
         WriteUtf8String(stream, "pedro");
+        return stream.ToArray();
+    }
+
+    private static byte[] SerializeStateBodyWithTags()
+    {
+        using var stream = new MemoryStream();
+        stream.Write(Encoding.ASCII.GetBytes("A2MP1"));
+        stream.WriteByte(1); // Content-Type present
+        WriteUtf8String(stream, "application/octet-stream");
+        stream.WriteByte(0);
+        stream.WriteByte(1); // metadata count = 1 (big-endian ushort)
+        WriteUtf8String(stream, "owner");
+        WriteUtf8String(stream, "pedro");
+        stream.WriteByte(0);
+        stream.WriteByte(1); // tag count = 1 (big-endian ushort), issue #799
+        WriteUtf8String(stream, "team");
+        WriteUtf8String(stream, "ops");
         return stream.ToArray();
     }
 

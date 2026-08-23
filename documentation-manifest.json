@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:3ca22073f95c9ef66512ee383b0d59f63aae1964d1bde0b4002b82e1319e1065",
+  "manifest_revision": "sha256:eeb27694970c3697c85066ea6323844f99b50a7eb2de21015c3c74fedce69587",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -34,9 +34,9 @@
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
     "contract_path": "docs/workloads/certification/authority.yaml",
-    "evaluated_as_of_utc": "2026-08-23T03:05:00Z",
+    "evaluated_as_of_utc": "2026-08-23T04:00:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:c0bbc38ff93efae0ff072bbd509e8f44177d886dc0227036cc7d59931a20be9f",
+    "canonical_inputs_revision": "sha256:c19bf5e18bf443cbf60643d48b38683403de6d12b518d3157c7e775542ee8329",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:032c86e897decad64fffe43496096de64156aed35284248b7db168e82b8b07f8"
@@ -1198,7 +1198,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:5bacd2f20c0331c69aa1c24836e4988038357d22badaf7165d7b20f0ce8ef324",
+      "revision": "sha256:c184b996565dc8e3b16bd37bfcc3514387bf9f24105b1f2259ec069865d3441d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -2465,7 +2465,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:13ca8d97398ed3fbf6f7b28350df15bbb3bf474eb64e7b3b18d670f32f64627d",
+      "revision": "sha256:0456ac0095c77bc5721908ee1b130e725d1daa8870fcb73997e7032348c84df9",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-11"
@@ -2481,7 +2481,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CreateMultipartUpload",
-      "revision": "sha256:8ab64fc691e324084e825e362518e5dacfc1b7a56948714b45265645694e402d",
+      "revision": "sha256:32c03c1a884022753859175082da412bfe69f930e7a4446f31165c102e875d6c",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-11"
@@ -6823,10 +6823,10 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:c93c815858bb7de825ca481b571af27c34174f999fe3f8f50caf7cf7dedee3f8",
+      "revision": "sha256:fa1862bb25d3e25cc4a9d91ca3b4779be44241054108569e0a34a263f8def83b",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T03:05:00Z"
+        "evaluated_as_of_utc": "2026-08-23T04:00:00Z"
       }
     },
     {
@@ -6837,10 +6837,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:5ac11886ada95384b8535f6cbd0501b116dfcfbdd7ee1d785cfd03f95056110d",
+      "revision": "sha256:f64b676bd32d322c90e704e0e5c423408a346c966a0134c4cda306d0261be939",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T03:05:00Z"
+        "evaluated_as_of_utc": "2026-08-23T04:00:00Z"
       }
     },
     {
@@ -6851,10 +6851,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:1e5c6c471375dc898ba7efb0ed6062e308bf4b1c2270aad382cefe71f0dc4c28",
+      "revision": "sha256:8fced811fc6f944a97971f9b46298fccd3bf65ca97aa77129a489c5bff33dad2",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T03:05:00Z"
+        "evaluated_as_of_utc": "2026-08-23T04:00:00Z"
       }
     },
     {

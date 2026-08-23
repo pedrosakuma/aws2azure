@@ -473,7 +473,19 @@ internal static class MultipartHandlers
 
             if (parsed.Parts.Count > 1)
             {
-                using var blockListResponse = await blob.GetBlockListAsync(bucket, key, "uncommitted", deadlineCts.Token).ConfigureAwait(false);
+                // Request "all" (not just "uncommitted") block state: on a
+                // retried CompleteMultipartUpload — e.g. after a prior
+                // attempt's Put Block List succeeded but a later step (tag
+                // application) failed and left the state record leased for
+                // retry — the referenced blocks are no longer "uncommitted"
+                // at all; they already moved into the blob's *committed*
+                // block list. Validating against uncommitted-only would
+                // then spuriously reject an already-successfully-committed
+                // part list as InvalidPart. A block matching this upload's
+                // nonce+partNumber naming is valid evidence the part was
+                // uploaded, whether it is still pending or was already
+                // committed by an earlier attempt.
+                using var blockListResponse = await blob.GetBlockListAsync(bucket, key, "all", deadlineCts.Token).ConfigureAwait(false);
                 if (!blockListResponse.IsSuccessStatusCode)
                 {
                     await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(blockListResponse, S3Operation.CompleteMultipartUpload)).ConfigureAwait(false);
@@ -966,16 +978,9 @@ internal static class MultipartHandlers
         out S3ErrorMapping.Mapping error)
     {
         error = default;
-        var sizes = new Dictionary<int, long>(blockList.Uncommitted.Count);
-        for (var i = 0; i < blockList.Uncommitted.Count; i++)
-        {
-            var block = blockList.Uncommitted[i];
-            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
-                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
-            {
-                sizes[partNumber] = block.Size;
-            }
-        }
+        var sizes = new Dictionary<int, long>(blockList.Uncommitted.Count + blockList.Committed.Count);
+        CollectPartSizes(blockList.Uncommitted, nonceHex, sizes);
+        CollectPartSizes(blockList.Committed, nonceHex, sizes);
 
         for (var i = 0; i < parts.Count - 1; i++)
         {
@@ -993,6 +998,22 @@ internal static class MultipartHandlers
         return false;
     }
 
+    private static void CollectPartSizes(
+        IReadOnlyList<BlockListParser.Block> blocks,
+        string nonceHex,
+        Dictionary<int, long> sizes)
+    {
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var block = blocks[i];
+            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
+                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                sizes[partNumber] = block.Size;
+            }
+        }
+    }
+
     private static bool TryFindInvalidPartError(
         string nonceHex,
         IReadOnlyList<CompleteMultipartUploadParser.PartRef> parts,
@@ -1001,15 +1022,13 @@ internal static class MultipartHandlers
     {
         error = default;
         var uploadedParts = new HashSet<int>();
-        for (var i = 0; i < blockList.Uncommitted.Count; i++)
-        {
-            var block = blockList.Uncommitted[i];
-            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
-                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
-            {
-                uploadedParts.Add(partNumber);
-            }
-        }
+        // A block matching this upload's nonce+partNumber naming in either
+        // the uncommitted or committed list is valid evidence the part was
+        // uploaded — see the "all" blocklisttype comment at the call site
+        // for why committed blocks must also count here (retried Complete
+        // after the blob was already committed by a prior attempt).
+        CollectUploadedParts(blockList.Uncommitted, nonceHex, uploadedParts);
+        CollectUploadedParts(blockList.Committed, nonceHex, uploadedParts);
 
         for (var i = 0; i < parts.Count; i++)
         {
@@ -1024,6 +1043,22 @@ internal static class MultipartHandlers
         }
 
         return false;
+    }
+
+    private static void CollectUploadedParts(
+        IReadOnlyList<BlockListParser.Block> blocks,
+        string nonceHex,
+        HashSet<int> uploadedParts)
+    {
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var block = blocks[i];
+            if (BlockListParser.TryParseBlockName(block.Name, out var blockNonce, out var partNumber)
+                && string.Equals(blockNonce, nonceHex, StringComparison.Ordinal))
+            {
+                uploadedParts.Add(partNumber);
+            }
+        }
     }
 
     // ---------- helpers ----------
