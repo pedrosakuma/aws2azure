@@ -7,7 +7,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// </summary>
 internal static class DynamoDbPersistedFormatContract
 {
-    public const int InventoryVersion = 4;
+    public const int InventoryVersion = 5;
 
     public const int LegacyItemEnvelopeVersion = 1;
     public const int CurrentItemDocumentVersion = 2;
@@ -16,7 +16,7 @@ internal static class DynamoDbPersistedFormatContract
     public const int DerivedFieldVersion = 1;
     public const int ContinuationVersion = 1;
     public const int OrderedContinuationVersion = 1;
-    public const int StoredProcedureIdentityVersion = 4;
+    public const int StoredProcedureIdentityVersion = 5;
     public const int TransactionIdempotencyRecordVersion = 1;
 
     public const string ContinuationSentinelAttribute = "__a2a_continuation";
@@ -31,7 +31,18 @@ internal static class DynamoDbPersistedFormatContract
     public const string PreviousAtomicTransactWriteStoredProcedureId = "atomicTransactWrite_v3";
     public const string PreviousDurableAtomicTransactWriteStoredProcedureId =
         "atomicTransactWrite_v4";
-    public const string AtomicTransactWriteStoredProcedureId = "atomicTransactWrite_v5";
+
+    // Frozen by the v5 inventory. atomicTransactWrite_v5 supported Put/Delete/
+    // ConditionCheck with the durable ClientRequestToken contract, but rejected
+    // Update and ReturnValuesOnConditionCheckFailure. Never update this
+    // identity or hash.
+    public const string PreviousPositionalAtomicTransactWriteStoredProcedureId =
+        "atomicTransactWrite_v5";
+
+    // Current: adds the Update transact-item action (SET/REMOVE subset) and
+    // ReturnValuesOnConditionCheckFailure=ALL_OLD (issue #798) on top of the
+    // v5 durable idempotency contract.
+    public const string AtomicTransactWriteStoredProcedureId = "atomicTransactWrite_v6";
     public const string AtomicTransactGetStoredProcedureId = "atomicTransactGet_v1";
 
     // Frozen by the v1 inventory. Never update these identities or hashes.
@@ -48,9 +59,13 @@ internal static class DynamoDbPersistedFormatContract
     public const string PreviousDurableAtomicTransactWriteBodySha256 =
         "ae755180bc12ee68af21d2ef68cae13d8b553539835fba623d8396d930c9536d";
 
-    // Frozen by the v4 inventory. Body changes require another new ID.
-    public const string AtomicTransactWriteBodySha256 =
+    // Frozen by the v4 inventory. Never update this identity or hash.
+    public const string PreviousPositionalAtomicTransactWriteBodySha256 =
         "adb8ca4c99bed8d5753d0d14c6d95310a7cc7b0599680a1d0379a879cc527465";
+
+    // Current v6 body hash (v5 inventory). Body changes require another new ID.
+    public const string AtomicTransactWriteBodySha256 =
+        "e3b4095b04614ad17a9bd8a0709d23d3b889134732f73d65ebfc9aee19384bcd";
     public const string AtomicTransactGetBodySha256 =
         "355d2c74187d3d7c9c84b88f07992bca8954489e2e43f613a2934d978174db7b";
 }

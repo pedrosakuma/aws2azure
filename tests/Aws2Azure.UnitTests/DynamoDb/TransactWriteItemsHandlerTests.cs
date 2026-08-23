@@ -564,19 +564,108 @@ public class TransactWriteItemsHandlerTests
     }
 
     [Fact]
-    public async Task Update_operation_rejected_as_gap()
+    public async Task Update_operation_is_accepted_and_executed_via_sproc()
     {
-        var (ctx, body) = NewCtx();
-        var cosmos = BuildClient(new ScriptedHandler());
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk("{\"success\":true}"),
+            },
+        };
         var req = "{\"TransactItems\":[{\"Update\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
             "\"UpdateExpression\":\"SET v = :x\",\"ExpressionAttributeValues\":{\":x\":{\"N\":\"5\"}}}}]}";
 
-        await Run(ctx, cosmos, EnabledSproc(), req);
+        await Run(ctx, BuildClient(handler), EnabledSproc(), req);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Update_expression_with_add_clause_rejected_as_ineligible()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var req = "{\"TransactItems\":[{\"Update\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"UpdateExpression\":\"ADD n :x\",\"ExpressionAttributeValues\":{\":x\":{\"N\":\"5\"}}}}]}";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), req);
 
         Assert.Equal(400, ctx.Response.StatusCode);
         var resp = ReadResponse(body);
         Assert.Contains("ValidationException", resp);
-        Assert.Contains("Update", resp);
+        Assert.Contains("ADD and DELETE", resp);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Update_missing_update_expression_is_rejected()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler();
+        var req = "{\"TransactItems\":[{\"Update\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}}}]}";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        Assert.Contains("UpdateExpression is required", ReadResponse(body));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Update_rejected_when_table_has_ttl_enabled()
+    {
+        var (ctx, body) = NewCtx();
+        var metaWithTtl =
+            "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+            + "\"tableName\":\"orders\","
+            + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"}],"
+            + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+            + "\"billingMode\":\"PAY_PER_REQUEST\","
+            + "\"timeToLive\":{\"enabled\":true,\"attributeName\":\"exp\"}}";
+        var handler = new ScriptedHandler { Responses = { CosmosOk(metaWithTtl) } };
+        var req = "{\"TransactItems\":[{\"Update\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"UpdateExpression\":\"SET v = :x\",\"ExpressionAttributeValues\":{\":x\":{\"N\":\"5\"}}}}]}";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("ValidationException", resp);
+        Assert.Contains("TTL", resp);
+    }
+
+    [Fact]
+    public async Task ReturnValuesOnConditionCheckFailure_all_old_surfaces_item_on_cancellation()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaPkSk),
+                CosmosCreated(),
+                CosmosOk(
+                    "{\"success\":false,\"reasons\":["
+                    + "{\"code\":\"ConditionalCheckFailed\",\"item\":{\"id\":\"x\",\"_a2a_pk\":\"y\",\"pk\":\"a\",\"sk\":\"1\",\"v\":1}}"
+                    + "]}"),
+            },
+        };
+        var req = "{\"TransactItems\":[{\"ConditionCheck\":{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}}," +
+            "\"ConditionExpression\":\"attribute_not_exists(missing)\"," +
+            "\"ReturnValuesOnConditionCheckFailure\":\"ALL_OLD\"}}]}";
+
+        await Run(ctx, BuildClient(handler), EnabledSproc(), req);
+
+        Assert.Equal(400, ctx.Response.StatusCode);
+        var resp = ReadResponse(body);
+        Assert.Contains("TransactionCanceledException", resp);
+        Assert.Contains("\"Item\"", resp);
+        Assert.Contains("\"v\":{\"N\":\"1\"}", resp);
     }
 
     [Fact]
@@ -599,7 +688,7 @@ public class TransactWriteItemsHandlerTests
     [InlineData(
         """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}}},"Delete":"invalid"}]}""",
         "Delete must be an object")]
-    [InlineData("""{"TransactItems":[{"Update":null}]}""", "Update is not supported")]
+    [InlineData("""{"TransactItems":[{"Update":null}]}""", "Update must be an object")]
     [InlineData(
         """{"TransactItems":[{"Put":{"TableName":"orders","Item":{"pk":{"S":"a"},"sk":{"S":"1"}}},"Unknown":{}}]}""",
         "unsupported action")]
@@ -837,7 +926,7 @@ public class TransactWriteItemsHandlerTests
         }
         var fingerprint = Fingerprint(executions[0]);
         Assert.Equal(
-            "aa7a21a707d061dd1b5acd0d0d9b8c9f9823d7837a5e7dfc3980ceea667e3c45",
+            "4bad26a47099a95a3d36eb3d4c7c6c5f26efdca6180468c58135ddf0648010d6",
             fingerprint);
         Assert.Equal(fingerprint, Fingerprint(executions[1]));
     }
@@ -909,9 +998,6 @@ public class TransactWriteItemsHandlerTests
     [InlineData(
         """{"TransactItems":[{"Delete":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionalOperator":"AND"}}]}""",
         "ConditionalOperator")]
-    [InlineData(
-        """{"TransactItems":[{"ConditionCheck":{"TableName":"orders","Key":{"pk":{"S":"a"},"sk":{"S":"1"}},"ConditionExpression":"attribute_exists(pk)","ReturnValuesOnConditionCheckFailure":"ALL_OLD"}}]}""",
-        "ReturnValuesOnConditionCheckFailure")]
     public async Task Legacy_and_unsupported_condition_members_are_rejected_before_cosmos(
         string request,
         string expected)

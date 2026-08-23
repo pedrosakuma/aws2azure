@@ -497,4 +497,118 @@ public class SprocEligibilityTests
                 out var error));
         Assert.Contains("Cosmos system", error, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ---- transaction Update subset (#798) --------------------------------
+
+    [Fact]
+    public void Transaction_update_null_is_rejected()
+    {
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(null, out var error));
+        Assert.Contains("UpdateExpression", error);
+    }
+
+    [Fact]
+    public void Transaction_update_set_and_remove_is_eligible()
+    {
+        var update = Upd(
+            "SET v = :x REMOVE stale",
+            values: new Dictionary<string, JsonElement> { [":x"] = Val("{\"N\":\"1\"}") });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_update_set_arithmetic_and_if_not_exists_is_eligible()
+    {
+        var update = Upd(
+            "SET total = total + :delta, note = if_not_exists(note, :fallback)",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":delta"] = Val("{\"N\":\"1\"}"),
+                [":fallback"] = Val("{\"S\":\"none\"}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_update_list_append_is_eligible()
+    {
+        var update = Upd(
+            "SET items = list_append(items, :new)",
+            values: new Dictionary<string, JsonElement>
+            {
+                [":new"] = Val("{\"L\":[{\"S\":\"z\"}]}"),
+            });
+
+        Assert.True(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error),
+            error);
+    }
+
+    [Fact]
+    public void Transaction_update_rejects_add_clause()
+    {
+        var update = Upd(
+            "ADD counter :one",
+            values: new Dictionary<string, JsonElement> { [":one"] = Val("{\"N\":\"1\"}") });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error));
+        Assert.Contains("ADD and DELETE", error);
+    }
+
+    [Fact]
+    public void Transaction_update_rejects_delete_clause()
+    {
+        var update = Upd(
+            "DELETE tags :one",
+            values: new Dictionary<string, JsonElement> { [":one"] = Val("{\"SS\":[\"x\"]}") });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error));
+        Assert.Contains("ADD and DELETE", error);
+    }
+
+    [Fact]
+    public void Transaction_update_rejects_nested_path()
+    {
+        var update = Upd(
+            "SET a.b = :x",
+            values: new Dictionary<string, JsonElement> { [":x"] = Val("{\"N\":\"1\"}") });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error));
+        Assert.Contains("Update", error);
+    }
+
+    [Fact]
+    public void Transaction_update_rejects_binary_literal()
+    {
+        var update = Upd(
+            "SET blob = :b",
+            values: new Dictionary<string, JsonElement> { [":b"] = Val("{\"B\":\"AQID\"}") });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error));
+        Assert.Contains("sets, binary", error);
+    }
+
+    [Fact]
+    public void Transaction_update_rejects_reserved_cosmos_field()
+    {
+        var update = Upd(
+            "SET #field = :x",
+            names: new Dictionary<string, string> { ["#field"] = "_etag" },
+            values: new Dictionary<string, JsonElement> { [":x"] = Val("{\"S\":\"x\"}") });
+
+        Assert.False(
+            SprocEligibility.TryValidateTransactionUpdate(update, out var error));
+        Assert.Contains("Cosmos system", error, StringComparison.OrdinalIgnoreCase);
+    }
 }

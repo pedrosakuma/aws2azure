@@ -157,6 +157,97 @@ internal static class SprocEligibility
         }
     }
 
+    /// <summary>
+    /// Validates the exact <c>Update</c> transact-item subset interpreted by
+    /// <c>atomicTransactWrite_v6</c> (#798). Reuses the same faithfulness
+    /// rules as the single-item <c>atomicWrite_v2</c> sproc-eligible update
+    /// path (<see cref="IsUpdateEligible"/>): SET/REMOVE only (no ADD/DELETE
+    /// — those carry set/number-envelope semantics the JS does not
+    /// replicate), top-level non-reserved attribute paths only, and native
+    /// JSON-representable literal values only. Transactional writes have no
+    /// in-process fallback, so an ineligible shape must fail before the
+    /// stored procedure is invoked rather than risk divergent execution.
+    /// </summary>
+    public static bool TryValidateTransactionUpdate(
+        UpdateExpressionAst? update,
+        out string? error)
+    {
+        error = null;
+        if (update is null)
+        {
+            error = "Update requires an UpdateExpression.";
+            return false;
+        }
+        if (update.Add is not null || update.Delete is not null)
+        {
+            error =
+                "Transactional Update supports SET and REMOVE only; ADD and DELETE carry set/number-envelope semantics that are not supported in this profile.";
+            return false;
+        }
+        if (update.Set is { Actions.Count: > 0 } set)
+        {
+            foreach (var action in set.Actions)
+            {
+                if (!TryValidateTransactionPath(action.Path, ref error, "Update"))
+                {
+                    return false;
+                }
+                if (!TryValidateTransactionUpdateOperand(action.Value, ref error))
+                {
+                    return false;
+                }
+            }
+        }
+        if (update.Remove is { Paths.Count: > 0 } remove)
+        {
+            foreach (var path in remove.Paths)
+            {
+                if (!TryValidateTransactionPath(path, ref error, "Update"))
+                {
+                    return false;
+                }
+            }
+        }
+        if ((update.Set is null || update.Set.Actions.Count == 0)
+            && (update.Remove is null || update.Remove.Paths.Count == 0))
+        {
+            error = "Transactional Update requires at least one SET or REMOVE action.";
+            return false;
+        }
+        return true;
+    }
+
+    private static bool TryValidateTransactionUpdateOperand(
+        ValueOperand operand,
+        ref string? error)
+    {
+        switch (operand)
+        {
+            case ValueRefOperand vr:
+                if (!IsNativeValue(vr.Value))
+                {
+                    error =
+                        "Transactional Update literal values must be S, BOOL, NULL, or a plain number/map/list of those; sets, binary, and enveloped numbers are rejected.";
+                    return false;
+                }
+                return true;
+            case PathOperand po:
+                return TryValidateTransactionPath(po.Path, ref error, "Update");
+            case ArithmeticOperand ao:
+                return TryValidateTransactionUpdateOperand(ao.Left, ref error)
+                    && TryValidateTransactionUpdateOperand(ao.Right, ref error);
+            case IfNotExistsOperand ine:
+                return TryValidateTransactionPath(ine.Path, ref error, "Update")
+                    && TryValidateTransactionUpdateOperand(ine.Fallback, ref error);
+            case ListAppendOperand la:
+                return TryValidateTransactionUpdateOperand(la.Left, ref error)
+                    && TryValidateTransactionUpdateOperand(la.Right, ref error);
+            default:
+                error = "Unsupported transactional Update value operand.";
+                return false;
+        }
+    }
+
     private static bool TryGetTransactionPath(
         ConditionOperand operand,
         out DocumentPath? path,
@@ -207,29 +298,30 @@ internal static class SprocEligibility
 
     private static bool TryValidateTransactionPath(
         DocumentPath path,
-        ref string? error)
+        ref string? error,
+        string context = "conditions")
     {
         if (path.Segments.Count != 1
             || path.Segments[0] is not AttributePathSegment attribute)
         {
-            error = "Transactional conditions support top-level attribute paths only; nested and list-index paths are rejected.";
+            error = $"Transactional {context} support top-level attribute paths only; nested and list-index paths are rejected.";
             return false;
         }
         if (attribute.Name.IndexOf('.') >= 0)
         {
-            error = "Transactional conditions do not support attribute names containing '.'.";
+            error = $"Transactional {context} do not support attribute names containing '.'.";
             return false;
         }
         if (InferredAttributeStorage.IsReservedTopLevelName(attribute.Name))
         {
             error =
-                $"Transactional conditions cannot reference reserved attribute '{attribute.Name}'.";
+                $"Transactional {context} cannot reference reserved attribute '{attribute.Name}'.";
             return false;
         }
         if (InferredAttributeStorage.IsCosmosSystemField(attribute.Name))
         {
             error =
-                $"Transactional conditions cannot reference Cosmos system attribute '{attribute.Name}'.";
+                $"Transactional {context} cannot reference Cosmos system attribute '{attribute.Name}'.";
             return false;
         }
         return true;
