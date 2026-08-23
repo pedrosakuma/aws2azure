@@ -1,0 +1,575 @@
+diff --git a/src/Aws2Azure.Modules.S3/Operations/MultipartHandlers.cs b/src/Aws2Azure.Modules.S3/Operations/MultipartHandlers.cs
+index 097baaf2..919ce7a3 100644
+--- a/src/Aws2Azure.Modules.S3/Operations/MultipartHandlers.cs
++++ b/src/Aws2Azure.Modules.S3/Operations/MultipartHandlers.cs
+@@ -108,7 +108,7 @@ await S3ErrorMapping.WriteAsync(
+         }
+ 
+         var xml = S3XmlWriter.InitiateMultipartUploadResult(bucket, key, token.Encoded);
+-        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
++        await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct, includeContentType: false).ConfigureAwait(false);
+     }
+ 
+     // ---------- UploadPart ----------
+@@ -585,7 +585,17 @@ await S3ErrorMapping.WriteAsync(
+ 
+             var azureEtag = ReadHeader(azureResp, "ETag") ?? string.Empty;
+             var synth = "\"" + HeaderForwarding.TranslateAzureMultipartEtagToS3(azureEtag, parsed.Parts.Count) + "\"";
+-            var location = blob.BuildBlobUri(bucket, key).AbsoluteUri;
++            // Real S3 emits <Location> shaped as the S3 URL the client hit
++            // (e.g. https://{bucket}.s3.{region}.amazonaws.com/{key} for
++            // virtual-hosted, https://s3.{region}.amazonaws.com/{bucket}/{key}
++            // for path-style). The proxy's raw Azure blob URL leaked the
++            // underlying storage account and confused clients that treated
++            // <Location> as an S3 endpoint. Echo the inbound request's
++            // scheme + host + path so the value matches whichever addressing
++            // style the caller used (bucket + key are already encoded in
++            // Request.Path for path-style; the bucket sits in Request.Host
++            // and the key is Request.Path for virtual-hosted).
++            var location = BuildS3ResponseLocation(ctx.Request);
+             var xml = S3XmlWriter.CompleteMultipartUploadResult(location, bucket, key, synth);
+             await WriteXmlAsync(ctx, StatusCodes.Status200OK, xml, ct).ConfigureAwait(false);
+             return;
+@@ -1235,16 +1245,37 @@ private static async Task ReleaseMultipartLeaseBestEffortAsync(
+         _ = await stateStore.ReleaseAsync(bucket, uploadId, leaseId, releaseCts.Token).ConfigureAwait(false);
+     }
+ 
+-    private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct)
++    private static async Task WriteXmlAsync(HttpContext ctx, int status, string xml, CancellationToken ct, bool includeContentType = true)
+     {
+         var bytes = System.Text.Encoding.UTF8.GetBytes(xml);
+         ctx.Response.StatusCode = status;
+         HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
+-        ctx.Response.ContentType = "application/xml";
++        // Real S3 omits Content-Type on CreateMultipartUpload 200 responses
++        // even though the body is XML; other multipart XML responses
++        // (Complete/ListParts/ListMultipartUploads/UploadPartCopy) do emit it.
++        if (includeContentType)
++        {
++            ctx.Response.ContentType = "application/xml";
++        }
+         ctx.Response.ContentLength = bytes.Length;
+         await ctx.Response.Body.WriteAsync(bytes, ct).ConfigureAwait(false);
+     }
+ 
++    // Rebuilds the inbound S3 request's URL — scheme + host + path — so the
++    // proxy can echo it back in a response body (currently only used for
++    // CompleteMultipartUpload's <Location>). Preserves whichever addressing
++    // style the caller used: path-style ("https://host/bucket/key") or
++    // virtual-hosted ("https://bucket.host/key"). Query is deliberately
++    // dropped — <Location> is the object's canonical URL, not the request
++    // URL that carried ?uploadId=…
++    private static string BuildS3ResponseLocation(HttpRequest request)
++    {
++        var scheme = string.IsNullOrEmpty(request.Scheme) ? "https" : request.Scheme;
++        var host = request.Host.HasValue ? request.Host.Value : string.Empty;
++        var path = request.Path.HasValue ? request.Path.Value : "/";
++        return scheme + "://" + host + path;
++    }
++
+     private static string? ReadHeader(HttpResponseMessage resp, string name)
+     {
+         if (resp.Headers.TryGetValues(name, out var v1))
+diff --git a/src/Aws2Azure.Modules.S3/Operations/SubresourceHandlers.cs b/src/Aws2Azure.Modules.S3/Operations/SubresourceHandlers.cs
+index ac10f883..53b59323 100644
+--- a/src/Aws2Azure.Modules.S3/Operations/SubresourceHandlers.cs
++++ b/src/Aws2Azure.Modules.S3/Operations/SubresourceHandlers.cs
+@@ -284,7 +284,7 @@ private static async Task GetObjectTaggingAsync(
+         var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+         var tags = SafeParseTagSet(xml) ?? Array.Empty<S3XmlWriter.Tag>();
+         SetVersionIdHeader(context, response, versionId);
+-        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags)).ConfigureAwait(false);
++        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags), includeContentType: false).ConfigureAwait(false);
+     }
+ 
+     private static async Task PutObjectTaggingAsync(
+@@ -314,6 +314,7 @@ private static async Task PutObjectTaggingAsync(
+             return;
+         }
+         SetVersionIdHeader(context, response, versionId);
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status200OK;
+     }
+ 
+@@ -337,6 +338,7 @@ private static async Task DeleteObjectTaggingAsync(
+             return;
+         }
+         SetVersionIdHeader(context, response, versionId);
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status204NoContent;
+     }
+ 
+@@ -375,7 +377,7 @@ await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
+         }
+ 
+         var mode = string.Equals(azureMode, "locked", StringComparison.OrdinalIgnoreCase) ? "COMPLIANCE" : "GOVERNANCE";
+-        await WriteXmlAsync(context, S3XmlWriter.ObjectRetention(mode, retainUntil)).ConfigureAwait(false);
++        await WriteXmlAsync(context, S3XmlWriter.ObjectRetention(mode, retainUntil), includeContentType: false).ConfigureAwait(false);
+     }
+ 
+     private static async Task PutObjectRetentionAsync(
+@@ -397,6 +399,7 @@ private static async Task PutObjectRetentionAsync(
+             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectRetention)).ConfigureAwait(false);
+             return;
+         }
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status200OK;
+     }
+ 
+@@ -413,7 +416,7 @@ private static async Task GetObjectLegalHoldAsync(
+ 
+         var hold = FirstHeader(response, LegalHoldHeader);
+         var on = string.Equals(hold, "true", StringComparison.OrdinalIgnoreCase);
+-        await WriteXmlAsync(context, S3XmlWriter.ObjectLegalHold(on)).ConfigureAwait(false);
++        await WriteXmlAsync(context, S3XmlWriter.ObjectLegalHold(on), includeContentType: false).ConfigureAwait(false);
+     }
+ 
+     private static async Task PutObjectLegalHoldAsync(
+@@ -433,6 +436,7 @@ private static async Task PutObjectLegalHoldAsync(
+             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(response, S3Operation.PutObjectLegalHold)).ConfigureAwait(false);
+             return;
+         }
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status200OK;
+     }
+ 
+@@ -562,7 +566,7 @@ await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.NoSuchConfiguration(
+             return;
+         }
+ 
+-        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags)).ConfigureAwait(false);
++        await WriteXmlAsync(context, S3XmlWriter.Tagging(tags), includeContentType: false).ConfigureAwait(false);
+     }
+ 
+     private static async Task PutBucketTaggingAsync(
+@@ -587,6 +591,7 @@ private static async Task PutBucketTaggingAsync(
+         if (!await MutateContainerMetadataAsync(
+                 context, blob, bucket, S3Operation.PutBucketTagging, BucketTagsMetadataKey, b64, ct)
+             .ConfigureAwait(false)) return;
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status204NoContent;
+     }
+ 
+@@ -598,6 +603,7 @@ private static async Task DeleteBucketTaggingAsync(
+         if (!await MutateContainerMetadataAsync(
+                 context, blob, bucket, S3Operation.DeleteBucketTagging, BucketTagsMetadataKey, null, ct)
+             .ConfigureAwait(false)) return;
++        HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+         context.Response.StatusCode = StatusCodes.Status204NoContent;
+     }
+ 
+@@ -1008,11 +1014,19 @@ private static async Task<bool> MutateContainerMetadataAsync(
+         return false;
+     }
+ 
+-    private static async Task WriteXmlAsync(HttpContext context, string xml)
++    private static async Task WriteXmlAsync(HttpContext context, string xml, bool includeContentType = true)
+     {
+         context.Response.StatusCode = StatusCodes.Status200OK;
+         HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+-        context.Response.ContentType = "application/xml";
++        // Real S3 omits Content-Type on Get{Object,Bucket}Tagging /
++        // GetObjectRetention / GetObjectLegalHold 200 responses even though
++        // the body is XML; other subresource GETs (versioning, logging, ACL,
++        // request-payment, notification, accelerate) do emit application/xml.
++        // Callers pass includeContentType:false for the parity-sensitive ops.
++        if (includeContentType)
++        {
++            context.Response.ContentType = "application/xml";
++        }
+         var bytes = Encoding.UTF8.GetBytes(xml);
+         context.Response.ContentLength = bytes.LongLength;
+         await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
+diff --git a/tests/Aws2Azure.UnitTests/S3/MultipartHandlersTests.cs b/tests/Aws2Azure.UnitTests/S3/MultipartHandlersTests.cs
+index 1913cdbe..7e056ef8 100644
+--- a/tests/Aws2Azure.UnitTests/S3/MultipartHandlersTests.cs
++++ b/tests/Aws2Azure.UnitTests/S3/MultipartHandlersTests.cs
+@@ -84,6 +84,192 @@ public async Task Create_upload_single_part_and_complete_returns_multipart_etag(
+             XDocument.Parse(handler.Requests[16].Body!).Root!.Elements("Latest").Select(static e => e.Value).ToArray());
+     }
+ 
++    // ── B5: CompleteMultipartUpload <Location> must be S3-shaped (echo the
++    // inbound request URL), not the raw Azure blob URL.
++
++    [Fact]
++    public async Task CompleteMultipartUpload_location_echoes_inbound_request_url_not_azure_blob_url()
++    {
++        var handler = new ScriptedHandler();
++        using var http = new AzureHttpClient(handler, ownsHandler: false);
++        var blob = NewBlobClient(http);
++
++        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
++
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++
++        var uploadPart = TestHttpContext.CreateContext(
++            body: "hello multipart",
++            method: HttpMethods.Put,
++            path: "/bucket/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
++        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
++        var partEtag = uploadPart.Response.Headers.ETag.ToString();
++
++        handler.Enqueue(StateGet(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(LeaseAcquired());
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateDeleted());
++
++        var complete = TestHttpContext.CreateContext(
++            body: $$"""
++                   <CompleteMultipartUpload>
++                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
++                   </CompleteMultipartUpload>
++                   """,
++            method: HttpMethods.Post,
++            path: "/bucket/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
++        complete.Request.Scheme = "https";
++        complete.Request.Host = new HostString("s3.us-east-1.amazonaws.com");
++        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
++
++        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
++        var body = await TestHttpContext.ReadBodyAsync(complete);
++        var location = ElementValue(body, "Location");
++        Assert.Equal("https://s3.us-east-1.amazonaws.com/bucket/object.txt", location);
++        Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
++        Assert.DoesNotContain(AccountName + ".blob", location, StringComparison.Ordinal);
++    }
++
++    [Fact]
++    public async Task CompleteMultipartUpload_location_preserves_virtual_hosted_style()
++    {
++        var handler = new ScriptedHandler();
++        using var http = new AzureHttpClient(handler, ownsHandler: false);
++        var blob = NewBlobClient(http);
++
++        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
++
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++
++        var uploadPart = TestHttpContext.CreateContext(
++            body: "hello multipart",
++            method: HttpMethods.Put,
++            path: "/bucket/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
++        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
++        var partEtag = uploadPart.Response.Headers.ETag.ToString();
++
++        handler.Enqueue(StateGet(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(LeaseAcquired());
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateDeleted());
++
++        // Virtual-hosted style: bucket lives on the host, only /key on the path.
++        var complete = TestHttpContext.CreateContext(
++            body: $$"""
++                   <CompleteMultipartUpload>
++                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
++                   </CompleteMultipartUpload>
++                   """,
++            method: HttpMethods.Post,
++            path: "/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
++        complete.Request.Scheme = "https";
++        complete.Request.Host = new HostString("bucket.s3.us-east-1.amazonaws.com");
++        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
++
++        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
++        var body = await TestHttpContext.ReadBodyAsync(complete);
++        var location = ElementValue(body, "Location");
++        Assert.Equal("https://bucket.s3.us-east-1.amazonaws.com/object.txt", location);
++        Assert.DoesNotContain("blob.core.windows.net", location, StringComparison.Ordinal);
++    }
++
++    // ── B6: CreateMultipartUpload response must NOT emit Content-Type;
++    // Complete/ListParts/ListMultipartUploads/UploadPartCopy must keep it.
++
++    [Fact]
++    public async Task CreateMultipartUpload_response_omits_content_type_header()
++    {
++        var handler = new ScriptedHandler();
++        using var http = new AzureHttpClient(handler, ownsHandler: false);
++        var blob = NewBlobClient(http);
++
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateContainerCreated());
++        handler.Enqueue(InternalStateContainerHead());
++        handler.Enqueue(BlobList());
++        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
++        handler.Enqueue(ContainerHead());
++
++        var create = TestHttpContext.CreateContext(
++            method: HttpMethods.Post,
++            path: "/bucket/object.txt",
++            queryString: "?uploads");
++        await MultipartHandlers.HandleAsync(create, Route(S3Operation.CreateMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
++
++        Assert.Equal(StatusCodes.Status200OK, create.Response.StatusCode);
++        Assert.True(string.IsNullOrEmpty(create.Response.ContentType));
++        Assert.False(string.IsNullOrEmpty(create.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task CompleteMultipartUpload_response_still_emits_content_type_application_xml()
++    {
++        var handler = new ScriptedHandler();
++        using var http = new AzureHttpClient(handler, ownsHandler: false);
++        var blob = NewBlobClient(http);
++
++        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
++
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateHead(upload));
++        handler.Enqueue(ContainerHead());
++
++        var uploadPart = TestHttpContext.CreateContext(
++            body: "x",
++            method: HttpMethods.Put,
++            path: "/bucket/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1");
++        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
++        var partEtag = uploadPart.Response.Headers.ETag.ToString();
++
++        handler.Enqueue(StateGet(upload));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(LeaseAcquired());
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
++        handler.Enqueue(ContainerHead());
++        handler.Enqueue(StateDeleted());
++
++        var complete = TestHttpContext.CreateContext(
++            body: $$"""
++                   <CompleteMultipartUpload>
++                     <Part><PartNumber>1</PartNumber><ETag>{{partEtag}}</ETag></Part>
++                   </CompleteMultipartUpload>
++                   """,
++            method: HttpMethods.Post,
++            path: "/bucket/object.txt",
++            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
++        complete.Request.Scheme = "https";
++        complete.Request.Host = new HostString("s3.us-east-1.amazonaws.com");
++        await MultipartHandlers.HandleAsync(complete, Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
++
++        Assert.Equal(StatusCodes.Status200OK, complete.Response.StatusCode);
++        Assert.Equal("application/xml", complete.Response.ContentType);
++    }
++
+     [Fact]
+     public async Task Upload_part_copy_forwards_range_and_returns_synthetic_etag_when_azure_omits_md5()
+     {
+diff --git a/tests/Aws2Azure.UnitTests/S3/SubresourceHandlersTests.cs b/tests/Aws2Azure.UnitTests/S3/SubresourceHandlersTests.cs
+index df10501d..91392bb0 100644
+--- a/tests/Aws2Azure.UnitTests/S3/SubresourceHandlersTests.cs
++++ b/tests/Aws2Azure.UnitTests/S3/SubresourceHandlersTests.cs
+@@ -1068,6 +1068,191 @@ private static HttpResponseMessage ErrorResponse(HttpStatusCode statusCode, stri
+         }
+     }
+ 
++    // ── B3 / B6: response-header + content-type parity guard-rails ────
++
++    [Fact]
++    public async Task PutObjectTagging_response_carries_x_amz_request_id()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            body: BucketTaggingXml(("k", "v")),
++            method: HttpMethods.Put,
++            path: "/bucket/key.txt",
++            queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.PutObjectTagging, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task DeleteObjectTagging_response_carries_x_amz_request_id_on_204()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Delete,
++            path: "/bucket/key.txt",
++            queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.DeleteObjectTagging, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task PutBucketTagging_response_carries_x_amz_request_id_on_204()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddContainer("bucket");
++        var ctx = TestHttpContext.CreateContext(
++            body: BucketTaggingXml(("env", "prod")),
++            method: HttpMethods.Put,
++            path: "/bucket",
++            queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.PutBucketTagging, "bucket"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task DeleteBucketTagging_response_carries_x_amz_request_id_on_204()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddContainer("bucket");
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Delete,
++            path: "/bucket",
++            queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.DeleteBucketTagging, "bucket"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status204NoContent, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task PutObjectRetention_response_carries_x_amz_request_id()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            body: RetentionXml("GOVERNANCE", "2030-01-02T03:04:05Z"),
++            method: HttpMethods.Put,
++            path: "/bucket/key.txt",
++            queryString: "?retention");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.PutObjectRetention, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    [Fact]
++    public async Task PutObjectLegalHold_response_carries_x_amz_request_id()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            body: LegalHoldXml("ON"),
++            method: HttpMethods.Put,
++            path: "/bucket/key.txt",
++            queryString: "?legal-hold");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.PutObjectLegalHold, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.False(string.IsNullOrEmpty(ctx.Response.Headers["x-amz-request-id"]));
++    }
++
++    // B6: real S3 does NOT emit Content-Type on these 4 XML-body GETs.
++    // Other subresource GETs (versioning/ACL/logging/…) MUST keep emitting it.
++
++    [Fact]
++    public async Task GetObjectTagging_omits_content_type_header()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.GetObjectTagging, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
++    }
++
++    [Fact]
++    public async Task GetBucketTagging_omits_content_type_header()
++    {
++        var backend = new FakeBlobBackend();
++        // Seed a bucket-tag entry so the handler follows the 200 path (not
++        // NoSuchTagSet, which is an error path with its own Content-Type
++        // semantics).
++        var tagXml = BucketTaggingXml(("env", "prod"));
++        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(tagXml));
++        backend.AddContainer("bucket", new Dictionary<string, string>(StringComparer.Ordinal)
++        {
++            ["aws2azurebuckettags"] = b64
++        });
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Get, path: "/bucket", queryString: "?tagging");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.GetBucketTagging, "bucket"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
++    }
++
++    [Fact]
++    public async Task GetObjectLegalHold_omits_content_type_header()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?legal-hold");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.GetObjectLegalHold, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
++    }
++
++    [Fact]
++    public async Task GetObjectRetention_omits_content_type_header()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddBlob("bucket", "key.txt");
++        backend.Blobs[("bucket", "key.txt")].ImmutabilityMode = "unlocked";
++        backend.Blobs[("bucket", "key.txt")].ImmutabilityUntilRfc1123 = "Wed, 02 Jan 2030 03:04:05 GMT";
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Get, path: "/bucket/key.txt", queryString: "?retention");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.GetObjectRetention, "bucket", "key.txt"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.True(string.IsNullOrEmpty(ctx.Response.ContentType));
++    }
++
++    [Fact]
++    public async Task GetBucketVersioning_still_emits_content_type_application_xml()
++    {
++        var backend = new FakeBlobBackend();
++        backend.AddContainer("bucket");
++        var ctx = TestHttpContext.CreateContext(
++            method: HttpMethods.Get, path: "/bucket", queryString: "?versioning");
++        await SubresourceHandlers.HandleAsync(
++            ctx, Route(S3Operation.GetBucketVersioning, "bucket"),
++            backend.Client, CancellationToken.None);
++        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
++        Assert.Equal("application/xml", ctx.Response.ContentType);
++    }
++
+     private sealed class BlobState
+     {
+         public string TagsXml { get; set; } = "<Tags><TagSet /></Tags>";
