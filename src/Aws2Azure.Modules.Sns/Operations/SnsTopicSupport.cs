@@ -146,6 +146,35 @@ internal static class SnsTopicSupport
         return true;
     }
 
+    /// <summary>
+    /// Surfaces the Azure Service Bus topic-path naming restriction that is narrower than the AWS
+    /// SNS-side pattern already enforced by <see cref="IsValidTopicName"/>. AWS SNS topic names use
+    /// [A-Za-z0-9_-]{1,256} (optionally with a .fifo suffix) and therefore always satisfy Service
+    /// Bus's broader allowed character set (letters, digits, '.', '-', '_' up to 260 characters).
+    /// However published Azure entity-naming guidance additionally requires the resulting Service
+    /// Bus topic path to start with a letter and end with a letter or digit -- an SNS name that
+    /// starts or ends with '-' or '_' passes the AWS-side pattern but would still be rejected by
+    /// Azure. This check exists to surface that specific case as a distinct, clearly-labeled
+    /// aws2azure error rather than forwarding it to Azure and returning an opaque management error.
+    /// Real-Azure verification of this specific boundary against the current Service Bus management
+    /// REST API (as opposed to ARM-template provisioning) is still pending; see CreateTopic.yaml.
+    /// </summary>
+    public static bool IsValidServiceBusTopicName(string topicName)
+    {
+        var baseName = topicName.EndsWith(".fifo", StringComparison.Ordinal)
+            ? topicName[..^5]
+            : topicName;
+
+        if (baseName.Length == 0)
+        {
+            return false;
+        }
+
+        var first = baseName[0];
+        var last = baseName[^1];
+        return char.IsAsciiLetter(first) && (char.IsAsciiLetterOrDigit(last));
+    }
+
     public static bool TryParseTopicArn(string topicArn, out string topicName, out string? error)
         => TryParseTopicArn(topicArn, allowFifo: false, out topicName, out error);
 

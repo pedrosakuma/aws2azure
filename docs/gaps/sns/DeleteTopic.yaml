@@ -1,7 +1,7 @@
 service: sns
 operation: DeleteTopic
 azure_equivalent: Azure Service Bus Topics management REST API
-status: partial
+status: implemented
 verified_real_azure:
   date: '2026-07-16'
   evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261
@@ -14,8 +14,7 @@ behavior_differences:
 - DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure.
 - FIFO topics can be deleted by their .fifo ARN names once they have been provisioned on the Service Bus-backed subset described in CreateTopic / Publish / PublishBatch.
 - Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone.
+- DeleteTopic parses the topic name out of the ARN with the same AWS-side pattern CreateTopic enforces at creation time; it does not re-apply CreateTopic's additional Azure naming check, because a topic that could not have been created here (due to that check) also could not appear in a client-supplied ARN.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html
 - https://learn.microsoft.com/en-us/rest/api/servicebus/delete-topic
-disposition: feasible_backlog
-tracking_issue: '#800'

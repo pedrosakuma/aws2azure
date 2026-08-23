@@ -240,6 +240,32 @@ public sealed class CreateTopicHandlerTests
     }
 
     [Theory]
+    [InlineData("-orders")]
+    [InlineData("orders-")]
+    [InlineData("_orders")]
+    [InlineData("orders_")]
+    [InlineData("-orders.fifo")]
+    [InlineData("orders-.fifo")]
+    public async Task HandleAsync_rejects_topic_names_that_violate_azure_service_bus_naming(string topicName)
+    {
+        var managementClient = NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called."));
+        var context = NewContext();
+
+        await CreateTopicHandler.HandleAsync(
+            context,
+            NewParseResult(topicName),
+            NewCredentials(),
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("InvalidParameter", body);
+        Assert.Contains("Azure Service Bus topic-path naming restriction", body);
+    }
+
+    [Theory]
     [InlineData("orders", "FifoTopic", "true", "requires parameter 'Name' to end with '.fifo'")]
     [InlineData("orders.fifo", "FifoTopic", "false", "cannot be false")]
     [InlineData("orders", "ContentBasedDeduplication", "true", "supported only for FIFO topics")]

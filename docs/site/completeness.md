@@ -13,7 +13,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 0 | 0 | 121 |
 | [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
-| [sns](sns.md) | 0 | 14 | 0 | 0 | 4 | 9 | 1 | 1 | 1 | 15 |
+| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
 
 ## dynamodb
@@ -291,18 +291,15 @@ _No remaining feasible backlog is documented for this service._
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 4 | 9 | 1 |
+| 🟡 partial | 2 | 9 | 1 |
 | ⚪ stub | 0 | 0 | 0 |
 | ⛔ unsupported | 0 | 0 | 0 |
 
 ### Feasible backlog
 
 - Operation [CreateTopic](operations/sns/createtopic.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
-- Operation [DeleteTopic](operations/sns/deletetopic.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
-- Operation [ListTopics](operations/sns/listtopics.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 - Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 - Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
-- Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 
 ### Workload maturity
 
@@ -311,6 +308,7 @@ _No remaining feasible backlog is documented for this service._
 ### Structural boundaries
 
 - Design gap [Event Grid subscription management is excluded](design-gaps/sns/event-grid-subscription-management-is-excluded.md) — 🔵 by design
+- Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sns/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [No IAM-backed policy surface](design-gaps/sns/no-iam-backed-policy-surface.md) — 🔵 by design
 - Design gap [Two backends with different fidelity](design-gaps/sns/two-backends-with-different-fidelity.md) — 🔵 by design
@@ -324,6 +322,7 @@ _No remaining feasible backlog is documented for this service._
 - Operation [SetTopicAttributes](operations/sns/settopicattributes.md) — 🔵 by design
 - Operation [Subscribe](operations/sns/subscribe.md) — ⚫ non-goal
 - Operation [Unsubscribe](operations/sns/unsubscribe.md) — 🔵 by design
+- Sub-feature [CreateTopic](operations/sns/createtopic.md#sub-feature-azure-service-bus-topic-path-naming-restriction-surfaced-separately-from-aws-side-validation) / Azure Service Bus topic-path naming restriction surfaced separately from AWS-side validation — 🔵 by design
 - Sub-feature [Subscribe](operations/sns/subscribe.md#sub-feature-subscriber-delivery-forwarder) / Subscriber delivery forwarder — ⚫ non-goal
 
 ## sqs

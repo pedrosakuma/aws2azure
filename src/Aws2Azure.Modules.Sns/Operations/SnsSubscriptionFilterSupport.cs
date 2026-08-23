@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns.Management;
@@ -12,6 +13,8 @@ internal static class SnsSubscriptionFilterSupport
     private const string AttributePropertyPrefix = "aws2azure_sns_attr_";
     private const string AttributeNumericPropertySuffix = "_num";
     private const string AttributeArrayPresencePropertySuffix = "_arr";
+    private const string CaseInsensitivePropertySuffix = "_ci";
+    private const string IpAddressPropertySuffix = "_ip";
     private const string BodyPropertyPrefix = "aws2azure_sns_body_";
     private const int MaxSqlExpressionLength = 1024;
 
@@ -82,6 +85,7 @@ internal static class SnsSubscriptionFilterSupport
             {
                 applicationProperties[attributePropertyName] = normalizedArray;
                 applicationProperties[attributePropertyName + AttributeArrayPresencePropertySuffix] = true;
+                applicationProperties[BuildLowerPropertyName(attributePropertyName)] = normalizedArray.ToLowerInvariant();
                 continue;
             }
 
@@ -91,6 +95,15 @@ internal static class SnsSubscriptionFilterSupport
                 && TryParseJsonNumber(attribute.StringValue, out var numericValue))
             {
                 applicationProperties[BuildAttributeNumericPropertyName(attribute.Name)] = numericValue;
+            }
+
+            if (attribute.StringValue is not null)
+            {
+                applicationProperties[BuildLowerPropertyName(attributePropertyName)] = attribute.StringValue.ToLowerInvariant();
+                if (TryParseIPv4ToUInt32(attribute.StringValue, out var ipValue))
+                {
+                    applicationProperties[BuildIpPropertyName(attributePropertyName)] = ipValue;
+                }
             }
         }
     }
@@ -132,8 +145,19 @@ internal static class SnsSubscriptionFilterSupport
                     AddBodyFilterPropertiesRecursive(property.Value, path, applicationProperties);
                     break;
                 case JsonValueKind.String:
-                    applicationProperties[BuildBodyPropertyName(path)] = property.Value.GetString()!;
+                {
+                    var stringValue = property.Value.GetString()!;
+                    var bodyPropertyName = BuildBodyPropertyName(path);
+                    applicationProperties[bodyPropertyName] = stringValue;
+                    applicationProperties[BuildLowerPropertyName(bodyPropertyName)] = stringValue.ToLowerInvariant();
+                    if (TryParseIPv4ToUInt32(stringValue, out var ipValue))
+                    {
+                        applicationProperties[BuildIpPropertyName(bodyPropertyName)] = ipValue;
+                    }
+
                     break;
+                }
+
                 case JsonValueKind.Number:
                     if (TryGetNumericValue(property.Value, out var numericValue))
                     {
@@ -146,6 +170,20 @@ internal static class SnsSubscriptionFilterSupport
                     break;
                 case JsonValueKind.False:
                     applicationProperties[BuildBodyPropertyName(path)] = false;
+                    break;
+                case JsonValueKind.Array:
+                    // Only a flat array of strings can be mirrored as a Service Bus filterable
+                    // property (mirroring the message-attribute String.Array subset below).
+                    // Arrays of objects/numbers/booleans, and nested arrays, are not stamped and
+                    // therefore cannot be matched by a MessageBody filter policy targeting this path.
+                    if (TryNormalizeStringArray(property.Value, out var normalizedBodyArray))
+                    {
+                        var bodyArrayPropertyName = BuildBodyPropertyName(path);
+                        applicationProperties[bodyArrayPropertyName] = normalizedBodyArray;
+                        applicationProperties[bodyArrayPropertyName + AttributeArrayPresencePropertySuffix] = true;
+                        applicationProperties[BuildLowerPropertyName(bodyArrayPropertyName)] = normalizedBodyArray.ToLowerInvariant();
+                    }
+
                     break;
             }
 
@@ -354,10 +392,67 @@ internal static class SnsSubscriptionFilterSupport
             }
 
             compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral(EscapeLikePattern(prefix.GetString()!) + "%")}");
-            if (IsAttributePropertyName(scalarPropertyName))
+            if (IsArrayFallbackPropertyName(scalarPropertyName))
             {
-                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, "%\"" + EscapeLikePattern(prefix.GetString()!) + "%")})";
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%\"" + EscapeLikePattern(prefix.GetString()!) + "%")})";
             }
+            error = null;
+            return true;
+        }
+
+        if (matcher.TryGetProperty("suffix", out var suffix))
+        {
+            if (suffix.ValueKind != JsonValueKind.String)
+            {
+                error = $"FilterPolicy suffix matcher for '{propertyDisplayName}' must be a string.";
+                return false;
+            }
+
+            var suffixValue = suffix.GetString()!;
+            compiledMatchers.Add($"{scalarPropertyName} LIKE {FormatStringLiteral("%" + EscapeLikePattern(suffixValue))}");
+            if (IsArrayFallbackPropertyName(scalarPropertyName))
+            {
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, "%" + EscapeLikePattern(suffixValue) + "\"")})";
+            }
+            error = null;
+            return true;
+        }
+
+        if (matcher.TryGetProperty("equals-ignore-case", out var equalsIgnoreCase))
+        {
+            if (equalsIgnoreCase.ValueKind != JsonValueKind.String)
+            {
+                error = $"FilterPolicy equals-ignore-case matcher for '{propertyDisplayName}' must be a string.";
+                return false;
+            }
+
+            // Service Bus SQL filters have no UPPER/LOWER function, so equals-ignore-case is
+            // expressed against a companion lower-cased property stamped alongside the scalar
+            // property at publish time rather than folded case in the SQL expression itself.
+            var lowerLiteral = equalsIgnoreCase.GetString()!.ToLowerInvariant();
+            var lowerPropertyName = BuildLowerPropertyName(scalarPropertyName);
+            compiledMatchers.Add($"{lowerPropertyName} = {FormatStringLiteral(lowerLiteral)}");
+            if (IsArrayFallbackPropertyName(scalarPropertyName))
+            {
+                compiledMatchers[^1] = $"({compiledMatchers[^1]} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, lowerPropertyName, BuildJsonStringArrayLikePattern(lowerLiteral))})";
+            }
+            error = null;
+            return true;
+        }
+
+        if (matcher.TryGetProperty("cidr", out var cidr))
+        {
+            if (cidr.ValueKind != JsonValueKind.String || !TryParseIPv4Cidr(cidr.GetString()!, out var minAddress, out var maxAddress))
+            {
+                // Only IPv4 dotted-quad CIDR ranges are translatable: Service Bus SQL filters have
+                // no bitwise/bit-shift operators, so matching relies on a companion IPv4-as-integer
+                // property computed at publish time. IPv6 CIDR has no portable numeric range here.
+                error = $"FilterPolicy cidr matcher for '{propertyDisplayName}' must be a valid IPv4 CIDR string (e.g. '10.0.0.0/24').";
+                return false;
+            }
+
+            var ipPropertyName = BuildIpPropertyName(scalarPropertyName);
+            compiledMatchers.Add($"({ipPropertyName} IS NOT NULL AND {ipPropertyName} >= {minAddress} AND {ipPropertyName} <= {maxAddress})");
             error = null;
             return true;
         }
@@ -577,17 +672,17 @@ internal static class SnsSubscriptionFilterSupport
     private static string BuildStringExactExpression(string scalarPropertyName, string value)
     {
         var equality = $"{scalarPropertyName} = {FormatStringLiteral(value)}";
-        if (!IsAttributePropertyName(scalarPropertyName))
+        if (!IsArrayFallbackPropertyName(scalarPropertyName))
         {
             return equality;
         }
 
-        return $"({equality} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
+        return $"({equality} OR {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
     }
 
     private static string BuildExistsExpression(string scalarPropertyName, bool exists)
     {
-        if (!IsAttributePropertyName(scalarPropertyName))
+        if (!IsArrayFallbackPropertyName(scalarPropertyName))
         {
             return exists
                 ? $"{scalarPropertyName} IS NOT NULL"
@@ -603,23 +698,26 @@ internal static class SnsSubscriptionFilterSupport
     private static string BuildStringAnythingButExpression(string scalarPropertyName, string value)
     {
         var inequality = $"{scalarPropertyName} <> {FormatStringLiteral(value)}";
-        if (!IsAttributePropertyName(scalarPropertyName))
+        if (!IsArrayFallbackPropertyName(scalarPropertyName))
         {
             return inequality;
         }
 
-        return $"({inequality} AND NOT {BuildArrayGuardedLikeExpression(scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
+        return $"({inequality} AND NOT {BuildArrayGuardedLikeExpression(scalarPropertyName, scalarPropertyName, BuildJsonStringArrayLikePattern(value))})";
     }
 
-    private static string BuildArrayGuardedLikeExpression(string scalarPropertyName, string likePattern)
+    private static string BuildArrayGuardedLikeExpression(string presenceBasePropertyName, string likeTargetPropertyName, string likePattern)
     {
-        var arrayPresenceProperty = scalarPropertyName + AttributeArrayPresencePropertySuffix;
-        return $"({arrayPresenceProperty} = true AND {scalarPropertyName} LIKE {FormatStringLiteral(likePattern)})";
+        var arrayPresenceProperty = presenceBasePropertyName + AttributeArrayPresencePropertySuffix;
+        return $"({arrayPresenceProperty} = true AND {likeTargetPropertyName} LIKE {FormatStringLiteral(likePattern)})";
     }
 
-    private static bool IsAttributePropertyName(string propertyName)
-        => propertyName.StartsWith(AttributePropertyPrefix, StringComparison.Ordinal)
-            && !propertyName.EndsWith(AttributeNumericPropertySuffix, StringComparison.Ordinal);
+    private static bool IsArrayFallbackPropertyName(string propertyName)
+        => (propertyName.StartsWith(AttributePropertyPrefix, StringComparison.Ordinal)
+                || propertyName.StartsWith(BodyPropertyPrefix, StringComparison.Ordinal))
+            && !propertyName.EndsWith(AttributeNumericPropertySuffix, StringComparison.Ordinal)
+            && !propertyName.EndsWith(CaseInsensitivePropertySuffix, StringComparison.Ordinal)
+            && !propertyName.EndsWith(IpAddressPropertySuffix, StringComparison.Ordinal);
 
     private static string FormatStringLiteral(string value)
         => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
@@ -698,29 +796,89 @@ internal static class SnsSubscriptionFilterSupport
         try
         {
             using var document = JsonDocument.Parse(value);
-            if (document.RootElement.ValueKind != JsonValueKind.Array)
-            {
-                return false;
-            }
-
-            foreach (var item in document.RootElement.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                {
-                    return false;
-                }
-            }
-
-            using var stream = new MemoryStream();
-            using var writer = new Utf8JsonWriter(stream);
-            document.RootElement.WriteTo(writer);
-            writer.Flush();
-            normalized = Encoding.UTF8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
-            return true;
+            return TryNormalizeStringArray(document.RootElement, out normalized);
         }
         catch (JsonException)
         {
             return false;
         }
+    }
+
+    private static bool TryNormalizeStringArray(JsonElement element, out string normalized)
+    {
+        normalized = string.Empty;
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                return false;
+            }
+        }
+
+        using var stream = new MemoryStream();
+        using var writer = new Utf8JsonWriter(stream);
+        element.WriteTo(writer);
+        writer.Flush();
+        normalized = Encoding.UTF8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
+        return true;
+    }
+
+    private static string BuildLowerPropertyName(string propertyName)
+        => propertyName + CaseInsensitivePropertySuffix;
+
+    private static string BuildIpPropertyName(string propertyName)
+        => propertyName + IpAddressPropertySuffix;
+
+    private static bool TryParseIPv4ToUInt32(string value, out uint address)
+    {
+        address = 0;
+
+        // Only accept strict dotted-quad IPv4 text; reject IPv6 and any other shape so the
+        // stamped property never silently mismatches what a CIDR matcher expects to compare against.
+        if (!IPAddress.TryParse(value, out var parsed)
+            || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        Span<byte> bytes = stackalloc byte[4];
+        if (!parsed.TryWriteBytes(bytes, out var written) || written != 4)
+        {
+            return false;
+        }
+
+        address = ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+        return true;
+    }
+
+    private static bool TryParseIPv4Cidr(string cidr, out uint minAddress, out uint maxAddress)
+    {
+        minAddress = 0;
+        maxAddress = 0;
+
+        var separatorIndex = cidr.IndexOf('/', StringComparison.Ordinal);
+        if (separatorIndex <= 0 || separatorIndex == cidr.Length - 1)
+        {
+            return false;
+        }
+
+        var addressPart = cidr[..separatorIndex];
+        var prefixPart = cidr[(separatorIndex + 1)..];
+        if (!TryParseIPv4ToUInt32(addressPart, out var networkAddress)
+            || !int.TryParse(prefixPart, NumberStyles.None, CultureInfo.InvariantCulture, out var prefixLength)
+            || prefixLength is < 0 or > 32)
+        {
+            return false;
+        }
+
+        var mask = prefixLength == 0 ? 0u : uint.MaxValue << (32 - prefixLength);
+        minAddress = networkAddress & mask;
+        maxAddress = minAddress | ~mask;
+        return true;
     }
 }

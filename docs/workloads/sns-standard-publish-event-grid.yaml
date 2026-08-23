@@ -15,7 +15,6 @@ accepted_partial_operations:
   - sns:CreateTopic
   - sns:Publish
   - sns:PublishBatch
-  - sns:DeleteTopic
 accepted_design_gaps:
   - "sns:Two backends with different fidelity"
 required_sub_feature_seals:
