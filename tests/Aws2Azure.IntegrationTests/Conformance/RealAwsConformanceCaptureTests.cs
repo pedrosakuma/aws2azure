@@ -273,7 +273,24 @@ public sealed partial class RealAwsConformanceCaptureTests(RealAwsConformanceCap
         await ExecuteServiceCasesAsync(
             "secretsmanager",
             SecretsManagerHappyPathMatrix.Cases,
-            CreateContext("secretsmanager")).ConfigureAwait(false);
+            CreateContext(
+                "secretsmanager",
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    // The real-AWS least-privilege policy only allows
+                    // secretsmanager:CreateSecret/etc. on
+                    // arn:...:secret:aws2azure-it-*, so every secret name the
+                    // matrix creates must use that prefix. "secretName" and
+                    // "describeSecretName" must stay distinct: DeleteSecret only
+                    // schedules deletion rather than removing the secret
+                    // immediately, so reusing one name across the sequential
+                    // roundtrip/describe cases would make the second case's
+                    // CreateSecret fail as "already scheduled for deletion".
+                    ["secretName"] = fixture.CreateEphemeralName("secretsmanagerroundtrip"),
+                    ["describeSecretName"] = fixture.CreateEphemeralName("secretsmanagerdescribe"),
+                    ["secretNameOne"] = fixture.CreateEphemeralName("secretsmanagerlist1"),
+                    ["secretNameTwo"] = fixture.CreateEphemeralName("secretsmanagerlist2"),
+                })).ConfigureAwait(false);
     }
 
     private ConformanceCaseContext CreateContext(
