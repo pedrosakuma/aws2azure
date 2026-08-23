@@ -379,7 +379,9 @@ internal static class BatchAdminHandlers
         {
             // The failure response was already written by the GET/PUT
             // helper (NonExistentQueue, an upstream mapping, or a bounded
-            // ETag-conflict exhaustion).
+            // ETag-conflict exhaustion). No distributed marker was
+            // committed on this path, so only the local reservation needs
+            // releasing.
             _purgeCooldowns.Release(key, now);
             return;
         }
@@ -392,6 +394,30 @@ internal static class BatchAdminHandlers
         // Started or Unsupported (single-replica fallback): proceed to
         // drain, guarded at minimum by the local in-process reservation
         // taken above.
+
+        // If TryStartDistributedCooldownAsync committed the deadline to
+        // Service Bus, the local and distributed reservations must stay
+        // symmetric: any drain failure below has to roll back *both*, or a
+        // failed purge attempt (client got an error, no purge happened)
+        // would still leave a live cross-replica cool-down in place and
+        // incorrectly reject an immediate retry with PurgeQueueInProgress.
+        var distributedUntilUnix = now.ToUnixTimeSeconds() + (long)PurgeCoolDown.TotalSeconds;
+        var distributedStarted = distributed == DistributedCooldownOutcome.Started;
+
+        async Task ReleaseReservationsAsync()
+        {
+            _purgeCooldowns.Release(key, now);
+            if (distributedStarted)
+            {
+                // Best-effort: a failed rollback just means the retry waits
+                // out the remainder of a window it never actually held —
+                // the same behavior as before distributed coordination
+                // existed. Use CancellationToken.None so an already-expired
+                // budget or an aborted request doesn't prevent the attempt.
+                await ClearDistributedCooldownAsync(sb, queueName, distributedUntilUnix, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+        }
 
         // Drain: peek-lock + DELETE in a loop bounded by PurgeBudget.
         // SB has no native purge over REST; this matches the SQS contract
@@ -415,13 +441,13 @@ internal static class BatchAdminHandlers
                 }
                 if (resp.StatusCode == HttpStatusCode.NotFound)
                 {
-                    _purgeCooldowns.Release(key, now);
+                    await ReleaseReservationsAsync().ConfigureAwait(false);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
                     return;
                 }
                 if (!resp.IsSuccessStatusCode)
                 {
-                    _purgeCooldowns.Release(key, now);
+                    await ReleaseReservationsAsync().ConfigureAwait(false);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(resp)).ConfigureAwait(false);
                     return;
                 }
@@ -434,7 +460,7 @@ internal static class BatchAdminHandlers
                 if (!del.IsSuccessStatusCode && del.StatusCode != HttpStatusCode.NotFound
                     && del.StatusCode != HttpStatusCode.Gone)
                 {
-                    _purgeCooldowns.Release(key, now);
+                    await ReleaseReservationsAsync().ConfigureAwait(false);
                     await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(del)).ConfigureAwait(false);
                     return;
                 }
@@ -451,13 +477,13 @@ internal static class BatchAdminHandlers
         }
         catch
         {
-            _purgeCooldowns.Release(key, now);
+            await ReleaseReservationsAsync().ConfigureAwait(false);
             throw;
         }
         finally
         {
             if (!accepted && ct.IsCancellationRequested)
-                _purgeCooldowns.Release(key, now);
+                await ReleaseReservationsAsync().ConfigureAwait(false);
         }
 
         await SqsResponseWriter.WritePurgeQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
@@ -541,6 +567,98 @@ internal static class BatchAdminHandlers
         InProgress,
         Unsupported,
         Failed,
+    }
+
+    /// <summary>
+    /// Best-effort rollback of the distributed cool-down marker committed by
+    /// <see cref="TryStartDistributedCooldownAsync"/> when a purge fails
+    /// *after* that marker was already persisted (queue deleted mid-drain,
+    /// a peek-lock/delete error from Service Bus, or an unexpected
+    /// exception). Without this, a failed purge attempt — the client got an
+    /// error, no messages were actually purged — would still leave a live
+    /// cross-replica cool-down in place and incorrectly reject an immediate
+    /// retry with PurgeQueueInProgress for up to 60 seconds.
+    ///
+    /// This performs its own quiet GET + PUT-with-If-Match compare-and-swap
+    /// (bounded by <see cref="QueueMetadataUpdateMaxAttempts"/>) and never
+    /// writes an HTTP error response — the caller has already written (or is
+    /// about to write) the real failure response for the drain, and this is
+    /// purely cleanup. Every failure mode (queue gone, foreign metadata,
+    /// exhausted retries, any exception) is swallowed: worst case a
+    /// legitimate retry simply waits out the remainder of a cool-down window
+    /// it never actually held, which is no worse than the fully in-process
+    /// behavior that existed before distributed coordination. The marker is
+    /// only cleared if it still equals <paramref name="expectedUntilUnix"/>,
+    /// so a cool-down legitimately started by a concurrent replica after
+    /// this failure (e.g. a retry that raced ahead and won) is never
+    /// clobbered.
+    /// </summary>
+    private static async Task ClearDistributedCooldownAsync(
+        ServiceBusClient sb, string queueName, long expectedUntilUnix, CancellationToken ct)
+    {
+        try
+        {
+            for (var attempt = 0; attempt < QueueMetadataUpdateMaxAttempts; attempt++)
+            {
+                using var getResp = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+                if (!getResp.IsSuccessStatusCode)
+                {
+                    // Queue gone, or some other GET failure: nothing to roll
+                    // back.
+                    return;
+                }
+
+                var xml = await getResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+                if (entry is null) return;
+
+                if (!SqsQueueTagStore.TryDecodeForMutation(
+                        entry.Properties.UserMetadata, out var metadata, out _))
+                {
+                    // UserMetadata is no longer in the aws2azure envelope
+                    // (or malformed) — nothing of ours left to clear.
+                    return;
+                }
+
+                if (metadata.PurgeCooldownUntilUnixSeconds != expectedUntilUnix)
+                {
+                    // Already cleared, expired, or superseded by a
+                    // concurrent replica's own legitimate cool-down —
+                    // leave it alone.
+                    return;
+                }
+
+                metadata.PurgeCooldownUntilUnixSeconds = null;
+                if (!SqsQueueTagStore.TryEncodeMetadata(metadata, out var userMetadata))
+                {
+                    return;
+                }
+
+                entry.Properties.UserMetadata = string.IsNullOrEmpty(userMetadata) ? null : userMetadata;
+                var atomBody = AtomQueueXmlWriter.BuildQueueEntry(entry.Properties);
+                var eTag = ExtractETag(getResp);
+                using var putResp = string.IsNullOrWhiteSpace(eTag)
+                    ? await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false)
+                    : await sb.UpdateQueueAsync(queueName, atomBody, eTag, ct).ConfigureAwait(false);
+                if (putResp.IsSuccessStatusCode)
+                {
+                    SqsQueueMetadataCache.Set(sb, queueName, entry.Properties);
+                    return;
+                }
+                if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
+                {
+                    continue;
+                }
+
+                // Any other upstream failure: give up quietly.
+                return;
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup only — never let a rollback failure mask
+            // the real error already being returned to the client.
+        }
     }
 
     internal enum PurgeStartResult
@@ -882,9 +1000,16 @@ internal static class BatchAdminHandlers
             return null;
         }
 
-        var eTag = getResp.Headers.ETag?.Tag;
+        var eTag = ExtractETag(getResp);
+
+        return new QueueReadResult(entry, eTag);
+    }
+
+    private static string? ExtractETag(HttpResponseMessage resp)
+    {
+        var eTag = resp.Headers.ETag?.Tag;
         if (string.IsNullOrWhiteSpace(eTag) &&
-            getResp.Headers.TryGetValues("ETag", out var values))
+            resp.Headers.TryGetValues("ETag", out var values))
         {
             foreach (var value in values)
             {
@@ -896,7 +1021,7 @@ internal static class BatchAdminHandlers
             }
         }
 
-        return new QueueReadResult(entry, eTag);
+        return eTag;
     }
 
     private sealed record QueueReadResult(AtomQueueXmlReader.QueueEntry Entry, string? ETag);

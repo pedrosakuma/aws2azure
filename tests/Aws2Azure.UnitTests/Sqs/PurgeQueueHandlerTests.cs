@@ -148,6 +148,76 @@ public sealed class PurgeQueueHandlerTests
     }
 
     [Fact]
+    public async Task Drain_failure_after_distributed_cooldown_is_persisted_rolls_it_back_so_retry_is_not_rejected()
+    {
+        // Regression test for the local/distributed reservation asymmetry:
+        // TryStartDistributedCooldownAsync persists the cool-down deadline
+        // to Service Bus UserMetadata *before* the drain loop runs. If the
+        // drain then fails (here: a hard upstream error from the first
+        // peek-lock), the failed attempt must not leave a live distributed
+        // cool-down behind — otherwise an immediate retry is incorrectly
+        // rejected with PurgeQueueInProgress even though the client never
+        // received confirmation that a purge/cool-down actually started.
+        BatchAdminHandlers.ResetPurgeCoolDownForTesting();
+        var handler = new ScriptedHandler();
+        string? cooldownPersistedUserMetadata = null;
+        string? rollbackClearedUserMetadata = null;
+
+        // First attempt: distributed CAS succeeds, then the drain's first
+        // peek-lock hits a hard upstream error.
+        handler.Enqueue(_ => Atom200("q1", userMetadata: null, eTag: "\"etag-1\""));
+        handler.Enqueue(async req =>
+        {
+            cooldownPersistedUserMetadata =
+                ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.BadRequest));
+
+        // Best-effort rollback triggered by the peek-lock failure: quiet
+        // GET + PUT-with-ETag clearing the marker this call just wrote.
+        handler.Enqueue(_ => Atom200("q1", userMetadata: cooldownPersistedUserMetadata, eTag: "\"etag-2\""));
+        handler.Enqueue(async req =>
+        {
+            rollbackClearedUserMetadata =
+                ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var serviceBus = new ServiceBusClient(http, Credentials);
+
+        var failed = NewContext();
+        await BatchAdminHandlers.HandleAsync(
+            failed, PurgeRequest(), serviceBus, CancellationToken.None);
+        Assert.False(string.IsNullOrEmpty(cooldownPersistedUserMetadata));
+        Assert.NotEqual(StatusCodes.Status200OK, failed.Response.StatusCode);
+        Assert.NotEqual(StatusCodes.Status403Forbidden, failed.Response.StatusCode);
+
+        // The rollback must have cleared the cool-down marker it wrote —
+        // not merely left it in place or removed unrelated metadata.
+        Assert.True(SqsQueueTagStore.TryDecodeForMutation(
+            cooldownPersistedUserMetadata, out var writtenMetadata, out _));
+        Assert.NotNull(writtenMetadata.PurgeCooldownUntilUnixSeconds);
+        Assert.True(SqsQueueTagStore.TryDecodeForMutation(
+            rollbackClearedUserMetadata, out var clearedMetadata, out _));
+        Assert.Null(clearedMetadata.PurgeCooldownUntilUnixSeconds);
+
+        // Second attempt (immediate retry, same or a different replica):
+        // must succeed rather than being rejected with PurgeQueueInProgress,
+        // since the first attempt never actually purged anything.
+        handler.Enqueue(_ => Atom200("q1", userMetadata: rollbackClearedUserMetadata, eTag: "\"etag-3\""));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var retry = NewContext();
+        await BatchAdminHandlers.HandleAsync(
+            retry, PurgeRequest(), serviceBus, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status200OK, retry.Response.StatusCode);
+        Assert.DoesNotContain("PurgeQueueInProgress", ReadBody(retry));
+    }
+
+    [Fact]
     public async Task Distributed_cooldown_retries_precondition_failures_and_still_persists()
     {
         BatchAdminHandlers.ResetPurgeCoolDownForTesting();
