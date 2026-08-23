@@ -345,9 +345,20 @@ internal static class BatchAdminHandlers
         }
 
         // SQS rule: at most one accepted PurgeQueue per queue per 60 seconds.
-        // The tracker removes expired keys opportunistically and has a hard
-        // entry cap, so high-cardinality queue names cannot grow static
-        // process state without bound.
+        // Two layers cooperate here:
+        //  1. The bounded in-process tracker gives same-replica callers a
+        //     fast reject without a network round trip (it removes expired
+        //     keys opportunistically and has a hard entry cap, so
+        //     high-cardinality queue names cannot grow static process state
+        //     without bound).
+        //  2. TryStartDistributedCooldownAsync persists the cool-down
+        //     deadline in Service Bus QueueDescription.UserMetadata via an
+        //     ETag compare-and-swap, so every proxy replica observes the
+        //     same window (see docs/gaps/sqs/PurgeQueue.yaml). If the
+        //     queue's UserMetadata is already owned by non-aws2azure content
+        //     or too full to fit the cool-down marker, coordination degrades
+        //     to the single-replica in-process tracker only — an explicit,
+        //     documented tradeoff rather than a silent gap.
         var key = sb.Namespace + "|" + queueName;
         var now = DateTimeOffset.UtcNow;
         var start = _purgeCooldowns.TryStart(key, now);
@@ -361,6 +372,26 @@ internal static class BatchAdminHandlers
             await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.PurgeStateCapacityExceeded()).ConfigureAwait(false);
             return;
         }
+
+        var distributed = await TryStartDistributedCooldownAsync(context, parsed, sb, queueName, now, ct)
+            .ConfigureAwait(false);
+        if (distributed == DistributedCooldownOutcome.Failed)
+        {
+            // The failure response was already written by the GET/PUT
+            // helper (NonExistentQueue, an upstream mapping, or a bounded
+            // ETag-conflict exhaustion).
+            _purgeCooldowns.Release(key, now);
+            return;
+        }
+        if (distributed == DistributedCooldownOutcome.InProgress)
+        {
+            _purgeCooldowns.Release(key, now);
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.PurgeQueueInProgress(queueName)).ConfigureAwait(false);
+            return;
+        }
+        // Started or Unsupported (single-replica fallback): proceed to
+        // drain, guarded at minimum by the local in-process reservation
+        // taken above.
 
         // Drain: peek-lock + DELETE in a loop bounded by PurgeBudget.
         // SB has no native purge over REST; this matches the SQS contract
@@ -430,6 +461,86 @@ internal static class BatchAdminHandlers
         }
 
         await SqsResponseWriter.WritePurgeQueueAsync(context, parsed.Protocol).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Persists the SQS <c>PurgeQueueInProgress</c> 60-second cool-down
+    /// deadline in Service Bus <c>QueueDescription.UserMetadata</c> using a
+    /// GET + PUT-with-If-Match compare-and-swap, so all proxy replicas
+    /// observe the same window (see docs/gaps/sqs/PurgeQueue.yaml). Falls
+    /// back to <see cref="DistributedCooldownOutcome.Unsupported"/> — single
+    /// replica coordination only, via <see cref="_purgeCooldowns"/> — when
+    /// the queue's UserMetadata is already owned by non-aws2azure content or
+    /// too full to fit the cool-down marker alongside existing tags.
+    /// </summary>
+    private static async Task<DistributedCooldownOutcome> TryStartDistributedCooldownAsync(
+        HttpContext context,
+        SqsParseResult parsed,
+        ServiceBusClient sb,
+        string queueName,
+        DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var nowUnix = now.ToUnixTimeSeconds();
+        for (var attempt = 0; attempt < QueueMetadataUpdateMaxAttempts; attempt++)
+        {
+            var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, queueName, ct).ConfigureAwait(false);
+            if (read is null)
+            {
+                // ReadQueueEntryWithETagAsync already wrote the failure
+                // response (NonExistentQueue or a mapped upstream error).
+                return DistributedCooldownOutcome.Failed;
+            }
+
+            if (!SqsQueueTagStore.TryDecodeForMutation(
+                    read.Entry.Properties.UserMetadata, out var metadata, out _))
+            {
+                return DistributedCooldownOutcome.Unsupported;
+            }
+
+            if (metadata.PurgeCooldownUntilUnixSeconds is { } until && until > nowUnix)
+            {
+                return DistributedCooldownOutcome.InProgress;
+            }
+
+            metadata.PurgeCooldownUntilUnixSeconds = nowUnix + (long)PurgeCoolDown.TotalSeconds;
+            if (!SqsQueueTagStore.TryEncodeMetadata(metadata, out var userMetadata))
+            {
+                // The queue's existing tags already consume the Service Bus
+                // UserMetadata budget; degrade rather than block the purge on
+                // unrelated tag content.
+                return DistributedCooldownOutcome.Unsupported;
+            }
+
+            read.Entry.Properties.UserMetadata = string.IsNullOrEmpty(userMetadata) ? null : userMetadata;
+            var atomBody = AtomQueueXmlWriter.BuildQueueEntry(read.Entry.Properties);
+            using var putResp = string.IsNullOrWhiteSpace(read.ETag)
+                ? await sb.UpdateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false)
+                : await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
+            if (putResp.IsSuccessStatusCode)
+            {
+                SqsQueueMetadataCache.Set(sb, queueName, read.Entry.Properties);
+                return DistributedCooldownOutcome.Started;
+            }
+            if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                continue;
+            }
+
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.FromServiceBus(putResp)).ConfigureAwait(false);
+            return DistributedCooldownOutcome.Failed;
+        }
+
+        await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueTagUpdateConflict()).ConfigureAwait(false);
+        return DistributedCooldownOutcome.Failed;
+    }
+
+    internal enum DistributedCooldownOutcome
+    {
+        Started,
+        InProgress,
+        Unsupported,
+        Failed,
     }
 
     internal enum PurgeStartResult
