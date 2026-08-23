@@ -554,6 +554,26 @@ reap_kinesis_streams() {
   done < <(jq -r --arg prefix "$name_prefix" '.StreamNames[]? | select(startswith($prefix))' <<< "$streams_json")
 }
 
+# Investigated in #879: this deliberately reaps only SNS *topics*, not
+# subscriptions, and that is sufficient. AWS's own DeleteTopic API reference
+# ("Deletes a topic and all its subscriptions" -
+# https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html) documents
+# subscription deletion as cascading, and this repo's own real-AWS-confirmed
+# observation (see the Unsubscribe/GetSubscriptionAttributes teardown check
+# in tests/Aws2Azure.Conformance/Sns/SnsHappyPathMatrix.cs) is that a
+# subscription's *authoritative* state (GetSubscriptionAttributes -> NotFound)
+# flips immediately once it is torn down, while the *list* APIs
+# (ListSubscriptions / ListSubscriptionsByTopic) are only eventually
+# consistent and can keep returning a stale "Deleted" sentinel entry for up
+# to ~72h regardless of how the subscription/topic was removed. A dedicated
+# sns:list-subscriptions + sns:unsubscribe reaping pass cannot make that
+# eventual-consistency window close any faster - there is no API to force an
+# immediate purge of a list-API sentinel - so it would add risk (touching
+# subscription ARNs, including ones this reaper doesn't own) for no
+# observable benefit. The correct, already-shipped fix for the pagination
+# symptom this produced is at the conformance-test level: follow NextToken
+# until the just-created subscription is found (see
+# BuildListSubscriptionsRequestAsync in SnsHappyPathMatrix.cs, added by #880).
 reap_sns_topics() {
   local topics_json
   local topic_arn
