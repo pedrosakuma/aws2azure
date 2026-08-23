@@ -49,6 +49,12 @@ public static class SecretsManagerHappyPathMatrix
             "ClientRequestToken/AWSCURRENT resolution semantics)."),
             static (context, _) =>
             {
+                // Distinct property key from CreateDescribeCase below: DeleteSecret
+                // (called at the end of this case) schedules the secret for
+                // deletion rather than removing it immediately, so reusing the
+                // same secret name across sequential cases would make the next
+                // case's CreateSecret fail with "already scheduled for
+                // deletion" even though the cases never run concurrently.
                 var secretName = context.GetProperty("secretName") ?? ("conf-happy-secret-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
@@ -84,7 +90,13 @@ public static class SecretsManagerHappyPathMatrix
             "VersionIdsToStages before the secret is deleted."),
             static (context, _) =>
             {
-                var secretName = context.GetProperty("secretName") ?? ("conf-happy-secret-" + Guid.NewGuid().ToString("N")[..12]);
+                // Distinct property key from CreateRoundTripCase above: both cases
+                // read a "secretName"-shaped property, and reusing the identical
+                // key/value would make this case's CreateSecret collide with the
+                // roundtrip case's DeleteSecret (which only schedules deletion,
+                // not an immediate removal) even though the two cases run
+                // sequentially rather than concurrently.
+                var secretName = context.GetProperty("describeSecretName") ?? ("conf-happy-describe-" + Guid.NewGuid().ToString("N")[..12]);
                 return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
                 [
                     new ConformanceRequestStep("create-secret", _ => BuildRequest(context, "CreateSecret",
