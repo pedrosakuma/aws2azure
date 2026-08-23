@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:CreateMultipartUpload/UploadPart/AbortMultipartUpload/ListParts/GetObject
-# captured: 2026-08-21T17:47:17.2939931+00:00
+# captured: 2026-08-23T19:48:06.2665160+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 404
@@ -14,4 +14,4 @@ HTTP 404
   HostId: <MASKED>
   Message: <MASKED>
   RequestId: <MASKED>
-  UploadId: CW3S.6JcvmcPk0Ap3HstVK33KKMK_4CmnL_8XLaflVubbjytQ.4MB5VT4m3HrD.R0E0ZUpI6A5OZNrISQ6eYRAFYtFizdnr.X3WDCg4K8GHVukpeuE9usKhAZPD5_Rks4jNgMWYJq0OLXYLTp8caKA--
+  UploadId: JqMjLIGXnI7ru.dTUDYpg2jRJbzuGeo._u.5uAxEqxfWa2nevYELwms24PpCd2OfzD24d9JL2.jbS6.309rWEwHIgfHuKgAQDjiVZmdVJDlDVJckajT4Ty.K13r7QVWrXv2.R1itmGEfQgMEmvtUSQ--

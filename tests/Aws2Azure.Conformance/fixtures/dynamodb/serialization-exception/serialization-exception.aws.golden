@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:SerializationException
-# captured: 2026-08-21T17:45:59.5702841+00:00
+# captured: 2026-08-23T19:46:55.5599586+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 400

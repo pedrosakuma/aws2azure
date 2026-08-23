@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PresignedPutObject/PresignedGetObject
-# captured: 2026-08-21T17:47:26.5902426+00:00
+# captured: 2026-08-23T19:48:13.3563632+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

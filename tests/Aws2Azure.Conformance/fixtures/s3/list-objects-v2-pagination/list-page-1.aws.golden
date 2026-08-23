@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:ListObjectsV2
-# captured: 2026-08-21T17:47:03.2729789+00:00
+# captured: 2026-08-23T19:47:55.8219316+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -15,6 +15,6 @@ HTTP 200
   IsTruncated: true
   KeyCount: 1
   MaxKeys: 1
-  Name: aws2azure-it-1787334418-288841-s3bucket
-  NextContinuationToken: 1R9nT6buGSjs/roAla6YrrV4ZU/7KUzMCDN1ntwEwTFUMW58DBWJLAmNbbhOgk5sLkwCVhnQ6+yvVMPKJdhOGrgnVhQYYMxlq
+  Name: aws2azure-it-1787514472-878450-s3bucket
+  NextContinuationToken: 1vP1wBYPX1wpYTQLEYx43KRmkAi5SHjciNgmsru/QXbd+uRBHPdz6kwJIg2qUCalZjQ8i2ybeqD+kE5X3lsLB9F73pDTSUKdZ
   Prefix: 

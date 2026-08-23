@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:InvalidAccessKeyId
-# captured: 2026-08-21T17:46:59.1071327+00:00
+# captured: 2026-08-23T19:47:52.7156605+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 403

@@ -1,11 +1,11 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:ListBuckets
-# captured: 2026-08-21T17:47:21.9437770+00:00
+# captured: 2026-08-23T19:48:09.7702628+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
-[header] x-amz-bucket-arn: arn:aws:s3:::aws2azure-it-1787334418-735377-s3listbuckets-a
+[header] x-amz-bucket-arn: arn:aws:s3:::aws2azure-it-1787514472-867693-s3listbuckets-a
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
 [body:empty]

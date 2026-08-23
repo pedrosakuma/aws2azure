@@ -1,12 +1,12 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PutObject/GetObject/DeleteObject
-# captured: 2026-08-21T17:47:01.7123382+00:00
+# captured: 2026-08-23T19:47:54.6591557+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 204
 [header] x-amz-delete-marker: true
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
-[header] x-amz-version-id: uLcD1h6LryYjVFTaqrUvcVYX9OGYSJy0
+[header] x-amz-version-id: yHhQYLwZ3SIUheGlAj683UILMlIlHTco
 [body:empty]

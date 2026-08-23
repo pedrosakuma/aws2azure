@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: kinesis:PutRecord/GetShardIterator/GetRecords
-# captured: 2026-08-21T17:44:58.7419778+00:00
+# captured: 2026-08-23T19:46:02.1873424+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -9,5 +9,5 @@ HTTP 200
 [header] x-amz-id-2: <MASKED>
 [body:json-error]
   MillisBehindLatest: 0
-  NextShardIterator: AAAAAAAAAAEWOFK9HYIXnJWgMhBJ4OPE3DjR6lmJjb6nbEO8YstOZoxFk39JiUqM22jpD3CVPkIDUAr1vEjxBQRm7LJJBKKAcvJ71Se+YhLUkWakf1hQdN8paxnbnvOlaTIES53ftK0kyvYoDhmxqY2i14e2VyBvAT2gXbfoGbuFmXeFLq6pGeiWiVyiUF9gCEc5+kF+jkYIDk/8SF6Fb2kxbVxrXwIlWMK/68i7uakG3zwJWfthM5X4JnoB1kOfN2I1sdXaSlpd8CJLyX21u+z9sQUbNM8J
+  NextShardIterator: AAAAAAAAAAG87/JyrZJFxZPU73WacZtV1A91C5NhD8iuVXE4K3dOYnUn8cOiQubOTnMvoYfra6cP96W7FRgmy42BhJpvxrqbfFWxlN6KPCJyuq9OyoHJKNHw4u9S+tdSkNTYzP7V0V+vyIXsgeIB6uYRBdsR6h+k84ub9C5pQ0OQv/sgoAYObvJ9zDclcY1uioobaUSgENzzgMc9hbRhgSivgY5A1ML9OTW/t2Ux+wtMXyHc6p83QJp0PL97TyKeXc9e5Nkrez2ZFJoRPP1VBzDpWCrhfP8t
   Records: <nested>

@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:ListObjects
-# captured: 2026-08-21T17:47:23.6373043+00:00
+# captured: 2026-08-23T19:48:11.1183441+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -10,5 +10,5 @@ HTTP 200
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
 [header] x-amz-server-side-encryption: AES256
-[header] x-amz-version-id: h7hHOPlIH8LrfSGGjVejxD.KDp.HDjmY
+[header] x-amz-version-id: mq7EItUittfLNkIJypCm1d6AugarZWwR
 [body:empty]

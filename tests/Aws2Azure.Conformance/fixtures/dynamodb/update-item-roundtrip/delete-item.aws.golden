@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:PutItem/UpdateItem/GetItem
-# captured: 2026-08-21T17:46:20.8315765+00:00
+# captured: 2026-08-23T19:47:17.2083547+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

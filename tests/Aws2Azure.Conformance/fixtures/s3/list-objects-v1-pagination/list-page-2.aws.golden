@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:ListObjects
-# captured: 2026-08-21T17:47:24.3540870+00:00
+# captured: 2026-08-23T19:48:11.6547721+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -16,6 +16,6 @@ HTTP 200
   IsTruncated: true
   Marker: page/a/
   MaxKeys: 1
-  Name: aws2azure-it-1787334418-288841-s3bucket
+  Name: aws2azure-it-1787514472-878450-s3bucket
   NextMarker: page/b/
   Prefix: page/

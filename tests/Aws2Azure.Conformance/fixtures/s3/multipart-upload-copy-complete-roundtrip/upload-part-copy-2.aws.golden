@@ -1,16 +1,16 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:CreateMultipartUpload/UploadPart/UploadPartCopy/ListParts/CompleteMultipartUpload/GetObject
-# captured: 2026-08-21T17:47:12.8867637+00:00
+# captured: 2026-08-23T19:48:03.0575158+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
 [header] content-type: application/xml
-[header] x-amz-copy-source-version-id: N_JFZYxEKocr5e7oeTNYYjpmahe0LCbe
+[header] x-amz-copy-source-version-id: P.kUGFC9vEcWMhbMbsVo9tqQmxkW3IVa
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
 [header] x-amz-server-side-encryption: AES256
 [body:xml-error]
   (root): CopyPartResult
   ETag: "7d9a4ece36b50e2049f64015896ec995"
-  LastModified: 2026-08-21T17:47:13.000Z
+  LastModified: 2026-08-23T19:48:03.000Z

@@ -1,11 +1,11 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:CreateTable/TagResource/ListTagsOfResource/UntagResource/DeleteTable
-# captured: 2026-08-21T17:46:21.0990045+00:00
+# captured: 2026-08-23T19:47:17.4071173+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
 [header] content-type: application/x-amz-json-1.0
-[header] x-amz-crc32: 3230187437
+[header] x-amz-crc32: 3586484956
 [body:json-error]
   TableDescription: <nested>

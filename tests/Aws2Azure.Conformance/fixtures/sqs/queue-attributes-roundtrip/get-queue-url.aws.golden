@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: sqs:CreateQueue/GetQueueUrl/GetQueueAttributes/SetQueueAttributes/GetQueueAttributes/DeleteQueue
-# captured: 2026-08-21T17:45:09.0156982+00:00
+# captured: 2026-08-23T19:46:12.8037775+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

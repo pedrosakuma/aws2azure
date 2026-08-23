@@ -1,11 +1,11 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PresignedPutObject/PresignedGetObject
-# captured: 2026-08-21T17:47:27.5482457+00:00
+# captured: 2026-08-23T19:48:14.0439156+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 204
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
-[header] x-amz-version-id: K6hFvD2z20Qkr1qIghQ1DH0CBzdg4l7i
+[header] x-amz-version-id: mZdH9GM0aGwCuqmDiMBMEZ9w3jyoWZqs
 [body:empty]

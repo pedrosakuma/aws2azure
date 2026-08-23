@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PutObjectRetention/GetObjectRetention
-# captured: 2026-08-21T17:47:31.8044730+00:00
+# captured: 2026-08-23T19:48:17.3049246+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -10,4 +10,4 @@ HTTP 200
 [body:xml-error]
   (root): Retention
   Mode: GOVERNANCE
-  RetainUntilDate: 2026-08-21T17:48:30.677Z
+  RetainUntilDate: 2026-08-23T19:49:16.427Z

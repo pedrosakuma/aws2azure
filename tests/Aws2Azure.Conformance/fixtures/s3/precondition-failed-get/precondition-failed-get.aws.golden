@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: precondition-failed-get
-# captured: 2026-08-21T17:47:33.7912255+00:00
+# captured: 2026-08-23T19:48:18.9719107+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 412

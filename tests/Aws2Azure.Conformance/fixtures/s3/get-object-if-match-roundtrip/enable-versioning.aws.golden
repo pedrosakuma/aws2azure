@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PutObject/GetObject[If-Match]/DeleteObject
-# captured: 2026-08-21T17:47:05.0606398+00:00
+# captured: 2026-08-23T19:47:57.1979790+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
