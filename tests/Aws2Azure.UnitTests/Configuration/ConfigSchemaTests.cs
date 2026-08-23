@@ -16,8 +16,14 @@ namespace Aws2Azure.UnitTests.Configuration;
 public sealed class ConfigSchemaTests
 {
     private static readonly string RepoRoot = FindRepoRoot();
+
+    // JsonSchema.Net 9.x throws if the same $id is registered twice against
+    // the shared Global registry. This schema's $id is also loaded
+    // independently by ConfigExampleValidator (DocsQualityTests), so build
+    // against a private registry here to avoid a cross-test collision.
     private static readonly JsonSchema Schema = JsonSchema.FromText(
-        File.ReadAllText(Path.Combine(RepoRoot, ConfigSchemaGenerator.ArtifactRelativePath)));
+        File.ReadAllText(Path.Combine(RepoRoot, ConfigSchemaGenerator.ArtifactRelativePath)),
+        new BuildOptions { SchemaRegistry = new SchemaRegistry() });
     private static readonly EvaluationOptions EvaluationOptions = new()
     {
         RequireFormatValidation = true,
