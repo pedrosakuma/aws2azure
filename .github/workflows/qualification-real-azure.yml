@@ -12,7 +12,13 @@ name: qualification-real-azure
 # reaffirm mode, #803/#875): the expected SHA is resolved from the profile's
 # approved-runtime ledger via `export-approved-runtime`, not from the current
 # checkout, and every input (correctness candidate + all load evidence) must
-# carry that same historical SHA -- see #877.
+# carry that same historical SHA -- see #877. Note: this content-level check
+# is distinct from the run-selection SHA passed to
+# eng/download-qualified-run-artifact.sh -- a reaffirm load run's own GitHub
+# Actions head_sha is always whatever main was on the day it ran (its
+# workflow always checks out the dispatch ref), never the historical runtime
+# SHA it reaffirms, so run selection for load evidence resolves and uses that
+# run's actual head_sha instead of the ledger SHA.
 on:
   workflow_dispatch:
     inputs:
@@ -240,6 +246,32 @@ jobs:
             seen+=("$run_id")
             destination="$PRIVATE_ROOT/load/$run_id"
             selection="$EVIDENCE_ROOT/selections/load-$run_id.json"
+            # workload-load-real-azure.yml always checks out the ref it was
+            # dispatched from, so a *reaffirm* load run's own head_sha is
+            # whatever main/RC-tag HEAD was on the day it ran -- never the
+            # historical runtime SHA it reaffirms (that SHA only lives in the
+            # run's *content*, i.e. load-evidence.json's candidate.git_sha,
+            # checked below against $EXPECTED_SHA). Threading the ledger SHA
+            # into the artifact-selection call itself would make every
+            # reaffirm load-run lookup fail-closed on a run-selection check it
+            # can structurally never satisfy. Promote mode is unaffected:
+            # there, $EXPECTED_SHA already equals $GITHUB_SHA, which is
+            # exactly what a freshly dispatched load run's own head_sha is
+            # expected to be, so run_selection_sha is unchanged from today.
+            if [ "$QUALIFICATION_MODE" = reaffirm ]; then
+              run_json="$PRIVATE_ROOT/load-run-$run_id.json"
+              install -d -m 0700 "$PRIVATE_ROOT"
+              gh api -H "Accept: application/vnd.github+json" \
+                "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$run_json"
+              chmod 0600 "$run_json"
+              run_selection_sha="$(jq -er '.head_sha' "$run_json")"
+              if [[ ! "$run_selection_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::Load run $run_id does not have a resolvable head SHA."
+                exit 1
+              fi
+            else
+              run_selection_sha="$EXPECTED_SHA"
+            fi
             content="$(
               ./eng/download-qualified-run-artifact.sh \
                 --repository "$GITHUB_REPOSITORY" \
@@ -248,7 +280,7 @@ jobs:
                 --workflow .github/workflows/workload-load-real-azure.yml \
                 --event workflow_dispatch \
                 --profile "$PROFILE" \
-                --expected-sha "$EXPECTED_SHA" \
+                --expected-sha "$run_selection_sha" \
                 --expected-ref "$GITHUB_REF" \
                 --artifact-name "real-azure-workload-load-$PROFILE" \
                 --destination "$destination" \
