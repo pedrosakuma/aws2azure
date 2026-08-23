@@ -36,8 +36,14 @@ internal static class ConfigExampleValidator
         return violations;
     }
 
+    // JsonSchema.Net 9.x throws if the same $id is registered twice against
+    // the shared Global registry, and this method is invoked repeatedly
+    // (per-test and per-run) with the same schema, so build against a
+    // private registry each time to avoid a collision.
     private static JsonSchema LoadSchema(string repoRoot) =>
-        JsonSchema.FromText(File.ReadAllText(Path.Combine(repoRoot, "config.schema.json")));
+        JsonSchema.FromText(
+            File.ReadAllText(Path.Combine(repoRoot, "config.schema.json")),
+            new BuildOptions { SchemaRegistry = new SchemaRegistry() });
 
     private static IEnumerable<string> ValidateCommittedExamples(string repoRoot, JsonSchema schema)
     {
@@ -122,7 +128,9 @@ internal static class ConfigExampleValidator
 
     private static IEnumerable<string> DescribeErrors(JsonSchema schema, JsonNode? document)
     {
-        var result = schema.Evaluate(document, EvaluationOptions);
+        // JsonSchema.Net 9.x evaluates against JsonElement rather than JsonNode.
+        var element = JsonSerializer.SerializeToElement(document);
+        var result = schema.Evaluate(element, EvaluationOptions);
         if (result.IsValid)
         {
             yield break;
@@ -147,7 +155,7 @@ internal static class ConfigExampleValidator
     private static IEnumerable<EvaluationResults> Flatten(EvaluationResults result)
     {
         yield return result;
-        foreach (var detail in result.Details)
+        foreach (var detail in result.Details ?? [])
         {
             foreach (var nested in Flatten(detail))
             {
