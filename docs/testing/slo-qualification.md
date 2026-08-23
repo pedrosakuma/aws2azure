@@ -114,8 +114,23 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
   --trend-output artifacts/qualification/s3-basic-object-crud-trend.csv \
   --run-id "$GITHUB_RUN_ID" \
   --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --run-attempt "$GITHUB_RUN_ATTEMPT"
+  --run-attempt "$GITHUB_RUN_ATTEMPT" \
+  --expected-sha "$GITHUB_SHA" \
+  --qualification-mode promote
 ```
+
+`--expected-sha` is required and is checked, byte-for-byte, against the
+correctness candidate's `candidate.git_sha` (the load-evidence generator
+already enforces that every load run's `candidate.git_sha` matches the
+correctness candidate's, so this transitively covers both). `--qualification-mode`
+is optional and defaults to `promote`, matching current/default behavior
+exactly: the expected SHA is the commit the candidate was built from.
+`--qualification-mode reaffirm` re-validates an already-approved *historical*
+runtime instead (see `workload-load-real-azure.yml`'s `mode: reaffirm`); in
+that case `--expected-sha` must be the SHA recorded in the profile's approved-
+runtime ledger (`export-approved-runtime --profile <id> --output ledger.json`,
+then read `.record.runtime.source_sha`), not the current checkout's SHA. Any
+other `--qualification-mode` value fails closed.
 
 Every load evidence file represents one immutable GitHub Actions run/attempt
 and carries the exact candidate/config digests, region/SKU description, run

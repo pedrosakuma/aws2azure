@@ -1021,7 +1021,9 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
             or "--run-id"
             or "--run-url"
             or "--run-attempt"
-            or "--correctness-selection")
+            or "--correctness-selection"
+            or "--expected-sha"
+            or "--qualification-mode")
         {
             if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
             {
@@ -1046,7 +1048,8 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
         "--run-id",
         "--run-url",
         "--run-attempt",
-        "--correctness-selection"
+        "--correctness-selection",
+        "--expected-sha"
     };
     var missing = required.Where(option => !values.ContainsKey(option)).ToList();
     if (evidencePaths.Count == 0)
@@ -1068,6 +1071,12 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
         Console.Error.WriteLine("--run-attempt requires a positive integer.");
         return 1;
     }
+    // --qualification-mode distinguishes promote (default: the candidate was
+    // built from the commit under test, so --expected-sha is that commit) from
+    // reaffirm (the candidate is the already-approved historical runtime, so
+    // --expected-sha is the profile's approved-runtime ledger SHA instead) --
+    // see #803/#875/#877.
+    var qualificationMode = values.GetValueOrDefault("--qualification-mode", "promote");
 
     try
     {
@@ -1077,6 +1086,16 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
         if (candidateErrors.Count > 0)
         {
             WriteErrors("real-Azure correctness candidate", candidateErrors);
+            return 1;
+        }
+        var expectedShaErrors = SloQualificationValidator.ValidateExpectedCandidateSha(
+            candidate,
+            qualificationMode,
+            values["--expected-sha"],
+            values["--candidate"]);
+        if (expectedShaErrors.Count > 0)
+        {
+            WriteErrors("real-Azure correctness candidate", expectedShaErrors);
             return 1;
         }
         var policy = WorkloadQualificationPolicyLoader.Load(values["--policy"]);

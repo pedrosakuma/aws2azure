@@ -3,6 +3,16 @@ name: qualification-real-azure
 # This workflow only evaluates immutable evidence produced by separate real-Azure
 # correctness and production-shaped load runs. It never consumes emulator
 # baselines or the specialized perf-real-azure A/B artifacts.
+#
+# mode: promote (default) qualifies a genuinely new candidate/load evidence
+# built from the commit currently checked out; the correctness candidate and
+# every piece of load evidence must carry that exact SHA (embedded_sha ==
+# $GITHUB_SHA). mode: reaffirm renews evidence freshness for an
+# already-approved *historical* runtime instead (see workload-load-real-azure.yml's
+# reaffirm mode, #803/#875): the expected SHA is resolved from the profile's
+# approved-runtime ledger via `export-approved-runtime`, not from the current
+# checkout, and every input (correctness candidate + all load evidence) must
+# carry that same historical SHA -- see #877.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +27,14 @@ on:
           - dynamodb-single-partition-transactions
           - sqs-standard-messaging
           - kinesis-single-consumer-per-shard
+      mode:
+        description: promote a new candidate/load evidence, or reaffirm already-approved historical evidence
+        required: true
+        default: promote
+        type: choice
+        options:
+          - promote
+          - reaffirm
       correctness_run_id:
         description: integration-real-azure run containing the correctness candidate
         required: true
@@ -52,6 +70,7 @@ jobs:
       cancel-in-progress: false
     env:
       PROFILE: ${{ inputs.profile }}
+      QUALIFICATION_MODE: ${{ inputs.mode }}
       CORRECTNESS_RUN_ID: ${{ inputs.correctness_run_id }}
       CORRECTNESS_RUN_ATTEMPT: ${{ inputs.correctness_run_attempt }}
       LOAD_RUN_IDS: ${{ inputs.load_run_ids }}
@@ -75,6 +94,10 @@ jobs:
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
           set -euo pipefail
+          if [[ "$QUALIFICATION_MODE" != promote && "$QUALIFICATION_MODE" != reaffirm ]]; then
+            echo "::error::mode must be promote or reaffirm."
+            exit 1
+          fi
           if [[ ! "$CORRECTNESS_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::correctness_run_id must be a numeric GitHub Actions run id."
             exit 1
@@ -104,6 +127,39 @@ jobs:
           mkdir -p "$OUTPUT_ROOT"
           cp "$POLICY_PATH" "$OUTPUT_ROOT/policy.yaml"
 
+      - name: Resolve expected candidate SHA
+        id: expected_sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$QUALIFICATION_MODE" = reaffirm ]; then
+            # Reaffirmation certifies the profile's already-approved historical
+            # runtime, never the current checkout, so the expected SHA comes
+            # from the approved-runtime ledger -- the same mechanism
+            # workload-load-real-azure.yml's mode: reaffirm already uses (see
+            # eng/resolve-sealed-runtime.sh and #803/#875). This also fixes the
+            # single historical SHA that every downloaded artifact (correctness
+            # candidate + every load-evidence run) must carry: mixing an old SHA
+            # in one input with current HEAD in another cannot happen because
+            # they are all checked against this one resolved value below.
+            ledger="$PRIVATE_ROOT/approved-runtime-ledger.json"
+            install -d -m 0700 "$PRIVATE_ROOT"
+            dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
+              export-approved-runtime \
+              --profile "$PROFILE" \
+              --output "$ledger"
+            chmod 0600 "$ledger"
+            expected_sha="$(jq -er '.record.runtime.source_sha' "$ledger")"
+          else
+            expected_sha="$GITHUB_SHA"
+          fi
+          if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Resolved expected SHA is not a full Git SHA."
+            exit 1
+          fi
+          echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
+          echo "EXPECTED_SHA=$expected_sha" >> "$GITHUB_ENV"
+
       - name: Download correctness candidate
         shell: bash
         run: |
@@ -118,7 +174,7 @@ jobs:
               --workflow .github/workflows/integration-real-azure.yml \
               --event workflow_dispatch \
               --profile "$PROFILE" \
-              --expected-sha "$GITHUB_SHA" \
+              --expected-sha "$EXPECTED_SHA" \
               --expected-ref "$GITHUB_REF" \
               --artifact-name real-azure-conformance \
               --destination "$destination" \
@@ -143,8 +199,8 @@ jobs:
             exit 1
           fi
           embedded_sha="$(sed -n 's/^  git_sha: //p' "$candidate" | head -n 1 | tr -d '\"')"
-          if [ "$embedded_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::Correctness candidate SHA '$embedded_sha' does not match checked-out qualification SHA."
+          if [ "$embedded_sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Correctness candidate SHA '$embedded_sha' does not match the expected $QUALIFICATION_MODE SHA '$EXPECTED_SHA'."
             exit 1
           fi
           printf '%s\n' "$candidate" > "$EVIDENCE_ROOT/correctness-candidate-path.txt"
@@ -192,7 +248,7 @@ jobs:
                 --workflow .github/workflows/workload-load-real-azure.yml \
                 --event workflow_dispatch \
                 --profile "$PROFILE" \
-                --expected-sha "$GITHUB_SHA" \
+                --expected-sha "$EXPECTED_SHA" \
                 --expected-ref "$GITHUB_REF" \
                 --artifact-name "real-azure-workload-load-$PROFILE" \
                 --destination "$destination" \
@@ -216,9 +272,9 @@ jobs:
               exit 1
             fi
             embedded_sha="$(jq -r '.candidate.git_sha // empty' "${downloaded[0]}")"
-            mode="$(jq -r '.candidate.qualification_mode // empty' "${downloaded[0]}")"
-            if [ "$embedded_sha" != "$GITHUB_SHA" ] || [ "$mode" != sealed ]; then
-              echo "::error::Load evidence is not sealed evidence for the checked-out qualification SHA."
+            embedded_qualification_mode="$(jq -r '.candidate.qualification_mode // empty' "${downloaded[0]}")"
+            if [ "$embedded_sha" != "$EXPECTED_SHA" ] || [ "$embedded_qualification_mode" != sealed ]; then
+              echo "::error::Load evidence is not sealed evidence for the expected $QUALIFICATION_MODE SHA '$EXPECTED_SHA'."
               exit 1
             fi
             printf '%s\n' "${downloaded[0]}" >> "$evidence_paths"
@@ -252,6 +308,8 @@ jobs:
             --run-id "$GITHUB_RUN_ID"
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             --run-attempt "$GITHUB_RUN_ATTEMPT"
+            --expected-sha "$EXPECTED_SHA"
+            --qualification-mode "$QUALIFICATION_MODE"
           )
           exec 3< "$EVIDENCE_ROOT/load-selection-paths.txt"
           while IFS= read -r evidence && IFS= read -r selection <&3; do
@@ -279,6 +337,7 @@ jobs:
             echo "## Real-Azure workload qualification"
             echo
             echo "- Profile: \`$PROFILE\`"
+            echo "- Mode: \`$QUALIFICATION_MODE\`"
             echo "- Verdict: \`${verdict:-missing}\`"
             echo "- Evidence class: production-shaped real Azure"
             echo "- Emulator baseline consumed: no"
@@ -286,6 +345,7 @@ jobs:
             echo "- Policy: \`$POLICY_PATH\`"
             echo "- Correctness run: \`$CORRECTNESS_RUN_ID\`"
             echo "- Load runs: \`$LOAD_RUN_IDS\`"
+            echo "- Expected candidate SHA: \`$EXPECTED_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable qualification bundle
