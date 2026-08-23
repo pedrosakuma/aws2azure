@@ -36,6 +36,15 @@ internal static class SqsQueueTagStore
         public int? DelaySeconds { get; set; }
 
         public int? ReceiveMessageWaitTimeSeconds { get; set; }
+
+        /// <summary>
+        /// Unix-epoch-second deadline of the SQS <c>PurgeQueueInProgress</c>
+        /// 60-second cool-down, persisted in Service Bus
+        /// QueueDescription.UserMetadata so every proxy replica observes the
+        /// same window (see docs/gaps/sqs/PurgeQueue.yaml). Null means no
+        /// purge is currently cooling down.
+        /// </summary>
+        public long? PurgeCooldownUntilUnixSeconds { get; set; }
     }
 
     internal static bool TryParseTagQueueRequest(
@@ -162,6 +171,7 @@ internal static class SqsQueueTagStore
         {
             DelaySeconds = metadata.DelaySeconds,
             ReceiveMessageWaitTimeSeconds = metadata.ReceiveMessageWaitTimeSeconds,
+            PurgeCooldownUntilUnixSeconds = metadata.PurgeCooldownUntilUnixSeconds,
         };
         return clone;
     }
@@ -233,7 +243,7 @@ internal static class SqsQueueTagStore
         error = null;
         var offset = MetadataMagic.Length;
         var flags = raw[offset++];
-        if ((flags & 0xFC) != 0)
+        if ((flags & 0xF8) != 0)
         {
             return HandleMalformedMetadata(failOnForeignMetadata, out error);
         }
@@ -257,6 +267,17 @@ internal static class SqsQueueTagStore
             }
 
             metadata.ReceiveMessageWaitTimeSeconds = raw[offset++];
+        }
+
+        if ((flags & 0x04) != 0)
+        {
+            if (offset + 4 > raw.Length)
+            {
+                return HandleMalformedMetadata(failOnForeignMetadata, out error);
+            }
+
+            metadata.PurgeCooldownUntilUnixSeconds = BinaryPrimitives.ReadUInt32BigEndian(raw.AsSpan(offset, 4));
+            offset += 4;
         }
 
         if (offset >= raw.Length)
@@ -321,14 +342,17 @@ internal static class SqsQueueTagStore
     {
         if (metadata.Tags.Count == 0 &&
             metadata.DelaySeconds is null &&
-            metadata.ReceiveMessageWaitTimeSeconds is null)
+            metadata.ReceiveMessageWaitTimeSeconds is null &&
+            metadata.PurgeCooldownUntilUnixSeconds is null)
         {
             userMetadata = string.Empty;
             return true;
         }
 
         using var stream = new MemoryStream();
-        if (metadata.DelaySeconds is null && metadata.ReceiveMessageWaitTimeSeconds is null)
+        if (metadata.DelaySeconds is null &&
+            metadata.ReceiveMessageWaitTimeSeconds is null &&
+            metadata.PurgeCooldownUntilUnixSeconds is null)
         {
             stream.Write(LegacyMagic, 0, LegacyMagic.Length);
             stream.WriteByte((byte)metadata.Tags.Count);
@@ -339,6 +363,7 @@ internal static class SqsQueueTagStore
             byte flags = 0;
             if (metadata.DelaySeconds is not null) flags |= 0x01;
             if (metadata.ReceiveMessageWaitTimeSeconds is not null) flags |= 0x02;
+            if (metadata.PurgeCooldownUntilUnixSeconds is not null) flags |= 0x04;
             stream.WriteByte(flags);
             if (metadata.DelaySeconds is { } delay)
             {
@@ -349,6 +374,12 @@ internal static class SqsQueueTagStore
             if (metadata.ReceiveMessageWaitTimeSeconds is { } wait)
             {
                 stream.WriteByte((byte)wait);
+            }
+            if (metadata.PurgeCooldownUntilUnixSeconds is { } cooldownUntil)
+            {
+                Span<byte> cooldownBytes = stackalloc byte[4];
+                BinaryPrimitives.WriteUInt32BigEndian(cooldownBytes, checked((uint)cooldownUntil));
+                stream.Write(cooldownBytes);
             }
             stream.WriteByte((byte)metadata.Tags.Count);
         }
