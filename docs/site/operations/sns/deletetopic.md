@@ -3,9 +3,7 @@
 [← sns operation index](../../sns.md) · [Coverage matrix](../../coverage.md)
 
 - **Capability ID:** `operation:sns:deletetopic`
-- **Status:** 🟡 partial
-- **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
@@ -23,6 +21,7 @@ Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.
 - DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure.
 - FIFO topics can be deleted by their .fifo ARN names once they have been provisioned on the Service Bus-backed subset described in CreateTopic / Publish / PublishBatch.
 - Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone.
+- DeleteTopic parses the topic name out of the ARN with the same AWS-side pattern CreateTopic enforces at creation time; it does not re-apply CreateTopic's additional Azure naming check, because a topic that could not have been created here (due to that check) also could not appear in a client-supplied ARN.
 
 ## References
 
