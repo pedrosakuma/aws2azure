@@ -156,6 +156,7 @@
         "secretsmanager:DeleteSecret",
         "secretsmanager:DescribeSecret",
         "secretsmanager:GetSecretValue",
+        "secretsmanager:RestoreSecret",
         "secretsmanager:TagResource",
         "secretsmanager:UpdateSecret"
       ],

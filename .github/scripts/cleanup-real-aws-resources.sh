@@ -459,6 +459,36 @@ delete_secretsmanager_secret() {
       echo "SecretsManager secret $secret_arn is already absent."
       return 0
     fi
+
+    if grep -q 'InvalidRequestException' <<< "$error_output" &&
+       grep -qi 'scheduled for deletion' <<< "$error_output"; then
+      # A secret already in the pending-deletion state (e.g. reaped via
+      # --include-planned-deletion, or deleted earlier without
+      # --force-delete-without-recovery) can't be force-deleted directly.
+      # Restore it out of the pending-deletion state first, then retry.
+      echo "SecretsManager secret $secret_arn is already scheduled for deletion; restoring before force-delete."
+      if ! error_output="$(aws secretsmanager restore-secret --secret-id "$secret_arn" 2>&1 > /dev/null)"; then
+        if grep -q 'ResourceNotFoundException' <<< "$error_output"; then
+          echo "SecretsManager secret $secret_arn is already absent."
+          return 0
+        fi
+        echo "::error::Could not restore SecretsManager secret $secret_arn out of pending deletion: $error_output"
+        return 1
+      fi
+
+      if ! error_output="$(aws secretsmanager delete-secret \
+        --secret-id "$secret_arn" \
+        --force-delete-without-recovery 2>&1 > /dev/null)"; then
+        if grep -q 'ResourceNotFoundException' <<< "$error_output"; then
+          echo "SecretsManager secret $secret_arn is already absent."
+          return 0
+        fi
+        echo "::error::Could not delete SecretsManager secret $secret_arn after restore: $error_output"
+        return 1
+      fi
+      return 0
+    fi
+
     echo "::error::Could not delete SecretsManager secret $secret_arn: $error_output"
     return 1
   fi
