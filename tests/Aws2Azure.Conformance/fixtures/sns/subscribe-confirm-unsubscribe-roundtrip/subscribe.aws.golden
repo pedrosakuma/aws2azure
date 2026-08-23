@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: sns:CreateTopic/Subscribe/GetSubscriptionAttributes/SetSubscriptionAttributes/GetSubscriptionAttributes/Unsubscribe/GetSubscriptionAttributes/DeleteTopic
-# captured: 2026-08-21T17:45:42.9277558+00:00
+# captured: 2026-08-23T19:46:40.3939924+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

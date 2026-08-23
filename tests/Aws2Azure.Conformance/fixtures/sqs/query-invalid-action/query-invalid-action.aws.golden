@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: sqs:InvalidAction
-# captured: 2026-08-21T17:45:00.7459840+00:00
+# captured: 2026-08-23T19:46:06.7026134+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 400

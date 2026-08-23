@@ -1,11 +1,11 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:CreateTable/UpdateTimeToLive/DescribeTimeToLive/DeleteTable
-# captured: 2026-08-21T17:46:48.0954756+00:00
+# captured: 2026-08-23T19:47:42.3871345+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
 [header] content-type: application/x-amz-json-1.0
-[header] x-amz-crc32: 840189574
+[header] x-amz-crc32: 4276122999
 [body:json-error]
   TableDescription: <nested>

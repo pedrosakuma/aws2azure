@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: kinesis:DescribeStreamSummary
-# captured: 2026-08-21T17:45:00.2899809+00:00
+# captured: 2026-08-23T19:46:03.4108539+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

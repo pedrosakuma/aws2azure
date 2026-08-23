@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PutObject/PutObjectTagging/GetObjectTagging/DeleteObjectTagging
-# captured: 2026-08-21T17:47:06.5882090+00:00
+# captured: 2026-08-23T19:47:58.3824017+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

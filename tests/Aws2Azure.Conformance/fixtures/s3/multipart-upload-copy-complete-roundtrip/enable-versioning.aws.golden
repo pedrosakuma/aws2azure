@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:CreateMultipartUpload/UploadPart/UploadPartCopy/ListParts/CompleteMultipartUpload/GetObject
-# captured: 2026-08-21T17:47:11.1866022+00:00
+# captured: 2026-08-23T19:48:01.8487518+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

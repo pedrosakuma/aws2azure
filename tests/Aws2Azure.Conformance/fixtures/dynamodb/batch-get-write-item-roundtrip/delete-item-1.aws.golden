@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:BatchWriteItem/BatchGetItem
-# captured: 2026-08-21T17:46:12.8515235+00:00
+# captured: 2026-08-23T19:47:07.3466799+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

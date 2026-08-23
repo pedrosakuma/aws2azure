@@ -1,12 +1,12 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:ListObjects
-# captured: 2026-08-21T17:47:25.7755104+00:00
+# captured: 2026-08-23T19:48:12.7236759+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 204
 [header] x-amz-delete-marker: true
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
-[header] x-amz-version-id: 5Uwvmqd0m21aquN9GlMwgM_UjDh.CrMV
+[header] x-amz-version-id: Sa2EuKr3dCAcOg.SLfZCRncbgFjphSsY
 [body:empty]

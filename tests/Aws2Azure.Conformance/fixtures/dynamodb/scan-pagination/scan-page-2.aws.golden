@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: dynamodb:PutItem/Scan/DeleteItem
-# captured: 2026-08-21T17:46:01.6031283+00:00
+# captured: 2026-08-23T19:46:57.0723475+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200

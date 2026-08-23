@@ -1,7 +1,7 @@
 # aws2azure conformance golden
 # source: aws
 # operation: s3:PutObject/GetObject/DeleteObject
-# captured: 2026-08-21T17:47:01.4733081+00:00
+# captured: 2026-08-23T19:47:54.4874042+00:00
 # note: Captured from real AWS by capture-real-aws.yml
 # ---
 HTTP 200
@@ -9,6 +9,6 @@ HTTP 200
 [header] x-amz-id-2: <MASKED>
 [header] x-amz-request-id: <MASKED>
 [header] x-amz-server-side-encryption: AES256
-[header] x-amz-version-id: Oer1ajzK2mLjOEEo9ZiI_Geejt80NW7l
+[header] x-amz-version-id: 60HzrQFVCcBT950s6oBOkuLSK150CNdt
 [body:opaque]
   (raw): aws2azure conformance roundtrip payload
