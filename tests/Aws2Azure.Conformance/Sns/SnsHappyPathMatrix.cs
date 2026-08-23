@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Xml.Linq;
 using Aws2Azure.Conformance.Cases;
 using Aws2Azure.Conformance.S3;
 
@@ -293,10 +294,8 @@ public static class SnsHappyPathMatrix
                         new("Protocol", "sqs"),
                         new("Endpoint", endpoint),
                     ])),
-                    new ConformanceRequestStep("list-subscriptions", _ => BuildRequest(context, [
-                        new("Action", "ListSubscriptions"),
-                        new("Version", "2010-03-31"),
-                    ])),
+                    new ConformanceRequestStep("list-subscriptions", (state, cancellationToken) =>
+                        BuildListSubscriptionsRequestAsync(context, state, cancellationToken)),
                     new ConformanceRequestStep("list-subscriptions-by-topic", state => BuildRequest(context, [
                         new("Action", "ListSubscriptionsByTopic"),
                         new("Version", "2010-03-31"),
@@ -314,6 +313,93 @@ public static class SnsHappyPathMatrix
                     ])),
                 ], Tier1SkipReason));
             });
+
+    // Real AWS's account-wide ListSubscriptions is paginated at a fixed
+    // (undocumented, observed ~100-item) page size, and unlike the topic-
+    // scoped ListSubscriptionsByTopic, the account can accumulate many
+    // subscriptions from unrelated topics/prior runs. A conformance account
+    // that has done so can see the subscription just created here land on a
+    // later page than the first — real AWS can even return a page with an
+    // empty <Subscriptions/> element while still returning a NextToken (see
+    // run 32659678591). Rather than asserting only against the first page
+    // (which only ever happened to work when the account had few
+    // subscriptions), follow NextToken until the just-created subscription's
+    // ARN is found or pagination is exhausted, bounded so a genuinely
+    // missing subscription still fails the case instead of looping forever.
+    // This performs its own real HTTP round trips to decide which page to
+    // request; the returned (unsent) HttpRequestMessage is then sent again by
+    // the harness for the actual golden capture/assertion, so the golden
+    // fixture still reflects one real request/response pair, same as every
+    // other step.
+    private const int MaxListSubscriptionsPages = 25;
+
+    private static async ValueTask<HttpRequestMessage> BuildListSubscriptionsRequestAsync(
+        ConformanceCaseContext context,
+        ConformanceExecutionState state,
+        CancellationToken cancellationToken)
+    {
+        var subscriptionArn = state.RequireXmlValue("subscribe", "SubscriptionArn");
+        string? nextToken = null;
+
+        using var probeClient = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        for (var page = 0; page < MaxListSubscriptionsPages; page++)
+        {
+            var parameters = BuildListSubscriptionsParameters(nextToken);
+            using var probeRequest = BuildRequest(context, parameters);
+            probeRequest.Headers.ConnectionClose = true;
+            using var probeResponse = await probeClient.SendAsync(
+                probeRequest,
+                HttpCompletionOption.ResponseContentRead,
+                cancellationToken).ConfigureAwait(false);
+            var body = probeResponse.Content is null
+                ? string.Empty
+                : await probeResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            if (probeResponse.StatusCode != System.Net.HttpStatusCode.OK)
+            {
+                // Let the harness's own request/response cycle observe and
+                // report the failure with its usual status/body diagnostics.
+                return BuildRequest(context, parameters);
+            }
+
+            var document = XDocument.Parse(body);
+            var foundSubscription = document.Descendants()
+                .Any(element => element.Name.LocalName == "SubscriptionArn" && element.Value == subscriptionArn);
+            var pageNextToken = document.Descendants()
+                .FirstOrDefault(element => element.Name.LocalName == "NextToken")?.Value;
+
+            if (foundSubscription || string.IsNullOrEmpty(pageNextToken))
+            {
+                // Either we found the subscription on this page, or there is
+                // no further page to follow - either way, this is the request
+                // the harness should (re-)send and assert against.
+                return BuildRequest(context, parameters);
+            }
+
+            nextToken = pageNextToken;
+        }
+
+        // Pagination exhausted without finding the subscription: return the
+        // final page's request so the harness's existing assertion failure
+        // reports the real (last-seen) body rather than silently retrying
+        // forever.
+        return BuildRequest(context, BuildListSubscriptionsParameters(nextToken));
+    }
+
+    private static List<KeyValuePair<string, string>> BuildListSubscriptionsParameters(string? nextToken)
+    {
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("Action", "ListSubscriptions"),
+            new("Version", "2010-03-31"),
+        };
+        if (!string.IsNullOrEmpty(nextToken))
+        {
+            parameters.Add(new("NextToken", nextToken));
+        }
+
+        return parameters;
+    }
 
     // Subscribe's sqs protocol only needs a syntactically valid SQS ARN; the
     // proxy stores the endpoint as opaque subscription metadata and never
