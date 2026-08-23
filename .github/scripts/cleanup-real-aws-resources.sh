@@ -447,6 +447,23 @@ delete_sqs_queue() {
   fi
 }
 
+delete_secretsmanager_secret() {
+  local secret_arn="$1"
+  local error_output
+
+  echo "Deleting SecretsManager secret $secret_arn."
+  if ! error_output="$(aws secretsmanager delete-secret \
+    --secret-id "$secret_arn" \
+    --force-delete-without-recovery 2>&1 > /dev/null)"; then
+    if grep -q 'ResourceNotFoundException' <<< "$error_output"; then
+      echo "SecretsManager secret $secret_arn is already absent."
+      return 0
+    fi
+    echo "::error::Could not delete SecretsManager secret $secret_arn: $error_output"
+    return 1
+  fi
+}
+
 reap_s3_buckets() {
   local buckets_json
   local bucket_name
@@ -553,11 +570,38 @@ reap_sqs_queues() {
   done < <(jq -r '.QueueUrls[]?' <<< "$queues_json")
 }
 
+reap_secretsmanager_secrets() {
+  local secrets_json
+  local entry
+  local secret_arn
+  local secret_name
+
+  secrets_json="$(aws secretsmanager list-secrets \
+    --filters "Key=name,Values=${name_prefix}" \
+    --include-planned-deletion \
+    --output json)"
+  while IFS= read -r entry; do
+    [ -z "$entry" ] && continue
+    secret_arn="$(jq -r '.arn' <<< "$entry")"
+    secret_name="$(jq -r '.name' <<< "$entry")"
+
+    if should_reap "SecretsManager secret $secret_name" "$secret_arn" "$secret_name"; then
+      if ! delete_secretsmanager_secret "$secret_arn"; then
+        echo "::error::Failed to delete SecretsManager secret $secret_arn."
+        failed=1
+      fi
+    elif [ "$last_inspection_failed" -ne 0 ]; then
+      failed=1
+    fi
+  done < <(jq -c --arg prefix "$name_prefix" '.SecretList[]? | select(.Name | startswith($prefix)) | {arn: .ARN, name: .Name}' <<< "$secrets_json")
+}
+
 reap_s3_buckets
 reap_dynamodb_tables
 reap_kinesis_streams
 reap_sns_topics
 reap_sqs_queues
+reap_secretsmanager_secrets
 
 if [ "$failed" -eq 0 ]; then
   echo "No AWS cleanup errors detected."
