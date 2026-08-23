@@ -15,8 +15,10 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 
 /// <summary>
 /// DynamoDB <c>TransactWriteItems</c> translated to one versioned Cosmos stored
-/// procedure transaction. Only Put, Delete, and ConditionCheck are supported,
-/// and every target must belong to one table and one logical partition.
+/// procedure transaction. Put, Delete, ConditionCheck, and Update (restricted
+/// to the SET/REMOVE-only, top-level, native-JSON-value subset validated by
+/// <see cref="SprocEligibility.TryValidateTransactionUpdate"/>) are supported;
+/// every target must belong to one table and one logical partition.
 /// </summary>
 internal static partial class TransactWriteItemsHandler
 {
@@ -35,6 +37,7 @@ internal static partial class TransactWriteItemsHandler
         Put,
         Delete,
         Check,
+        Update,
     }
 
     internal readonly record struct PreparedOp(
@@ -48,7 +51,9 @@ internal static partial class TransactWriteItemsHandler
         JsonRange Range,
         string Name,
         long BaseItemSize,
-        ConditionNode? Condition);
+        ConditionNode? Condition,
+        UpdateExpressionAst? Update,
+        bool ReturnOldOnFailure);
 
     private readonly record struct PreparedRequestOp(
         OpKind Kind,
@@ -57,7 +62,9 @@ internal static partial class TransactWriteItemsHandler
         string PartitionKey,
         int? TtlSeconds,
         OrderKeyField[]? OrderKeys,
-        ConditionNode? Condition);
+        ConditionNode? Condition,
+        UpdateExpressionAst? Update,
+        bool ReturnOldOnFailure);
 
     private readonly record struct PreparedIdempotency(
         string RecordId,
@@ -175,14 +182,7 @@ internal static partial class TransactWriteItemsHandler
             var hasPut = IsPresentObject(body, item.Put);
             var hasDelete = IsPresentObject(body, item.Delete);
             var hasCheck = IsPresentObject(body, item.ConditionCheck);
-            if (item.Update.IsPresent)
-            {
-                await RejectAsync(
-                    ctx,
-                    $"TransactItems[{index}].Update is not supported. Atomic UpdateExpression execution is outside the certified transaction subset; use Put to replace the full item.")
-                    .ConfigureAwait(false);
-                return;
-            }
+            var hasUpdate = IsPresentObject(body, item.Update);
             if (item.Put.IsPresent && !hasPut)
             {
                 await RejectAsync(
@@ -207,16 +207,25 @@ internal static partial class TransactWriteItemsHandler
                     .ConfigureAwait(false);
                 return;
             }
+            if (item.Update.IsPresent && !hasUpdate)
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Update must be an object.")
+                    .ConfigureAwait(false);
+                return;
+            }
 
             var present =
                 (item.Put.IsPresent ? 1 : 0)
                 + (item.Delete.IsPresent ? 1 : 0)
-                + (item.ConditionCheck.IsPresent ? 1 : 0);
+                + (item.ConditionCheck.IsPresent ? 1 : 0)
+                + (item.Update.IsPresent ? 1 : 0);
             if (present != 1)
             {
                 await RejectAsync(
                     ctx,
-                    $"TransactItems[{index}] must contain exactly one of Put, Delete, or ConditionCheck.")
+                    $"TransactItems[{index}] must contain exactly one of Put, Delete, ConditionCheck, or Update.")
                     .ConfigureAwait(false);
                 return;
             }
@@ -225,13 +234,17 @@ internal static partial class TransactWriteItemsHandler
                 ? OpKind.Put
                 : hasDelete
                     ? OpKind.Delete
-                    : OpKind.Check;
+                    : hasUpdate
+                        ? OpKind.Update
+                        : OpKind.Check;
             var range = hasPut
                 ? item.Put
                 : hasDelete
                     ? item.Delete
-                    : item.ConditionCheck;
-            var name = hasPut ? "Put" : hasDelete ? "Delete" : "ConditionCheck";
+                    : hasUpdate
+                        ? item.Update
+                        : item.ConditionCheck;
+            var name = hasPut ? "Put" : hasDelete ? "Delete" : hasUpdate ? "Update" : "ConditionCheck";
 
             using var operationDocument = JsonDocument.Parse(
                 body.AsMemory(range.Start, range.Length),
@@ -335,10 +348,27 @@ internal static partial class TransactWriteItemsHandler
                 return;
             }
 
+            if (!TryParseReturnValuesOnConditionCheckFailure(
+                    operation,
+                    out var returnOldOnFailure,
+                    out var rvoccfError))
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].{name}.{rvoccfError}")
+                    .ConfigureAwait(false);
+                return;
+            }
+
             ConditionNode? condition;
+            UpdateExpressionAst? update;
             try
             {
-                condition = ParseCondition(operation, out var conditionError);
+                condition = ParseConditionAndUpdate(
+                    operation,
+                    kind,
+                    out update,
+                    out var conditionError);
                 if (conditionError is not null)
                 {
                     await RejectAsync(ctx, conditionError).ConfigureAwait(false);
@@ -349,7 +379,7 @@ internal static partial class TransactWriteItemsHandler
             {
                 await RejectAsync(
                     ctx,
-                    $"Invalid ConditionExpression (offset {exception.Position}): {exception.Message}")
+                    $"Invalid {(kind == OpKind.Update ? "UpdateExpression" : "ConditionExpression")} (offset {exception.Position}): {exception.Message}")
                     .ConfigureAwait(false);
                 return;
             }
@@ -372,13 +402,26 @@ internal static partial class TransactWriteItemsHandler
                     .ConfigureAwait(false);
                 return;
             }
+            if (kind == OpKind.Update
+                && !SprocEligibility.TryValidateTransactionUpdate(
+                    update,
+                    out var updateEligibilityError))
+            {
+                await RejectAsync(
+                    ctx,
+                    $"TransactItems[{index}].Update.UpdateExpression is outside the supported transaction subset: {updateEligibilityError}")
+                    .ConfigureAwait(false);
+                return;
+            }
 
             inputs[index] = new InputOp(
                 kind,
                 range,
                 name,
                 baseItemSize,
-                condition);
+                condition,
+                update,
+                returnOldOnFailure);
         }
 
         if (sprocContext is not { IsSprocEnabled: true } || sprocContext.Manager is null)
@@ -422,6 +465,30 @@ internal static partial class TransactWriteItemsHandler
         }
 
         var metadata = metadataRead.Metadata!;
+        var hasUpdateOp = false;
+        foreach (var input in inputs)
+        {
+            if (input.Kind == OpKind.Update)
+            {
+                hasUpdateOp = true;
+                break;
+            }
+        }
+        if (hasUpdateOp
+            && (metadata.TimeToLive is { Enabled: true }
+                || metadata.NumericIndexSortKeys.Count > 0))
+        {
+            await RejectAsync(
+                ctx,
+                "TransactItems.Update is not supported for tables with TTL enabled or "
+                + "N-typed secondary-index sort keys: the transaction stored procedure "
+                + "cannot recompute the native ttl or the order-preserving index sort "
+                + "keys server-side. Use UpdateItem outside a transaction, or Put to "
+                + "replace the whole item.")
+                .ConfigureAwait(false);
+            return;
+        }
+
         var prepared = new PreparedRequestOp[inputs.Length];
         var seenTargets = new HashSet<string>(StringComparer.Ordinal);
         string? partitionKey = null;
@@ -571,7 +638,9 @@ internal static partial class TransactWriteItemsHandler
                 candidatePartitionKey,
                 ttlSeconds,
                 orderKeys,
-                input.Condition);
+                input.Condition,
+                input.Update,
+                input.ReturnOldOnFailure);
         }
 
         PreparedIdempotency? idempotency = null;
@@ -746,20 +815,16 @@ internal static partial class TransactWriteItemsHandler
                     $"uses legacy condition member '{property.Name}', which is not supported; use ConditionExpression.";
                 return false;
             }
-            if (property.Name == "ReturnValuesOnConditionCheckFailure")
-            {
-                error =
-                    "uses ReturnValuesOnConditionCheckFailure, which is not supported because cancellation items are not returned.";
-                return false;
-            }
 
             var allowed = property.Name is
                 "TableName"
                 or "ConditionExpression"
                 or "ExpressionAttributeNames"
                 or "ExpressionAttributeValues"
+                or "ReturnValuesOnConditionCheckFailure"
                 || (kind == OpKind.Put && property.Name == "Item")
-                || (kind != OpKind.Put && property.Name == "Key");
+                || (kind != OpKind.Put && property.Name == "Key")
+                || (kind == OpKind.Update && property.Name == "UpdateExpression");
             if (!allowed)
             {
                 error = $"contains unsupported member '{property.Name}'.";
@@ -771,11 +836,47 @@ internal static partial class TransactWriteItemsHandler
         return true;
     }
 
-    private static ConditionNode? ParseCondition(
+    private static bool TryParseReturnValuesOnConditionCheckFailure(
         JsonElement operation,
+        out bool returnOldOnFailure,
+        out string? error)
+    {
+        returnOldOnFailure = false;
+        error = null;
+        if (!operation.TryGetProperty(
+                "ReturnValuesOnConditionCheckFailure",
+                out var element))
+        {
+            return true;
+        }
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            error = "ReturnValuesOnConditionCheckFailure must be a string.";
+            return false;
+        }
+        var raw = element.GetString();
+        switch (raw)
+        {
+            case "NONE":
+                return true;
+            case "ALL_OLD":
+                returnOldOnFailure = true;
+                return true;
+            default:
+                error =
+                    $"ReturnValuesOnConditionCheckFailure='{raw}' must be NONE or ALL_OLD.";
+                return false;
+        }
+    }
+
+    private static ConditionNode? ParseConditionAndUpdate(
+        JsonElement operation,
+        OpKind kind,
+        out UpdateExpressionAst? update,
         out string? error)
     {
         error = null;
+        update = null;
         string? expression = null;
         var hasExpression = operation.TryGetProperty(
             "ConditionExpression",
@@ -852,6 +953,39 @@ internal static partial class TransactWriteItemsHandler
             expressionValues = values;
         }
 
+        // Update: parses UpdateExpression against the same
+        // ExpressionAttributeNames/Values pool as ConditionExpression, and,
+        // matching UpdateItemHandler's precedent, does not enforce an
+        // unused-placeholder check (a placeholder may be consumed by either
+        // expression and UpdateExpressionParser does not report usage).
+        if (kind == OpKind.Update)
+        {
+            if (!operation.TryGetProperty(
+                    "UpdateExpression",
+                    out var updateExpressionElement)
+                || updateExpressionElement.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(updateExpressionElement.GetString()))
+            {
+                error = "UpdateExpression is required and must be a non-empty string.";
+                return null;
+            }
+
+            update = UpdateExpressionParser.Parse(
+                updateExpressionElement.GetString()!,
+                names,
+                expressionValues);
+
+            if (!hasExpression)
+            {
+                return null;
+            }
+
+            return ConditionExpressionParser.ParseWithUsage(
+                expression!,
+                names,
+                expressionValues).Node;
+        }
+
         if (!hasExpression)
         {
             if (names is { Count: > 0 } || expressionValues is { Count: > 0 })
@@ -906,6 +1040,14 @@ internal static partial class TransactWriteItemsHandler
         return false;
     }
 
+    private static string OpTypeToken(OpKind kind) => kind switch
+    {
+        OpKind.Put => "PUT",
+        OpKind.Delete => "DELETE",
+        OpKind.Update => "UPDATE",
+        _ => "CHECK",
+    };
+
     private static BoundedPooledByteBufferWriter BuildTransactRequestParamsBody(
         string tableName,
         byte[] body,
@@ -947,25 +1089,14 @@ internal static partial class TransactWriteItemsHandler
                         fingerprint.WriteByte((byte)',');
                     }
                     fingerprint.WriteRaw("{\"type\":"u8);
-                    fingerprint.WriteJsonString(
-                        operation.Kind switch
-                        {
-                            OpKind.Put => "PUT",
-                            OpKind.Delete => "DELETE",
-                            _ => "CHECK",
-                        });
+                    fingerprint.WriteJsonString(OpTypeToken(operation.Kind));
                     fingerprint.WriteRaw(",\"id\":"u8);
                     fingerprint.WriteJsonString(operation.Id);
                 }
 
-                WriteRaw(
-                    buffer,
-                    operation.Kind switch
-                    {
-                        OpKind.Put => "{\"type\":\"PUT\",\"id\":"u8,
-                        OpKind.Delete => "{\"type\":\"DELETE\",\"id\":"u8,
-                        _ => "{\"type\":\"CHECK\",\"id\":"u8,
-                    });
+                WriteRaw(buffer, "{\"type\":"u8);
+                WriteJsonString(buffer, OpTypeToken(operation.Kind));
+                WriteRaw(buffer, ",\"id\":"u8);
                 WriteJsonString(buffer, operation.Id);
                 if (operation.Kind == OpKind.Put)
                 {
@@ -988,6 +1119,33 @@ internal static partial class TransactWriteItemsHandler
                             operationDocument.RootElement.GetProperty("Item"));
                     }
                 }
+                else if (operation.Kind == OpKind.Update)
+                {
+                    using var operationDocument = JsonDocument.Parse(
+                        body.AsMemory(operation.Range.Start, operation.Range.Length),
+                        TransactItemParseOptions);
+                    WriteRaw(buffer, ",\"keyDoc\":"u8);
+                    InferredAttributeStorage.WriteCosmosDocument(
+                        buffer,
+                        operation.Id,
+                        operation.PartitionKey,
+                        operationDocument.RootElement.GetProperty("Key"));
+                    WriteRaw(buffer, ",\"update\":"u8);
+                    SprocAstSerializer.WriteUpdate(buffer, operation.Update!);
+                    if (fingerprint is not null)
+                    {
+                        fingerprint.WriteRaw(",\"update\":"u8);
+                        WriteCanonicalUpdate(fingerprint, operation.Update!);
+                    }
+                }
+
+                WriteRaw(buffer, ",\"rvoccf\":"u8);
+                fingerprint?.WriteRaw(",\"rvoccf\":"u8);
+                WriteRaw(
+                    buffer,
+                    operation.ReturnOldOnFailure ? "true"u8 : "false"u8);
+                fingerprint?.WriteRaw(
+                    operation.ReturnOldOnFailure ? "true"u8 : "false"u8);
 
                 WriteRaw(buffer, ",\"condition\":"u8);
                 fingerprint?.WriteRaw(",\"condition\":"u8);
@@ -1146,10 +1304,12 @@ internal static partial class TransactWriteItemsHandler
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
+    private readonly record struct CancellationReason(string Code, JsonElement? Item);
+
     private static bool TryReadCancellationReasons(
         string? body,
         PreparedRequestOp[] operations,
-        out string[]? reasons)
+        out CancellationReason[]? reasons)
     {
         reasons = null;
         if (string.IsNullOrEmpty(body))
@@ -1170,7 +1330,7 @@ internal static partial class TransactWriteItemsHandler
                 return false;
             }
 
-            var parsed = new string[operations.Length];
+            var parsed = new CancellationReason[operations.Length];
             var index = 0;
             var failed = false;
             foreach (var reason in reasonArray.EnumerateArray())
@@ -1187,6 +1347,7 @@ internal static partial class TransactWriteItemsHandler
                 {
                     return false;
                 }
+                JsonElement? item = null;
                 if (code == "ConditionalCheckFailed")
                 {
                     if (operations[index].Condition is null)
@@ -1194,8 +1355,21 @@ internal static partial class TransactWriteItemsHandler
                         return false;
                     }
                     failed = true;
+
+                    // Only trust a returned pre-write snapshot when this
+                    // operation actually requested
+                    // ReturnValuesOnConditionCheckFailure=ALL_OLD — the sproc
+                    // is expected to gate `item` on `op.rvoccf`, but treat the
+                    // C# side as the source of truth rather than the
+                    // untrusted response body.
+                    if (operations[index].ReturnOldOnFailure
+                        && reason.TryGetProperty("item", out var itemElement)
+                        && itemElement.ValueKind == JsonValueKind.Object)
+                    {
+                        item = ConvertCosmosDocToDynamoDbItem(itemElement);
+                    }
                 }
-                parsed[index] = code;
+                parsed[index] = new CancellationReason(code!, item);
                 index++;
             }
             if (!failed)
@@ -1212,9 +1386,29 @@ internal static partial class TransactWriteItemsHandler
         }
     }
 
+    /// <summary>
+    /// Converts a raw Cosmos-shaped document snapshot (as returned by the
+    /// <c>atomicTransactWrite_v6</c> stored procedure for a
+    /// ReturnValuesOnConditionCheckFailure=ALL_OLD cancellation reason) into
+    /// the DynamoDB attribute-value shape, reusing the same
+    /// <see cref="InferredAttributeStorage.WriteGetItemEnvelope"/> logic the
+    /// GetItem path uses so the two never diverge.
+    /// </summary>
+    private static JsonElement ConvertCosmosDocToDynamoDbItem(JsonElement cosmosDoc)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            InferredAttributeStorage.WriteGetItemEnvelope(writer, cosmosDoc);
+        }
+        stream.Position = 0;
+        using var document = JsonDocument.Parse(stream);
+        return document.RootElement.GetProperty("Item").Clone();
+    }
+
     private static async Task WriteTransactionCanceledAsync(
         HttpContext ctx,
-        string[] reasons)
+        CancellationReason[] reasons)
     {
         using var stream = new MemoryStream();
         await using (var writer = new Utf8JsonWriter(stream))
@@ -1226,19 +1420,24 @@ internal static partial class TransactWriteItemsHandler
             writer.WriteString(
                 "Message",
                 "Transaction cancelled, please refer cancellation reasons for specific reasons ["
-                + string.Join(", ", reasons)
+                + string.Join(", ", Array.ConvertAll(reasons, r => r.Code))
                 + "].");
             writer.WritePropertyName("CancellationReasons");
             writer.WriteStartArray();
-            foreach (var code in reasons)
+            foreach (var reason in reasons)
             {
                 writer.WriteStartObject();
-                writer.WriteString("Code", code);
-                if (code == "ConditionalCheckFailed")
+                writer.WriteString("Code", reason.Code);
+                if (reason.Code == "ConditionalCheckFailed")
                 {
                     writer.WriteString(
                         "Message",
                         "The conditional request failed");
+                }
+                if (reason.Item is { } item)
+                {
+                    writer.WritePropertyName("Item");
+                    item.WriteTo(writer);
                 }
                 writer.WriteEndObject();
             }
@@ -1251,6 +1450,7 @@ internal static partial class TransactWriteItemsHandler
         var bytes = stream.ToArray();
         await ctx.Response.Body.WriteAsync(bytes).ConfigureAwait(false);
     }
+
 
     private static Task RejectAsync(HttpContext ctx, string message)
         => CosmosOpsShared.WriteErrorAsync(

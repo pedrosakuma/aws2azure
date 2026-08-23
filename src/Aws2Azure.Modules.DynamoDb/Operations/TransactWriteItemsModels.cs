@@ -13,9 +13,13 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 /// request retains no per-action DOM (up to 100 actions/call), and the handler
 /// opens a short-lived pooled <see cref="JsonDocument"/> over the present
 /// envelope to validate/extract the inner DynamoDB fields. <c>Update</c> is
-/// captured only to emit a clear <c>ValidationException</c> — atomic
-/// <c>Update</c> within a transaction is a documented gap (see
-/// <c>docs/gaps/dynamodb/TransactWriteItems.yaml</c>).
+/// parsed and executed atomically alongside <c>Put</c>/<c>Delete</c>/
+/// <c>ConditionCheck</c> via the <c>atomicTransactWrite_v6</c> stored
+/// procedure, restricted to the SET/REMOVE-only, top-level-attribute,
+/// native-JSON-value subset validated by
+/// <see cref="Internal.SprocEligibility.TryValidateTransactionUpdate"/> (see
+/// <c>docs/gaps/dynamodb/TransactWriteItems.yaml</c> for the exact scope and
+/// verification status).
 /// </summary>
 internal sealed class TransactWriteItemsRequest
 {

@@ -559,14 +559,21 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
     /// <list type="number">
     ///   <item>Read every target document.</item>
     ///   <item>Evaluate every operation's condition. If ANY fails, emit
-    ///   <c>{success:false, reasons:[...]}</c> and perform NO writes.</item>
+    ///   <c>{success:false, reasons:[...]}</c> (attaching a stripped pre-write
+    ///   snapshot under <c>item</c> for any failed operation that requested
+    ///   <c>ReturnValuesOnConditionCheckFailure=ALL_OLD</c>) and perform NO
+    ///   writes.</item>
     ///   <item>Otherwise perform every write (PUT=upsert, DELETE=delete,
-    ///   CHECK=no-op). A write error throws, aborting the whole sproc
-    ///   transaction so nothing partial is committed.</item>
+    ///   UPDATE=apply SET/REMOVE to the read snapshot then upsert, CHECK=no-op).
+    ///   A write error throws, aborting the whole sproc transaction so nothing
+    ///   partial is committed.</item>
     /// </list>
-    /// Only the condition evaluator is shared with <c>atomicWrite</c>; there is
-    /// deliberately no update executor here — atomic <c>Update</c> is rejected
-    /// by the handler and documented as a gap.
+    /// The condition evaluator is shared with <c>atomicWrite</c>. The update
+    /// executor (<c>applyUpdate</c>/<c>resolveSetValue</c>) is a verbatim copy
+    /// of the one in the frozen <c>atomicWrite_v2</c> body: only the SET/REMOVE
+    /// subset the C# <see cref="Internal.SprocEligibility"/> gate admits ever
+    /// reaches this sproc (no ADD/DELETE clause, top-level non-reserved paths
+    /// only, native-JSON literal values only — see #798).
     /// </summary>
     internal static readonly string TransactSprocBody = """
 function atomicTransactWrite(operations, idempotency) {
@@ -707,12 +714,30 @@ function atomicTransactWrite(operations, idempotency) {
         var reasons = new Array(n);
         var anyFail = false;
         for (var i = 0; i < n; i++) {
-            var cond = operations[i].condition;
+            var op = operations[i];
+            var cond = op.condition;
             var pass;
             try {
                 pass = (cond === null || cond === undefined)
                     ? true
                     : evaluateCondition(cond, existing[i]);
+                // Dry-run the update executor now, against a throwaway clone,
+                // while it is still safe to abort cleanly: a Cosmos stored
+                // procedure commits whatever writes already ran if the script
+                // returns without throwing, so a runtime type error surfacing
+                // mid-way through writeNext (after earlier operations already
+                // upserted/deleted) could not be rolled back by setBody alone.
+                // Validating every UPDATE operand here, before any write in
+                // this transaction has been issued, keeps a bad operand
+                // (e.g. SET n = n + :x where the stored n is not numeric) a
+                // clean ValidationException instead of a partial commit.
+                if (pass && op.type === 'UPDATE') {
+                    var dryBase = existing[i] ? cloneForReturn(existing[i]) : {};
+                    if (op.keyDoc) {
+                        for (var dk in op.keyDoc) dryBase[dk] = op.keyDoc[dk];
+                    }
+                    applyUpdate(dryBase, op.update);
+                }
             } catch (err) {
                 if (err
                     && err.a2aValidationError === true
@@ -721,7 +746,7 @@ function atomicTransactWrite(operations, idempotency) {
                         success: false,
                         validationError: {
                             code: 'ValidationException',
-                            message: 'TransactItems[' + i + '] condition validation failed: '
+                            message: 'TransactItems[' + i + '] validation failed: '
                                 + err.message
                         }
                     });
@@ -729,8 +754,14 @@ function atomicTransactWrite(operations, idempotency) {
                 }
                 throw err;
             }
-            reasons[i] = pass ? { code: 'None' } : { code: 'ConditionalCheckFailed' };
-            if (!pass) anyFail = true;
+            if (pass) {
+                reasons[i] = { code: 'None' };
+            } else {
+                reasons[i] = (op.rvoccf && existing[i])
+                    ? { code: 'ConditionalCheckFailed', item: cloneForReturn(existing[i]) }
+                    : { code: 'ConditionalCheckFailed' };
+                anyFail = true;
+            }
         }
         if (anyFail) {
             completeWithIdempotency(
@@ -771,6 +802,29 @@ function atomicTransactWrite(operations, idempotency) {
             } else {
                 writeNext(i + 1);
             }
+        } else if (op.type === 'UPDATE') {
+            // baseDoc starts from the read snapshot (upsert semantics: an
+            // absent item is created from an empty map), stripped of Cosmos
+            // system fields so they are neither re-upserted nor visible to
+            // the update executor. Key attributes are merged in before AND
+            // re-stamped after the update executes, mirroring the
+            // GET->apply->PUT fallback's ReinforceKeyAttributes behavior: a
+            // SET/REMOVE that touches a key attribute is silently overwritten
+            // rather than rejected.
+            var baseDoc = existing[i] ? existing[i] : {};
+            stripSystemFields(baseDoc);
+            if (op.keyDoc) {
+                for (var kk in op.keyDoc) baseDoc[kk] = op.keyDoc[kk];
+            }
+            var updatedDoc = applyUpdate(baseDoc, op.update);
+            if (op.keyDoc) {
+                for (var kk2 in op.keyDoc) updatedDoc[kk2] = op.keyDoc[kk2];
+            }
+            var accU = coll.upsertDocument(selfLink, updatedDoc, function(err) {
+                if (err) throw err;
+                writeNext(i + 1);
+            });
+            if (!accU) throw new Error('upsertDocument not accepted at operation ' + i);
         } else {
             // CHECK: read-only, no write.
             writeNext(i + 1);
@@ -800,6 +854,103 @@ function atomicTransactWrite(operations, idempotency) {
             complete();
         });
         if (!accepted) throw new Error('idempotency upsertDocument not accepted');
+    }
+
+    // Removes Cosmos-generated system fields from a queried document so they
+    // are not re-written or surfaced as DynamoDB attributes. Mutates in place
+    // (mirrors atomicWrite_v2's stripSystemFields).
+    function stripSystemFields(d) {
+        delete d._rid;
+        delete d._self;
+        delete d._etag;
+        delete d._ts;
+        delete d._attachments;
+        delete d._lsn;
+        delete d._metadata;
+    }
+
+    // Deep-clones a read snapshot for ReturnValuesOnConditionCheckFailure=
+    // ALL_OLD, stripping Cosmos system fields, WITHOUT mutating the original
+    // (which a later operation in the same batch may still need, e.g. its own
+    // DELETE self-link).
+    function cloneForReturn(doc) {
+        var clone = JSON.parse(JSON.stringify(doc));
+        stripSystemFields(clone);
+        return clone;
+    }
+
+    // Update executor: applies the UpdateExpression AST (SET/REMOVE only —
+    // SprocEligibility.IsUpdateEligible rejects ADD/DELETE and any path/value
+    // shape this cannot faithfully execute) to a document. Verbatim copy of
+    // atomicWrite_v2's applyUpdate/resolveSetValue/setAttr/removeAttr.
+    function applyUpdate(doc, updateAst) {
+        if (!updateAst) return doc;
+
+        if (updateAst.set) {
+            for (var i = 0; i < updateAst.set.length; i++) {
+                var s = updateAst.set[i];
+                setAttr(doc, s.path, resolveSetValue(doc, s.value));
+            }
+        }
+
+        if (updateAst.remove) {
+            for (var i = 0; i < updateAst.remove.length; i++) {
+                removeAttr(doc, updateAst.remove[i]);
+            }
+        }
+
+        return doc;
+    }
+
+    // Resolves a tagged SET-value operand ($k discriminator from
+    // SprocAstSerializer.WriteValueOperand) against the current document.
+    function resolveSetValue(doc, v) {
+        if (v === null || typeof v !== 'object' || !('$k' in v)) return v;
+        switch (v.$k) {
+            case 'lit':
+                return v.v;
+            case 'path':
+                return getAttrValue(doc, v.p);
+            case 'op':
+                var l = resolveSetValue(doc, v.l);
+                var r = resolveSetValue(doc, v.r);
+                if (typeof l !== 'number' || typeof r !== 'number') {
+                    validationError(
+                        'Incorrect operand type for update arithmetic; both operands must be numbers.');
+                }
+                return v.o === '+' ? (l + r) : (l - r);
+            case 'ifne':
+                var cur = getAttrValue(doc, v.p);
+                return (cur !== undefined && cur !== null) ? cur : resolveSetValue(doc, v.f);
+            case 'lap':
+                var ll = resolveSetValue(doc, v.l);
+                if (!Array.isArray(ll)) ll = [];
+                var rr = resolveSetValue(doc, v.r);
+                if (!Array.isArray(rr)) rr = [];
+                return ll.concat(rr);
+            default:
+                validationError('Unsupported update value operand: ' + v.$k);
+        }
+    }
+
+    function setAttr(doc, path, value) {
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length - 1; i++) {
+            if (!cur[parts[i]]) cur[parts[i]] = {};
+            cur = cur[parts[i]];
+        }
+        cur[parts[parts.length - 1]] = value;
+    }
+
+    function removeAttr(doc, path) {
+        var parts = path.split('.');
+        var cur = doc;
+        for (var i = 0; i < parts.length - 1; i++) {
+            if (!cur[parts[i]]) return;
+            cur = cur[parts[i]];
+        }
+        delete cur[parts[parts.length - 1]];
     }
 
 """ + TransactionConditionEvaluatorJs + """

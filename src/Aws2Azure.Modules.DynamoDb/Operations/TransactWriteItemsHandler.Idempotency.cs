@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Aws2Azure.Modules.DynamoDb.Expressions;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Persistence;
 
@@ -43,6 +44,125 @@ internal static partial class TransactWriteItemsHandler
             .Replace('/', '_');
         return DynamoDbPersistedFormatContract.TransactionIdempotencyRecordIdPrefix
             + encoded;
+    }
+
+    // Canonicalizes the parsed UpdateExpression AST (SET/REMOVE only — the
+    // only clauses SprocEligibility.TryValidateTransactionUpdate admits) into
+    // the idempotency fingerprint hash. Paths use their display form (stable,
+    // already alias-resolved) and literal operands reuse
+    // WriteCanonicalAttributeValue so a JSON-encoding-order variance in
+    // ExpressionAttributeValues does not change the fingerprint.
+    private static void WriteCanonicalUpdate(
+        CanonicalFingerprintWriter writer,
+        UpdateExpressionAst ast)
+    {
+        writer.WriteByte((byte)'{');
+        var wrote = false;
+        if (ast.Set is { Actions.Count: > 0 })
+        {
+            writer.WriteRaw("\"set\":["u8);
+            for (var i = 0; i < ast.Set.Actions.Count; i++)
+            {
+                if (i > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                var action = ast.Set.Actions[i];
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("p");
+                writer.WriteByte((byte)':');
+                writer.WriteJsonString(action.Path.Display);
+                writer.WriteByte((byte)',');
+                writer.WriteJsonString("v");
+                writer.WriteByte((byte)':');
+                WriteCanonicalUpdateOperand(writer, action.Value);
+                writer.WriteByte((byte)'}');
+            }
+            writer.WriteByte((byte)']');
+            wrote = true;
+        }
+        if (ast.Remove is { Paths.Count: > 0 })
+        {
+            if (wrote)
+            {
+                writer.WriteByte((byte)',');
+            }
+            writer.WriteRaw("\"remove\":["u8);
+            for (var i = 0; i < ast.Remove.Paths.Count; i++)
+            {
+                if (i > 0)
+                {
+                    writer.WriteByte((byte)',');
+                }
+                writer.WriteJsonString(ast.Remove.Paths[i].Display);
+            }
+            writer.WriteByte((byte)']');
+        }
+        writer.WriteByte((byte)'}');
+    }
+
+    private static void WriteCanonicalUpdateOperand(
+        CanonicalFingerprintWriter writer,
+        ValueOperand operand)
+    {
+        switch (operand)
+        {
+            case ValueRefOperand valueRef:
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("lit");
+                writer.WriteByte((byte)':');
+                WriteCanonicalAttributeValue(writer, valueRef.Value);
+                writer.WriteByte((byte)'}');
+                break;
+            case PathOperand pathOperand:
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("path");
+                writer.WriteByte((byte)':');
+                writer.WriteJsonString(pathOperand.Path.Display);
+                writer.WriteByte((byte)'}');
+                break;
+            case ArithmeticOperand arithmetic:
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("op");
+                writer.WriteByte((byte)':');
+                writer.WriteJsonString(
+                    arithmetic.Op == ArithmeticOp.Add ? "+" : "-");
+                writer.WriteByte((byte)',');
+                writer.WriteJsonString("l");
+                writer.WriteByte((byte)':');
+                WriteCanonicalUpdateOperand(writer, arithmetic.Left);
+                writer.WriteByte((byte)',');
+                writer.WriteJsonString("r");
+                writer.WriteByte((byte)':');
+                WriteCanonicalUpdateOperand(writer, arithmetic.Right);
+                writer.WriteByte((byte)'}');
+                break;
+            case IfNotExistsOperand ifNotExists:
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("ifne");
+                writer.WriteByte((byte)':');
+                writer.WriteJsonString(ifNotExists.Path.Display);
+                writer.WriteByte((byte)',');
+                writer.WriteJsonString("f");
+                writer.WriteByte((byte)':');
+                WriteCanonicalUpdateOperand(writer, ifNotExists.Fallback);
+                writer.WriteByte((byte)'}');
+                break;
+            case ListAppendOperand listAppend:
+                writer.WriteByte((byte)'{');
+                writer.WriteJsonString("lap");
+                writer.WriteByte((byte)':');
+                writer.WriteByte((byte)'[');
+                WriteCanonicalUpdateOperand(writer, listAppend.Left);
+                writer.WriteByte((byte)',');
+                WriteCanonicalUpdateOperand(writer, listAppend.Right);
+                writer.WriteByte((byte)']');
+                writer.WriteByte((byte)'}');
+                break;
+            default:
+                throw new ArgumentException(
+                    $"Unsupported update operand type '{operand.GetType().Name}'.");
+        }
     }
 
     private static void WriteCanonicalAttributeMap(
