@@ -1,6 +1,5 @@
 using Aws2Azure.Modules.S3.Errors;
 using Aws2Azure.Modules.S3.Xml;
-using Microsoft.AspNetCore.WebUtilities;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -8,10 +7,7 @@ namespace Aws2Azure.Modules.S3.Internal;
 /// Parses the <c>x-amz-tagging</c> request header used by <c>PutObject</c>
 /// and <c>CreateMultipartUpload</c> to set object tags at write time. The
 /// value is a URL-encoded query-string of <c>key=value</c> pairs (e.g.
-/// <c>"Project=Blue&amp;Team=Widget"</c>) — the same wire shape AWS SDKs use
-/// for a plain query string, so it is parsed with
-/// <see cref="QueryHelpers.ParseQuery"/> for consistency with the proxy's
-/// other query-string parsing (see <see cref="CopySourceParser"/>).
+/// <c>"Project=Blue&amp;Team=Widget"</c>).
 /// </summary>
 internal static class TaggingHeaderParser
 {
@@ -26,36 +22,56 @@ internal static class TaggingHeaderParser
             return (Array.Empty<S3XmlWriter.Tag>(), null);
         }
 
-        Dictionary<string, Microsoft.Extensions.Primitives.StringValues> parsed;
-        try
-        {
-            parsed = QueryHelpers.ParseQuery(headerValue.StartsWith('?') ? headerValue : "?" + headerValue);
-        }
-        catch (Exception)
-        {
-            return (null, S3ErrorMapping.InvalidArgument("The x-amz-tagging header value is malformed."));
-        }
-
-        if (parsed.Count > MaxTags)
+        // Parsed by hand rather than via QueryHelpers.ParseQuery: that helper
+        // groups keys with an ordinal-IGNORE-CASE comparer, which would
+        // silently merge two distinct, case-sensitive S3 tag keys (e.g.
+        // "Env" and "ENV" are different tags in S3) into one duplicate-key
+        // false-positive.
+        var pairs = headerValue.Split('&', StringSplitOptions.RemoveEmptyEntries);
+        if (pairs.Length > MaxTags)
         {
             return (null, S3ErrorMapping.InvalidArgument(
                 $"Object tag count exceeds the allowed maximum of {MaxTags}."));
         }
 
-        var tags = new List<S3XmlWriter.Tag>(parsed.Count);
-        foreach (var (key, values) in parsed)
+        var tags = new List<S3XmlWriter.Tag>(pairs.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var pair in pairs)
         {
-            // A repeated key in the query string (e.g. "a=1&a=2") surfaces
-            // as multiple StringValues entries under the same dictionary
-            // key — treat that the same as a duplicate <Tag> in the XML
-            // TagSet body used by PutObjectTagging.
-            if (values.Count > 1)
+            var eq = pair.IndexOf('=');
+            string rawKey, rawValue;
+            if (eq < 0)
+            {
+                rawKey = pair;
+                rawValue = string.Empty;
+            }
+            else
+            {
+                rawKey = pair[..eq];
+                rawValue = pair[(eq + 1)..];
+            }
+
+            string key, value;
+            try
+            {
+                // '+' means space in a query-string-encoded value (the same
+                // application/x-www-form-urlencoded convention AWS SDKs use
+                // when marshalling x-amz-tagging), so decode it explicitly —
+                // Uri.UnescapeDataString does not.
+                key = Uri.UnescapeDataString(rawKey.Replace('+', ' '));
+                value = Uri.UnescapeDataString(rawValue.Replace('+', ' '));
+            }
+            catch (Exception)
+            {
+                return (null, S3ErrorMapping.InvalidArgument("The x-amz-tagging header value is malformed."));
+            }
+
+            if (!seen.Add(key))
             {
                 return (null, S3ErrorMapping.InvalidArgument(
                     $"Duplicate tag key '{key}' in x-amz-tagging."));
             }
 
-            var value = values.Count == 1 ? values[0] ?? string.Empty : string.Empty;
             if (string.IsNullOrEmpty(key) || key.Length > MaxTagKeyLength || value.Length > MaxTagValueLength)
             {
                 return (null, S3ErrorMapping.InvalidArgument(
@@ -68,3 +84,4 @@ internal static class TaggingHeaderParser
         return (tags, null);
     }
 }
+

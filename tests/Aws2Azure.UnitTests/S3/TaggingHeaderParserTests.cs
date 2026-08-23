@@ -71,6 +71,20 @@ public class TaggingHeaderParserTests
     }
 
     [Fact]
+    public void Parse_treats_keys_differing_only_by_case_as_distinct_tags()
+    {
+        // S3 tag keys are case-sensitive: "Env" and "ENV" are two different
+        // tags, not a duplicate.
+        var (tags, error) = TaggingHeaderParser.Parse("Env=prod&ENV=staging");
+
+        Assert.Null(error);
+        Assert.NotNull(tags);
+        Assert.Equal(2, tags!.Count);
+        Assert.Contains(tags, t => t.Key == "Env" && t.Value == "prod");
+        Assert.Contains(tags, t => t.Key == "ENV" && t.Value == "staging");
+    }
+
+    [Fact]
     public void Parse_rejects_key_exceeding_max_length()
     {
         var longKey = new string('k', TaggingHeaderParser.MaxTagKeyLength + 1);
