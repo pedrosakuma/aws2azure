@@ -843,7 +843,25 @@ public static class RealAzureLoadQualificationGenerator
                 || !expectedOperations.SetEquals(runOperations)
                 || run.Candidate.GitSha != candidate.Candidate.GitSha
                 || run.Candidate.ArtifactDigest != candidate.Candidate.ArtifactDigest
-                || run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest
+                // config_digest seals the correctness workflow's own
+                // environment/config manifest (region, dynamodb stored
+                // procedure mode, and hashes of files that workflow reads at
+                // its own dispatch-time commit). In mode=reaffirm the load
+                // job re-derives this manifest from the candidate's historical
+                // commit, but the manifest's *shape* (the correctness
+                // workflow's inline script logic) can itself have changed
+                // between that historical commit and today's checkout of the
+                // load workflow's duplicated copy of that logic -- making
+                // byte-for-byte reproduction structurally unreliable across
+                // workflow evolution, independent of whether the load
+                // evidence genuinely pertains to the sealed candidate (which
+                // git_sha, artifact_digest, and the sealed-runtime identity
+                // key below already anchor). Reaffirmation therefore does not
+                // require config_digest equality; promote mode -- where the
+                // load job's own commit always equals the freshly-sealed
+                // candidate's commit -- still enforces it exactly.
+                || (qualificationMode != "reaffirm"
+                    && run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest)
                 || run.Candidate.QualificationMode != "sealed"
                 || run.Candidate.Runtime is null
                 || SealedRuntimeEvidenceValidator.IdentityKey(run.Candidate.Runtime)

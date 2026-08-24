@@ -86,6 +86,42 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
+    // Reaffirm mode (see #803/#875/#877, follow-up to the head_sha fix above):
+    // a reaffirmed load run's own config_digest cannot generally reproduce
+    // the correctness workflow's historical config-manifest byte-for-byte,
+    // because that workflow's inline script shape (not just the files it
+    // references) can itself drift between the candidate's historical commit
+    // and today. Regression test for the bug where this cross-run check
+    // rejected reaffirmed evidence whose config_digest genuinely differs from
+    // the correctness candidate's for that structural reason alone.
+    [Fact]
+    public void Generate_qualifies_reaffirmed_load_run_with_drifted_config_digest()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        foreach (var run in evidence)
+        {
+            run.Candidate.ConfigDigest = "sha256:drifted-config-digest";
+        }
+        var selections = RunSelections(candidate, evidence);
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            candidate,
+            Policy(),
+            evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.All(
+            document.Provenance.SourceRuns,
+            run => Assert.True(run.Reaffirmed));
+    }
+
     [Fact]
     public void Generate_rejects_reaffirmed_load_run_with_wrong_artifact_selection_head_sha()
     {
