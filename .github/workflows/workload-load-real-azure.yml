@@ -427,15 +427,37 @@ jobs:
             ) > "$GITHUB_WORKSPACE/$runtime_manifest"
           fi
 
+          # In mode=reaffirm the job dispatches at the current HEAD, but the
+          # candidate it is re-validating is historical: integration-real-azure's
+          # own config-manifest was hashed from the *candidate commit's* copies
+          # of these files, not from whatever they look like today. Hashing the
+          # dispatch-time working tree would make config_digest permanently
+          # unreproducible for any reaffirmed candidate whose referenced files
+          # have since changed on main (they routinely do). Resolve content at
+          # the candidate's own commit instead, so config_digest is reproduced
+          # identically regardless of which commit the job happens to run at.
+          candidate_identity="$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json"
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
+            manifest_git_sha="$(jq -er '.source.sha' "$candidate_identity")"
+          else
+            manifest_git_sha="$(git rev-parse HEAD)"
+          fi
+          if ! git cat-file -e "$manifest_git_sha" 2>/dev/null; then
+            git fetch --quiet --depth 1 origin "$manifest_git_sha"
+          fi
+          at_candidate_sha() {
+            git show "$manifest_git_sha:$1"
+          }
+
           candidate_config_manifest="$QUALIFICATION_DIR/config-manifest.json"
           jq -n \
             --arg schema_version "1" \
-            --arg git_sha "$(git rev-parse HEAD)" \
+            --arg git_sha "$manifest_git_sha" \
             --arg region "$AZURE_LOCATION" \
             --arg dynamodb_stored_procedure_mode "$AWS2AZURE_DDB_STORED_PROCEDURE_MODE" \
-            --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
-            --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
-            --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
+            --arg matrix_sha256 "$(at_candidate_sha docs/testing/real-azure-conformance.yaml | sha256sum | cut -d' ' -f1)" \
+            --arg bicep_sha256 "$(at_candidate_sha deploy/realazure/main.bicep | sha256sum | cut -d' ' -f1)" \
+            --arg workflow_sha256 "$(at_candidate_sha .github/workflows/integration-real-azure.yml | sha256sum | cut -d' ' -f1)" \
             '{
               schema_version: ($schema_version | tonumber),
               git_sha: $git_sha,
