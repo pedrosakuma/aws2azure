@@ -393,6 +393,38 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
+    public async Task PresignedPost_with_expired_policy_is_rejected_without_backend_call()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var (bodyBytes, contentType) = BuildPresignedPostRequest(
+            "bucket",
+            "upload.txt",
+            "hello post"u8.ToArray(),
+            expiration: "2000-01-01T00:00:00Z");
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Post,
+            path: "/bucket",
+            contentType: contentType);
+        context.Request.Body = new MemoryStream(bodyBytes);
+        context.Request.ContentLength = bodyBytes.Length;
+
+        await ObjectHandlers.HandlePostObjectAsync(
+            context,
+            new S3RouteResult(S3Operation.PostObject, "bucket", null, VirtualHosted: false),
+            http,
+            Resolver(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.Empty(handler.Requests);
+        var body = await TestHttpContext.ReadBodyAsync(context);
+        Assert.Contains("AccessDenied", body, StringComparison.Ordinal);
+        Assert.Contains("Request has expired.", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PresignedPost_with_success_action_status_201_is_rejected_without_backend_call()
     {
         var handler = new ScriptedHandler();
@@ -566,7 +598,8 @@ public sealed class ObjectHandlersTests
         byte[] fileBytes,
         IReadOnlyDictionary<string, string>? additionalFields = null,
         IReadOnlySet<string>? unsignedFields = null,
-        bool tamperSignature = false)
+        bool tamperSignature = false,
+        string expiration = "2099-01-01T00:00:00Z")
     {
         const string boundary = "----aws2azure-unit-boundary";
         const string date = "20260728";
@@ -589,7 +622,6 @@ public sealed class ObjectHandlersTests
             }
         }
 
-        var expiration = "2099-01-01T00:00:00Z";
         var conditions = new StringBuilder();
         conditions.Append("{\"bucket\":\"").Append(bucket).Append("\"},");
         foreach (var field in fields)
