@@ -172,6 +172,74 @@ jobs:
           set -euo pipefail
           destination="$PRIVATE_ROOT/correctness"
           selection="$EVIDENCE_ROOT/selections/correctness.json"
+          # integration-real-azure.yml's reaffirm mode mirrors the load
+          # workflow's split identity: the job still executes at its own
+          # dispatch-day HEAD, but the emitted correctness candidate's content
+          # (git_sha / artifact_digest / config_digest / sealed runtime
+          # identity) reaffirms the historical approved runtime from the
+          # ledger. Promote mode keeps the old exact equality: the run's own
+          # head_sha must equal EXPECTED_SHA. Reaffirm mode instead threads the
+          # correctness run's actual head_sha into artifact selection and then
+          # separately checks the candidate content below against EXPECTED_SHA.
+          resolve_reaffirm_run_ref() {
+            local run_json="$1"
+            local run_id="$2"
+            local head_sha="$3"
+            local branch_name
+            branch_name="$(jq -er '.head_branch' "$run_json")"
+            if [ "$branch_name" = main ]; then
+              printf 'refs/heads/main\n'
+              return
+            fi
+            if [[ ! "$branch_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; then
+              echo "::error::Run $run_id does not use protected main or an allowed RC tag."
+              exit 1
+            fi
+            if gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/branches/$branch_name" >/dev/null 2>&1; then
+              echo "::error::Run $run_id uses an RC-shaped branch name; refusing to treat it as a protected tag."
+              exit 1
+            fi
+            tag_ref_json="$PRIVATE_ROOT/run-$run_id-tag-ref.json"
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/git/ref/tags/$branch_name" > "$tag_ref_json"
+            tag_object_type="$(jq -er '.object.type' "$tag_ref_json")"
+            tag_object_sha="$(jq -er '.object.sha' "$tag_ref_json")"
+            case "$tag_object_type" in
+              commit)
+                tag_commit_sha="$tag_object_sha"
+                ;;
+              tag)
+                tag_object_json="$PRIVATE_ROOT/run-$run_id-tag-object.json"
+                gh api -H "Accept: application/vnd.github+json" \
+                  "/repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" > "$tag_object_json"
+                tag_commit_sha="$(jq -er '.object.sha' "$tag_object_json")"
+                ;;
+              *)
+                echo "::error::Run $run_id tag ref resolved unexpected object type '$tag_object_type'."
+                exit 1
+                ;;
+            esac
+            if [ "$tag_commit_sha" != "$head_sha" ]; then
+              echo "::error::Run $run_id RC tag does not resolve to head_sha $head_sha."
+              exit 1
+            fi
+            printf 'refs/tags/%s\n' "$branch_name"
+          }
+          if [ "$QUALIFICATION_MODE" = reaffirm ]; then
+            run_json="$PRIVATE_ROOT/correctness-run.json"
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/actions/runs/$CORRECTNESS_RUN_ID" > "$run_json"
+            run_selection_sha="$(jq -er '.head_sha' "$run_json")"
+            if [[ ! "$run_selection_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Correctness run $CORRECTNESS_RUN_ID does not expose a valid head_sha."
+              exit 1
+            fi
+            run_selection_ref="$(resolve_reaffirm_run_ref "$run_json" "$CORRECTNESS_RUN_ID" "$run_selection_sha")"
+          else
+            run_selection_sha="$EXPECTED_SHA"
+            run_selection_ref="$GITHUB_REF"
+          fi
           content="$(
             ./eng/download-qualified-run-artifact.sh \
               --repository "$GITHUB_REPOSITORY" \
@@ -180,8 +248,8 @@ jobs:
               --workflow .github/workflows/integration-real-azure.yml \
               --event workflow_dispatch \
               --profile "$PROFILE" \
-              --expected-sha "$EXPECTED_SHA" \
-              --expected-ref "$GITHUB_REF" \
+              --expected-sha "$run_selection_sha" \
+              --expected-ref "$run_selection_ref" \
               --artifact-name real-azure-conformance \
               --destination "$destination" \
               --identity-output "$selection"
@@ -227,6 +295,51 @@ jobs:
             exit 1
           fi
           seen=()
+          resolve_reaffirm_run_ref() {
+            local run_json="$1"
+            local run_id="$2"
+            local head_sha="$3"
+            local branch_name
+            branch_name="$(jq -er '.head_branch' "$run_json")"
+            if [ "$branch_name" = main ]; then
+              printf 'refs/heads/main\n'
+              return
+            fi
+            if [[ ! "$branch_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; then
+              echo "::error::Run $run_id does not use protected main or an allowed RC tag."
+              exit 1
+            fi
+            if gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/branches/$branch_name" >/dev/null 2>&1; then
+              echo "::error::Run $run_id uses an RC-shaped branch name; refusing to treat it as a protected tag."
+              exit 1
+            fi
+            tag_ref_json="$PRIVATE_ROOT/run-$run_id-tag-ref.json"
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/git/ref/tags/$branch_name" > "$tag_ref_json"
+            tag_object_type="$(jq -er '.object.type' "$tag_ref_json")"
+            tag_object_sha="$(jq -er '.object.sha' "$tag_ref_json")"
+            case "$tag_object_type" in
+              commit)
+                tag_commit_sha="$tag_object_sha"
+                ;;
+              tag)
+                tag_object_json="$PRIVATE_ROOT/run-$run_id-tag-object.json"
+                gh api -H "Accept: application/vnd.github+json" \
+                  "/repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha" > "$tag_object_json"
+                tag_commit_sha="$(jq -er '.object.sha' "$tag_object_json")"
+                ;;
+              *)
+                echo "::error::Run $run_id tag ref resolved unexpected object type '$tag_object_type'."
+                exit 1
+                ;;
+            esac
+            if [ "$tag_commit_sha" != "$head_sha" ]; then
+              echo "::error::Run $run_id RC tag does not resolve to head_sha $head_sha."
+              exit 1
+            fi
+            printf 'refs/tags/%s\n' "$branch_name"
+          }
           for index in "${!run_ids[@]}"; do
             raw="${run_ids[$index]}"
             run_id="$(echo "$raw" | xargs)"
@@ -269,8 +382,10 @@ jobs:
                 echo "::error::Load run $run_id does not have a resolvable head SHA."
                 exit 1
               fi
+              run_selection_ref="$(resolve_reaffirm_run_ref "$run_json" "$run_id" "$run_selection_sha")"
             else
               run_selection_sha="$EXPECTED_SHA"
+              run_selection_ref="$GITHUB_REF"
             fi
             content="$(
               ./eng/download-qualified-run-artifact.sh \
@@ -281,7 +396,7 @@ jobs:
                 --event workflow_dispatch \
                 --profile "$PROFILE" \
                 --expected-sha "$run_selection_sha" \
-                --expected-ref "$GITHUB_REF" \
+                --expected-ref "$run_selection_ref" \
                 --artifact-name "real-azure-workload-load-$PROFILE" \
                 --destination "$destination" \
                 --identity-output "$selection"

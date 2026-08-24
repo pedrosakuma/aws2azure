@@ -271,6 +271,7 @@ public static class RealAzureLoadQualificationGenerator
                     ArtifactDigest = candidate.Candidate.ArtifactDigest,
                     ConfigDigest = candidate.Candidate.ConfigDigest,
                     EvidenceArtifact = correctnessSelection,
+                    Reaffirmed = qualificationMode == "reaffirm",
                 },
                 SourceRuns = orderedEvidence.Select(item => new SloQualificationSourceRun
                 {
@@ -967,8 +968,12 @@ public static class RealAzureLoadQualificationGenerator
             "real-azure-conformance",
             candidate.Provenance.RunId,
             candidate.Provenance.RunAttempt,
-            candidate.Candidate.GitSha,
-            candidate.Candidate.Runtime.Source.Ref,
+            qualificationMode == "reaffirm"
+                ? correctnessSelection.HeadSha
+                : candidate.Candidate.GitSha,
+            qualificationMode == "reaffirm"
+                ? correctnessSelection.HeadRef
+                : candidate.Candidate.Runtime.Source.Ref,
             metadata.GeneratedAtUtc);
         foreach (var run in evidence)
         {
@@ -1008,7 +1013,9 @@ public static class RealAzureLoadQualificationGenerator
                 qualificationMode == "reaffirm"
                     ? matches[0].HeadSha
                     : run.Candidate.GitSha,
-                candidate.Candidate.Runtime.Source.Ref,
+                qualificationMode == "reaffirm"
+                    ? matches[0].HeadRef
+                    : candidate.Candidate.Runtime.Source.Ref,
                 metadata.GeneratedAtUtc);
         }
 
@@ -1016,7 +1023,8 @@ public static class RealAzureLoadQualificationGenerator
         var headRef = correctnessSelection.HeadRef;
         if (loadSelections.Any(selection =>
                 selection.Repository != repository
-                || selection.HeadRef != headRef))
+                || (qualificationMode != "reaffirm"
+                    && selection.HeadRef != headRef)))
         {
             throw new InvalidDataException(
                 "Correctness and load evidence selections must use one repository and protected ref.");

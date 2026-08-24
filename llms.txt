@@ -41,5 +41,5 @@ A historical GA statement never overrides a later `candidate`, `conditional`, or
 
 Current workload authority was evaluated at `2026-08-23T01:10:00Z`.
 Canonical workload inputs revision: `sha256:111c02d334ad52c912e3a4fa7e61ea8faccaf1e2f084e5b9e14109c3f2ebaedd`.
-Evaluator implementation revision: `sha256:edec30744d4dd7c9527488aeacb72f49f2a8a923d56cb51420bd3384e80f1f85`.
-Documentation manifest revision: `sha256:9f668ccc11a92cb419fd9b7ed47bf4c90687109b60132e398227313646d6bb3a`.
+Evaluator implementation revision: `sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f`.
+Documentation manifest revision: `sha256:892383fcd27f449fa87d2bec2e658c6960fcc15ca77ad5205f42b3cc439a24f0`.
