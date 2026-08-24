@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:3769edfb157737ab5cc39f0cba9cb1b8d0022e2c148d35d2e95f53e4bbc9066b",
+  "manifest_revision": "sha256:3b32a6c9125f57cecfc22431b2ff8d172b20bfe5a36f51f6cde5846a1257a193",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:af51b47a903bf30f667593339444e74f1f1bf4019ed4fcb0c37f3c980953934a",
+    "canonical_inputs_revision": "sha256:a5e36c6b8f9870d562378598c677b7df8b187c053fb16c98c6618f81c5fd0b76",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f"
@@ -137,20 +137,6 @@
       "freshness": {
         "mode": "versioned",
         "version": "5"
-      }
-    },
-    {
-      "id": "compatibility:dynamodb-persisted-formats-v6",
-      "path": "docs/compatibility/dynamodb-persisted-formats-v6.json",
-      "type": "persisted-format-contract",
-      "scope": "dynamodb-persisted-format",
-      "authority": "canonical",
-      "provenance": "source",
-      "service": "dynamodb",
-      "revision": "sha256:b71c569924c3dbc3f1f445c748d8672c258a8b7c93dcb028e4bbcce03c0f2d6d",
-      "freshness": {
-        "mode": "versioned",
-        "version": "6"
       }
     },
     {
@@ -1190,7 +1176,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:8445b4735f24ffcbb670b921448a644616ffd39235f85c742f4f7f9c149424f1",
+      "revision": "sha256:04f119e692c62d0528f3722aeab1a122bd6a3711fbc3481fb1c19ae55383e123",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1226,7 +1212,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:5c51ca4ff8ce6562a12192f1968d2a14411a3e20c0bb571ab709ac08ccc7ac6d",
+      "revision": "sha256:52b60ba0a0dd86e075d8cfc08a13f5155139608d10d007e140864112efc1e7e5",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1454,7 +1440,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:ca279ff0381bfc6738be63f8507c532dac66f88feb30548ae0d357b81ac2d1fa",
+      "revision": "sha256:7fed68b367dba6f442ef40706746b6ef3914ca405dbf89e6367f98ff064d6c16",
       "freshness": {
         "mode": "current"
       }
@@ -1637,7 +1623,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "DeleteItem",
-      "revision": "sha256:d1318c328bfc978b0dace030b00456e600a1133346484a213b19ab1b375a94d0",
+      "revision": "sha256:8736a3a2c4ef862660dbb58440e9b7abc7c3d29483c4242eb8d2c884c5c81f4c",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1652,7 +1638,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "DeleteItem",
-      "revision": "sha256:87e329aae3bf9343d6c91bda61a6181afcfa4aca58a268c236cdc58ea5ac2b40",
+      "revision": "sha256:9c212d5f052e6ef1f066f13c6bf8922c0a773219ebe57b3ce401c20bfae85edf",
       "freshness": {
         "mode": "current"
       }
@@ -1857,7 +1843,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "PutItem",
-      "revision": "sha256:d4a6236cafaffbb471650801bea2abfa06a3e3aac4cdd484fb89f757f30b6f82",
+      "revision": "sha256:e5fba67107d54b6bdc4109796598499dc66a13e569347ddae118a510b4049e25",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1872,7 +1858,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "PutItem",
-      "revision": "sha256:35b628dfbfc0ff32e568a7b0359ede139f83c248dfb7012c1b8b9ca8a68945b6",
+      "revision": "sha256:45d827116b13d23cf6b3d57a2b87f4ee27f81802274df556a5386b8167d8bd0a",
       "freshness": {
         "mode": "current"
       }
@@ -2015,7 +2001,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "TransactWriteItems",
-      "revision": "sha256:d8d7b8633cb69c14e5741f4148badb2548de24078c14c644711e0940a1df2823",
+      "revision": "sha256:0a8d5ec47a333642e1ecfe3d1f63055c945ea62db30ecbc0718193615c3485e2",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-27"
@@ -2031,7 +2017,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "TransactWriteItems",
-      "revision": "sha256:6df2abda93ee97b9d60891fbc35ebd490668e372f08af7c9bde3a75b881028f9",
+      "revision": "sha256:6e14d5d636e9580a3dedcbb89ae45ab4f7d6b4fa4ad42732a8c80732b743c720",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-27"
@@ -2079,7 +2065,7 @@
       "provenance": "generated",
       "service": "dynamodb",
       "operation": "UpdateItem",
-      "revision": "sha256:fd8741b37db4d9ba34cb11c3d595c9e1c4cdc6d11d5c29df8d6db678083173e6",
+      "revision": "sha256:029778e91139e7d90e285a813c79c30f89d0ece4a32c79a0731a6306fc7fd6e2",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -2095,7 +2081,7 @@
       "provenance": "source",
       "service": "dynamodb",
       "operation": "UpdateItem",
-      "revision": "sha256:ff95684aa0efc273b9af3def80fed1def2e9dfd3ceafe2d0265d688f4cbab6c2",
+      "revision": "sha256:629dad1908d398236ec54c33565a2ed78eb647e66a376b25f421b0526c4136e7",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -2429,7 +2415,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "CopyObject",
-      "revision": "sha256:b2307ae65e7b725441b7379a5e00d95b7904065675f387e8e024f65303698849",
+      "revision": "sha256:db6ad2d0226b566c76b38eb924affb69b6994fc93e3d2b9cb168a8ebbc4f0c00",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-11"
@@ -2445,7 +2431,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "CopyObject",
-      "revision": "sha256:5a855483053c76117d77dad3c86a6bc3ed31d354b036adf8e3ee695a787b3367",
+      "revision": "sha256:c571086d1830cb8018352dfbeb1bcab9abac1a069bb22bf18422642bd1b9e34f",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-11"
@@ -3379,7 +3365,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "GetObject",
-      "revision": "sha256:18ffeb6c2e551f01f8426fd0fc66992e3bbcdb888ab02ba07ccf2fd6bb922cc8",
+      "revision": "sha256:b34a1d8f2fb9b48057ca30bc56f21ec6c96be9f4e5da4698d50bedf0c0a0a117",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -3395,7 +3381,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "GetObject",
-      "revision": "sha256:5d4e0a88432d7fe4e4c23f8a001c301c16d07ff7fb4ddd40c415451cb11ca495",
+      "revision": "sha256:6f392009a76b9c82e86bfcab84ea51b1f65da2f705982bb6f734ff3ac74afeef",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -3659,7 +3645,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "HeadObject",
-      "revision": "sha256:1645e9998c1173afc095d97c4ed454d7d8d0e647fe5319728214db0480a8a57e",
+      "revision": "sha256:d5bed8bc8594f8627003bf461a9450160b2caddcf08e233dad5eab479549c6f1",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-17"
@@ -3675,7 +3661,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "HeadObject",
-      "revision": "sha256:c35a5c2b1c87ccb1204a9f8108e1a9bbdf44723733cdff3ebd37c80def8d8a0a",
+      "revision": "sha256:68e64ee98f735c55b7c0ed45e32edc61740945eab54d1f2ac07dd35117bc15a8",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-17"
@@ -3755,7 +3741,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListObjects",
-      "revision": "sha256:0f10d00c159e69142da6f6f32210a0b4ae43edcff32a7bd44d4f2a6dc0b656e2",
+      "revision": "sha256:718405ff344128c242b94a56febd44d6f133b858c90162bff28f2116e79c240a",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-11"
@@ -3771,7 +3757,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListObjects",
-      "revision": "sha256:03b32af8f10f4ed328af6cd226f895693d912f531aaaf4532899b2c3bdc83b93",
+      "revision": "sha256:8649823e1b0be0db15be0451965022f162036997ca23ec9f60f91ad055e6ab1e",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-11"
@@ -3787,7 +3773,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListObjectsV2",
-      "revision": "sha256:877d65d5b2a075046ed5d5244f642e4605e1140f148507065b8d4c3ba70d4191",
+      "revision": "sha256:ba75cb0a1add28006f33693aebfeee46557372d7b3b726dcbe500f767bc9e289",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -3803,7 +3789,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListObjectsV2",
-      "revision": "sha256:6af7c2e61b75912a2195897ae063532bbbf4120c054d121a8a2d19f4c410b0c5",
+      "revision": "sha256:cd655ef0afa6be3764f2e3f29aae2aa76962ce38b6c588f57867015ca09ce24e",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -3819,7 +3805,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "ListObjectVersions",
-      "revision": "sha256:3a1ab50d6f61ab1409b8827e158d61ba760ce77c3e282fbd4928a8037422d9a7",
+      "revision": "sha256:7c6deca7fafab19d8a409aa49e5584704ecdf524b1c55cd962a065cca8a865f9",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-06-30"
@@ -3835,7 +3821,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "ListObjectVersions",
-      "revision": "sha256:34e9a8634d35edf41bd9e38a25e6b9e1acc6fe07eb5a059d687ae181871d55bc",
+      "revision": "sha256:90b7200cf2b538617ec21fbbd6adb99c06b1131735966eeb36afeb84af6bfc5e",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-06-30"
@@ -4339,7 +4325,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "PutObject",
-      "revision": "sha256:e32e8f1c567760b801618eb32b7d94b7496bfde85b842d619800fb9a1451bb87",
+      "revision": "sha256:99f7281cad91b1562fdf2adf3f3d9d77d15b8519afb2df96774d4e76b20dca48",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -4355,7 +4341,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "PutObject",
-      "revision": "sha256:3f5510b5635a27ead5d55925bab3198fea5b256ad033d890b428321d9907d137",
+      "revision": "sha256:fe882f91a61bd9393780de52fe0b143999b66722cb59cff59cf1286767335889",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -4587,7 +4573,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "UploadPart",
-      "revision": "sha256:5e80758ed44a94cf8a29a6612bec1f81dba84f58a4e792066f10c14b34d919a1",
+      "revision": "sha256:be66793c91584abee8f82ec56b1620caf0c29eee65cd60c3c2f7cc94a76ab591",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-08-11"
@@ -4603,7 +4589,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "UploadPart",
-      "revision": "sha256:f69a855d3816418b88340c0bb3f7588f7a999f375764010d639e0967e33529c3",
+      "revision": "sha256:87430dc4272bda938c338ba49a3258607510f8200a7212fb55f4707315b921f5",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-08-11"
@@ -6851,7 +6837,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:37782d1c93a39b9c128980998ca17fa60e80581d05b225ac63cf163785f0c7f6",
+      "revision": "sha256:d283adee5fafc33abd3e073c54961d00a1886eb312055f002a7e702a22102e0b",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-23T01:10:00Z"
@@ -6865,7 +6851,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:8e4db963c117ed60a7081b39cfcb53b7be92b2f217c50ff06a71c50e3642c3fd",
+      "revision": "sha256:41861f53834e4cd53e5eb7ce331cebce5121de8233c678fde9fb6c8ae3e0ab52",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-23T01:10:00Z"
@@ -6879,7 +6865,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:fc60a2072ab95da157490416c788493d99f5500e2e7983eae5d090538bc3c30b",
+      "revision": "sha256:f53ee7984265c2bf08065b1e0a29d0967ff4e37434147473de2d103314902b92",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-23T01:10:00Z"

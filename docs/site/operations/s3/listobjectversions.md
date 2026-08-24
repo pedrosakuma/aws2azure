@@ -42,6 +42,7 @@ The proxy carries both key-marker and version-id-marker through pagination and e
 ## Behaviour differences
 
 - VersionId 'null' is used when account versioning is off (the blob has no version id).
+- Version.StorageClass is always STANDARD. Azure Blob version listings expose Azure access tiers, not AWS storage classes, and the proxy currently does not map or persist an AWS-equivalent class.
 - Owner element omitted.
 
 ## References

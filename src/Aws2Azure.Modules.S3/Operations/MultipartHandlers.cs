@@ -35,6 +35,7 @@ internal static class MultipartHandlers
     /// headroom while keeping memory bounded.</summary>
     private const int MaxCompleteBodyBytes = 4 * 1024 * 1024;
     private const long MinNonFinalPartBytes = 5L * 1024 * 1024;
+    private const long MaxPartBytes = 5L * 1024 * 1024 * 1024;
     private static readonly TimeSpan LeaseOperationTimeout = TimeSpan.FromSeconds(45);
 
     public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct, ICredentialResolver? credentials = null) =>
@@ -410,6 +411,13 @@ internal static class MultipartHandlers
         {
             return (null, S3ErrorMapping.InvalidArgument(
                 "x-amz-copy-source-range must be of the form 'bytes=start-end' with end >= start >= 0."));
+        }
+        if (end - start >= MaxPartBytes)
+        {
+            return (null, new S3ErrorMapping.Mapping(
+                StatusCodes.Status400BadRequest,
+                "InvalidRequest",
+                "Your proposed upload exceeds the maximum allowed part size. Each part must be at most 5 GiB in size."));
         }
         // Azure's x-ms-source-range uses the same RFC-7233 'bytes=' syntax,
         // so re-emit the canonical form (drops any whitespace S3 tolerates).

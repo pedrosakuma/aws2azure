@@ -74,6 +74,69 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
+    public async Task PutObject_applies_x_amz_tagging_via_put_blob_tags()
+    {
+        var handler = new ScriptedHandler();
+        var putResponse = AzureResponse(HttpStatusCode.Created, eTag: "\"0xPUT\"");
+        putResponse.Headers.TryAddWithoutValidation("x-ms-version-id", "2026-08-08T12:00:00.0000000Z");
+        handler.Enqueue(putResponse);
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(
+            body: "hello",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-tagging", "Project=Blue&Team=Widget")
+            ]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.PutObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("?comp=tags&versionid=2026-08-08T12%3A00%3A00.0000000Z", handler.Requests[1].RequestUri!.Query);
+        Assert.Contains("<Key>Project</Key><Value>Blue</Value>", handler.Requests[1].Body, StringComparison.Ordinal);
+        Assert.Contains("<Key>Team</Key><Value>Widget</Value>", handler.Requests[1].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PutObject_ignores_storage_class_and_algorithm_specific_checksum_headers()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xPUT\""));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(
+            body: "hello",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-storage-class", "STANDARD_IA"),
+                new KeyValuePair<string, string>("x-amz-sdk-checksum-algorithm", "SHA256"),
+                new KeyValuePair<string, string>("x-amz-checksum-sha256", "c2hhMjU2")
+            ]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.PutObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var request = Assert.Single(handler.Requests);
+        Assert.False(request.Headers.ContainsKey("x-amz-storage-class"));
+        Assert.False(request.Headers.ContainsKey("x-amz-sdk-checksum-algorithm"));
+        Assert.False(request.Headers.ContainsKey("x-amz-checksum-sha256"));
+    }
+
+    [Fact]
     public async Task GetObject_does_not_emit_bucket_headers_or_checksum_type()
     {
         var handler = new ScriptedHandler();
@@ -93,6 +156,30 @@ public sealed class ObjectHandlersTests
         Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-type"));
         Assert.Equal("AES256", context.Response.Headers["x-amz-server-side-encryption"]);
+    }
+
+    [Fact]
+    public async Task GetObject_omits_algorithm_specific_checksum_headers()
+    {
+        var handler = new ScriptedHandler();
+        var response = GetResponse("hello"u8.ToArray(), contentType: "application/octet-stream");
+        response.Content.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(MD5.HashData("hello"u8.ToArray())));
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Get, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.GetObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-crc32"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-crc32c"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha1"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
     }
 
     [Fact]
@@ -165,8 +252,13 @@ public sealed class ObjectHandlersTests
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
         var handler = new ScriptedHandler();
         handler.Enqueue(HeadResponse(etag: "\"0xSOURCE\"", contentMd5Base64: sourceMd5));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
+        });
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
         handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var blob = NewBlobClient(http);
 
@@ -187,10 +279,11 @@ public sealed class ObjectHandlersTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(5, handler.Requests.Count);
         Assert.EndsWith("/src-bucket/src.txt?versionid=ver-1", handler.Requests[0].RequestUri!.PathAndQuery, StringComparison.Ordinal);
-        Assert.Contains("versionid=ver-1", Assert.Single(handler.Requests[1].Headers["x-ms-copy-source"]), StringComparison.Ordinal);
-        Assert.DoesNotContain("x-ms-source-if-match", handler.Requests[1].Headers.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.EndsWith("/src-bucket/src.txt?comp=tags&versionid=ver-1", handler.Requests[1].RequestUri!.PathAndQuery, StringComparison.Ordinal);
+        Assert.Contains("versionid=ver-1", Assert.Single(handler.Requests[2].Headers["x-ms-copy-source"]), StringComparison.Ordinal);
+        Assert.DoesNotContain("x-ms-source-if-match", handler.Requests[2].Headers.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.Equal("CopyObjectResult", XDocument.Parse(await TestHttpContext.ReadBodyAsync(context)).Root!.Name.LocalName);
         // Regression guard for #857 (B4): CopyObject 200 must not carry
         // x-amz-bucket-region / x-amz-bucket-arn — those are HeadBucket-scoped
@@ -204,8 +297,13 @@ public sealed class ObjectHandlersTests
     {
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
         var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
+        });
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
         handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var blob = NewBlobClient(http);
 
@@ -263,9 +361,14 @@ public sealed class ObjectHandlersTests
     {
         var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
         var handler = new ScriptedHandler();
-        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
-        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xPROPS\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:11:00Z")));
-        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xMETA\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:12:00Z")));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
+        });
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z"), versionId: "ver-copy"));
+        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xPROPS\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:11:00Z"), versionId: "ver-props"));
+        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xMETA\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:12:00Z"), versionId: "ver-meta"));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
         handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var blob = NewBlobClient(http);
@@ -288,6 +391,74 @@ public sealed class ObjectHandlersTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.Contains(handler.Requests, request => request.RequestUri!.Query == "?comp=metadata");
+        Assert.Contains(handler.Requests, request => request.RequestUri!.Query == "?comp=tags&versionid=ver-meta");
+    }
+
+    [Fact]
+    public async Task CopyObject_default_tagging_directive_copies_source_tags_to_destination()
+    {
+        var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
+        var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet><Tag><Key>env</Key><Value>prod</Value></Tag></TagSet></Tags>""")
+        });
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
+        handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/src-bucket/src.txt")
+            ]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.CopyObject, "dest-bucket", "dest.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("?comp=tags", handler.Requests[3].RequestUri!.Query);
+        Assert.Contains("<Key>env</Key><Value>prod</Value>", handler.Requests[3].Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CopyObject_replace_tagging_directive_uses_x_amz_tagging_header()
+    {
+        var sourceMd5 = Convert.ToBase64String(MD5.HashData("source"u8.ToArray()));
+        var handler = new ScriptedHandler();
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xCOPY\"", lastModified: DateTimeOffset.Parse("2026-07-28T20:10:00Z")));
+        handler.Enqueue(HeadResponse(etag: "\"0xDEST\"", contentMd5Base64: sourceMd5));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/src-bucket/src.txt"),
+                new KeyValuePair<string, string>("x-amz-tagging-directive", "REPLACE"),
+                new KeyValuePair<string, string>("x-amz-tagging", "tier=gold")
+            ]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.CopyObject, "dest-bucket", "dest.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal("?comp=tags", handler.Requests[2].RequestUri!.Query);
+        Assert.Contains("<Key>tier</Key><Value>gold</Value>", handler.Requests[2].Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -549,7 +720,7 @@ public sealed class ObjectHandlersTests
             }
         });
 
-    private static HttpResponseMessage AzureResponse(HttpStatusCode statusCode, string? eTag = null, DateTimeOffset? lastModified = null)
+    private static HttpResponseMessage AzureResponse(HttpStatusCode statusCode, string? eTag = null, DateTimeOffset? lastModified = null, string? versionId = null)
     {
         var response = new HttpResponseMessage(statusCode)
         {
@@ -562,6 +733,10 @@ public sealed class ObjectHandlersTests
         if (lastModified is not null)
         {
             response.Content.Headers.LastModified = lastModified;
+        }
+        if (versionId is not null)
+        {
+            response.Headers.TryAddWithoutValidation("x-ms-version-id", versionId);
         }
         return response;
     }

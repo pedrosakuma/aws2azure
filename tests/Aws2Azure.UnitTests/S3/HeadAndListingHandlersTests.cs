@@ -66,6 +66,35 @@ public sealed class HeadAndListingHandlersTests
     }
 
     [Fact]
+    public async Task HeadObject_omits_algorithm_specific_checksum_headers()
+    {
+        var handler = new ScriptedHandler();
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>())
+        };
+        response.Headers.TryAddWithoutValidation("ETag", "\"azure-etag\"");
+        response.Content.Headers.ContentLength = 7;
+        response.Content.Headers.TryAddWithoutValidation("Content-MD5", Convert.ToBase64String(System.Security.Cryptography.MD5.HashData("content"u8.ToArray())));
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Head, path: "/bucket/object.txt");
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.HeadObject, "bucket", "object.txt", VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-crc32"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-crc32c"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha1"));
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
+    }
+
+    [Fact]
     public async Task HeadObject_precondition_failed_clears_success_metadata_and_sets_error_header()
     {
         var handler = new ScriptedHandler();
@@ -174,6 +203,86 @@ public sealed class HeadAndListingHandlersTests
         Assert.Equal("true", doc.Root!.Element(S3Ns + "IsTruncated")!.Value);
         Assert.Equal("page/a/", doc.Root!.Element(S3Ns + "CommonPrefixes")!.Element(S3Ns + "Prefix")!.Value);
         Assert.Equal("page/b/", doc.Root!.Element(S3Ns + "NextMarker")!.Value);
+    }
+
+    [Theory]
+    [InlineData(S3Operation.ListObjects, "")]
+    [InlineData(S3Operation.ListObjectsV2, "?list-type=2")]
+    public async Task ListObjects_responses_always_report_STANDARD_storage_class(S3Operation operation, string queryString)
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                <?xml version="1.0" encoding="utf-8"?>
+                <EnumerationResults>
+                  <Blobs>
+                    <Blob>
+                      <Name>file.txt</Name>
+                      <Properties>
+                        <Last-Modified>Tue, 02 Jan 2024 03:04:05 GMT</Last-Modified>
+                        <Content-Length>42</Content-Length>
+                        <Etag>"etag-1"</Etag>
+                        <AccessTier>Cool</AccessTier>
+                      </Properties>
+                    </Blob>
+                  </Blobs>
+                  <NextMarker />
+                </EnumerationResults>
+                """)
+        });
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Get, path: "/bucket", queryString: queryString);
+
+        await ObjectListHandlers.HandleAsync(
+            context,
+            new S3RouteResult(operation, "bucket", null, VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        var doc = XDocument.Parse(await TestHttpContext.ReadBodyAsync(context));
+        Assert.Equal("STANDARD", doc.Root!.Element(S3Ns + "Contents")!.Element(S3Ns + "StorageClass")!.Value);
+    }
+
+    [Fact]
+    public async Task ListObjectVersions_response_always_reports_STANDARD_storage_class()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                <?xml version="1.0" encoding="utf-8"?>
+                <EnumerationResults>
+                  <Blobs>
+                    <Blob>
+                      <Name>file.txt</Name>
+                      <VersionId>ver-1</VersionId>
+                      <IsCurrentVersion>true</IsCurrentVersion>
+                      <Properties>
+                        <Last-Modified>Tue, 02 Jan 2024 03:04:05 GMT</Last-Modified>
+                        <Content-Length>42</Content-Length>
+                        <Etag>"etag-1"</Etag>
+                        <AccessTier>Cool</AccessTier>
+                      </Properties>
+                    </Blob>
+                  </Blobs>
+                  <NextMarker />
+                </EnumerationResults>
+                """)
+        });
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var context = TestHttpContext.CreateContext(method: HttpMethods.Get, path: "/bucket", queryString: "?versions");
+
+        await ObjectListHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.ListObjectVersions, "bucket", null, VirtualHosted: false),
+            blob,
+            CancellationToken.None);
+
+        var doc = XDocument.Parse(await TestHttpContext.ReadBodyAsync(context));
+        Assert.Equal("STANDARD", doc.Root!.Element(S3Ns + "Version")!.Element(S3Ns + "StorageClass")!.Value);
     }
 
     private static BlobClient NewBlobClient(AzureHttpClient http) =>

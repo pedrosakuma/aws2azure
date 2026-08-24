@@ -235,12 +235,14 @@ internal static class ObjectHandlers
         }
 
         // S3 rejects same-bucket/same-key CopyObject unless the request
-        // changes something (metadata, storage class, encryption…). We only
-        // model metadata for now, so a default/COPY self-copy is always a
-        // no-op and must surface as InvalidRequest to match SDK expectations.
+        // changes something (metadata, tags, storage class, encryption…).
+        // A default/COPY self-copy is therefore a no-op and must surface as
+        // InvalidRequest to match SDK expectations.
         var directive = ReadDirective(context.Request, "x-amz-metadata-directive");
         var replace = string.Equals(directive, "REPLACE", StringComparison.OrdinalIgnoreCase);
-        if (!replace && string.IsNullOrEmpty(sourceVersionId)
+        var taggingDirective = ReadDirective(context.Request, "x-amz-tagging-directive");
+        var replaceTags = string.Equals(taggingDirective, "REPLACE", StringComparison.OrdinalIgnoreCase);
+        if (!replace && !replaceTags && string.IsNullOrEmpty(sourceVersionId)
             && string.Equals(sourceBucket, destBucket, StringComparison.Ordinal)
             && string.Equals(sourceKey, destKey, StringComparison.Ordinal))
         {
@@ -255,6 +257,29 @@ internal static class ObjectHandlers
             await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
                 "x-amz-metadata-directive must be COPY or REPLACE.")).ConfigureAwait(false);
             return;
+        }
+        if (!replaceTags && !string.IsNullOrEmpty(taggingDirective) && !string.Equals(taggingDirective, "COPY", StringComparison.OrdinalIgnoreCase))
+        {
+            await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                "x-amz-tagging-directive must be COPY or REPLACE.")).ConfigureAwait(false);
+            return;
+        }
+
+        IReadOnlyList<Aws2Azure.Modules.S3.Xml.S3XmlWriter.Tag> destTags;
+        if (replaceTags)
+        {
+            var (parsedTags, taggingError) = TaggingHeaderParser.Parse(HeaderForwarding.ReadFirstHeader(context.Request, "x-amz-tagging"));
+            if (taggingError is { } parsedTaggingError)
+            {
+                await S3ErrorMapping.WriteAsync(context, parsedTaggingError).ConfigureAwait(false);
+                return;
+            }
+
+            destTags = parsedTags!;
+        }
+        else
+        {
+            destTags = Array.Empty<Aws2Azure.Modules.S3.Xml.S3XmlWriter.Tag>();
         }
 
         // Concrete-ETag copy-source preconditions: once the proxy
@@ -271,11 +296,29 @@ internal static class ObjectHandlers
             return;
         }
 
+        var effectiveSourceVersionId = sourceConditionals.PinnedVersionId ?? sourceVersionId;
+        if (!replaceTags)
+        {
+            var (tagsError, copiedTags) = await ReadSourceTagsAsync(
+                blob,
+                sourceBucket,
+                sourceKey,
+                effectiveSourceVersionId,
+                ct).ConfigureAwait(false);
+            if (tagsError is { } sourceTagsError)
+            {
+                await S3ErrorMapping.WriteAsync(context, sourceTagsError).ConfigureAwait(false);
+                return;
+            }
+
+            destTags = copiedTags!;
+        }
+
         var sourceUri = BuildSourceObjectUri(
             blob,
             sourceBucket,
             sourceKey,
-            sourceConditionals.PinnedVersionId ?? sourceVersionId);
+            effectiveSourceVersionId);
         using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(destBucket, destKey));
         azureReq.Content = new ByteArrayContent(Array.Empty<byte>());
         azureReq.Content.Headers.ContentLength = 0;
@@ -322,6 +365,7 @@ internal static class ObjectHandlers
         }
 
         var lastModified = azureResp.Content.Headers.LastModified ?? DateTimeOffset.UtcNow;
+        var destVersionId = ReadHeader(azureResp, "x-ms-version-id");
         // Capture the raw Azure ETag of the version we just wrote — used
         // below as the If-Match guard on the destination HEAD so a racing
         // overwrite cannot make us return another writer's ETag, and as
@@ -339,7 +383,7 @@ internal static class ObjectHandlers
         string? etag = null;
         if (replace)
         {
-            var (err, propsETag, propsLastModified) =
+            var (err, propsETag, propsLastModified, propsVersionId) =
                 await SetDestinationPropertiesAsync(context.Request, blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
             if (err is { } mapping)
             {
@@ -348,8 +392,9 @@ internal static class ObjectHandlers
             }
             if (propsLastModified is not null) lastModified = propsLastModified.Value;
             if (!string.IsNullOrEmpty(propsETag)) rawAzureEtag = propsETag;
+            if (!string.IsNullOrEmpty(propsVersionId)) destVersionId = propsVersionId;
 
-            var (metadataError, metadataETag, metadataLastModified) =
+            var (metadataError, metadataETag, metadataLastModified, metadataVersionId) =
                 await SetDestinationMetadataAsync(context.Request, blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
             if (metadataError is { } metadataMapping)
             {
@@ -358,10 +403,11 @@ internal static class ObjectHandlers
             }
             if (metadataLastModified is not null) lastModified = metadataLastModified.Value;
             if (!string.IsNullOrEmpty(metadataETag)) rawAzureEtag = metadataETag;
+            if (!string.IsNullOrEmpty(metadataVersionId)) destVersionId = metadataVersionId;
         }
         else
         {
-            var (metadataError, metadataS3Etag, metadataETag, metadataLastModified) =
+            var (metadataError, metadataS3Etag, metadataETag, metadataLastModified, metadataVersionId) =
                 await StripInternalCopiedMetadataAsync(blob, destBucket, destKey, rawAzureEtag, ct).ConfigureAwait(false);
             if (metadataError is { } metadataMapping)
             {
@@ -371,6 +417,20 @@ internal static class ObjectHandlers
             if (!string.IsNullOrEmpty(metadataS3Etag)) etag = metadataS3Etag;
             if (metadataLastModified is not null) lastModified = metadataLastModified.Value;
             if (!string.IsNullOrEmpty(metadataETag)) rawAzureEtag = metadataETag;
+            if (!string.IsNullOrEmpty(metadataVersionId)) destVersionId = metadataVersionId;
+        }
+
+        var tagsApplied = await TryApplyDestinationTagsAsync(
+            blob,
+            destBucket,
+            destKey,
+            destTags,
+            destVersionId,
+            ct).ConfigureAwait(false);
+        if (tagsApplied is { } tagApplyError)
+        {
+            await S3ErrorMapping.WriteAsync(context, tagApplyError).ConfigureAwait(false);
+            return;
         }
 
         // Issue a HEAD against the destination to obtain the authoritative
@@ -417,6 +477,49 @@ internal static class ObjectHandlers
         return null;
     }
 
+    private static async Task<(S3ErrorMapping.Mapping? Error, IReadOnlyList<Aws2Azure.Modules.S3.Xml.S3XmlWriter.Tag>? Tags)>
+        ReadSourceTagsAsync(
+            BlobClient blob,
+            string sourceBucket,
+            string sourceKey,
+            string? sourceVersionId,
+            CancellationToken ct)
+    {
+        using var response = await blob.GetBlobTagsAsync(sourceBucket, sourceKey, sourceVersionId, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return (S3ErrorMapping.FromAzure(response, S3Operation.CopyObject), null);
+        }
+
+        try
+        {
+            var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return (null, Aws2Azure.Modules.S3.Xml.AzureBlobXmlReader.ParseTagSet(xml) ?? Array.Empty<Aws2Azure.Modules.S3.Xml.S3XmlWriter.Tag>());
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            return (new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "aws2azure: Azure blob tags response was malformed: " + ex.Message), null);
+        }
+    }
+
+    private static async Task<S3ErrorMapping.Mapping?> TryApplyDestinationTagsAsync(
+        BlobClient blob,
+        string destBucket,
+        string destKey,
+        IReadOnlyList<Aws2Azure.Modules.S3.Xml.S3XmlWriter.Tag> tags,
+        string? destVersionId,
+        CancellationToken ct)
+    {
+        var body = Aws2Azure.Modules.S3.Xml.S3XmlWriter.AzureBlobTagsBody(tags);
+        using var response = await blob.PutBlobTagsAsync(destBucket, destKey, body, destVersionId, ct).ConfigureAwait(false);
+        return response.IsSuccessStatusCode
+            ? null
+            : S3ErrorMapping.FromAzure(response, S3Operation.CopyObject);
+    }
+
     /// <summary>
     /// After a REPLACE copy, push the request's system properties onto the
     /// destination blob via Set Blob Properties. The call is unconditional
@@ -427,7 +530,7 @@ internal static class ObjectHandlers
     /// CopyObjectResult coherent with the final destination state, or an
     /// error mapping if Azure rejects the call.
     /// </summary>
-    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified, string? VersionId)>
         SetDestinationPropertiesAsync(
             HttpRequest source, BlobClient blob, string destBucket, string destKey, string? ifMatchEtag, CancellationToken ct)
     {
@@ -449,12 +552,12 @@ internal static class ObjectHandlers
         using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null, null);
         }
-        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified, ReadHeader(resp, "x-ms-version-id"));
     }
 
-    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified)>
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? ETag, DateTimeOffset? LastModified, string? VersionId)>
         SetDestinationMetadataAsync(
             HttpRequest source, BlobClient blob, string destBucket, string destKey, string? ifMatchEtag, CancellationToken ct)
     {
@@ -471,13 +574,13 @@ internal static class ObjectHandlers
         using var resp = await blob.SendBlobRequestAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null);
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null, null);
         }
 
-        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+        return (null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified, ReadHeader(resp, "x-ms-version-id"));
     }
 
-    private static async Task<(S3ErrorMapping.Mapping? Error, string? S3Etag, string? ETag, DateTimeOffset? LastModified)>
+    private static async Task<(S3ErrorMapping.Mapping? Error, string? S3Etag, string? ETag, DateTimeOffset? LastModified, string? VersionId)>
         StripInternalCopiedMetadataAsync(
             BlobClient blob,
             string destBucket,
@@ -494,7 +597,12 @@ internal static class ObjectHandlers
         using var headResp = await blob.SendBlobRequestAsync(head, ct).ConfigureAwait(false);
         if (!headResp.IsSuccessStatusCode || !HeaderForwarding.HasInternalMultipartPartCountMetadata(headResp))
         {
-            return (null, headResp.IsSuccessStatusCode ? HeaderForwarding.TranslateAzureResponseEtagToS3(headResp) : null, null, headResp.Content.Headers.LastModified);
+            return (
+                null,
+                headResp.IsSuccessStatusCode ? HeaderForwarding.TranslateAzureResponseEtagToS3(headResp) : null,
+                null,
+                headResp.Content.Headers.LastModified,
+                ReadHeader(headResp, "x-ms-version-id"));
         }
 
         var currentEtag = headResp.Headers.ETag?.Tag ?? ifMatchEtag;
@@ -514,13 +622,13 @@ internal static class ObjectHandlers
         {
             if (resp.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
             {
-                return (null, null, null, null);
+                return (null, null, null, null, null);
             }
 
-            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null, null);
+            return (S3ErrorMapping.FromAzure(resp, S3Operation.CopyObject), null, null, null, null);
         }
 
-        return (null, null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified);
+        return (null, null, resp.Headers.ETag?.Tag, resp.Content.Headers.LastModified, ReadHeader(resp, "x-ms-version-id"));
     }
 
     /// <summary>
@@ -586,6 +694,14 @@ internal static class ObjectHandlers
             return;
         }
 
+        var taggingHeader = HeaderForwarding.ReadFirstHeader(context.Request, "x-amz-tagging");
+        var (tags, taggingError) = TaggingHeaderParser.Parse(taggingHeader);
+        if (taggingError is { } parsedTaggingError)
+        {
+            await S3ErrorMapping.WriteAsync(context, parsedTaggingError).ConfigureAwait(false);
+            return;
+        }
+
         var body = AwsChunkedRequest.PrepareBodyStream(context.Request, credentials);
 
         try
@@ -623,6 +739,18 @@ internal static class ObjectHandlers
             {
                 await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
                 return;
+            }
+
+            if (tags!.Count > 0)
+            {
+                var versionId = ReadHeader(azureResp, "x-ms-version-id");
+                var tagsBody = Aws2Azure.Modules.S3.Xml.S3XmlWriter.AzureBlobTagsBody(tags);
+                using var tagsResponse = await blob.PutBlobTagsAsync(bucket, key, tagsBody, versionId, ct).ConfigureAwait(false);
+                if (!tagsResponse.IsSuccessStatusCode)
+                {
+                    await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(tagsResponse, S3Operation.PutObject)).ConfigureAwait(false);
+                    return;
+                }
             }
 
             // S3 PUT object response is empty with ETag in the header.

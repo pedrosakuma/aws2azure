@@ -84,6 +84,41 @@ public sealed class MultipartHandlersTests
             XDocument.Parse(handler.Requests[16].Body!).Root!.Elements("Latest").Select(static e => e.Value).ToArray());
     }
 
+    [Fact]
+    public async Task UploadPart_ignores_algorithm_specific_checksum_headers_and_returns_md5_etag()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var uploadPart = TestHttpContext.CreateContext(
+            body: "hello multipart",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-sdk-checksum-algorithm", "SHA256"),
+                new KeyValuePair<string, string>("x-amz-checksum-sha256", "c2hhMjU2")
+            ]);
+        await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, uploadPart.Response.StatusCode);
+        Assert.Equal(QuotedMd5("hello multipart"), uploadPart.Response.Headers.ETag.ToString());
+        var request = handler.Requests[4];
+        Assert.False(request.Headers.ContainsKey("x-amz-sdk-checksum-algorithm"));
+        Assert.False(request.Headers.ContainsKey("x-amz-checksum-sha256"));
+    }
+
     // ── B5: CompleteMultipartUpload <Location> must be S3-shaped (echo the
     // inbound request URL), not the raw Azure blob URL.
 
@@ -467,6 +502,31 @@ public sealed class MultipartHandlersTests
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
         Assert.Empty(handler.Requests);
         Assert.Contains("InvalidArgument", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Upload_part_copy_with_range_larger_than_five_gib_returns_invalid_request_without_calling_azure()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var token = UploadIdCodec.Issue(AccountName, "dest-bucket", "dest.txt", AccountKeyBytes);
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(token.Encoded) + "&partNumber=1",
+            headers:
+            [
+                new KeyValuePair<string, string>("x-amz-copy-source", "/source-bucket/source.txt"),
+                new KeyValuePair<string, string>("x-amz-copy-source-range", "bytes=0-5368709120")
+            ]);
+
+        await MultipartHandlers.HandleAsync(context, Route(S3Operation.UploadPartCopy, "dest-bucket", "dest.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Empty(handler.Requests);
+        Assert.Contains("InvalidRequest", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
     }
 
     [Fact]

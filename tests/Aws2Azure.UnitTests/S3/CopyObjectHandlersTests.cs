@@ -38,8 +38,13 @@ public sealed class CopyObjectHandlersTests
     public async Task Copy_object_success_returns_copy_result_body_without_version_header()
     {
         var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
+        });
         handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", versionId: "v-copy", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
         handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", versionId: "v-copy", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
 
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var blob = NewBlobClient(http);
@@ -60,13 +65,17 @@ public sealed class CopyObjectHandlersTests
         Assert.False(string.IsNullOrEmpty(doc.Root!.Element(S3Ns + "ETag")?.Value));
         Assert.False(string.IsNullOrEmpty(doc.Root!.Element(S3Ns + "LastModified")?.Value));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-version-id"));
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]
     public async Task Copy_object_default_metadata_directive_strips_internal_multipart_marker_from_destination()
     {
         var handler = new ScriptedHandler();
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
+        });
         handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
         handler.Enqueue(AzureResponse(
             HttpStatusCode.OK,
@@ -77,7 +86,8 @@ public sealed class CopyObjectHandlersTests
                 new KeyValuePair<string, string>("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName, "2"),
                 new KeyValuePair<string, string>("x-ms-meta-user-visible", "yes"),
             ]));
-        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xdef\"", lastModified: new DateTimeOffset(2026, 8, 1, 12, 31, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xdef\"", versionId: "ver-meta", lastModified: new DateTimeOffset(2026, 8, 1, 12, 31, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
         handler.Enqueue(AzureResponse(
             HttpStatusCode.OK,
             eTag: "\"0xdef\"",
@@ -100,11 +110,12 @@ public sealed class CopyObjectHandlersTests
         await ObjectHandlers.HandleAsync(context, Route(S3Operation.CopyObject, "dest-bucket", "dest.txt"), blob, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(4, handler.Requests.Count);
-        Assert.Contains("?comp=metadata", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
-        Assert.False(handler.Requests[2].Headers.ContainsKey("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
-        Assert.True(handler.Requests[2].Headers.TryGetValue("x-ms-meta-user-visible", out var values));
+        Assert.Equal(6, handler.Requests.Count);
+        Assert.Contains("?comp=metadata", handler.Requests[3].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.False(handler.Requests[3].Headers.ContainsKey("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+        Assert.True(handler.Requests[3].Headers.TryGetValue("x-ms-meta-user-visible", out var values));
         Assert.Equal("yes", Assert.Single(values));
+        Assert.Equal("?comp=tags&versionid=ver-meta", handler.Requests[4].RequestUri!.Query);
 
         var xml = await TestHttpContext.ReadBodyAsync(context);
         var doc = XDocument.Parse(xml);

@@ -30,6 +30,7 @@
 
 - 404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec).
 - 412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec).
+- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not emitted on HeadObject responses; Azure Blob exposes Content-MD5 but does not surface AWS's algorithm-specific flexible-checksum headers for reads, and the proxy does not synthesize them.
 - Presigned HEAD is accepted (see PresignedUrl.yaml).
 
 ## References

@@ -18,6 +18,18 @@ sub_features:
 - name: aws-chunked trailer / unsigned payloads (STREAMING-*-PAYLOAD-TRAILER, STREAMING-UNSIGNED-PAYLOAD)
   status: implemented
   gap: Decodes the signed and unsigned trailer framings emitted by modern AWS SDKs when flexible checksums are enabled (the AWSSDK.S3 4.x / recent boto3 default). The trailing checksum / x-amz-trailer-signature section is consumed and discarded — Azure Blob validates content integrity independently; the proxy does not re-validate the x-amz-checksum-* trailer. The -ECDSA-* (SigV4a) streaming variants are not recognized.
+- name: object-tagging (x-amz-tagging)
+  status: implemented
+  gap: x-amz-tagging is parsed as the same URL-encoded key=value query-string used by CreateMultipartUpload, validated against the PutObjectTagging limits, then applied to the newly written blob via a follow-up Azure Put Blob Tags call.
+- name: storage-class (x-amz-storage-class)
+  status: unsupported
+  gap: Azure Blob does not have an AWS storage-class equivalent on Put Blob; the request header is ignored and later listings still report STANDARD.
+  disposition: by_design
+- name: flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*)
+  status: partial
+  gap: Content-MD5 is forwarded. Algorithm-specific flexible-checksum headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK uploads succeed, but the proxy does not re-validate or persist those checksum values beyond the normal Azure integrity checks.
+  disposition: feasible_backlog
+  tracking_issue: '#894'
 - name: versioning (x-amz-version-id)
   status: partial
   gap: When account-level Blob versioning is enabled, the created Azure x-ms-version-id is reversibly encoded before being surfaced as x-amz-version-id so the token round-trips through S3 ?versionId without leaking Azure's raw timestamp format.
@@ -37,6 +49,9 @@ behavior_differences:
 - x-amz-version-id is a proxy-encoded Azure version token (azv-...); it preserves presence/round-trip semantics but will not byte-match AWS's opaque version id. [conformance:header-value:x-amz-version-id]
 - PUT always overwrites an existing blob, matching S3 default semantics.
 - x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
+- x-amz-tagging is applied via a second, non-atomic Azure Put Blob Tags call after the blob body is already committed. If the tag call fails, PutObject returns the Azure error even though the object bytes were already written.
+- x-amz-storage-class is ignored on write; Azure Blob uses its own account/container tiering model and the proxy does not persist the requested AWS storage class.
+- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not surfaced on the response and are not revalidated proxy-side on upload; only Content-MD5 participates in the classic S3 ETag flow for single-part uploads.
 - x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on PutObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme]
 - 'Concrete-ETag preconditions (If-Match / If-None-Match with a value other than ''*'') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure''s raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The ''*'' sentinel is honored (forwarded to Azure).'
 - Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics.

@@ -21,6 +21,7 @@ sub_features:
 behavior_differences:
 - Legacy V1 listing kept alongside V2 for SDKs that have not migrated.
 - Without a delimiter, callers derive the next marker from the last Contents.Key (matches S3 docs).
+- Contents.StorageClass is always STANDARD. Azure Blob listings expose Azure access tiers, not AWS storage classes, and the proxy currently does not map or persist an AWS-equivalent class.
 - x-amz-bucket-region is not emitted on ListObjects responses; Azure's List Blobs response does not carry an equivalent region indicator, and the proxy does not synthesize one for the listing path (HeadBucket is the surface that carries region). [conformance:list-objects-v1-pagination::missing-header:x-amz-bucket-region]
 - NextMarker / Marker use a proxy-defined opaque encoding of Azure's continuation token when a delimiter is set (mirroring ListObjectsV2's opaque continuation-token semantics) rather than AWS's "last returned key" convention; clients must round-trip the exact value across page boundaries. [conformance:list-objects-v1-pagination::field-value:NextMarker] [conformance:list-objects-v1-pagination::field-value:Marker]
 references:

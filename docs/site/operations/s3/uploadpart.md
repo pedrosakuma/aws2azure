@@ -30,6 +30,15 @@ ETag returned to clients is hex(MD5) of the part body, computed in-flight as the
 
 All STREAMING-* chunked payload variants already supported by the proxy are decoded before forwarding the part to Azure.
 
+### flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) {#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum}
+
+- **Capability ID:** `sub-feature:s3:uploadpart:flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum`
+- **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+
+**Gap.** Algorithm-specific flexible-checksum request headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK multipart uploads succeed, but the proxy does not re-validate or persist them. The UploadPart response ETag remains the streamed MD5 hex of the part body.
+
 ### server-side-encryption-customer {#sub-feature-server-side-encryption-customer}
 
 - **Capability ID:** `sub-feature:s3:uploadpart:server-side-encryption-customer`
@@ -40,6 +49,7 @@ All STREAMING-* chunked payload variants already supported by the proxy are deco
 
 - Block IDs use the fixed-width layout b{nonce16hex}p{partNumber5d} (base64-encoded) so all parts of a blob share a constant length, satisfying Azure's block-ID uniformity rule.
 - Part numbers must be in [1, 10000] (S3 limit). Azure's higher block-count ceiling is intentionally unused.
+- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not emitted on the UploadPart response and are not revalidated proxy-side; the returned ETag is always the streamed MD5 of the part body.
 - x-amz-server-side-encryption is not emitted on the UploadPart response; Azure Blob Storage's Put Block response reports encryption state via x-ms-server-encrypted rather than an equivalent AWS-style header the proxy mirrors onto UploadPart 200s. [conformance:multipart-upload-abort-roundtrip::missing-header:x-amz-server-side-encryption] [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
 
 ## References
