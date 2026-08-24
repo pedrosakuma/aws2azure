@@ -1473,11 +1473,14 @@ public sealed class WorkloadGaCertificationTests
     // Regression coverage for #803/#875/#877 reaffirm-mode evidence renewal:
     // a reaffirmed load run's real GitHub Actions head_sha genuinely differs
     // from the qualification candidate's historical git_sha (see
-    // SloQualification.cs's ValidateRunEvidenceArtifact), so committed
-    // evidence marked source_runs[*].reaffirmed: true must tolerate that
-    // mismatch, while every other evidence_artifact identity check (and the
-    // unconditional git_sha/artifact_digest/config_digest content match a
-    // few lines above) remains fully enforced.
+    // SloQualification.cs's ValidateRunEvidenceArtifact), and its config_digest
+    // genuinely cannot reproduce the correctness workflow's own historical
+    // config-manifest byte-for-byte once that workflow's script shape has
+    // drifted since the candidate's commit, so committed evidence marked
+    // source_runs[*].reaffirmed: true must tolerate both mismatches, while
+    // every other evidence_artifact identity check (and the unconditional
+    // git_sha/artifact_digest content match a few lines above) remains fully
+    // enforced.
     [Fact]
     public void Committed_qualified_artifact_tolerates_reaffirmed_load_run_head_sha_mismatch()
     {
@@ -1497,6 +1500,7 @@ public sealed class WorkloadGaCertificationTests
         var source = qualification.Provenance.SourceRuns[0];
         source.Reaffirmed = true;
         source.EvidenceArtifact!.HeadSha = "fedcba9876543210fedcba9876543210fedcba9";
+        source.ConfigDigest = "sha256:different-config";
         SloQualificationRenderer.RenderYaml(qualification, evidencePath);
 
         try
@@ -1509,6 +1513,54 @@ public sealed class WorkloadGaCertificationTests
                 AtEndOfUtcDay(2026, 7, 16));
 
             Assert.Equal("ga", report.Verdict);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    // Companion negative case: a load run's config_digest is only relaxed
+    // when reaffirmed is true; an ordinary promote-mode run with a
+    // mismatched config_digest must still be rejected, preserving the real
+    // tamper/mismatch detection for non-reaffirmed evidence.
+    [Fact]
+    public void Committed_qualified_artifact_rejects_non_reaffirmed_config_digest_mismatch()
+    {
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-config-digest-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Scenarios[0].Id = "required-load";
+        qualification.Signals.ForEach(signal => signal.ScenarioId = "required-load");
+        var source = qualification.Provenance.SourceRuns[0];
+        source.Reaffirmed = false;
+        source.ConfigDigest = "sha256:different-config";
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                AtEndOfUtcDay(2026, 7, 16));
+
+            Assert.Equal("candidate", report.Verdict);
+            Assert.Contains(
+                report.Findings,
+                finding => finding.Code == "qualification_evidence_invalid"
+                           && finding.Message.Contains(
+                               "candidate provenance does not match",
+                               StringComparison.Ordinal));
         }
         finally
         {

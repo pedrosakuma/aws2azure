@@ -81,15 +81,18 @@ public sealed class SloQualificationSourceRun
     // the ref it was dispatched from, so a reaffirmed load run's real
     // GitHub Actions head_sha is whatever main was on its own dispatch day --
     // never required to equal GitSha (the historical runtime it reaffirms).
-    // Only used to relax the load-run head_sha cross-check in
-    // ValidateRunEvidenceArtifact; every other identity check (repository,
-    // workflow, event, conclusion, artifact digest, protected ref) and the
-    // unconditional GitSha/ArtifactDigest/ConfigDigest content match against
-    // the qualification candidate remain fully enforced regardless of this
-    // flag. Unused/ignored on the correctness run (its own real head_sha
-    // always equals the candidate's GitSha, in both promote and reaffirm
-    // modes, since integration-real-azure.yml genuinely executes at the
-    // historical commit it certifies).
+    // Also relaxes the load-run config_digest cross-check (see the ConfigDigest
+    // property comment and its use in Validate below): the correctness
+    // workflow's config-manifest script shape can itself have drifted since
+    // the candidate's historical commit, making byte-for-byte reproduction
+    // structurally unreliable across workflow evolution. Every other identity
+    // check (repository, workflow, event, conclusion, artifact digest,
+    // protected ref) and the unconditional GitSha/ArtifactDigest content match
+    // against the qualification candidate remain fully enforced regardless of
+    // this flag. Unused/ignored on the correctness run (its own real head_sha
+    // and config_digest always equal the candidate's, in both promote and
+    // reaffirm modes, since integration-real-azure.yml genuinely executes at
+    // the historical commit it certifies).
     public bool Reaffirmed { get; set; }
 }
 
@@ -579,10 +582,24 @@ public static class SloQualificationValidator
                     run.ArtifactDigest,
                     document.Candidate.ArtifactDigest,
                     StringComparison.Ordinal)
-                || !string.Equals(
-                    run.ConfigDigest,
-                    document.Candidate.ConfigDigest,
-                    StringComparison.Ordinal))
+                // config_digest seals the correctness workflow's own
+                // environment/config manifest as computed by its inline
+                // script logic at its own dispatch-time commit. A reaffirmed
+                // load run re-derives this manifest from the candidate's
+                // historical commit, but the correctness workflow's script
+                // *shape* can itself have changed between that historical
+                // commit and today -- making byte-for-byte reproduction
+                // structurally unreliable across workflow evolution,
+                // independent of whether the evidence genuinely pertains to
+                // the sealed candidate (which git_sha and artifact_digest,
+                // checked unconditionally above, already anchor). Promote-mode
+                // runs -- whose own commit always equals the freshly-sealed
+                // candidate's commit -- keep the strict equality check.
+                || (!run.Reaffirmed
+                    && !string.Equals(
+                        run.ConfigDigest,
+                        document.Candidate.ConfigDigest,
+                        StringComparison.Ordinal)))
             {
                 err($"{prefix} candidate provenance does not match the qualification candidate");
             }
