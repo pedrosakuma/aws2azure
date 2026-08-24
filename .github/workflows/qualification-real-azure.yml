@@ -170,6 +170,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
           destination="$PRIVATE_ROOT/correctness"
           selection="$EVIDENCE_ROOT/selections/correctness.json"
           # integration-real-azure.yml's reaffirm mode mirrors the load
@@ -283,6 +284,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
           mkdir -p "$EVIDENCE_ROOT/load"
           evidence_paths="$EVIDENCE_ROOT/load-evidence-paths.txt"
           selection_paths="$EVIDENCE_ROOT/load-selection-paths.txt"
