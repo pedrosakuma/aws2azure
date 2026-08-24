@@ -104,6 +104,27 @@ public sealed class ServiceModuleRegistry
             var result = _sigV4.Validate(sigRequest);
             if (!result.IsValid)
             {
+                // S3 browser-based POST-policy uploads carry SigV4 material in
+                // multipart form fields (policy/x-amz-credential/x-amz-date/
+                // x-amz-signature), not in the Authorization header or
+                // X-Amz-Signature query parameter that the generic SigV4
+                // validator inspects here. For that narrow request shape we
+                // intentionally defer authentication to the S3 module instead
+                // of rejecting it at the registry boundary.
+                //
+                // Authentication is not skipped: ObjectHandlers.HandlePostObjectAsync
+                // calls PresignedPostPolicy.Validate in Aws2Azure.Modules.S3,
+                // which re-derives the SigV4 signing key from the caller's real
+                // AWS secret, verifies the policy signature with HMAC-SHA256
+                // using constant-time comparison, and enforces expiration plus
+                // submitted-field authorization checks before any blob write.
+                //
+                // Reviewed in CodeQL alert #1 (cs/user-controlled-bypass),
+                // dismissed as a false positive because CodeQL cannot follow
+                // this cross-assembly IServiceModule.HandleAsync dispatch.
+                // GitHub CodeQL does not support an effective inline C#
+                // suppression for this alert, so this comment documents the
+                // reviewed intent alongside the dismissal record.
                 if (ShouldDeferS3MultipartFormAuth(module, context, result))
                 {
                     goto SigV4Complete;
@@ -306,6 +327,11 @@ SigV4Complete:
         HttpContext context,
         SigV4ValidationResult result)
     {
+        // This predicate is intentionally strict because it gates the only
+        // request shape whose SigV4 credentials are expected to arrive in
+        // multipart form fields instead of Authorization/X-Amz-Signature:
+        // S3 POST-policy browser uploads. The downstream S3 POST-policy
+        // validator performs the real cryptographic auth check.
         if (!string.Equals(module.ServiceName, "s3", StringComparison.Ordinal)
             || result.Status != SigV4ValidationStatus.Malformed
             || !string.Equals(result.Reason, "no Authorization header and no X-Amz-Signature query parameter", StringComparison.Ordinal))
