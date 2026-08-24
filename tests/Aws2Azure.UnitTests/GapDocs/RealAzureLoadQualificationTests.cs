@@ -86,6 +86,71 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
+    // Follow-up for #889: integration-real-azure.yml's reaffirm mode now mirrors
+    // workload-load-real-azure.yml's split identity. The job still runs at its
+    // own dispatch-day HEAD, while the emitted correctness candidate's content
+    // reaffirms the historical approved runtime from the ledger. Qualification
+    // must therefore accept a reaffirmed correctness run whose trusted
+    // evidence-artifact head_sha differs from candidate.GitSha.
+    [Fact]
+    public void Generate_qualifies_reaffirmed_correctness_run_with_different_dispatch_day_head_sha()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
+        const string reaffirmDispatchDayHeadSha = "fedcba9876543210fedcba9876543210fedcba9";
+        selections.Correctness.HeadSha = reaffirmDispatchDayHeadSha;
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            candidate,
+            Policy(),
+            evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal("qualified", document.Verdict);
+        var correctness = document.Provenance.CorrectnessRun
+            ?? throw new InvalidDataException("Generated qualification lacks correctness run.");
+        Assert.True(correctness.Reaffirmed);
+        correctness.EvidenceArtifact!.HeadSha = reaffirmDispatchDayHeadSha;
+        Assert.Empty(SloQualificationValidator.Validate(document, Now));
+    }
+
+    [Fact]
+    public void Generate_qualifies_reaffirmed_evidence_selected_from_different_protected_refs()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
+        selections.Correctness.HeadRef = "refs/heads/main";
+        foreach (var load in selections.Load)
+        {
+            load.HeadRef = "refs/tags/v1.2.3-rc.1";
+            load.HeadSha = "fedcba9876543210fedcba9876543210fedcba9";
+        }
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            candidate,
+            Policy(),
+            evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.Equal("refs/heads/main", document.Provenance.CorrectnessRun!.EvidenceArtifact!.HeadRef);
+        Assert.All(
+            document.Provenance.SourceRuns,
+            run => Assert.Equal("refs/tags/v1.2.3-rc.1", run.EvidenceArtifact!.HeadRef));
+    }
+
     // Reaffirm mode (see #803/#875/#877, follow-up to the head_sha fix above):
     // a reaffirmed load run's own config_digest cannot generally reproduce
     // the correctness workflow's historical config-manifest byte-for-byte,

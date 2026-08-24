@@ -75,24 +75,20 @@ public sealed class SloQualificationSourceRun
     public string ConfigDigest { get; set; } = string.Empty;
     public QualificationRunArtifactIdentity? EvidenceArtifact { get; set; }
 
-    // Reaffirmed distinguishes a load run generated under
-    // qualification_mode=reaffirm (see #803/#875/#877) from an ordinary
-    // promote-mode load run. workload-load-real-azure.yml always checks out
-    // the ref it was dispatched from, so a reaffirmed load run's real
-    // GitHub Actions head_sha is whatever main was on its own dispatch day --
-    // never required to equal GitSha (the historical runtime it reaffirms).
-    // Also relaxes the load-run config_digest cross-check (see the ConfigDigest
-    // property comment and its use in Validate below): the correctness
-    // workflow's config-manifest script shape can itself have drifted since
-    // the candidate's historical commit, making byte-for-byte reproduction
-    // structurally unreliable across workflow evolution. Every other identity
-    // check (repository, workflow, event, conclusion, artifact digest,
-    // protected ref) and the unconditional GitSha/ArtifactDigest content match
-    // against the qualification candidate remain fully enforced regardless of
-    // this flag. Unused/ignored on the correctness run (its own real head_sha
-    // and config_digest always equal the candidate's, in both promote and
-    // reaffirm modes, since integration-real-azure.yml genuinely executes at
-    // the historical commit it certifies).
+    // Reaffirmed distinguishes a source run generated under
+    // qualification_mode=reaffirm (see #803/#875/#877/#889) from an ordinary
+    // promote-mode run. Reaffirmed real-Azure workflows still check out the ref
+    // they were dispatched from, so a reaffirmed run's real GitHub Actions
+    // head_sha/head_ref are whatever protected main/RC-tag the run was
+    // dispatched from on that day -- never required to equal GitSha/Runtime.Ref
+    // (the historical runtime it reaffirms). Load runs
+    // additionally relax the cross-run config_digest equality below because that
+    // workflow re-derives the correctness workflow's candidate manifest from a
+    // duplicated inline script shape that can itself drift over time. Correctness
+    // runs do not relax config_digest equality: integration-real-azure.yml
+    // re-derives its own candidate-facing config manifest from the historical
+    // candidate commit, so the content-level candidate identity still matches
+    // exactly even though the dispatch-day head_sha differs.
     public bool Reaffirmed { get; set; }
 }
 
@@ -542,7 +538,12 @@ public static class SloQualificationValidator
         DateTimeOffset nowUtc,
         Action<string> err)
     {
-        var runs = document.Provenance.SourceRuns;
+        var provenance = document.Provenance;
+        var runs = provenance?.SourceRuns ?? [];
+        if (provenance is null)
+        {
+            return;
+        }
         if (document.Verdict != "qualified" && runs.Count == 0)
         {
             return;
@@ -572,8 +573,8 @@ public static class SloQualificationValidator
             {
                 err($"{prefix} requires an ordered non-empty run window");
             }
-            if (run.WindowStartUtc < document.Provenance.WindowStartUtc
-                || run.WindowEndUtc > document.Provenance.WindowEndUtc)
+            if (run.WindowStartUtc < provenance.WindowStartUtc
+                || run.WindowEndUtc > provenance.WindowEndUtc)
             {
                 err($"{prefix} window must fall within the aggregate provenance window");
             }
@@ -625,8 +626,9 @@ public static class SloQualificationValidator
                     // whatever main/RC-tag HEAD was on the day it was
                     // dispatched (its workflow always checks out the dispatch
                     // ref) -- it is never required to equal
-                    // document.Candidate.GitSha (the sealed runtime's
-                    // certified commit), since a reaffirmed load run
+                    // document.Candidate.GitSha / Runtime.Source.Ref (the
+                    // sealed runtime's certified commit/ref), since a
+                    // reaffirmed load run
                     // genuinely reaffirms an older, already-approved runtime
                     // from a fresh dispatch. That the *content* actually
                     // reaffirms the right runtime is already independently
@@ -639,6 +641,7 @@ public static class SloQualificationValidator
                     // runs keep the strict, tamper-evident equality check
                     // against document.Candidate.GitSha unchanged.
                     run.Reaffirmed ? run.EvidenceArtifact?.HeadSha : document.Candidate.GitSha,
+                    run.Reaffirmed ? run.EvidenceArtifact?.HeadRef : document.Candidate.Runtime?.Source?.Ref,
                     nowUtc,
                     prefix,
                     err);
@@ -654,11 +657,11 @@ public static class SloQualificationValidator
         }
         if (document.Verdict == "qualified")
         {
-            if (seen.Contains(document.Provenance.RunId))
+            if (seen.Contains(provenance.RunId))
             {
                 err("qualification provenance.run_id must be distinct from load source runs");
             }
-            var correctness = document.Provenance.CorrectnessRun;
+            var correctness = provenance.CorrectnessRun;
             if (correctness is null)
             {
                 err("qualified real-Azure artifact requires provenance.correctness_run");
@@ -670,7 +673,7 @@ public static class SloQualificationValidator
                 {
                     err("provenance.correctness_run must be distinct from load source runs");
                 }
-                if (correctness.RunId == document.Provenance.RunId)
+                if (correctness.RunId == provenance.RunId)
                 {
                     err(
                         "qualification provenance.run_id must be distinct from " +
@@ -714,7 +717,8 @@ public static class SloQualificationValidator
             run,
             ".github/workflows/integration-real-azure.yml",
             "real-azure-conformance",
-            document.Candidate.GitSha,
+            run.Reaffirmed ? run.EvidenceArtifact?.HeadSha : document.Candidate.GitSha,
+            run.Reaffirmed ? run.EvidenceArtifact?.HeadRef : document.Candidate.Runtime?.Source?.Ref,
             nowUtc,
             prefix,
             err);
@@ -726,6 +730,7 @@ public static class SloQualificationValidator
         string expectedWorkflow,
         string expectedArtifactName,
         string? expectedHeadSha,
+        string? expectedHeadRef,
         DateTimeOffset nowUtc,
         string prefix,
         Action<string> err)
@@ -745,6 +750,11 @@ public static class SloQualificationValidator
             err($"{prefix}.evidence_artifact is missing a head SHA to validate against");
             return;
         }
+        if (string.IsNullOrWhiteSpace(expectedHeadRef))
+        {
+            err($"{prefix}.evidence_artifact is missing a head ref to validate against");
+            return;
+        }
 
         try
         {
@@ -759,7 +769,7 @@ public static class SloQualificationValidator
                 run.RunId,
                 run.RunAttempt,
                 expectedHeadSha,
-                document.Candidate.Runtime.Source.Ref,
+                expectedHeadRef,
                 nowUtc);
             if (run.RunUrl != run.EvidenceArtifact.RunUrl)
             {

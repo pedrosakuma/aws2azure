@@ -38,6 +38,17 @@ name: integration-real-azure
 #
 # One-time operator setup (OIDC + reaper) is documented in
 # docs/testing/real-azure-nightly.md.
+#
+# mode: promote (default) certifies a genuinely new sealed candidate built from
+# the commit currently checked out; candidate_run_id and candidate_run_attempt
+# select that new candidate. mode: reaffirm renews correctness evidence freshness
+# for the already-approved *historical* runtime instead: it ignores any supplied
+# candidate_* inputs, resolves the candidate directly from the profile's current
+# approved-runtime ledger, and still runs today's harness/tests at today's
+# checkout while embedding the historical sealed runtime's identity/provenance in
+# the emitted correctness candidate (mirroring workload-load-real-azure.yml's
+# reaffirm-mode split between dispatch-day head_sha and historical candidate
+# identity; see #803/#877/#889).
 on:
   schedule:
     # Nightly at 05:00 UTC, an hour after the emulator `integration`
@@ -83,6 +94,14 @@ on:
           - sqs-dlq-redrive
           - sqs-fifo-amqp
           - kinesis-single-consumer-per-shard
+      mode:
+        description: promote a new sealed candidate, or reaffirm the already-approved runtime
+        required: true
+        default: promote
+        type: choice
+        options:
+          - promote
+          - reaffirm
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id
         required: false
@@ -155,13 +174,16 @@ jobs:
           SELECTED_SCENARIO: ${{ inputs.scenario || '' }}
           REQUIRE_REAL_AZURE: ${{ inputs.require_real_azure || false }}
           QUALIFICATION_PROFILE: ${{ inputs.qualification_profile || 'source-validation' }}
+          REQUALIFICATION_MODE: ${{ inputs.mode }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
+          CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
           REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: |
           set -euo pipefail
           qualification_sha="$(git rev-parse HEAD)"
+          requalification_mode="${REQUALIFICATION_MODE:-promote}"
           qualifying=false
           runtime_mode=source_validation
           persisted_format_qualification=0
@@ -181,8 +203,13 @@ jobs:
               echo "::error::Sealed correctness requires the complete profile plan and enforced positive real-Azure evidence."
               exit 1
             fi
-            if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-               [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            if [ "$requalification_mode" = reaffirm ]; then
+              if [ -n "$CANDIDATE_RUN_ID" ] || [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+                echo "::error::mode=reaffirm resolves the candidate from the approved-runtime ledger; candidate_* inputs must be left blank."
+                exit 1
+              fi
+            elif [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+                 [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
               echo "::error::Sealed correctness requires numeric candidate run id and attempt."
               exit 1
             fi
@@ -198,17 +225,21 @@ jobs:
               runtime_mode=rollback
               persisted_format_qualification=1
             fi
+          else
+            requalification_mode=promote
           fi
           {
             echo "qualifying=$qualifying"
             echo "profile=$profile"
             echo "qualification_sha=$qualification_sha"
+            echo "requalification_mode=$requalification_mode"
           } >> "$GITHUB_OUTPUT"
           {
             echo "AWS2AZURE_SEALED_RUNTIME_MODE=$runtime_mode"
             echo "AWS2AZURE_DDB_PERSISTED_FORMAT_QUALIFICATION=$persisted_format_qualification"
             echo "AWS2AZURE_QUALIFICATION_SHA=$qualification_sha"
             echo "AWS2AZURE_QUALIFICATION_PROFILE=$profile"
+            echo "AWS2AZURE_QUALIFICATION_MODE=$requalification_mode"
           } >> "$GITHUB_ENV"
 
       # Provisioning needs the OIDC client id. When it is absent (fork PRs, or
@@ -243,6 +274,7 @@ jobs:
         if: steps.mode.outputs.qualifying == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUALIFICATION_MODE: ${{ steps.mode.outputs.requalification_mode }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
           CANDIDATE_RUN_ATTEMPT: ${{ inputs.candidate_run_attempt }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
@@ -251,31 +283,71 @@ jobs:
           install -d -m 0700 "$PRIVATE_DIR"
           identity_dir="$QUALIFICATION_DIR/sealed-runtimes"
           install -d -m 0700 "$identity_dir"
-          candidate_args=(
-            --repository "$GITHUB_REPOSITORY"
-            --run-id "$CANDIDATE_RUN_ID"
-            --run-attempt "$CANDIDATE_RUN_ATTEMPT"
-            --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
-            --expected-ref "$GITHUB_REF"
-            --profile "${{ steps.mode.outputs.profile }}"
-            --profile-version 1
-            --role candidate
-            --destination "$PRIVATE_DIR/sealed-candidate"
-            --identity-output "$identity_dir/candidate-runtime.json"
-            --github-env "$GITHUB_ENV"
-          )
-          if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
-            candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
-          fi
-          ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          prior_ledger="$identity_dir/prior-ledger.json"
 
-          if [ "${{ steps.mode.outputs.profile }}" = dynamodb-single-partition-transactions ]; then
-            gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
-            prior_ledger="$identity_dir/prior-ledger.json"
+          if [ "$REQUALIFICATION_MODE" = reaffirm ]; then
+            current_ledger="$identity_dir/current-ledger.json"
             dotnet exec "$gap_docs" export-approved-runtime \
               --profile "${{ steps.mode.outputs.profile }}" \
-              --output "$prior_ledger"
-            chmod 0600 "$prior_ledger"
+              --output "$current_ledger"
+            chmod 0600 "$current_ledger"
+
+            candidate_run_id="$(jq -er '.record.producer.run_id' "$current_ledger")"
+            candidate_attempt="$(jq -er '.record.producer.run_attempt' "$current_ledger")"
+            candidate_sha="$(jq -er '.record.runtime.source_sha' "$current_ledger")"
+            candidate_ref="$(jq -er '.record.attestation.source_ref' "$current_ledger")"
+            candidate_artifact_id="$(jq -er '.record.artifact.id' "$current_ledger")"
+            ./eng/resolve-sealed-runtime.sh \
+              --repository "$GITHUB_REPOSITORY" \
+              --run-id "$candidate_run_id" \
+              --run-attempt "$candidate_attempt" \
+              --expected-sha "$candidate_sha" \
+              --expected-ref "$candidate_ref" \
+              --profile "${{ steps.mode.outputs.profile }}" \
+              --profile-version 1 \
+              --role candidate \
+              --artifact-id "$candidate_artifact_id" \
+              --destination "$PRIVATE_DIR/sealed-candidate" \
+              --identity-output "$identity_dir/candidate-runtime.json" \
+              --github-env "$GITHUB_ENV"
+
+            if [ "${{ steps.mode.outputs.profile }}" = dynamodb-single-partition-transactions ]; then
+              dotnet exec "$gap_docs" export-approved-runtime \
+                --profile "${{ steps.mode.outputs.profile }}" \
+                --rollback-target \
+                --candidate "$identity_dir/candidate-runtime.json" \
+                --ledger-json "$current_ledger" \
+                --output "$prior_ledger"
+              chmod 0600 "$prior_ledger"
+            fi
+          else
+            candidate_args=(
+              --repository "$GITHUB_REPOSITORY"
+              --run-id "$CANDIDATE_RUN_ID"
+              --run-attempt "$CANDIDATE_RUN_ATTEMPT"
+              --expected-sha "${{ steps.mode.outputs.qualification_sha }}"
+              --expected-ref "$GITHUB_REF"
+              --profile "${{ steps.mode.outputs.profile }}"
+              --profile-version 1
+              --role candidate
+              --destination "$PRIVATE_DIR/sealed-candidate"
+              --identity-output "$identity_dir/candidate-runtime.json"
+              --github-env "$GITHUB_ENV"
+            )
+            if [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+              candidate_args+=(--artifact-id "$CANDIDATE_ARTIFACT_ID")
+            fi
+            ./eng/resolve-sealed-runtime.sh "${candidate_args[@]}"
+          fi
+
+          if [ "${{ steps.mode.outputs.profile }}" = dynamodb-single-partition-transactions ]; then
+            if [ "$REQUALIFICATION_MODE" != reaffirm ]; then
+              dotnet exec "$gap_docs" export-approved-runtime \
+                --profile "${{ steps.mode.outputs.profile }}" \
+                --output "$prior_ledger"
+              chmod 0600 "$prior_ledger"
+            fi
 
             prior_run_id="$(jq -er '.record.producer.run_id' "$prior_ledger")"
             prior_attempt="$(jq -er '.record.producer.run_attempt' "$prior_ledger")"
@@ -437,14 +509,51 @@ jobs:
           fi
 
           config_manifest="$QUALIFICATION_DIR/config-manifest.json"
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ] &&
+             [ "${{ steps.mode.outputs.requalification_mode }}" = reaffirm ]; then
+            # Reaffirmed correctness still runs today's harness/tests at today's
+            # checkout, but the emitted candidate must honestly describe the
+            # already-approved historical sealed runtime being re-certified. Re-
+            # derive the candidate-facing config manifest from the candidate SHA's
+            # committed sources (mirroring workload-load-real-azure.yml) so the
+            # resulting config_digest stays anchored to the historical candidate,
+            # not to the dispatch day's checkout.
+            candidate_git_sha="$(
+              jq -er '.source.sha' "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json"
+            )"
+            if ! git cat-file -e "$candidate_git_sha" 2>/dev/null; then
+              git fetch --quiet --depth 1 origin "$candidate_git_sha"
+            fi
+            sha256_at_qualification_sha() {
+              local path="$1"
+              local digest
+              digest="$(
+                git show "$candidate_git_sha:$path" | sha256sum | cut -d' ' -f1
+              )" || {
+                echo "::error::Unable to read $path at candidate SHA $candidate_git_sha." >&2
+                exit 1
+              }
+              printf '%s\n' "$digest"
+            }
+
+            config_git_sha="$candidate_git_sha"
+            matrix_sha256="$(sha256_at_qualification_sha docs/testing/real-azure-conformance.yaml)"
+            bicep_sha256="$(sha256_at_qualification_sha deploy/realazure/main.bicep)"
+            workflow_sha256="$(sha256_at_qualification_sha .github/workflows/integration-real-azure.yml)"
+          else
+            config_git_sha="$(git rev-parse HEAD)"
+            matrix_sha256="$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)"
+            bicep_sha256="$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)"
+            workflow_sha256="$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)"
+          fi
           jq -n \
             --arg schema_version "1" \
-            --arg git_sha "$(git rev-parse HEAD)" \
+            --arg git_sha "$config_git_sha" \
             --arg region "$AZURE_LOCATION" \
             --arg dynamodb_stored_procedure_mode "$AWS2AZURE_DDB_STORED_PROCEDURE_MODE" \
-            --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
-            --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
-            --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
+            --arg matrix_sha256 "$matrix_sha256" \
+            --arg bicep_sha256 "$bicep_sha256" \
+            --arg workflow_sha256 "$workflow_sha256" \
             '{
               schema_version: ($schema_version | tonumber),
               git_sha: $git_sha,
@@ -745,13 +854,19 @@ jobs:
           profile="${{ steps.mode.outputs.profile }}"
           manifest="docs/workloads/$profile.yaml"
           output="$QUALIFICATION_DIR/candidates/$profile.yaml"
+          candidate_git_sha="${{ steps.mode.outputs.qualification_sha }}"
+          if [ "${{ steps.mode.outputs.requalification_mode }}" = reaffirm ]; then
+            candidate_git_sha="$(
+              jq -er '.source.sha' "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json"
+            )"
+          fi
           set +e
           dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll \
             generate-real-azure-workload-qualification \
             --manifest "$manifest" \
             --evidence "$evidence" \
             --output "$output" \
-            --git-sha "$(git rev-parse HEAD)" \
+            --git-sha "$candidate_git_sha" \
             --artifact-digest "${{ steps.provenance.outputs.runtime_digest }}" \
             --config-digest "${{ steps.provenance.outputs.config_digest }}" \
             --sealed-runtime-identity "$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json" \
