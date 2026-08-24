@@ -427,15 +427,63 @@ jobs:
             ) > "$GITHUB_WORKSPACE/$runtime_manifest"
           fi
 
+          # In mode=reaffirm the job dispatches at the current HEAD, but the
+          # candidate it is re-validating is historical: integration-real-azure's
+          # own config-manifest was hashed from the *candidate commit's* copies
+          # of these files, not from whatever they look like today. Hashing the
+          # dispatch-time working tree would make config_digest permanently
+          # unreproducible for any reaffirmed candidate whose referenced files
+          # have since changed on main (they routinely do). Resolve content at
+          # the candidate's own commit instead, so config_digest is reproduced
+          # identically regardless of which commit the job happens to run at.
+          candidate_identity="$QUALIFICATION_DIR/sealed-runtimes/candidate-runtime.json"
+          if [ "${{ steps.mode.outputs.qualifying }}" = true ]; then
+            manifest_git_sha="$(jq -er '.source.sha' "$candidate_identity")"
+          else
+            manifest_git_sha="$(git rev-parse HEAD)"
+          fi
+          if ! git cat-file -e "$manifest_git_sha" 2>/dev/null; then
+            git fetch --quiet --depth 1 origin "$manifest_git_sha"
+          fi
+          # git show's failure inside a command substitution used as an
+          # argument (rather than as the whole of a simple command) is not
+          # caught by errexit, so a missing/unresolvable path would otherwise
+          # silently hash empty content instead of failing the step.
+          # Redirecting to a file (rather than capturing via $(...)) also
+          # avoids bash's command-substitution trailing-newline stripping,
+          # which would otherwise make the digest diverge from a plain
+          # `sha256sum <file>` on byte-identical content.
+          sha256_at_candidate_sha() {
+            local tmp
+            tmp="$(mktemp)"
+            if ! git show "$manifest_git_sha:$1" > "$tmp"; then
+              rm -f "$tmp"
+              echo "::error::Unable to read $1 at candidate commit $manifest_git_sha." >&2
+              exit 1
+            fi
+            sha256sum "$tmp" | cut -d' ' -f1
+            rm -f "$tmp"
+          }
+
           candidate_config_manifest="$QUALIFICATION_DIR/config-manifest.json"
+          # Each digest is assigned to its own standalone variable (rather than
+          # inlined as a jq --arg's command substitution) because a failing
+          # command substitution is only caught by errexit when it is the
+          # entirety of a simple command (e.g. `x=$(cmd)`), not when embedded
+          # as an argument to another command (e.g. `jq --arg x "$(cmd)"`) --
+          # inlining it would let sha256_at_candidate_sha's `exit 1` be
+          # silently swallowed by jq's own (successful) exit status.
+          matrix_sha256="$(sha256_at_candidate_sha docs/testing/real-azure-conformance.yaml)"
+          bicep_sha256="$(sha256_at_candidate_sha deploy/realazure/main.bicep)"
+          workflow_sha256="$(sha256_at_candidate_sha .github/workflows/integration-real-azure.yml)"
           jq -n \
             --arg schema_version "1" \
-            --arg git_sha "$(git rev-parse HEAD)" \
+            --arg git_sha "$manifest_git_sha" \
             --arg region "$AZURE_LOCATION" \
             --arg dynamodb_stored_procedure_mode "$AWS2AZURE_DDB_STORED_PROCEDURE_MODE" \
-            --arg matrix_sha256 "$(sha256sum docs/testing/real-azure-conformance.yaml | cut -d' ' -f1)" \
-            --arg bicep_sha256 "$(sha256sum deploy/realazure/main.bicep | cut -d' ' -f1)" \
-            --arg workflow_sha256 "$(sha256sum .github/workflows/integration-real-azure.yml | cut -d' ' -f1)" \
+            --arg matrix_sha256 "$matrix_sha256" \
+            --arg bicep_sha256 "$bicep_sha256" \
+            --arg workflow_sha256 "$workflow_sha256" \
             '{
               schema_version: ($schema_version | tonumber),
               git_sha: $git_sha,
