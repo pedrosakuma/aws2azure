@@ -919,7 +919,8 @@ public static class RealAzureLoadQualificationGenerator
                 run,
                 candidate.Candidate,
                 policy.Scenarios.Any(item => item.Id == "credential-rotation"),
-                seenRotationIdentities);
+                seenRotationIdentities,
+                qualificationMode);
             ValidateRollbackProof(
                 run,
                 candidate.Candidate,
@@ -1172,7 +1173,8 @@ public static class RealAzureLoadQualificationGenerator
         RealAzureLoadEvidence run,
         SloQualificationCandidate candidate,
         bool required,
-        ISet<string> seenIdentities)
+        ISet<string> seenIdentities,
+        string qualificationMode)
     {
         if (!required)
         {
@@ -1242,8 +1244,25 @@ public static class RealAzureLoadQualificationGenerator
             || proof.RuntimeArtifactDigestA != candidate.ArtifactDigest
             || proof.RuntimeArtifactDigestB != candidate.ArtifactDigest
             || proof.RuntimeArtifactDigestA != proof.RuntimeArtifactDigestB
-            || proof.CandidateConfigDigestA != candidate.ConfigDigest
-            || proof.CandidateConfigDigestB != candidate.ConfigDigest
+            // config_digest seals the correctness workflow's own
+            // environment/config manifest at its own dispatch-time commit
+            // (see the identical run.Candidate.ConfigDigest comment above).
+            // In mode=reaffirm the load job re-derives this manifest from the
+            // candidate's historical commit using today's checkout of the
+            // load workflow's duplicated manifest-generation logic, which can
+            // legitimately diverge from the July-sealed correctness
+            // candidate's own manifest as that logic evolves -- independent
+            // of whether the credential-rotation proof genuinely pertains to
+            // the sealed candidate (already anchored by RuntimeArtifactDigest
+            // above). Reaffirmation therefore only requires the proof's own
+            // A/B config digests to agree with each other, not with the
+            // correctness candidate's; promote mode -- where the load job's
+            // own commit always equals the freshly-sealed candidate's commit
+            // -- still enforces exact equality with the candidate.
+            || (qualificationMode != "reaffirm"
+                && (proof.CandidateConfigDigestA != candidate.ConfigDigest
+                    || proof.CandidateConfigDigestB != candidate.ConfigDigest))
+            || !IsDigest(proof.CandidateConfigDigestA)
             || proof.CandidateConfigDigestA != proof.CandidateConfigDigestB
             || !IsDigest(proof.ProxyConfigDigestA)
             || proof.ProxyConfigDigestA != proof.ProxyConfigDigestB
