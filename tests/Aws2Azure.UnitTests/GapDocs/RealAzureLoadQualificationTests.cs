@@ -122,6 +122,82 @@ public sealed class RealAzureLoadQualificationTests
             run => Assert.True(run.Reaffirmed));
     }
 
+    // Reaffirm mode (see #877, second follow-up): a repeated rollback proof's
+    // Attestation.BundleDigest is re-derived by `gh attestation verify` at
+    // whatever moment the reaffirm-mode load run happens to run, for both
+    // the candidate and the prior (rollback-baseline) runtime identities --
+    // it is not byte-stable across the months between original promotion
+    // and a reaffirm dispatch, even though every other identity fact is.
+    // Regression test for the bug where the rollback-proof candidate/prior
+    // identity comparisons rejected reaffirmed evidence whose bundle_digest
+    // genuinely differs from the correctness candidate's and the ledger's
+    // committed rollback_target for that reason alone.
+    [Fact]
+    public void Generate_qualifies_reaffirmed_load_run_with_drifted_rollback_bundle_digests()
+    {
+        var inputs = RollbackInputs();
+        var trustedTarget = inputs.Prior.Qualification?.RollbackTarget
+            ?? throw new InvalidOperationException(
+                "Fixture approved-runtime ledger lacks a rollback target.");
+        foreach (var run in inputs.Evidence)
+        {
+            var proof = Assert.Single(run.RollbackProofs);
+            proof.Prior = CloneWithBundleDigest(trustedTarget, Sha256('e'));
+            proof.Candidate = CloneWithBundleDigest(
+                run.Candidate.Runtime!,
+                Sha256('f'));
+        }
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            inputs.Manifest,
+            inputs.Candidate,
+            inputs.Policy,
+            inputs.Evidence,
+            Metadata(),
+            inputs.Prior,
+            selections.Correctness,
+            selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.Equal(3, document.RollbackProofs.Count);
+    }
+
+    // Regression test for the same #877 rollback-baseline bug in promote
+    // mode: promote mode must keep rejecting a genuinely drifted prior
+    // bundle_digest (or any other identity mismatch), because a promote-mode
+    // dispatch's own `gh attestation verify` re-derivation happens minutes,
+    // not months, after the candidate was sealed and is expected to match
+    // exactly.
+    [Fact]
+    public void Generate_rejects_promoted_load_run_with_drifted_rollback_prior_bundle_digest()
+    {
+        var inputs = RollbackInputs();
+        var trustedTarget = inputs.Prior.Qualification?.RollbackTarget
+            ?? throw new InvalidOperationException(
+                "Fixture approved-runtime ledger lacks a rollback target.");
+        Assert.Single(inputs.Evidence[0].RollbackProofs).Prior =
+            CloneWithBundleDigest(trustedTarget, Sha256('e'));
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata(),
+                inputs.Prior,
+                selections.Correctness,
+                selections.Load,
+                qualificationMode: "promote"));
+
+        Assert.Equal(
+            "Sealed prior identity does not exactly match the committed profile ledger.",
+            exception.Message);
+    }
+
     [Fact]
     public void Generate_rejects_reaffirmed_load_run_with_wrong_artifact_selection_head_sha()
     {
@@ -1847,6 +1923,73 @@ public sealed class RealAzureLoadQualificationTests
             ExecutableSubjectDigest = record.Attestation.SubjectDigest,
             ManifestSubjectName = record.Attestation.ManifestSubjectName,
             ManifestSubjectDigest = record.Attestation.ManifestSubjectDigest,
+        },
+    };
+
+    // Deep-copies a sealed runtime identity so a test can drift one field
+    // (e.g. a re-verified attestation.bundle_digest) without mutating a
+    // fixture shared by other assertions/tests.
+    private static QualificationSealedRuntimeIdentity CloneWithBundleDigest(
+        QualificationSealedRuntimeIdentity source,
+        string bundleDigest) => new()
+    {
+        SchemaVersion = source.SchemaVersion,
+        Role = source.Role,
+        Profile = new QualificationSealedRuntimeProfile
+        {
+            Id = source.Profile.Id,
+            Version = source.Profile.Version,
+        },
+        Status = source.Status,
+        Eligibility = new QualificationSealedRuntimeEligibility
+        {
+            RollbackBaselineEligible = source.Eligibility.RollbackBaselineEligible,
+            PromotionEligible = source.Eligibility.PromotionEligible,
+        },
+        LedgerRecordDigest = source.LedgerRecordDigest,
+        Source = new QualificationSealedRuntimeSource
+        {
+            Repository = source.Source.Repository,
+            Sha = source.Source.Sha,
+            Ref = source.Source.Ref,
+        },
+        Runtime = new QualificationSealedRuntimeDigests
+        {
+            AggregateDigest = source.Runtime.AggregateDigest,
+            ExecutableDigest = source.Runtime.ExecutableDigest,
+            ManifestDigest = source.Runtime.ManifestDigest,
+        },
+        Producer = new QualificationSealedRuntimeProducer
+        {
+            Workflow = source.Producer.Workflow,
+            EventName = source.Producer.EventName,
+            RunId = source.Producer.RunId,
+            RunAttempt = source.Producer.RunAttempt,
+            RunUrl = source.Producer.RunUrl,
+            AttemptUrl = source.Producer.AttemptUrl,
+            RunStartedAt = source.Producer.RunStartedAt,
+        },
+        Artifact = new QualificationSealedRuntimeArtifact
+        {
+            Id = source.Artifact.Id,
+            Name = source.Artifact.Name,
+            UploadDigest = source.Artifact.UploadDigest,
+            CreatedAt = source.Artifact.CreatedAt,
+            ExpiresAt = source.Artifact.ExpiresAt,
+        },
+        Attestation = new QualificationSealedRuntimeAttestation
+        {
+            PredicateType = source.Attestation.PredicateType,
+            Repository = source.Attestation.Repository,
+            SignerWorkflow = source.Attestation.SignerWorkflow,
+            SourceSha = source.Attestation.SourceSha,
+            SourceRef = source.Attestation.SourceRef,
+            RunInvocationUrl = source.Attestation.RunInvocationUrl,
+            BundleDigest = bundleDigest,
+            ExecutableSubjectName = source.Attestation.ExecutableSubjectName,
+            ExecutableSubjectDigest = source.Attestation.ExecutableSubjectDigest,
+            ManifestSubjectName = source.Attestation.ManifestSubjectName,
+            ManifestSubjectDigest = source.Attestation.ManifestSubjectDigest,
         },
     };
 
