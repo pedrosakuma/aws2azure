@@ -1141,7 +1141,8 @@ static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
             },
             priorRuntime,
             correctnessSelection,
-            loadSelections);
+            loadSelections,
+            qualificationMode);
         var errors = SloQualificationValidator.Validate(document, DateTimeOffset.UtcNow);
         if (errors.Count > 0)
         {

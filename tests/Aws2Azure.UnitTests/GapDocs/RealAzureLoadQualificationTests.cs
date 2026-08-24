@@ -34,6 +34,103 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Empty(SloQualificationValidator.Validate(document, Now));
     }
 
+    // Reaffirm mode (see #803/#875/#877): a reaffirmed load run's real
+    // GitHub Actions head_sha is whatever main/RC-tag HEAD was on its own
+    // dispatch day -- structurally unrelated to the historical candidate
+    // GitSha it reaffirms, since workload-load-real-azure.yml always checks
+    // out its dispatch ref rather than the historical commit. Regression
+    // test for the bug where ValidateRunArtifactSelections/
+    // ValidateRunEvidenceArtifact wrongly required load run head_sha ==
+    // candidate.GitSha even in reaffirm mode, making it impossible to ever
+    // renew reaffirmed evidence end-to-end.
+    [Fact]
+    public void Generate_qualifies_reaffirmed_load_run_with_different_dispatch_day_head_sha()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
+        const string reaffirmDispatchDayHeadSha = "fedcba9876543210fedcba9876543210fedcba9";
+        foreach (var load in selections.Load)
+        {
+            load.HeadSha = reaffirmDispatchDayHeadSha;
+        }
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            Manifest(),
+            candidate,
+            Policy(),
+            evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal("qualified", document.Verdict);
+        Assert.All(
+            document.Provenance.SourceRuns,
+            run => Assert.True(run.Reaffirmed));
+        foreach (var run in document.Provenance.SourceRuns)
+        {
+            run.EvidenceArtifact!.HeadSha = reaffirmDispatchDayHeadSha;
+        }
+        var correctness = document.Provenance.CorrectnessRun
+            ?? throw new InvalidDataException("Generated qualification lacks correctness run.");
+        correctness.EvidenceArtifact = QualificationTrustTestData.RunArtifact(
+            document.Profile.Id,
+            long.Parse(correctness.RunId),
+            correctness.RunAttempt,
+            ".github/workflows/integration-real-azure.yml",
+            "real-azure-conformance",
+            Now);
+        Assert.Empty(SloQualificationValidator.Validate(document, Now));
+    }
+
+    [Fact]
+    public void Generate_rejects_reaffirmed_load_run_with_wrong_artifact_selection_head_sha()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
+        selections.Load[0].HeadSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                candidate,
+                Policy(),
+                evidence,
+                Metadata(),
+                priorRuntime: null,
+                correctnessSelection: selections.Correctness,
+                loadSelections: selections.Load,
+                qualificationMode: "promote"));
+
+        Assert.Contains("does not match", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Generate_rejects_unrecognized_qualification_mode()
+    {
+        var candidate = Candidate();
+        var evidence = new[] { Evidence(1), Evidence(2), Evidence(3) };
+        var selections = RunSelections(candidate, evidence);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                Manifest(),
+                candidate,
+                Policy(),
+                evidence,
+                Metadata(),
+                priorRuntime: null,
+                correctnessSelection: selections.Correctness,
+                loadSelections: selections.Load,
+                qualificationMode: "bogus"));
+
+        Assert.Contains("qualification_mode", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Generate_keeps_zero_completion_run_as_blocking_candidate()
     {
