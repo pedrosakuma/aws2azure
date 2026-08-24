@@ -864,8 +864,22 @@ public static class RealAzureLoadQualificationGenerator
                     && run.Candidate.ConfigDigest != candidate.Candidate.ConfigDigest)
                 || run.Candidate.QualificationMode != "sealed"
                 || run.Candidate.Runtime is null
-                || SealedRuntimeEvidenceValidator.IdentityKey(run.Candidate.Runtime)
-                    != SealedRuntimeEvidenceValidator.IdentityKey(candidate.Candidate.Runtime)
+                // Attestation.BundleDigest is intentionally excluded from
+                // this comparison in reaffirm mode (see #877 and the
+                // IdentityKey doc comment in SealedRuntimeEvidence.cs): it is
+                // a hash of `gh attestation verify`'s own re-verification
+                // output, which is not byte-stable across the weeks between
+                // a candidate's historical sealing and a reaffirm dispatch,
+                // even though every other identity fact it re-derives
+                // (source sha, subject digests, run invocation url, signer
+                // workflow) is confirmed stable. Promote mode keeps the
+                // strict full-identity comparison.
+                || SealedRuntimeEvidenceValidator.IdentityKey(
+                    run.Candidate.Runtime,
+                    includeAttestationBundleDigest: qualificationMode != "reaffirm")
+                    != SealedRuntimeEvidenceValidator.IdentityKey(
+                        candidate.Candidate.Runtime,
+                        includeAttestationBundleDigest: qualificationMode != "reaffirm")
                 || run.Provenance.Region != first.Provenance.Region
                 || run.Provenance.BackendDescription != first.Provenance.BackendDescription
                 || string.IsNullOrWhiteSpace(run.Provenance.ProducerConfigDigest)
@@ -913,7 +927,8 @@ public static class RealAzureLoadQualificationGenerator
                 rollbackRequired,
                 seenPriorRuntimeIdentities,
                 seenRollbackCanaries,
-                metadata.GeneratedAtUtc);
+                metadata.GeneratedAtUtc,
+                qualificationMode);
         }
         if (rollbackRequired && seenPriorRuntimeIdentities.Count != 1)
         {
@@ -1014,7 +1029,8 @@ public static class RealAzureLoadQualificationGenerator
         bool required,
         ISet<string> seenPriorRuntimeIdentities,
         ISet<string> seenCanaryDigests,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string qualificationMode)
     {
         if (!required)
         {
@@ -1060,9 +1076,40 @@ public static class RealAzureLoadQualificationGenerator
             candidate.GitSha,
             candidate.ArtifactDigest,
             now);
-        SealedRuntimeEvidenceValidator.ValidatePrior(proof.Prior, priorRuntime, now);
-        if (SealedRuntimeEvidenceValidator.IdentityKey(proof.Candidate)
-                != SealedRuntimeEvidenceValidator.IdentityKey(candidate.Runtime)
+        // In promote mode, `priorRuntime` is the ledger file's top-level
+        // record as checked out at dispatch time -- which correctly *is*
+        // the prior runtime, because the ledger is only updated to reflect
+        // the new candidate *after* qualification succeeds. In reaffirm
+        // mode that assumption breaks: the profile has already been
+        // promoted, so the ledger's top-level record now equals the
+        // candidate itself, not its historical prior. The historical prior
+        // that the candidate actually rolled back from at promotion time is
+        // preserved separately, already committed, inside the candidate's
+        // own `qualification.rollback_target` snapshot -- so reaffirm mode
+        // validates the freshly re-derived rollback proof's prior identity
+        // against that trusted snapshot instead of the ledger's top-level
+        // record (see #877).
+        if (qualificationMode == "reaffirm")
+        {
+            var trustedPrior = priorRuntime.Qualification?.RollbackTarget
+                ?? throw new InvalidDataException(
+                    "Approved runtime does not contain a trusted rollback target.");
+            SealedRuntimeEvidenceValidator.ValidateRollbackTarget(
+                proof.Prior,
+                trustedPrior,
+                now,
+                includeAttestationBundleDigest: false);
+        }
+        else
+        {
+            SealedRuntimeEvidenceValidator.ValidatePrior(proof.Prior, priorRuntime, now);
+        }
+        if (SealedRuntimeEvidenceValidator.IdentityKey(
+                proof.Candidate,
+                includeAttestationBundleDigest: qualificationMode != "reaffirm")
+                != SealedRuntimeEvidenceValidator.IdentityKey(
+                    candidate.Runtime,
+                    includeAttestationBundleDigest: qualificationMode != "reaffirm")
             || proof.Candidate.Source.Sha == proof.Prior.Source.Sha
             || proof.Candidate.Runtime.AggregateDigest == proof.Prior.Runtime.AggregateDigest
             || proof.Candidate.Runtime.ExecutableDigest == proof.Prior.Runtime.ExecutableDigest)
@@ -1071,7 +1118,9 @@ public static class RealAzureLoadQualificationGenerator
                 "Rollback candidate and prior runtime identities are missing or not distinct.");
         }
         seenPriorRuntimeIdentities.Add(
-            SealedRuntimeEvidenceValidator.IdentityKey(proof.Prior));
+            SealedRuntimeEvidenceValidator.IdentityKey(
+                proof.Prior,
+                includeAttestationBundleDigest: qualificationMode != "reaffirm"));
 
         if (!SealedRuntimeEvidenceValidator.IsDigest(proof.CandidateConfigDigest)
             || proof.CandidateConfigDigest != proof.PriorConfigDigest

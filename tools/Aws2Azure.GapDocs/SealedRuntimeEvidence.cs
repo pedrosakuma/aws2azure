@@ -218,7 +218,27 @@ public static partial class SealedRuntimeEvidenceValidator
     public static void ValidateRollbackTarget(
         QualificationSealedRuntimeIdentity identity,
         QualificationSealedRuntimeIdentity trustedTarget,
-        DateTimeOffset now)
+        DateTimeOffset now) =>
+        ValidateRollbackTarget(
+            identity,
+            trustedTarget,
+            now,
+            includeAttestationBundleDigest: true);
+
+    // includeAttestationBundleDigest: false is used when comparing a
+    // freshly re-derived rollback proof's prior identity (produced by a
+    // reaffirm-mode load run, whose `gh attestation verify` re-verification
+    // happens today) against a trusted rollback target snapshot committed
+    // months earlier at original promotion time (see #877 and the
+    // IdentityKey doc comment above). BundleDigest is not a static property
+    // of the sealed artifact -- it is derived from re-verifying the
+    // attestation at whatever moment it was captured, and is not
+    // byte-stable across that gap even though every other identity fact is.
+    public static void ValidateRollbackTarget(
+        QualificationSealedRuntimeIdentity identity,
+        QualificationSealedRuntimeIdentity trustedTarget,
+        DateTimeOffset now,
+        bool includeAttestationBundleDigest)
     {
         ValidateTrustedRollbackTarget(
             trustedTarget,
@@ -232,7 +252,8 @@ public static partial class SealedRuntimeEvidenceValidator
             trustedTarget.Profile.Version,
             now,
             requireUnexpiredArtifact: false);
-        if (IdentityKey(identity) != IdentityKey(trustedTarget))
+        if (IdentityKey(identity, includeAttestationBundleDigest)
+            != IdentityKey(trustedTarget, includeAttestationBundleDigest))
         {
             throw new InvalidDataException(
                 "Sealed prior identity does not exactly match the trusted rollback target.");
@@ -287,11 +308,33 @@ public static partial class SealedRuntimeEvidenceValidator
         }
     }
 
-    public static string IdentityKey(QualificationSealedRuntimeIdentity identity)
+    public static string IdentityKey(QualificationSealedRuntimeIdentity identity) =>
+        IdentityKey(identity, includeAttestationBundleDigest: true);
+
+    // includeAttestationBundleDigest: false intentionally excludes
+    // Attestation.BundleDigest from the key (see #877 reaffirm mode). That
+    // field is not a static property of the sealed artifact itself -- it is
+    // the hash of a canonicalized `gh attestation verify` response,
+    // re-derived by re-verifying the same attestation at whatever moment the
+    // consuming workflow runs. Direct comparison confirmed the underlying
+    // Sigstore/Rekor facts (source sha, subject digests, run invocation url,
+    // signer workflow, etc. -- every other field in this key) are stable and
+    // byte-identical when re-verified; only bundle_digest differs when
+    // re-verification happens weeks apart, consistent with the `gh` CLI's
+    // attestation verification output evolving over that gap rather than any
+    // fact about the artifact changing. A reaffirmed load run's fresh
+    // re-verification therefore cannot be expected to reproduce the
+    // historical candidate's bundle_digest byte-for-byte, so reaffirm mode
+    // compares the identity sans that one field; promote mode -- where the
+    // load job's own re-verification always happens the same day as the
+    // freshly-sealed candidate's -- keeps the strict full-key comparison.
+    public static string IdentityKey(
+        QualificationSealedRuntimeIdentity identity,
+        bool includeAttestationBundleDigest)
     {
         ValidateIdentityShape(identity);
-        return string.Join(
-            '\n',
+        var fields = new List<object?>
+        {
             identity.Role,
             identity.Profile.Id,
             identity.Profile.Version,
@@ -323,11 +366,16 @@ public static partial class SealedRuntimeEvidenceValidator
             identity.Attestation.SourceSha,
             identity.Attestation.SourceRef,
             identity.Attestation.RunInvocationUrl,
-            identity.Attestation.BundleDigest,
-            identity.Attestation.ExecutableSubjectName,
-            identity.Attestation.ExecutableSubjectDigest,
-            identity.Attestation.ManifestSubjectName,
-            identity.Attestation.ManifestSubjectDigest);
+        };
+        if (includeAttestationBundleDigest)
+        {
+            fields.Add(identity.Attestation.BundleDigest);
+        }
+        fields.Add(identity.Attestation.ExecutableSubjectName);
+        fields.Add(identity.Attestation.ExecutableSubjectDigest);
+        fields.Add(identity.Attestation.ManifestSubjectName);
+        fields.Add(identity.Attestation.ManifestSubjectDigest);
+        return string.Join('\n', fields);
     }
 
     public static bool IsDigest(string? value) =>
