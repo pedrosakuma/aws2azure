@@ -560,6 +560,67 @@ public sealed class RealAzureLoadQualificationTests
         Assert.Contains("distinct", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Reaffirm mode (see #877, third follow-up): the credential-rotation
+    // proof's candidate_config_digest is captured fresh by today's checkout
+    // of the load workflow's manifest-generation logic when reaffirming a
+    // historical candidate, and can legitimately diverge from that
+    // candidate's own July-sealed config_digest as that logic evolves --
+    // exactly the same reason run.Candidate.ConfigDigest is already relaxed
+    // for reaffirm mode above. Regression test for the bug where this proof
+    // rejected reaffirmed secretsmanager-basic-lifecycle evidence solely
+    // because its candidate_config_digest genuinely differs from the sealed
+    // candidate's, even though the proof's own A/B digests still agree.
+    [Fact]
+    public void Generate_qualifies_reaffirmed_rotation_proof_with_drifted_candidate_config_digest()
+    {
+        var inputs = RotationInputs();
+        var proof = Assert.Single(inputs.Evidence[0].CredentialRotationProofs);
+        var drifted = Sha256('9');
+        proof.CandidateConfigDigestA = drifted;
+        proof.CandidateConfigDigestB = drifted;
+        var selections = RunSelections(inputs.Candidate, inputs.Evidence);
+
+        var document = RealAzureLoadQualificationGenerator.Generate(
+            inputs.Manifest,
+            inputs.Candidate,
+            inputs.Policy,
+            inputs.Evidence,
+            Metadata(),
+            priorRuntime: null,
+            correctnessSelection: selections.Correctness,
+            loadSelections: selections.Load,
+            qualificationMode: "reaffirm");
+
+        Assert.Equal(
+            3,
+            Assert.Single(document.Scenarios, scenario => scenario.Id == "credential-rotation")
+                .Completions);
+    }
+
+    // Regression test for the same bug in promote mode: promote mode must
+    // keep rejecting a genuinely drifted candidate_config_digest, because a
+    // promote-mode dispatch's own manifest-generation logic runs at the exact
+    // commit being sealed and is expected to match exactly.
+    [Fact]
+    public void Generate_rejects_promoted_rotation_proof_with_drifted_candidate_config_digest()
+    {
+        var inputs = RotationInputs();
+        var proof = Assert.Single(inputs.Evidence[0].CredentialRotationProofs);
+        var drifted = Sha256('9');
+        proof.CandidateConfigDigestA = drifted;
+        proof.CandidateConfigDigestB = drifted;
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            RealAzureLoadQualificationGenerator.Generate(
+                inputs.Manifest,
+                inputs.Candidate,
+                inputs.Policy,
+                inputs.Evidence,
+                Metadata()));
+
+        Assert.Contains("drift", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Generate_rejects_rotation_runtime_or_config_drift()
     {
