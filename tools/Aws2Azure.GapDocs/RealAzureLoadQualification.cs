@@ -216,7 +216,8 @@ public static class RealAzureLoadQualificationGenerator
         RealAzureLoadQualificationMetadata metadata,
         ApprovedRuntimeRecord? priorRuntime = null,
         QualificationRunArtifactIdentity? correctnessSelection = null,
-        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections = null)
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections = null,
+        string qualificationMode = "promote")
     {
         ValidateInputs(
             manifest,
@@ -226,7 +227,8 @@ public static class RealAzureLoadQualificationGenerator
             metadata,
             priorRuntime,
             correctnessSelection,
-            loadSelections);
+            loadSelections,
+            qualificationMode);
 
         var orderedEvidence = evidence
             .OrderBy(item => item.Provenance.WindowStartUtc)
@@ -284,6 +286,7 @@ public static class RealAzureLoadQualificationGenerator
                         .Single(selection =>
                             selection.RunId.ToString(CultureInfo.InvariantCulture)
                             == item.Provenance.RunId),
+                    Reaffirmed = qualificationMode == "reaffirm",
                 }).ToList(),
             },
             Rules = policy.Rules,
@@ -632,7 +635,8 @@ public static class RealAzureLoadQualificationGenerator
         RealAzureLoadQualificationMetadata metadata,
         ApprovedRuntimeRecord? priorRuntime,
         QualificationRunArtifactIdentity? correctnessSelection,
-        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections)
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections,
+        string qualificationMode)
     {
         if (policy.SchemaVersion != 1)
         {
@@ -686,13 +690,20 @@ public static class RealAzureLoadQualificationGenerator
             candidate.Candidate.GitSha,
             candidate.Candidate.ArtifactDigest,
             metadata.GeneratedAtUtc);
+        if (qualificationMode is not ("promote" or "reaffirm"))
+        {
+            throw new InvalidDataException(
+                $"qualification_mode '{qualificationMode}' is not recognized; " +
+                "expected promote or reaffirm.");
+        }
         ValidateRunArtifactSelections(
             manifest,
             candidate,
             evidence,
             metadata,
             correctnessSelection,
-            loadSelections);
+            loadSelections,
+            qualificationMode);
         if (policy.ProfileId != manifest.Id
             || policy.ProfileVersion != manifest.Version
             || candidate.Profile.Id != manifest.Id
@@ -899,7 +910,8 @@ public static class RealAzureLoadQualificationGenerator
         IReadOnlyList<RealAzureLoadEvidence> evidence,
         RealAzureLoadQualificationMetadata metadata,
         QualificationRunArtifactIdentity? correctnessSelection,
-        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections)
+        IReadOnlyList<QualificationRunArtifactIdentity>? loadSelections,
+        string qualificationMode)
     {
         if (correctnessSelection is null && loadSelections is null)
         {
@@ -935,6 +947,22 @@ public static class RealAzureLoadQualificationGenerator
                 throw new InvalidDataException(
                     $"Load run {run.Provenance.RunId} must have one exact artifact selection.");
             }
+            // workload-load-real-azure.yml always checks out the ref it was
+            // dispatched from, so a load run's own GitHub Actions head_sha is
+            // whatever main/RC-tag HEAD was on the day it ran -- it is never
+            // required to equal run.Candidate.GitSha (the sealed runtime's
+            // certified commit) in reaffirm mode, because a reaffirmed load
+            // run genuinely reaffirms an older, already-approved runtime from
+            // a fresh dispatch. That the *content* actually reaffirms the
+            // right runtime is already independently and unconditionally
+            // enforced above (run.Candidate.GitSha/ArtifactDigest/ConfigDigest
+            // and the sealed-runtime identity key must match the correctness
+            // candidate's), so in reaffirm mode this call only needs to
+            // confirm the artifact-selection identity is internally
+            // self-consistent and genuinely came from a trusted,
+            // protected-ref run -- not that its own head_sha equals the
+            // runtime's certified commit. Promote mode keeps the strict,
+            // tamper-evident equality check unchanged.
             SealedRuntimeEvidenceValidator.ValidateRunArtifact(
                 matches[0],
                 manifest.Id,
@@ -943,7 +971,9 @@ public static class RealAzureLoadQualificationGenerator
                 "real-azure-workload-load-" + manifest.Id,
                 run.Provenance.RunId,
                 run.Provenance.RunAttempt,
-                run.Candidate.GitSha,
+                qualificationMode == "reaffirm"
+                    ? matches[0].HeadSha
+                    : run.Candidate.GitSha,
                 candidate.Candidate.Runtime.Source.Ref,
                 metadata.GeneratedAtUtc);
         }
