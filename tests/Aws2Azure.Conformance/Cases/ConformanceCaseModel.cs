@@ -35,6 +35,13 @@ public interface IConformanceCase
     ConformanceCaseExpectation Expected { get; }
 
     /// <summary>
+    /// Whether this case requires DynamoDB stored procedures to be enabled in
+    /// the target profile/environment before a real-Azure runner can execute it.
+    /// Other services and most DynamoDB cases return <see langword="false"/>.
+    /// </summary>
+    bool RequiresStoredProcedures => false;
+
+    /// <summary>
     /// Builds the executable request plan for this case. A plan may contain
     /// multiple steps and may also carry a skip reason when the current tier lacks
     /// the backend required to make the success path meaningful (the exact Tier-3
@@ -157,6 +164,15 @@ public sealed record ConformanceExecutionPlan(
 }
 
 /// <summary>
+/// Runner-side case selection result. A case remains visible in the execution
+/// list even when skipped so evidence artifacts can record why it did not run.
+/// </summary>
+public sealed record ConformanceCaseSelection(IConformanceCase Case, string? SkipReason = null)
+{
+    public bool ShouldSkip => !string.IsNullOrWhiteSpace(SkipReason);
+}
+
+/// <summary>
 /// One request-building step. Later steps receive the responses produced by
 /// earlier ones, which is what lets a case say "list page 2 uses the
 /// NextContinuationToken returned by page 1" or "DeleteMessage uses the receipt
@@ -274,7 +290,8 @@ public sealed class PlannedConformanceCase : IConformanceCase
         string name,
         string operation,
         ConformanceCaseExpectation expected,
-        Func<ConformanceCaseContext, CancellationToken, ValueTask<ConformanceExecutionPlan>> createPlanAsync)
+        Func<ConformanceCaseContext, CancellationToken, ValueTask<ConformanceExecutionPlan>> createPlanAsync,
+        bool requiresStoredProcedures = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
@@ -284,6 +301,7 @@ public sealed class PlannedConformanceCase : IConformanceCase
         Name = name;
         Operation = operation;
         Expected = expected;
+        RequiresStoredProcedures = requiresStoredProcedures;
         _createPlanAsync = createPlanAsync;
     }
 
@@ -292,6 +310,8 @@ public sealed class PlannedConformanceCase : IConformanceCase
     public string Operation { get; }
 
     public ConformanceCaseExpectation Expected { get; }
+
+    public bool RequiresStoredProcedures { get; }
 
     public ValueTask<ConformanceExecutionPlan> CreatePlanAsync(
         ConformanceCaseContext context,
