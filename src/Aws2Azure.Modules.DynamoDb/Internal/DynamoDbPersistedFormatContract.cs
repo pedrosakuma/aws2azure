@@ -7,7 +7,7 @@ namespace Aws2Azure.Modules.DynamoDb.Internal;
 /// </summary>
 internal static class DynamoDbPersistedFormatContract
 {
-    public const int InventoryVersion = 5;
+    public const int InventoryVersion = 6;
 
     public const int LegacyItemEnvelopeVersion = 1;
     public const int CurrentItemDocumentVersion = 2;
@@ -16,7 +16,7 @@ internal static class DynamoDbPersistedFormatContract
     public const int DerivedFieldVersion = 1;
     public const int ContinuationVersion = 1;
     public const int OrderedContinuationVersion = 1;
-    public const int StoredProcedureIdentityVersion = 5;
+    public const int StoredProcedureIdentityVersion = 6;
     public const int TransactionIdempotencyRecordVersion = 1;
 
     public const string ContinuationSentinelAttribute = "__a2a_continuation";
@@ -26,7 +26,8 @@ internal static class DynamoDbPersistedFormatContract
     public const string TransactionIdempotencyRecordDiscriminator =
         "transaction-idempotency-v1";
 
-    public const string AtomicWriteStoredProcedureId = "atomicWrite_v2";
+    public const string AtomicWriteStoredProcedureId = "atomicWrite_v3";
+    public const string LegacyAtomicWriteStoredProcedureId = "atomicWrite_v2";
     public const string LegacyAtomicTransactWriteStoredProcedureId = "atomicTransactWrite_v2";
     public const string PreviousAtomicTransactWriteStoredProcedureId = "atomicTransactWrite_v3";
     public const string PreviousDurableAtomicTransactWriteStoredProcedureId =
@@ -46,8 +47,10 @@ internal static class DynamoDbPersistedFormatContract
     public const string AtomicTransactGetStoredProcedureId = "atomicTransactGet_v1";
 
     // Frozen by the v1 inventory. Never update these identities or hashes.
-    public const string AtomicWriteBodySha256 =
+    public const string LegacyAtomicWriteBodySha256 =
         "68bb5745f1725ed43b2b06bf195cc34ffeb37c4b30fb56b446faf5444747b06a";
+    public const string AtomicWriteBodySha256 =
+        "d707cad7010a0952b3996c9624ca75089b0b26df57f0960f56869d3c84c13d75";
     public const string LegacyAtomicTransactWriteBodySha256 =
         "592335a445a63d7722f859955e1124ebff0f5c02a2ba038273e2f3d19c4cc5f1";
 

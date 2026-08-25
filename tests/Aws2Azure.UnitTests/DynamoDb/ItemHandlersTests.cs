@@ -122,6 +122,18 @@ public class ItemHandlersTests
         return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
     }
 
+    private static int PutItemPayloadBytesFromMaxSize(int delta)
+    {
+        using var d = JsonDocument.Parse(
+            """{"pk":{"S":"a"},"sk":{"S":"1"},"payload":{"S":""}}""");
+        Assert.True(DynamoDbItemSize.TryCalculate(d.RootElement, out var size, out var error), error);
+        return checked((int)(DynamoDbItemSize.MaximumBytes - size + delta));
+    }
+
+    private static string PutItemRequestWithPayload(int payloadBytes)
+        => "{\"TableName\":\"orders\",\"Item\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"},\"payload\":{\"S\":\""
+           + new string('x', payloadBytes) + "\"}}}";
+
     [Fact]
     public async Task PutItem_writes_doc_with_routing_fields_and_envelope()
     {
@@ -263,6 +275,55 @@ public class ItemHandlersTests
 
         Assert.Equal(400, ctx.Response.StatusCode);
         Assert.Contains("data", ReadResponse(body));
+    }
+
+    [Fact]
+    public async Task PutItem_item_just_under_400_kib_is_accepted()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDoc),
+                new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("{}") },
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await ItemHandlers.HandlePutItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(PutItemRequestWithPayload(PutItemPayloadBytesFromMaxSize(-1))),
+            cosmos,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task PutItem_item_over_400_kib_is_rejected_before_write()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses = { CosmosOk(MetadataDoc) },
+        };
+        var cosmos = BuildClient(handler);
+
+        await ItemHandlers.HandlePutItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(PutItemRequestWithPayload(PutItemPayloadBytesFromMaxSize(1))),
+            cosmos,
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("ValidationException", response);
+        Assert.Contains("400 KiB", response, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]

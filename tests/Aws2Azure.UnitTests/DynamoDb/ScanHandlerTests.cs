@@ -1132,6 +1132,33 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_gsi_filter_does_not_match_non_projected_attribute()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetaWithGsi("customer", "S", sortName: null, "KEYS_ONLY")),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a",
+                        "{\"pk\":{\"S\":\"a\"},\"customer\":{\"S\":\"acme\"},\"extra\":{\"S\":\"secret\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"gix\","
+                  + "\"FilterExpression\":\"extra = :e\","
+                  + "\"ExpressionAttributeValues\":{\":e\":{\"S\":\"secret\"}}}";
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, logger: null, enableGsi: true, ct: default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(0, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
     public async Task Scan_gsi_consistent_read_is_rejected()
     {
         var (ctx, body) = NewCtx();

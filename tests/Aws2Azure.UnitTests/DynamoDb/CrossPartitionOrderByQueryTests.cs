@@ -131,7 +131,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: false, forward: true, scanCap: 100, token: null,
-            backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+            backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
         Assert.Equal(new[] { 1d, 2, 3, 4, 5, 6, 7, 8, 9 }, Values(result.Items));
         Assert.Equal(9, result.Scanned);
@@ -150,7 +150,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: false, forward: false, scanCap: 100, token: null,
-            backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+            backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
         Assert.Equal(new[] { 9d, 7, 5, 4, 2, 1 }, Values(result.Items));
         Assert.Null(result.Next);
@@ -167,7 +167,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: false, forward: true, scanCap: 3, token: null,
-            backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+            backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
         Assert.Equal(new[] { 1d, 2, 3 }, Values(result.Items));
         Assert.Equal(3, result.Scanned);
@@ -228,7 +228,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: false, forward: true, scanCap: 100, token: null,
-            backend.Fetch, residual, projection: Projection.FromTopLevelNames(new[] { Sk }), CancellationToken.None);
+            backend.Fetch, residual, filterProjection: null, projection: Projection.FromTopLevelNames(new[] { Sk }), CancellationToken.None);
 
         Assert.Equal(new[] { 3d, 4 }, Values(result.Items));
         Assert.Equal(4, result.Scanned); // pre-filter
@@ -244,7 +244,7 @@ public sealed class CrossPartitionOrderByQueryTests
         var backend = new EmptyFirstPageBackend();
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: false, forward: true, scanCap: 100, token: null,
-            backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+            backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
         Assert.Equal(new[] { 1d, 2, 3, 4 }, Values(result.Items));
     }
@@ -265,7 +265,7 @@ public sealed class CrossPartitionOrderByQueryTests
 
             var result = await MergeAsync(
                 backend.Ranges, Sk, numericOrderKey: false, forward, scanCapPerPage, token,
-                backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+                backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
             collected.AddRange(Values(result.Items));
             if (result.Next is null) return collected;

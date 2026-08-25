@@ -11,6 +11,49 @@ internal static class DynamoDbItemSize
 {
     public const int MaximumBytes = 400 * 1024;
 
+    public static bool TryValidateWriteSize(
+        JsonElement item,
+        TableMetadata metadata,
+        string itemName,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        if (!TryCalculate(item, out var baseItemSize, out error))
+        {
+            return false;
+        }
+
+        if (baseItemSize > MaximumBytes)
+        {
+            error =
+                $"{itemName} is {baseItemSize} bytes; DynamoDB items must not exceed " +
+                $"{MaximumBytes} bytes (400 KiB).";
+            return false;
+        }
+
+        if (!TryCalculateWithLocalSecondaryIndexes(
+                item,
+                metadata,
+                baseItemSize,
+                out var combinedSize,
+                out error))
+        {
+            return false;
+        }
+
+        if (combinedSize > MaximumBytes)
+        {
+            error =
+                $"{itemName} plus its local secondary index entries is {combinedSize} bytes; " +
+                $"the combined DynamoDB limit is {MaximumBytes} bytes (400 KiB).";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
     public static bool TryCalculate(
         JsonElement item,
         out long size,

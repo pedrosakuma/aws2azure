@@ -115,9 +115,16 @@ internal static class SprocDispatcher
     }
 
     private static SprocWriteResult MapExecutionFailure(SprocContext ctx, SprocExecuteResult result)
-        => ctx.IsSprocRequired
+    {
+        if (result.ValidationFailed)
+        {
+            return SprocWriteResult.ValidationNotMet(result.ValidationError ?? "Stored procedure validation failed.");
+        }
+
+        return ctx.IsSprocRequired
             ? SprocWriteResult.Failed($"Sproc execution failed: {result.ErrorBody}")
             : SprocWriteResult.NotAttempted;
+    }
 
     /// <summary>
     /// Attempts to execute a conditional PutItem via stored procedure.
@@ -319,6 +326,7 @@ internal readonly struct SprocWriteResult
     public bool Attempted { get; init; }
     public bool Success { get; init; }
     public bool ConditionFailed { get; init; }
+    public string? ValidationError { get; init; }
     public string? Error { get; init; }
     public string? ResponseBody { get; init; }
     
@@ -354,6 +362,13 @@ internal readonly struct SprocWriteResult
         Success = false,
         ConditionFailed = true,
         OldItem = oldItem
+    };
+
+    public static SprocWriteResult ValidationNotMet(string error) => new()
+    {
+        Attempted = true,
+        Success = false,
+        ValidationError = error,
     };
     
     public static SprocWriteResult Failed(string error) => new() { Attempted = true, Success = false, Error = error };

@@ -360,6 +360,224 @@ internal sealed partial class SprocManager
     }
 """;
 
+    private const string SingleWriteSizeValidationJs = """
+    function validationError(message) {
+        throw { a2aValidationError: true, message: message };
+    }
+
+    function utf8Bytes(value) {
+        var bytes = [];
+        for (var i = 0; i < value.length; i++) {
+            var code = value.charCodeAt(i);
+            if (code >= 0xD800 && code <= 0xDBFF) {
+                var low = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                    i++;
+                } else {
+                    code = 0xFFFD;
+                }
+            } else if (code >= 0xDC00 && code <= 0xDFFF) {
+                code = 0xFFFD;
+            }
+            if (code < 0x80) {
+                bytes.push(code);
+            } else if (code < 0x800) {
+                bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F));
+            } else if (code < 0x10000) {
+                bytes.push(0xE0 | (code >> 12),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            } else {
+                bytes.push(0xF0 | (code >> 18),
+                    0x80 | ((code >> 12) & 0x3F),
+                    0x80 | ((code >> 6) & 0x3F),
+                    0x80 | (code & 0x3F));
+            }
+        }
+        return bytes;
+    }
+
+    function validateDocumentSize(doc) {
+        var size = 0;
+        for (var name in doc) {
+            if (!Object.prototype.hasOwnProperty.call(doc, name) || shouldSkipInternalField(name)) {
+                continue;
+            }
+            size += measureStoredFieldName(name);
+            size += measureStoredValue(doc[name]);
+        }
+        if (size > 409600) {
+            validationError(
+                'Item is ' + size
+                + ' bytes; DynamoDB items must not exceed 409600 bytes (400 KiB).');
+        }
+    }
+
+    function shouldSkipInternalField(name) {
+        return name === 'id'
+            || name === '_a2a'
+            || name === '_a2a_pk'
+            || name === 'ttl'
+            || name.indexOf('_a2a$ord$') === 0;
+    }
+
+    function measureStoredValue(value) {
+        if (value === null || value === undefined) return 1;
+        var type = typeof value;
+        if (type === 'string') return utf8Bytes(value).length;
+        if (type === 'number') return measureNumberText(normalizeNumberText(value));
+        if (type === 'boolean') return 1;
+        if (Array.isArray(value)) {
+            var listSize = 3;
+            for (var i = 0; i < value.length; i++) {
+                listSize += 1 + measureStoredValue(value[i]);
+            }
+            return listSize;
+        }
+        if (type === 'object') {
+            var envelopeKeys = Object.keys(value);
+            if (envelopeKeys.length === 1) {
+                switch (envelopeKeys[0]) {
+                    case '_a2a:N':
+                        return measureNumberText(value['_a2a:N']);
+                    case '_a2a:B':
+                        return base64ByteLength(value['_a2a:B']);
+                    case '_a2a:SS':
+                        return measureStringSet(value['_a2a:SS']);
+                    case '_a2a:NS':
+                        return measureNumberSet(value['_a2a:NS']);
+                    case '_a2a:BS':
+                        return measureBinarySet(value['_a2a:BS']);
+                }
+            }
+
+            var mapSize = 3;
+            for (var name in value) {
+                if (!Object.prototype.hasOwnProperty.call(value, name)) continue;
+                mapSize += 1 + measureStoredFieldName(name) + measureStoredValue(value[name]);
+            }
+            return mapSize;
+        }
+
+        validationError('Stored procedure cannot measure item size for value type ' + type + '.');
+    }
+
+    function measureStringSet(values) {
+        var size = 0;
+        for (var i = 0; i < values.length; i++) size += utf8Bytes(values[i]).length;
+        return size;
+    }
+
+    function measureNumberSet(values) {
+        var size = 0;
+        for (var i = 0; i < values.length; i++) size += measureNumberText(values[i]);
+        return size;
+    }
+
+    function measureBinarySet(values) {
+        var size = 0;
+        for (var i = 0; i < values.length; i++) size += base64ByteLength(values[i]);
+        return size;
+    }
+
+    function measureStoredFieldName(name) {
+        if (name === '_a2a$id') return utf8Bytes('id').length;
+        if (name === '_a2a$ttl') return utf8Bytes('ttl').length;
+        return utf8Bytes(name).length;
+    }
+
+    function base64ByteLength(text) {
+        var padding = 0;
+        if (text.length >= 2 && text.slice(-2) === '==') padding = 2;
+        else if (text.length >= 1 && text.charAt(text.length - 1) === '=') padding = 1;
+        return ((text.length / 4) * 3) - padding;
+    }
+
+    function measureNumberText(text) {
+        var firstSignificant = -1;
+        var lastSignificant = -1;
+        for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            if (ch < '1' || ch > '9') continue;
+            if (firstSignificant < 0) firstSignificant = i;
+            lastSignificant = i;
+        }
+
+        var significantDigits = 0;
+        if (firstSignificant >= 0) {
+            for (var j = firstSignificant; j <= lastSignificant; j++) {
+                var digit = text.charAt(j);
+                if (digit >= '0' && digit <= '9') significantDigits++;
+            }
+        } else {
+            significantDigits = 1;
+        }
+
+        return Math.floor((significantDigits + 1) / 2) + 1;
+    }
+
+    function normalizeNumberText(value) {
+        if (typeof value !== 'number' || !isFinite(value)) {
+            validationError('Stored procedure cannot measure a non-finite numeric value.');
+        }
+
+        if (value === 0) return '0';
+
+        var text = value.toString();
+        var expIndex = text.indexOf('e');
+        if (expIndex < 0) expIndex = text.indexOf('E');
+        if (expIndex < 0) {
+            return trimPlainNumber(text);
+        }
+
+        var negative = text.charAt(0) === '-';
+        if (negative) text = text.substring(1);
+        expIndex = text.indexOf('e');
+        if (expIndex < 0) expIndex = text.indexOf('E');
+        var mantissa = text.substring(0, expIndex);
+        var exponent = parseInt(text.substring(expIndex + 1), 10);
+
+        var dot = mantissa.indexOf('.');
+        var digits = mantissa.replace('.', '');
+        var integerDigits = dot < 0 ? digits.length : dot;
+        var decimalPos = integerDigits + exponent;
+        var plain;
+        if (decimalPos <= 0) {
+            plain = '0.' + repeatChar('0', -decimalPos) + digits;
+        } else if (decimalPos >= digits.length) {
+            plain = digits + repeatChar('0', decimalPos - digits.length);
+        } else {
+            plain = digits.substring(0, decimalPos) + '.' + digits.substring(decimalPos);
+        }
+
+        plain = trimPlainNumber(plain);
+        if (negative && plain !== '0') plain = '-' + plain;
+        return plain;
+    }
+
+    function trimPlainNumber(text) {
+        var negative = text.charAt(0) === '-';
+        var body = negative ? text.substring(1) : text;
+        if (body.indexOf('.') >= 0) {
+            while (body.length > 0 && body.charAt(body.length - 1) === '0') {
+                body = body.substring(0, body.length - 1);
+            }
+            if (body.length > 0 && body.charAt(body.length - 1) === '.') {
+                body = body.substring(0, body.length - 1);
+            }
+        }
+        if (body === '' || body === '0') return '0';
+        return negative ? '-' + body : body;
+    }
+
+    function repeatChar(ch, count) {
+        var result = '';
+        for (var i = 0; i < count; i++) result += ch;
+        return result;
+    }
+""";
+
     /// <summary>
     /// The JavaScript stored procedure body that executes atomic conditional writes.
     /// Handles PUT, UPDATE, and DELETE operations with optional condition evaluation.
@@ -403,36 +621,54 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
         }
 
         // Execute operation
-        switch (op) {
-            case 'PUT':
-                if (payload === null) throw { code: 400, body: 'Payload required for PUT' };
-                // payload is already an object (not JSON string) built clean by C#
-                coll.upsertDocument(selfLink, payload, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'PUT', oldItem: oldItemClone });
-                break;
+        try {
+            switch (op) {
+                case 'PUT':
+                    if (payload === null) throw { code: 400, body: 'Payload required for PUT' };
+                    validateDocumentSize(payload);
+                    // payload is already an object (not JSON string) built clean by C#
+                    coll.upsertDocument(selfLink, payload, function(e) { if (e) throw e; });
+                    resp.setBody({ success: true, operation: 'PUT', oldItem: oldItemClone });
+                    break;
 
-            case 'UPDATE':
-                if (updateAst === null) throw { code: 400, body: 'UpdateAst required for UPDATE' };
-                var baseDoc = existing || {};
-                if (payload) {
-                    // payload contains the key attributes to ensure they're set (already an object)
-                    for (var k in payload) baseDoc[k] = payload[k];
-                }
-                // updateAst is already an object (not JSON string)
-                var updatedDoc = applyUpdate(baseDoc, updateAst);
-                coll.upsertDocument(selfLink, updatedDoc, function(e) { if (e) throw e; });
-                resp.setBody({ success: true, operation: 'UPDATE', oldItem: oldItemClone, newItem: updatedDoc });
-                break;
+                case 'UPDATE':
+                    if (updateAst === null) throw { code: 400, body: 'UpdateAst required for UPDATE' };
+                    var baseDoc = existing || {};
+                    if (payload) {
+                        // payload contains the key attributes to ensure they're set (already an object)
+                        for (var k in payload) baseDoc[k] = payload[k];
+                    }
+                    // updateAst is already an object (not JSON string)
+                    var updatedDoc = applyUpdate(baseDoc, updateAst);
+                    validateDocumentSize(updatedDoc);
+                    coll.upsertDocument(selfLink, updatedDoc, function(e) { if (e) throw e; });
+                    resp.setBody({ success: true, operation: 'UPDATE', oldItem: oldItemClone, newItem: updatedDoc });
+                    break;
 
-            case 'DELETE':
-                if (existingSelf) {
-                    coll.deleteDocument(existingSelf, function(e) { if (e) throw e; });
-                }
-                resp.setBody({ success: true, operation: 'DELETE', oldItem: oldItemClone });
-                break;
+                case 'DELETE':
+                    if (existingSelf) {
+                        coll.deleteDocument(existingSelf, function(e) { if (e) throw e; });
+                    }
+                    resp.setBody({ success: true, operation: 'DELETE', oldItem: oldItemClone });
+                    break;
 
-            default:
-                throw { code: 400, body: 'Unknown operation: ' + op };
+                default:
+                    throw { code: 400, body: 'Unknown operation: ' + op };
+            }
+        } catch (err) {
+            if (err
+                && err.a2aValidationError === true
+                && typeof err.message === 'string') {
+                resp.setBody({
+                    success: false,
+                    validationError: {
+                        code: 'ValidationException',
+                        message: err.message
+                    }
+                });
+                return;
+            }
+            throw err;
         }
     });
 
@@ -450,7 +686,7 @@ function atomicWrite(op, docId, payload, conditionAst, updateAst) {
         delete d._metadata;
     }
     
-""" + ConditionEvaluatorJs + """
+""" + ConditionEvaluatorJs + SingleWriteSizeValidationJs + """
     // Update executor: applies UpdateExpression AST to a document
     function applyUpdate(doc, updateAst) {
         if (!updateAst) return doc;

@@ -23,6 +23,8 @@ internal sealed class SprocExecuteResult
 {
     public bool Success { get; init; }
     public bool ConditionFailed { get; init; }
+    public bool ValidationFailed { get; init; }
+    public string? ValidationError { get; init; }
     public int StatusCode { get; init; }
     public string? ErrorBody { get; init; }
     public string? ResponseBody { get; init; }
