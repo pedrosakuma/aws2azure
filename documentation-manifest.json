@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:6e8ab8c250d9601982e4338007b886627054b55cd5cfb1cf18f2f5c88973b169",
+  "manifest_revision": "sha256:4443efc0808bffbb7effb1e5e0e3d076fd1b214d9b83ba1138058e2e2be1b371",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-27T00:19:31Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:551d104c75eed02cd415343ef60a5fe830248b3d6bbfefd6c8efcdbc134d321d",
+    "canonical_inputs_revision": "sha256:5c0a1aa9ab6f563f234dbcfac45344016620a3ae686818ad936d481f8f9ce7b4",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9"
@@ -286,6 +286,20 @@
       }
     },
     {
+      "id": "design-gap:dynamodb:99999-availability-depends-on-cosmos-account-topology:reference",
+      "canonical_id": "design-gap:dynamodb:99999-availability-depends-on-cosmos-account-topology",
+      "path": "docs/site/design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "dynamodb",
+      "revision": "sha256:bde4207b4931334be8ec7e843bff9e128ee8d47cf44e8a02a63690dbc38baab3",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
       "id": "design-gap:dynamodb:absent-dynamodb-features:reference",
       "canonical_id": "design-gap:dynamodb:absent-dynamodb-features",
       "path": "docs/site/design-gaps/dynamodb/absent-dynamodb-features.md",
@@ -308,7 +322,21 @@
       "authority": "normative-capability",
       "provenance": "generated",
       "service": "dynamodb",
-      "revision": "sha256:aede5af5fbecec2a67120308a54e9b429dd49ee25e2f24a1a321f91174be09e7",
+      "revision": "sha256:0a2e52a7f2952b3cd7d8e553aa64b2f5b450118f880a3c4cc2feec357726933e",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:dynamodb:cross-partition-continuation-tokens-can-be-large:reference",
+      "canonical_id": "design-gap:dynamodb:cross-partition-continuation-tokens-can-be-large",
+      "path": "docs/site/design-gaps/dynamodb/cross-partition-continuation-tokens-can-be-large.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "dynamodb",
+      "revision": "sha256:7ee2a032560432134d2775ace7391857c64bea8716a05b8c9224143a7d9ae24b",
       "freshness": {
         "mode": "derived-current"
       }
@@ -323,6 +351,20 @@
       "provenance": "generated",
       "service": "dynamodb",
       "revision": "sha256:2a161a93af345536ad17a9763f71ac395f0363ecf62840b4d300c73d9eb26eca",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:dynamodb:multi-write-conflict-resolution-is-last-write-wins:reference",
+      "canonical_id": "design-gap:dynamodb:multi-write-conflict-resolution-is-last-write-wins",
+      "path": "docs/site/design-gaps/dynamodb/multi-write-conflict-resolution-is-last-write-wins.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "dynamodb",
+      "revision": "sha256:5f74ac0a91116bd7f83950e422b4909c98b961ea0183a4c2c71c960ebd58f43f",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1442,7 +1484,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:459e572237eaa51f6f96ec8e61b34147407924bd5cf0d66cc229c686b6758872",
+      "revision": "sha256:1b4bc9637587fa7cb174b11111d29f66c35446fda98c93b923e78197ec7c9f16",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1466,7 +1508,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:b75004c626487b839e29ef70f380d56f92d613e6b21488a1540ff3c273d8452c",
+      "revision": "sha256:e1501a4e091270fe0d154884d11625ee133d53a0188b0c79e58dc24e5dbd1fbd",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1502,7 +1544,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:1ab7a1145f0b2597b5cd1f3b7ef7fc14c5a4f5846a41ca00597d179ab61760d6",
+      "revision": "sha256:fd42cb9f8a698c419827b439087176e81f520d517fd042111ebeac4726b0f0c9",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1574,7 +1616,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:de4b091a75552ff7efce3592e993014e09330359ee5321508642800afa18c70a",
+      "revision": "sha256:22ef9b8f3f3bc59a8a2e99e83e32cd914d798d8898fd32fe534b0e551745f362",
       "freshness": {
         "mode": "derived-current"
       }
@@ -6396,7 +6438,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "dynamodb-basic-crud",
-      "revision": "sha256:593e6d78b107a632a01bd8eb1838a1f10703220e1d708a7d9f060ad39a6021ec",
+      "revision": "sha256:151379efa93da91f0c9fa99744e5acd095056d75952dd99fbe3a4c46109fa390",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -6453,7 +6495,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "dynamodb-query-scan-indexes",
-      "revision": "sha256:4ebada67a8bcf1230fffff69a6b7cef0ba5bf3de7a57e2de190860c644b6ba61",
+      "revision": "sha256:84c312ba686efa8323ebdc74d18dbdcb18080bc69fc4f272009a36b75b91c385",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -7115,7 +7157,7 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "dynamodb",
-      "revision": "sha256:6a7182d73faeb9cc52fcae172bb8eaee2534411a22e02b883a5c16c0a11db440",
+      "revision": "sha256:42ec35d24a6157bf4de0a9b2b381b91b9c53e95daa198781cd943d3d283f4b09",
       "freshness": {
         "mode": "current"
       }
@@ -7197,7 +7239,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:96d6bf09dd7a64059b5f1daa00105f4ea8b56c98f68e914538c45beb395e1184",
+      "revision": "sha256:3c48289c1c9b9090065aa00b288a5ba48c61449d3f6d4b81c8d6203f05df607a",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7211,7 +7253,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:ffdad2737ccd58e10142e158e190998937f68776716bc681dc385f7a2c4116d5",
+      "revision": "sha256:5e7c17414efeac4ac2d677e11eafaecd13c400a35ad19b827662e26ee5cfec8f",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7225,7 +7267,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:f4edeab0c0737673ccac20e9069cb2c5344c2680f9c8e4269207b784c23fb755",
+      "revision": "sha256:b966ba041b55d98b21836ad9061baa68ffeed210416ce9f404200f2229ab80f3",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"

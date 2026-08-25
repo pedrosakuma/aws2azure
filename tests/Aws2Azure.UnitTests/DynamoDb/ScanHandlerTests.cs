@@ -920,6 +920,32 @@ public class ScanHandlerTests
     }
 
     [Fact]
+    public async Task Scan_cross_partition_does_not_cap_continuation_token_size()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(Metadata),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}")),
+                    continuation: "PAGE2"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await ScanHandler.HandleScanAsync(ctx, Encoding.UTF8.GetBytes("{\"TableName\":\"orders\",\"Limit\":1}"), cosmos, logger: null, enableGsi: false, ct: default);
+
+        var queryReq = handler.Requests[1];
+        Assert.Equal("true", queryReq.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(queryReq.Headers.ContainsKey("x-ms-documentdb-responsecontinuationtoken-limitinkb"));
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
     public async Task Scan_gsi_index_is_rejected_when_flag_off()
     {
         var (ctx, body) = NewCtx();

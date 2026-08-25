@@ -14,6 +14,7 @@ accepted_partial_operations:
   - dynamodb:Query
   - dynamodb:Scan
 accepted_design_gaps:
+  - "dynamodb:Cross-partition continuation tokens can be large"
   - "dynamodb:Secondary indexes (GSI / LSI)"
   - "dynamodb:Throughput and throttling model"
 required_sub_feature_seals:

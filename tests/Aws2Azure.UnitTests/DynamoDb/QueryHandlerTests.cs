@@ -1105,6 +1105,36 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_gsi_cross_partition_does_not_cap_continuation_token_size()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsi),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x", "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"}}")),
+                    continuation: "TOKEN-XYZ"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
+
+        var queryReq = handler.Requests[1];
+        Assert.Equal("true", queryReq.Headers["x-ms-documentdb-query-enablecrosspartition"]);
+        Assert.False(queryReq.Headers.ContainsKey("x-ms-documentdb-responsecontinuationtoken-limitinkb"));
+
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.True(resp.RootElement.TryGetProperty("LastEvaluatedKey", out _));
+    }
+
+    [Fact]
     public async Task Query_gsi_composite_sort_key_comparison_and_order_by()
     {
         var (ctx, body) = NewCtx();

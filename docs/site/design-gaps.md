@@ -13,9 +13,12 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 | Service | Area | Status | Disposition | Tracking |
 |---|---|---|---|---|
+| [dynamodb](#dynamodb) | <a id="dynamodb-99999-availability-depends-on-cosmos-account-topology"></a><a id="99999-availability-depends-on-cosmos-account-topology" data-legacy-fragment="true"></a>[99.999% availability depends on Cosmos account topology](design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md) | 🔵 by design | 🔵 by design | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-absent-dynamodb-features"></a><a id="absent-dynamodb-features" data-legacy-fragment="true"></a>[Absent DynamoDB features](design-gaps/dynamodb/absent-dynamodb-features.md) | ⛔ unsupported | ⚫ non-goal | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-consistency-and-read-your-writes"></a><a id="consistency-and-read-your-writes" data-legacy-fragment="true"></a>[Consistency and read-your-writes](design-gaps/dynamodb/consistency-and-read-your-writes.md) | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | <a id="dynamodb-cross-partition-continuation-tokens-can-be-large"></a><a id="cross-partition-continuation-tokens-can-be-large" data-legacy-fragment="true"></a>[Cross-partition continuation tokens can be large](design-gaps/dynamodb/cross-partition-continuation-tokens-can-be-large.md) | 🔵 by design | 🔵 by design | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-key-encoding-and-on-disk-storage-format"></a><a id="key-encoding-and-on-disk-storage-format" data-legacy-fragment="true"></a>[Key encoding and on-disk storage format](design-gaps/dynamodb/key-encoding-and-on-disk-storage-format.md) | 🔵 by design | 🔵 by design | — |
+| [dynamodb](#dynamodb) | <a id="dynamodb-multi-write-conflict-resolution-is-last-write-wins"></a><a id="multi-write-conflict-resolution-is-last-write-wins" data-legacy-fragment="true"></a>[Multi-write conflict resolution is Last-Write-Wins](design-gaps/dynamodb/multi-write-conflict-resolution-is-last-write-wins.md) | 🔵 by design | 🔵 by design | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-secondary-indexes--gsi---lsi"></a><a id="secondary-indexes-gsi-lsi" data-legacy-fragment="true"></a>[Secondary indexes (GSI / LSI)](design-gaps/dynamodb/secondary-indexes--gsi---lsi.md) | 🟡 partial | 🔵 by design | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-throughput-and-throttling-model"></a><a id="throughput-and-throttling-model" data-legacy-fragment="true"></a>[Throughput and throttling model](design-gaps/dynamodb/throughput-and-throttling-model.md) | 🔵 by design | 🔵 by design | — |
 | [dynamodb](#dynamodb) | <a id="dynamodb-transaction-execution-has-one-configured-cosmos-authority"></a><a id="transaction-execution-has-one-configured-cosmos-authority" data-legacy-fragment="true"></a>[Transaction execution has one configured Cosmos authority](design-gaps/dynamodb/transaction-execution-has-one-configured-cosmos-authority.md) | 🔵 by design | 🔵 by design | — |
@@ -63,9 +66,12 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## dynamodb {#dynamodb}
 
+- [99.999% availability depends on Cosmos account topology](design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md) — 🔵 by design · `design-gap:dynamodb:99999-availability-depends-on-cosmos-account-topology`
 - [Absent DynamoDB features](design-gaps/dynamodb/absent-dynamodb-features.md) — ⛔ unsupported · `design-gap:dynamodb:absent-dynamodb-features`
 - [Consistency and read-your-writes](design-gaps/dynamodb/consistency-and-read-your-writes.md) — 🔵 by design · `design-gap:dynamodb:consistency-and-read-your-writes`
+- [Cross-partition continuation tokens can be large](design-gaps/dynamodb/cross-partition-continuation-tokens-can-be-large.md) — 🔵 by design · `design-gap:dynamodb:cross-partition-continuation-tokens-can-be-large`
 - [Key encoding and on-disk storage format](design-gaps/dynamodb/key-encoding-and-on-disk-storage-format.md) — 🔵 by design · `design-gap:dynamodb:key-encoding-and-on-disk-storage-format`
+- [Multi-write conflict resolution is Last-Write-Wins](design-gaps/dynamodb/multi-write-conflict-resolution-is-last-write-wins.md) — 🔵 by design · `design-gap:dynamodb:multi-write-conflict-resolution-is-last-write-wins`
 - [Secondary indexes (GSI / LSI)](design-gaps/dynamodb/secondary-indexes--gsi---lsi.md) — 🟡 partial · `design-gap:dynamodb:secondary-indexes--gsi---lsi`
 - [Throughput and throttling model](design-gaps/dynamodb/throughput-and-throttling-model.md) — 🔵 by design · `design-gap:dynamodb:throughput-and-throttling-model`
 - [Transaction execution has one configured Cosmos authority](design-gaps/dynamodb/transaction-execution-has-one-configured-cosmos-authority.md) — 🔵 by design · `design-gap:dynamodb:transaction-execution-has-one-configured-cosmos-authority`
