@@ -151,7 +151,10 @@ public sealed class QueueMetadataHandlersTests : IDisposable
     {
         const string queueName = "meta-stale-create-q";
         var handler = new ScriptedHandler();
-        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Headers = { ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"etag-q\"") },
+        });
         handler.Enqueue(_ => Atom200(queueName));
         handler.Enqueue(_ => Atom200(queueName));
 
@@ -188,7 +191,8 @@ public sealed class QueueMetadataHandlersTests : IDisposable
             {
                 DelaySeconds = 3,
                 ReceiveMessageWaitTimeSeconds = 2,
-            });
+            },
+            writeVersionEtag: "\"etag-q\"");
 
         var tagsCtx = NewCtx();
         await TailHandlers.HandleAsync(tagsCtx, QueryParsed(SqsOperation.ListQueueTags,
@@ -302,7 +306,7 @@ public sealed class QueueMetadataHandlersTests : IDisposable
 
         using var http = NewHttpClient(new ScriptedHandler());
         var sb = new ServiceBusClient(http, Creds);
-        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, cached);
+        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, cached, writeVersionEtag: "\"etag-q\"");
 
         string? updatedUserMetadata = null;
         var handler = new ScriptedHandler();
@@ -327,6 +331,206 @@ public sealed class QueueMetadataHandlersTests : IDisposable
         Assert.Equal(6, updated.DelaySeconds);
         Assert.Equal(11, updated.ReceiveMessageWaitTimeSeconds);
         Assert.Equal("platform", updated.Tags["owner"]);
+    }
+
+    [Fact]
+    public void ApplyFreshSnapshot_does_not_resurrect_stale_write_when_fresh_read_has_newer_etag()
+    {
+        const string serviceBusNamespace = "fake-ns";
+        const string queueName = "cross-pod-q";
+        var staleMetadata = new SqsQueueTagStore.QueueMetadata(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["owner"] = "pod-a",
+            })
+        {
+            DelaySeconds = 10,
+        };
+
+        var podA = new SqsQueueMetadataCache(16, TimeSpan.FromSeconds(30));
+        var podB = new SqsQueueMetadataCache(16, TimeSpan.FromSeconds(30));
+        var writeAt = new DateTimeOffset(2026, 7, 17, 1, 2, 3, TimeSpan.Zero);
+
+        podA.RememberSuccessfulWriteForTesting(
+            serviceBusNamespace,
+            queueName,
+            staleMetadata,
+            previousVersionEtag: null,
+            previousUpdatedAt: null,
+            writeVersionEtag: "\"etag-a\"",
+            writeCompletedAtUtc: writeAt);
+        podB.RememberSuccessfulWriteForTesting(
+            serviceBusNamespace,
+            queueName,
+            new SqsQueueTagStore.QueueMetadata(),
+            previousVersionEtag: "\"etag-a\"",
+            previousUpdatedAt: writeAt,
+            writeVersionEtag: "\"etag-b\"",
+            writeCompletedAtUtc: writeAt.AddSeconds(1));
+
+        var freshPropsFromBackend = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt.AddSeconds(1),
+            UserMetadata = null,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, "\"etag-b\"", freshPropsFromBackend);
+
+        var freshMetadata = SqsQueueTagStore.DecodeMetadata(freshPropsFromBackend.UserMetadata);
+        Assert.Null(freshMetadata.DelaySeconds);
+        Assert.Empty(freshMetadata.Tags);
+
+        var subsequentEmptyRead = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt.AddSeconds(1),
+            UserMetadata = null,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, null, subsequentEmptyRead);
+
+        var subsequentMetadata = SqsQueueTagStore.DecodeMetadata(subsequentEmptyRead.UserMetadata);
+        Assert.Null(subsequentMetadata.DelaySeconds);
+        Assert.Empty(subsequentMetadata.Tags);
+    }
+
+    [Fact]
+    public void ApplyFreshSnapshot_evicts_stale_write_when_newer_read_has_no_etag()
+    {
+        const string serviceBusNamespace = "fake-ns";
+        const string queueName = "cross-pod-no-etag-q";
+        var staleMetadata = new SqsQueueTagStore.QueueMetadata
+        {
+            DelaySeconds = 10,
+        };
+        var podA = new SqsQueueMetadataCache(16, TimeSpan.FromSeconds(30));
+        var writeAt = new DateTimeOffset(2026, 7, 17, 1, 2, 3, TimeSpan.Zero);
+
+        podA.RememberSuccessfulWriteForTesting(
+            serviceBusNamespace,
+            queueName,
+            staleMetadata,
+            previousVersionEtag: null,
+            previousUpdatedAt: writeAt,
+            writeVersionEtag: null,
+            writeCompletedAtUtc: writeAt);
+
+        var newerBackendRead = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt.AddSeconds(1),
+            UserMetadata = null,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, null, newerBackendRead);
+
+        var freshMetadata = SqsQueueTagStore.DecodeMetadata(newerBackendRead.UserMetadata);
+        Assert.Null(freshMetadata.DelaySeconds);
+
+        var subsequentEmptyRead = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt.AddSeconds(1),
+            UserMetadata = null,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, null, subsequentEmptyRead);
+
+        var subsequentMetadata = SqsQueueTagStore.DecodeMetadata(subsequentEmptyRead.UserMetadata);
+        Assert.Null(subsequentMetadata.DelaySeconds);
+    }
+
+    [Fact]
+    public void ApplyFreshSnapshot_replaces_stale_write_cache_when_fresh_read_has_authoritative_metadata()
+    {
+        const string serviceBusNamespace = "fake-ns";
+        const string queueName = "cross-pod-authoritative-q";
+        var staleMetadata = new SqsQueueTagStore.QueueMetadata
+        {
+            DelaySeconds = 10,
+        };
+        var authoritativeMetadata = new SqsQueueTagStore.QueueMetadata(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["owner"] = "pod-b",
+            });
+        Assert.True(SqsQueueTagStore.TryEncodeMetadata(authoritativeMetadata, out var userMetadata));
+
+        var podA = new SqsQueueMetadataCache(16, TimeSpan.FromSeconds(30));
+        var writeAt = new DateTimeOffset(2026, 7, 17, 1, 2, 3, TimeSpan.Zero);
+
+        podA.RememberSuccessfulWriteForTesting(
+            serviceBusNamespace,
+            queueName,
+            staleMetadata,
+            previousVersionEtag: "\"etag-a\"",
+            previousUpdatedAt: writeAt,
+            writeVersionEtag: "\"etag-b\"",
+            writeCompletedAtUtc: writeAt.AddSeconds(1));
+
+        podA.ApplyFreshSnapshotForTesting(
+            serviceBusNamespace,
+            queueName,
+            "\"etag-c\"",
+            new QueueDescriptionProperties
+            {
+                UpdatedAt = writeAt.AddSeconds(2),
+                UserMetadata = userMetadata,
+            });
+
+        var subsequentEmptyRead = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt.AddSeconds(2),
+            UserMetadata = null,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, null, subsequentEmptyRead);
+
+        var subsequentMetadata = SqsQueueTagStore.DecodeMetadata(subsequentEmptyRead.UserMetadata);
+        Assert.Null(subsequentMetadata.DelaySeconds);
+        Assert.Empty(subsequentMetadata.Tags);
+    }
+
+    [Fact]
+    public void ApplyFreshSnapshot_overlays_cached_write_when_fresh_read_matches_previous_nonempty_version()
+    {
+        const string serviceBusNamespace = "fake-ns";
+        const string queueName = "cross-pod-stale-nonempty-q";
+        var cachedMetadata = new SqsQueueTagStore.QueueMetadata(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["owner"] = "pod-a",
+            })
+        {
+            DelaySeconds = 10,
+        };
+        var staleBackendMetadata = new SqsQueueTagStore.QueueMetadata(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["owner"] = "pod-before",
+            });
+        Assert.True(SqsQueueTagStore.TryEncodeMetadata(staleBackendMetadata, out var staleUserMetadata));
+
+        var podA = new SqsQueueMetadataCache(16, TimeSpan.FromSeconds(30));
+        var writeAt = new DateTimeOffset(2026, 7, 17, 1, 2, 3, TimeSpan.Zero);
+
+        podA.RememberSuccessfulWriteForTesting(
+            serviceBusNamespace,
+            queueName,
+            cachedMetadata,
+            previousVersionEtag: "\"etag-a\"",
+            previousUpdatedAt: writeAt,
+            writeVersionEtag: "\"etag-b\"",
+            writeCompletedAtUtc: writeAt.AddSeconds(1));
+
+        var staleRead = new QueueDescriptionProperties
+        {
+            UpdatedAt = writeAt,
+            UserMetadata = staleUserMetadata,
+        };
+
+        podA.ApplyFreshSnapshotForTesting(serviceBusNamespace, queueName, "\"etag-a\"", staleRead);
+
+        var repairedMetadata = SqsQueueTagStore.DecodeMetadata(staleRead.UserMetadata);
+        Assert.Equal(10, repairedMetadata.DelaySeconds);
+        Assert.Equal("pod-a", repairedMetadata.Tags["owner"]);
     }
 
     [Fact]

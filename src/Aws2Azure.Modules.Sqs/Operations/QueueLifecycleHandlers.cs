@@ -92,6 +92,7 @@ internal static class QueueLifecycleHandlers
 
         var atomBody = AtomQueueXmlWriter.BuildQueueEntry(props);
 
+        string? createdQueueEtag = null;
         using (var response = await sb.CreateQueueAsync(queueName, atomBody, ct).ConfigureAwait(false))
         {
             if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
@@ -117,9 +118,16 @@ internal static class QueueLifecycleHandlers
                     SqsErrorMapping.FromServiceBus(response)).ConfigureAwait(false);
                 return;
             }
+
+            createdQueueEtag = SqsQueueMetadataCache.ExtractETag(response);
         }
 
-        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, props);
+        SqsQueueMetadataCache.RememberSuccessfulWrite(
+            sb,
+            queueName,
+            props,
+            writeVersionEtag: createdQueueEtag,
+            writeCompletedAtUtc: DateTimeOffset.UtcNow);
 
         await SqsResponseWriter.WriteCreateQueueAsync(context, parsed.Protocol,
             QueueUrlBuilder.Build(context, queueName)).ConfigureAwait(false);
@@ -134,6 +142,11 @@ internal static class QueueLifecycleHandlers
         var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
         if (entry is null) return false;
 
+        SqsQueueMetadataCache.ApplyFreshSnapshot(
+            sb,
+            queueName,
+            SqsQueueMetadataCache.ExtractETag(response),
+            entry.Properties);
         var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
         return SecondsClose(requested.LockDurationSeconds,
                             entry.Properties.LockDurationSeconds,
@@ -381,7 +394,11 @@ internal static class QueueLifecycleHandlers
             return;
         }
 
-        SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, entry.Properties);
+        SqsQueueMetadataCache.ApplyFreshSnapshot(
+            sb,
+            queueName,
+            SqsQueueMetadataCache.ExtractETag(response),
+            entry.Properties);
         var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
         entry.Properties.DelaySeconds = metadata.DelaySeconds;
         entry.Properties.ReceiveMessageWaitTimeSeconds = metadata.ReceiveMessageWaitTimeSeconds;

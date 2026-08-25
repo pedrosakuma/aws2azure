@@ -201,14 +201,14 @@ internal static class TailHandlers
     private static async Task ListQueueTagsAsync(
         HttpContext context, SqsParseResult parsed, ServiceBusClient sb, CancellationToken ct)
     {
-        var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
-        if (entry is null) return;
+        var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, ct).ConfigureAwait(false);
+        if (read is null) return;
 
         if (ResolveQueueNameOrNull(context, parsed) is { } queueName)
         {
-            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, entry.Properties);
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.ETag, read.Entry.Properties);
         }
-        var tags = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata).Tags;
+        var tags = SqsQueueTagStore.DecodeMetadata(read.Entry.Properties.UserMetadata).Tags;
         await SqsResponseWriter.WriteListQueueTagsAsync(context, parsed.Protocol, tags).ConfigureAwait(false);
     }
 
@@ -397,21 +397,7 @@ internal static class TailHandlers
             return null;
         }
 
-        var eTag = response.Headers.ETag?.Tag;
-        if (string.IsNullOrWhiteSpace(eTag) &&
-            response.Headers.TryGetValues("ETag", out var values))
-        {
-            foreach (var value in values)
-            {
-                if (!string.IsNullOrWhiteSpace(value))
-                {
-                    eTag = value;
-                    break;
-                }
-            }
-        }
-
-        return new QueueReadResult(entry, eTag);
+        return new QueueReadResult(entry, SqsQueueMetadataCache.ExtractETag(response));
     }
 
     private static async Task<bool> MutateQueueTagsAsync(
@@ -440,7 +426,7 @@ internal static class TailHandlers
             var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, ct).ConfigureAwait(false);
             if (read is null) return false;
 
-            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.Entry.Properties);
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.ETag, read.Entry.Properties);
             if (!SqsQueueTagStore.TryDecodeForMutation(
                     read.Entry.Properties.UserMetadata,
                     out var metadata,
@@ -485,7 +471,14 @@ internal static class TailHandlers
             using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
             if (putResp.IsSuccessStatusCode)
             {
-                SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, read.Entry.Properties);
+                SqsQueueMetadataCache.RememberSuccessfulWrite(
+                    sb,
+                    queueName,
+                    read.Entry.Properties,
+                    previousVersionEtag: read.ETag,
+                    previousUpdatedAt: read.Entry.Properties.UpdatedAt,
+                    writeVersionEtag: SqsQueueMetadataCache.ExtractETag(putResp),
+                    writeCompletedAtUtc: DateTimeOffset.UtcNow);
                 return true;
             }
             if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)
