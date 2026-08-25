@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -6,6 +7,9 @@ namespace Aws2Azure.Modules.SecretsManager.Operations;
 
 internal static class DeleteSecretHandler
 {
+    private static readonly TimeSpan PurgeRetryTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxPurgeRetryDelay = TimeSpan.FromSeconds(1);
+
     public static async Task HandleAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
     {
         var name = KeyVaultSecretClient.NormalizeSecretName(SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty);
@@ -87,6 +91,7 @@ internal static class DeleteSecretHandler
                 client,
                 token,
                 name,
+                initialRecoveryLevel: deletedSecretDocument is null ? null : TryReadRecoveryLevel(deletedSecretDocument.RootElement),
                 allowNotFoundSuccess: !response.IsSuccessStatusCode,
                 cancellationToken).ConfigureAwait(false);
             if (!purgeResult)
@@ -123,10 +128,13 @@ internal static class DeleteSecretHandler
         KeyVaultSecretClient client,
         string token,
         string name,
+        string? initialRecoveryLevel,
         bool allowNotFoundSuccess,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 8; attempt++)
+        var attempt = 0;
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
         {
             using var purgeRequest = new HttpRequestMessage(HttpMethod.Delete, client.BuildVaultUri(KeyVaultSecretClient.BuildDeletedSecretPath(name)));
             purgeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -135,17 +143,16 @@ internal static class DeleteSecretHandler
             {
                 return true;
             }
-
             if (purgeResponse.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Conflict)
             {
-                if (attempt < 7)
+                if (allowNotFoundSuccess
+                    && purgeResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
-                    var delay = Math.Min(50 << Math.Min(attempt, 4), 1_000);
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-                    continue;
+                    return true;
                 }
 
-                if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict)
+                if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict
+                    && IsKnownNonPurgeable(initialRecoveryLevel))
                 {
                     await SecretsManagerOperationSupport.WriteAwsErrorAsync(
                         context,
@@ -155,17 +162,42 @@ internal static class DeleteSecretHandler
                     return false;
                 }
 
-                if (allowNotFoundSuccess)
+                var deletedSecretState = await GetDeletedSecretStateAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+                if (deletedSecretState.IsNonPurgeable)
+                {
+                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        "InvalidRequestException",
+                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).").ConfigureAwait(false);
+                    return false;
+                }
+
+                if (!deletedSecretState.ContinueRetrying)
+                {
+                    return deletedSecretState.TreatAsSuccess;
+                }
+
+                if (purgeResponse.StatusCode == System.Net.HttpStatusCode.NotFound
+                    && deletedSecretState.IsMissing)
                 {
                     return true;
                 }
 
-                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                    context,
-                    StatusCodes.Status503ServiceUnavailable,
-                    "InternalServiceError",
-                    "Deleted Key Vault secret did not become purgeable before the bounded retry window expired.").ConfigureAwait(false);
-                return false;
+                if (stopwatch.Elapsed >= PurgeRetryTimeout)
+                {
+                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                        context,
+                        StatusCodes.Status503ServiceUnavailable,
+                        "InternalServiceError",
+                        "Deleted Key Vault secret did not become purgeable before the bounded retry window expired.").ConfigureAwait(false);
+                    return false;
+                }
+
+                var delay = TimeSpan.FromMilliseconds(Math.Min(50 << Math.Min(attempt, 4), (int)MaxPurgeRetryDelay.TotalMilliseconds));
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                attempt++;
+                continue;
             }
 
             if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
@@ -185,7 +217,83 @@ internal static class DeleteSecretHandler
                 "Key Vault request failed.").ConfigureAwait(false);
             return false;
         }
+    }
 
-        return false;
+    private static async Task<DeletedSecretState> GetDeletedSecretStateAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        using var getRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildDeletedSecretPath(name)));
+        getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var getResponse = await client.SendAsync(getRequest, cancellationToken).ConfigureAwait(false);
+        if (getResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return DeletedSecretState.Missing;
+        }
+
+        if (getResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return DeletedSecretState.Unknown;
+        }
+
+        if (!getResponse.IsSuccessStatusCode)
+        {
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                context,
+                SecretsManagerOperationSupport.MapStatusCode(getResponse.StatusCode),
+                SecretsManagerOperationSupport.MapErrorCode(getResponse.StatusCode),
+                "Key Vault request failed.").ConfigureAwait(false);
+            return DeletedSecretState.Fail;
+        }
+
+        using var deletedSecretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(getResponse.Content, cancellationToken).ConfigureAwait(false);
+        var recoveryLevel = TryReadRecoveryLevel(deletedSecretDocument.RootElement);
+        if (!string.IsNullOrEmpty(recoveryLevel)
+            && recoveryLevel.Contains("Purgeable", StringComparison.OrdinalIgnoreCase))
+        {
+            return DeletedSecretState.Purgeable;
+        }
+
+        if (!string.IsNullOrEmpty(recoveryLevel))
+        {
+            return DeletedSecretState.NonPurgeable;
+        }
+
+        return DeletedSecretState.Purgeable;
+    }
+
+    private static string? TryReadRecoveryLevel(JsonElement root)
+    {
+        if (root.TryGetProperty("recoveryLevel", out var recoveryLevelProperty)
+            && recoveryLevelProperty.ValueKind == JsonValueKind.String)
+        {
+            return recoveryLevelProperty.GetString();
+        }
+
+        if (root.TryGetProperty("attributes", out var attributesProperty)
+            && attributesProperty.ValueKind == JsonValueKind.Object
+            && attributesProperty.TryGetProperty("recoveryLevel", out recoveryLevelProperty)
+            && recoveryLevelProperty.ValueKind == JsonValueKind.String)
+        {
+            return recoveryLevelProperty.GetString();
+        }
+
+        return null;
+    }
+
+    private static bool IsKnownNonPurgeable(string? recoveryLevel)
+        => !string.IsNullOrEmpty(recoveryLevel)
+            && !recoveryLevel.Contains("Purgeable", StringComparison.OrdinalIgnoreCase);
+
+    private readonly record struct DeletedSecretState(bool ContinueRetrying, bool IsNonPurgeable, bool IsMissing, bool TreatAsSuccess)
+    {
+        public static DeletedSecretState Purgeable => new(true, false, false, false);
+        public static DeletedSecretState NonPurgeable => new(false, true, false, false);
+        public static DeletedSecretState Missing => new(true, false, true, false);
+        public static DeletedSecretState Unknown => new(true, false, false, false);
+        public static DeletedSecretState Fail => new(false, false, false, false);
     }
 }

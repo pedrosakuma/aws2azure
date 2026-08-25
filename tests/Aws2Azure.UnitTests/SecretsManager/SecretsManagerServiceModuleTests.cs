@@ -980,6 +980,49 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_retries_until_deleted_secret_becomes_purgeable()
+    {
+        var purgeAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Delete)
+            {
+                purgeAttempts++;
+                return Task.FromResult(new HttpResponseMessage(purgeAttempts <= 8 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.True(purgeAttempts > 8);
+    }
+
+    [Fact]
     public async Task HandleAsync_DeleteSecret_force_delete_succeeds_when_secret_is_already_missing()
     {
         var requestUris = new List<string>();
@@ -1005,6 +1048,38 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.Contains(requestUris, uri => uri.Contains("/secrets/demo?api-version=7.4", StringComparison.Ordinal));
         Assert.Contains(requestUris, uri => uri.Contains("/deletedsecrets/demo?api-version=7.4", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_treats_missing_deleted_secret_as_success_after_delete()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
     }
 
     [Theory]
@@ -1094,10 +1169,89 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Contains("must be a boolean", body, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_does_not_require_deleted_secret_get_permission()
+    {
+        var purgeAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+
+            purgeAttempts++;
+            return Task.FromResult(new HttpResponseMessage(purgeAttempts == 1 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(2, purgeAttempts);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_reports_non_purgeable_vault_without_deleted_secret_get_permission()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable\"}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("enforces soft-delete retention", body, StringComparison.Ordinal);
+    }
+
     [Theory]
-    [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "requires Key Vault purge permission")]
-    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "enforces soft-delete retention")]
-    public async Task HandleAsync_DeleteSecret_reports_force_delete_limitations_honestly(HttpStatusCode purgeStatus, int expectedStatusCode, string expectedMessage)
+    [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "requires Key Vault purge permission", null)]
+    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "enforces soft-delete retention", "{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable\"}}")]
+    public async Task HandleAsync_DeleteSecret_reports_force_delete_limitations_honestly(HttpStatusCode purgeStatus, int expectedStatusCode, string expectedMessage, string? deletedSecretResponseJson)
     {
         using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
         {
@@ -1114,6 +1268,14 @@ public sealed class SecretsManagerServiceModuleTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(deletedSecretResponseJson ?? "{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
                 });
             }
 
