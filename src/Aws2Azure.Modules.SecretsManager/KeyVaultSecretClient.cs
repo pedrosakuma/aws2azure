@@ -9,7 +9,8 @@ namespace Aws2Azure.Modules.SecretsManager;
 
 internal sealed class KeyVaultSecretClient
 {
-    private const string ApiVersion = "7.4";
+    internal const string ApiVersion = "7.6";
+    internal const string VaultScope = "https://vault.azure.net/.default";
     private const string InternalTagPrefix = "aws2azure-";
     internal const string ClientRequestTokenTag = InternalTagPrefix + "client-request-token";
     internal const string PayloadSha256Tag = InternalTagPrefix + "payload-sha256";
@@ -37,7 +38,7 @@ internal sealed class KeyVaultSecretClient
         var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
         return await _tokenProvider.GetTokenAsync(
             auth,
-            "https://vault.azure.net/.default",
+            VaultScope,
             cancellationToken).ConfigureAwait(false);
     }
 

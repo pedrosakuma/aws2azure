@@ -46,7 +46,7 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var completedIterations = new CompletedIterationCounter();
         var vaultUrl = RequiredEnvironment("AZURE_KEYVAULT_URL");
         var windowStart = DateTimeOffset.UtcNow;
-        var networkTarget = new Uri(new Uri(vaultUrl), "secrets?api-version=7.4");
+        var networkTarget = new Uri(new Uri(vaultUrl), "secrets?api-version=7.6");
         var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var loadStartedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();

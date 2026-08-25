@@ -45,6 +45,11 @@ internal static class GetSecretValueHandler
                 }
                 else
                 {
+                    if (await SecretsManagerOperationSupport.TryWriteDisabledSecretVersionAsNotFoundAsync(context, directResponse, cancellationToken).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+
                     await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(directResponse.StatusCode), SecretsManagerOperationSupport.MapErrorCode(directResponse.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
                     return;
                 }
@@ -77,6 +82,11 @@ internal static class GetSecretValueHandler
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
+            if (await SecretsManagerOperationSupport.TryWriteDisabledSecretVersionAsNotFoundAsync(context, response, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(response.StatusCode), SecretsManagerOperationSupport.MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
             return;
         }

@@ -12,7 +12,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
-| [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
+| [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 19 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
 
@@ -277,7 +277,10 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [Certificate-backed secrets require the certificate API for deletion](design-gaps/secretsmanager/certificate-backed-secrets-require-the-certificate-api-for-deletion.md) — 🔵 by design
 - Design gap [Deletion recovery semantics differ](design-gaps/secretsmanager/deletion-recovery-semantics-differ.md) — 🔵 by design
+- Design gap [Disabled Key Vault secret versions use a backend-specific 403](design-gaps/secretsmanager/disabled-key-vault-secret-versions-use-a-backend-specific-403.md) — 🔵 by design
+- Design gap [Managed HSM endpoints do not implement the secrets API](design-gaps/secretsmanager/managed-hsm-endpoints-do-not-implement-the-secrets-api.md) — 🔵 by design
 - Design gap [No resource policies or cross-account access](design-gaps/secretsmanager/no-resource-policies-or-cross-account-access.md) — 🔵 by design
 - Design gap [Rotation has no Lambda equivalent](design-gaps/secretsmanager/rotation-has-no-lambda-equivalent.md) — ⚫ non-goal
 - Design gap [Synthetic ARNs use a proxy-specific namespace](design-gaps/secretsmanager/synthetic-arns-use-a-proxy-specific-namespace.md) — 🔵 by design

@@ -42,6 +42,31 @@ internal static class SecretsManagerOperationSupport
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
+    public static async Task<bool> TryWriteDisabledSecretVersionAsNotFoundAsync(
+        HttpContext context,
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.StatusCode != HttpStatusCode.Forbidden)
+        {
+            return false;
+        }
+
+        var error = await TryReadKeyVaultErrorAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(error?.Code, "Forbidden", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(error?.Message?.Trim(), "Operation is disabled for this secret version.", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        await WriteAwsErrorAsync(
+            context,
+            StatusCodes.Status404NotFound,
+            "ResourceNotFoundException",
+            "Secrets Manager can't find the specified secret value because the requested Key Vault secret version is disabled.").ConfigureAwait(false);
+        return true;
+    }
+
     public static string? ReadString(JsonDocument document, string propertyName)
         => document.RootElement.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
@@ -124,6 +149,7 @@ internal static class SecretsManagerOperationSupport
             HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
             HttpStatusCode.Conflict => StatusCodes.Status400BadRequest,
             HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
+            HttpStatusCode.MethodNotAllowed => StatusCodes.Status400BadRequest,
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => StatusCodes.Status403Forbidden,
             HttpStatusCode.TooManyRequests => StatusCodes.Status429TooManyRequests,
             HttpStatusCode.RequestTimeout => StatusCodes.Status503ServiceUnavailable,
@@ -137,10 +163,38 @@ internal static class SecretsManagerOperationSupport
             HttpStatusCode.NotFound => "ResourceNotFoundException",
             HttpStatusCode.Conflict => "ResourceExistsException",
             HttpStatusCode.BadRequest => "InvalidParameterException",
+            HttpStatusCode.MethodNotAllowed => "InvalidRequestException",
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "AccessDeniedException",
             HttpStatusCode.TooManyRequests => "ThrottlingException",
             HttpStatusCode.RequestTimeout => "InternalServiceError",
             >= HttpStatusCode.InternalServerError => "InternalServiceError",
             _ => "InvalidParameterException",
         };
+
+    private static async Task<KeyVaultError?> TryReadKeyVaultErrorAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = await ReadJsonDocumentAsync(content, cancellationToken).ConfigureAwait(false);
+            if (!document.RootElement.TryGetProperty("error", out var error)
+                || error.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var code = error.TryGetProperty("code", out var codeProperty) && codeProperty.ValueKind == JsonValueKind.String
+                ? codeProperty.GetString()
+                : null;
+            var message = error.TryGetProperty("message", out var messageProperty) && messageProperty.ValueKind == JsonValueKind.String
+                ? messageProperty.GetString()
+                : null;
+            return new KeyVaultError(code, message);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record KeyVaultError(string? Code, string? Message);
 }

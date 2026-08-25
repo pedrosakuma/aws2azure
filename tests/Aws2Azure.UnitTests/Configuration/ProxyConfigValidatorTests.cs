@@ -832,6 +832,27 @@ public class ProxyConfigValidatorTests
         Assert.Contains("azure.secretsmanager.auth: identity reference 'missing' was not found in azureIdentities.", ex.Message);
     }
 
+    [Theory]
+    [InlineData("https://example.managedhsm.azure.net/")]
+    [InlineData("https://example.managedhsm.usgovcloudapi.net/")]
+    public void Rejects_managed_hsm_endpoint_for_secrets_manager(string vaultUrl)
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.KeyVault = new KeyVaultCredentials
+        {
+            VaultUrl = vaultUrl,
+            TenantId = "tenant",
+            ClientId = "client",
+            ClientSecret = "secret",
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains(
+            "azure.secretsmanager.target.vaultUrl: Managed HSM endpoints are not supported for Secrets Manager because Azure Managed HSM stores keys only, not secrets or certificates.",
+            ex.Message,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Event_grid_fallback_identity_error_uses_fallback_auth_path()
     {

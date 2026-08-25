@@ -17,6 +17,24 @@ design_gaps:
   summary: DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Vault soft-delete and purge, whose retention model and immediate-purge permissions are governed by the vault, not by AWS parameters.
   impact: Recovery-window timing and force-delete behaviour follow the Key Vault soft-delete configuration rather than the exact AWS window semantics.
   workaround: Configure the Key Vault soft-delete retention to match the intended recovery window; grant purge permission only where force-delete is needed.
+- area: Managed HSM endpoints do not implement the secrets API
+  status: unsupported
+  summary: Azure Managed HSM stores and serves keys only. It does not expose the Key Vault secrets or certificates data-plane APIs that aws2azure's Secrets Manager translation requires.
+  impact: Pointing the Secrets Manager backend at a `*.managedhsm.azure.net` endpoint cannot work, even though the URL shape resembles a Key Vault hostname.
+  workaround: Use a standard Azure Key Vault vault endpoint for Secrets Manager bindings. Startup validation rejects Managed HSM URLs with a clear configuration error instead of failing later at runtime.
+  disposition: by_design
+- area: Certificate-backed secrets require the certificate API for deletion
+  status: partial
+  summary: "Azure Key Vault marks certificate-backed secrets as `managed: true` and rejects `DELETE /secrets/{name}` with HTTP 405. AWS Secrets Manager does not expose that certificate distinction on DeleteSecret."
+  impact: A caller can request DeleteSecret for a certificate-backed secret name and receive a failure even though the same name looks like a normal secret in list/describe flows.
+  workaround: Delete the backing certificate through the Azure Key Vault certificate API or portal. aws2azure returns InvalidRequestException with a certificate-specific message when this backend rule is hit.
+  disposition: by_design
+- area: Disabled Key Vault secret versions use a backend-specific 403
+  status: by_design
+  summary: Key Vault returns HTTP 403 `Forbidden` with the message `Operation is disabled for this secret version.` when a secret version is disabled, whereas AWS callers expect disabled or deprecated versions to behave like not found during rotation fallback.
+  impact: Without a targeted translation layer, SDK rotation code that catches ResourceNotFoundException and falls back to an older version would stop on an AccessDeniedException instead.
+  workaround: aws2azure remaps only that exact disabled-version signature to ResourceNotFoundException. Other 403 responses still mean authorization failed and must be fixed in Azure RBAC or Key Vault access policy.
+  disposition: by_design
 - area: Synthetic ARNs use a proxy-specific namespace
   status: by_design
   summary: The proxy has no real AWS region/account/random-suffix identity for an Azure Key Vault secret, so it emits a synthetic `arn:aws:secretsmanager:azure:keyvault:secret:{name}` shape and parses any inbound ARN by taking the segment after `:secret:`.
@@ -43,6 +61,7 @@ workload_patterns:
   - DeleteSecret
   design_gaps:
   - Deletion recovery semantics differ
+  - Managed HSM endpoints do not implement the secrets API
   guidance: Suitable after configuring Entra ID authentication and validating Key Vault soft-delete behavior for the deployment.
 - id: secretsmanager_version_stages
   name: Version stages

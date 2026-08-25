@@ -247,7 +247,7 @@ class KeyVaultRbacStabilityTests(unittest.TestCase):
             sanitize_diagnostic("request-id\n<region>"),
         )
         self.assertEqual(
-            "https://example.vault.azure.net/secrets?api-version=7.4",
+            "https://example.vault.azure.net/secrets?api-version=7.6",
             build_list_secrets_url("https://example.vault.azure.net/"),
         )
         with self.assertRaises(ValueError):

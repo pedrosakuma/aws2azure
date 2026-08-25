@@ -604,7 +604,7 @@ public sealed class SecretsManagerDurabilityTests
             builder.Append(']');
             if (next is not null)
             {
-                builder.Append(",\"nextLink\":\"https://example.vault.azure.net/secrets/demo/versions?api-version=7.4&$skiptoken=");
+                builder.Append(",\"nextLink\":\"https://example.vault.azure.net/secrets/demo/versions?api-version=7.6&$skiptoken=");
                 builder.Append(next.Value);
                 builder.Append('"');
             }

@@ -106,9 +106,9 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [UploadPartCopy](operations/s3/uploadpartcopy.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)` |
 | secretsmanager | [CreateSecret](operations/secretsmanager/createsecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DeleteSecret](operations/secretsmanager/deletesecret.md) | ✅ implemented | — | — | ✅ | `DELETE https://{vault}.vault.azure.net/secrets/{name}` |
-| secretsmanager | [DescribeSecret](operations/secretsmanager/describesecret.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4` |
+| secretsmanager | [DescribeSecret](operations/secretsmanager/describesecret.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.6` |
 | secretsmanager | [GetSecretValue](operations/secretsmanager/getsecretvalue.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}/versions/{version?}` |
-| secretsmanager | [ListSecrets](operations/secretsmanager/listsecrets.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets?api-version=7.4` |
+| secretsmanager | [ListSecrets](operations/secretsmanager/listsecrets.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets?api-version=7.6` |
 | secretsmanager | [PutSecretValue](operations/secretsmanager/putsecretvalue.md) | 🟡 partial | 🔵 by design | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [RotateSecret](operations/secretsmanager/rotatesecret.md) | ⛔ unsupported | ⚫ non-goal | — | — | `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive` |
 | secretsmanager | [TagResource](operations/secretsmanager/tagresource.md) | 🟡 partial | 🔵 by design | — | — | `PATCH https://{vault}.vault.azure.net/secrets/{name}/{version}` |

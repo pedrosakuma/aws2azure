@@ -15,6 +15,7 @@
 - Plain DeleteSecret now reports Key Vault's actual deleted/scheduled-purge timestamps instead of fabricating response dates locally.
 - ForceDeleteWithoutRecovery now maps to Key Vault delete followed by purge when the target vault permits purge. If the vault still enforces retention (for example, purge protection is enabled) or the configured identity lacks purge permission, aws2azure returns an explicit error instead of silently soft-deleting.
 - RecoveryWindowInDays is accepted so common AWS cleanup flows keep working, but the requested window is not enforced. Key Vault uses the vault's fixed soft-delete retention policy and DeleteSecret returns the actual Key Vault scheduled-purge timestamp rather than the caller-requested window.
+- Certificate-backed Key Vault secrets (`managed: true`) cannot be deleted through the secrets API. When Key Vault rejects DELETE with HTTP 405, aws2azure returns InvalidRequestException with a certificate-specific message instead of a generic parameter error.
 
 ## References
 
