@@ -410,8 +410,8 @@ internal sealed class KeyVaultSecretClient
     public static string BuildJsonBody(string? secretString, string? secretBinary, string? description, IReadOnlyDictionary<string, string>? tags)
     {
         var payload = new KeyVaultSecretRequest(
-            Value: string.IsNullOrWhiteSpace(secretBinary) ? secretString : EncodeSecretBinary(DecodeSecretBinary(secretBinary)),
-            ContentType: string.IsNullOrWhiteSpace(secretBinary) ? null : "application/octet-stream",
+            Value: string.IsNullOrEmpty(secretBinary) ? secretString : EncodeSecretBinary(DecodeSecretBinary(secretBinary)),
+            ContentType: string.IsNullOrEmpty(secretBinary) ? null : "application/octet-stream",
             Tags: tags is null || tags.Count == 0 ? null : tags,
             Attributes: new KeyVaultSecretAttributes(true, null, null, null),
             Description: string.IsNullOrWhiteSpace(description) ? null : description);
@@ -430,6 +430,8 @@ internal sealed class KeyVaultSecretClient
     public static string BuildSecretVersionPath(string name, string versionId) => "/secrets/" + Uri.EscapeDataString(name) + "/" + Uri.EscapeDataString(versionId);
 
     public static string BuildSecretVersionsPath(string name) => "/secrets/" + Uri.EscapeDataString(name) + "/versions";
+
+    public static string BuildDeletedSecretPath(string name) => "/deletedsecrets/" + Uri.EscapeDataString(name);
 
     private static bool IsInternalTag(string name)
         => name.StartsWith(InternalTagPrefix, StringComparison.Ordinal);

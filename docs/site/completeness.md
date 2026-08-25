@@ -11,8 +11,8 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
-| [secretsmanager](secretsmanager.md) | 6 | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 11 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 0 | 0 | 121 |
+| [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
 
@@ -125,8 +125,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
-- Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+_No remaining feasible backlog is documented for this service._
 
 ### Workload maturity
 
@@ -250,7 +249,6 @@ _No remaining feasible backlog is documented for this service._
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-acls--x-amz-acl) / ACLs (x-amz-acl) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-object-lock---legal-hold---retention) / Object Lock / Legal Hold / Retention — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-server-side-encryption--sse-s3-sse-kms-sse-c) / server-side encryption (SSE-S3, SSE-KMS, SSE-C) — 🔵 by design
-- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-storage-class--x-amz-storage-class) / storage-class (x-amz-storage-class) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-versioning--x-amz-version-id) / versioning (x-amz-version-id) — 🔵 by design
 - Sub-feature [PutPublicAccessBlock](operations/s3/putpublicaccessblock.md#sub-feature-public-access-enforcement) / public-access enforcement — 🔵 by design
 - Sub-feature [RestoreObject](operations/s3/restoreobject.md#sub-feature-operation) / operation — 🔵 by design
@@ -262,9 +260,9 @@ _No remaining feasible backlog is documented for this service._
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 0 | 1 | 0 |
+| 🟡 partial | 0 | 3 | 0 |
 | ⚪ stub | 0 | 0 | 0 |
-| ⛔ unsupported | 0 | 0 | 1 |
+| ⛔ unsupported | 0 | 1 | 1 |
 
 ### Feasible backlog
 
@@ -279,13 +277,18 @@ _No remaining feasible backlog is documented for this service._
 - Design gap [Deletion recovery semantics differ](design-gaps/secretsmanager/deletion-recovery-semantics-differ.md) — 🔵 by design
 - Design gap [No resource policies or cross-account access](design-gaps/secretsmanager/no-resource-policies-or-cross-account-access.md) — 🔵 by design
 - Design gap [Rotation has no Lambda equivalent](design-gaps/secretsmanager/rotation-has-no-lambda-equivalent.md) — ⚫ non-goal
+- Design gap [Synthetic ARNs use a proxy-specific namespace](design-gaps/secretsmanager/synthetic-arns-use-a-proxy-specific-namespace.md) — 🔵 by design
 - Design gap [Versioning and staging modelled on Key Vault version tags](design-gaps/secretsmanager/versioning-and-staging-modelled-on-key-vault-version-tags.md) — 🔵 by design
 - Operation [PutSecretValue](operations/secretsmanager/putsecretvalue.md) — 🔵 by design
 - Operation [RotateSecret](operations/secretsmanager/rotatesecret.md) — ⚫ non-goal
+- Operation [TagResource](operations/secretsmanager/tagresource.md) — 🔵 by design
+- Operation [UntagResource](operations/secretsmanager/untagresource.md) — 🔵 by design
+- Operation [UpdateSecretVersionStage](operations/secretsmanager/updatesecretversionstage.md) — 🔵 by design
 - Sub-feature [PutSecretValue](operations/secretsmanager/putsecretvalue.md#sub-feature-clientrequesttoken-idempotency) / ClientRequestToken idempotency — 🔵 by design
 - Sub-feature [PutSecretValue](operations/secretsmanager/putsecretvalue.md#sub-feature-versionstages-request-labels) / VersionStages request labels — 🔵 by design
 - Sub-feature [RotateSecret](operations/secretsmanager/rotatesecret.md#sub-feature-rotateimmediately---rotationrules---rotationlambdaarn) / RotateImmediately / RotationRules / RotationLambdaARN — ⚫ non-goal
 - Sub-feature [RotateSecret](operations/secretsmanager/rotatesecret.md#sub-feature-rotation-lambda-orchestration) / Rotation Lambda orchestration — ⚫ non-goal
+- Sub-feature [UpdateSecretVersionStage](operations/secretsmanager/updatesecretversionstage.md#sub-feature-standalone-stage-label-mutation-api) / Standalone stage-label mutation API — 🔵 by design
 - Sub-feature [UpdateSecret](operations/secretsmanager/updatesecret.md#sub-feature-version-durability-and-clientrequesttoken-replay) / Version durability and ClientRequestToken replay — 🔵 by design
 
 ## sns

@@ -13,6 +13,9 @@ internal enum SecretsManagerOperation
     ListSecrets,
     DescribeSecret,
     RotateSecret,
+    UpdateSecretVersionStage,
+    TagResource,
+    UntagResource,
 }
 
 internal static class SecretsManagerOperationNames
@@ -31,6 +34,12 @@ internal static class SecretsManagerOperationNames
         // Dispatch rejects it with a NotImplementedException (see the module + the
         // RotateSecret gap doc) rather than silently translating to Key Vault.
         ["RotateSecret"] = SecretsManagerOperation.RotateSecret,
+        // Recognised for routing/metrics but deliberately unsupported: while the
+        // module models stage labels internally, it does not yet expose the
+        // standalone AWS label-mutation API contract.
+        ["UpdateSecretVersionStage"] = SecretsManagerOperation.UpdateSecretVersionStage,
+        ["TagResource"] = SecretsManagerOperation.TagResource,
+        ["UntagResource"] = SecretsManagerOperation.UntagResource,
     };
 
     /// <summary>

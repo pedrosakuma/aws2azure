@@ -12,6 +12,8 @@
 - Initial MVP uses Key Vault AAD auth and translates the core secret CRUD/read paths to AWS Secrets Manager JSON responses.
 - Advanced rotation, restore, and policy semantics are not yet modeled; the proxy uses Key Vault secret versions as the AWS version surface.
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
+- Plain DeleteSecret now reports Key Vault's actual deleted/scheduled-purge timestamps instead of fabricating response dates locally.
+- RecoveryWindowInDays / ForceDeleteWithoutRecovery are rejected with NotImplementedException rather than silently ignored. Azure Key Vault soft-delete retention and purgeability are configured at the vault, not per DeleteSecret request.
 
 ## References
 

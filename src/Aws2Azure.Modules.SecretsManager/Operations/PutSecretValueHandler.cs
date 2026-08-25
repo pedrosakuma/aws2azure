@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -12,11 +13,12 @@ internal static class PutSecretValueHandler
         var name = KeyVaultSecretClient.NormalizeSecretName(SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty);
         var secretString = SecretsManagerOperationSupport.ReadString(document, "SecretString");
         var secretBinary = SecretsManagerOperationSupport.ReadString(document, "SecretBinary");
+        SecretsManagerOperationSupport.ValidateExactlyOneSecretValue(secretString, secretBinary);
         var versionStagesSpecified = document.RootElement.TryGetProperty("VersionStages", out _);
         var versionStages = KeyVaultSecretClient.ReadVersionStages(document);
         var clientRequestToken = SecretsManagerOperationSupport.ReadString(document, "ClientRequestToken");
-        var contentType = string.IsNullOrWhiteSpace(secretBinary) ? null : "application/octet-stream";
-        var storedValue = string.IsNullOrWhiteSpace(secretBinary)
+        var contentType = string.IsNullOrEmpty(secretBinary) ? null : "application/octet-stream";
+        var storedValue = string.IsNullOrEmpty(secretBinary)
             ? secretString
             : KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(secretBinary));
         var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
@@ -35,6 +37,12 @@ internal static class PutSecretValueHandler
         }
 
         await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
+        var currentUserTags = await ReadCurrentUserTagsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+        if (currentUserTags is null)
+        {
+            return;
+        }
+
         var written = await CreateVersionAsync(
             context,
             client,
@@ -47,6 +55,7 @@ internal static class PutSecretValueHandler
             payloadSha256,
             versionStages,
             versionStagesSpecified,
+            currentUserTags,
             cancellationToken).ConfigureAwait(false);
         if (written is null)
         {
@@ -73,6 +82,7 @@ internal static class PutSecretValueHandler
         string payloadSha256,
         IReadOnlyList<string> versionStages,
         bool versionStagesSpecified,
+        IReadOnlyDictionary<string, string> currentUserTags,
         CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
@@ -117,10 +127,15 @@ internal static class PutSecretValueHandler
             payloadSha256,
             versionStages,
             defaultStageTransition: !versionStagesSpecified);
+        var mergedTags = new Dictionary<string, string>(currentUserTags, StringComparer.Ordinal);
+        foreach (var tag in internalTags)
+        {
+            mergedTags[tag.Key] = tag.Value;
+        }
         using var request = new HttpRequestMessage(HttpMethod.Put, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = new StringContent(
-            KeyVaultSecretClient.BuildJsonBody(secretString, secretBinary, description, internalTags),
+            KeyVaultSecretClient.BuildJsonBody(secretString, secretBinary, description, mergedTags),
             Encoding.UTF8,
             "application/json");
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -150,6 +165,30 @@ internal static class PutSecretValueHandler
         return published is null
             ? null
             : new NewVersionResult(published.Value.VersionId, createdDate, published.Value.VersionStages);
+    }
+
+    internal static async Task<IReadOnlyDictionary<string, string>?> ReadCurrentUserTagsAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                context,
+                SecretsManagerOperationSupport.MapStatusCode(response.StatusCode),
+                SecretsManagerOperationSupport.MapErrorCode(response.StatusCode),
+                "Key Vault request failed.").ConfigureAwait(false);
+            return null;
+        }
+
+        using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        return KeyVaultSecretClient.GetTags(document.RootElement);
     }
 
     internal readonly record struct NewVersionResult(

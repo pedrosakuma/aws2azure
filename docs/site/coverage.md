@@ -111,7 +111,10 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | secretsmanager | [ListSecrets](operations/secretsmanager/listsecrets.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets?api-version=7.4` |
 | secretsmanager | [PutSecretValue](operations/secretsmanager/putsecretvalue.md) | 🟡 partial | 🔵 by design | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [RotateSecret](operations/secretsmanager/rotatesecret.md) | ⛔ unsupported | ⚫ non-goal | — | — | `None — Azure Key Vault has no equivalent managed-rotation trigger the proxy can drive` |
+| secretsmanager | [TagResource](operations/secretsmanager/tagresource.md) | 🟡 partial | 🔵 by design | — | — | `PATCH https://{vault}.vault.azure.net/secrets/{name}/{version}` |
+| secretsmanager | [UntagResource](operations/secretsmanager/untagresource.md) | 🟡 partial | 🔵 by design | — | — | `PATCH https://{vault}.vault.azure.net/secrets/{name}/{version}` |
 | secretsmanager | [UpdateSecret](operations/secretsmanager/updatesecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
+| secretsmanager | [UpdateSecretVersionStage](operations/secretsmanager/updatesecretversionstage.md) | ⛔ unsupported | 🔵 by design | — | — | `None — no standalone Key Vault stage-label mutation API` |
 | sns | [ConfirmSubscription](operations/sns/confirmsubscription.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
 | sns | [CreateTopic](operations/sns/createtopic.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](operations/sns/deletetopic.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus Topics management REST API` |

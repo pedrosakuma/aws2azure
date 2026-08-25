@@ -14,6 +14,7 @@
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - SecretList entries emit Tags as an AWS Key/Value array and resolve the secret Name/ARN from the Key Vault item id; a JSON-map tag shape would desync the AWS SDK list unmarshaller.
 - Pagination: AWS NextToken carries the Key Vault $skiptoken continuation value (and MaxResults maps to Key Vault maxresults); the proxy always rebuilds its own vault URI from the token rather than following an inbound URL, so NextToken cannot be used as an SSRF vector.
+- Filters, SortBy, SortOrder, and IncludePlannedDeletion are currently ignored. The proxy forwards only NextToken and MaxResults to Key Vault's list API and returns the unfiltered active-secret inventory.
 
 ## References
 

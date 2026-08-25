@@ -87,6 +87,12 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             return;
         }
 
+        if (operation == SecretsManagerOperation.UpdateSecretVersionStage)
+        {
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status501NotImplemented, "NotImplementedException", "UpdateSecretVersionStage is recognised but not supported by aws2azure. The proxy's Key Vault-backed stage model is documented for PutSecretValue, UpdateSecret, GetSecretValue, and DescribeSecret, but the standalone AWS label-mutation API is not implemented.").ConfigureAwait(false);
+            return;
+        }
+
         var accessKeyId = context.Items["aws2azure.accessKeyId"] as string;
         if (string.IsNullOrWhiteSpace(accessKeyId))
         {
@@ -130,6 +136,12 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                     return;
                 case SecretsManagerOperation.DescribeSecret:
                     await DescribeSecretHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
+                    return;
+                case SecretsManagerOperation.TagResource:
+                    await TagResourceHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
+                    return;
+                case SecretsManagerOperation.UntagResource:
+                    await UntagResourceHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
             }
 
