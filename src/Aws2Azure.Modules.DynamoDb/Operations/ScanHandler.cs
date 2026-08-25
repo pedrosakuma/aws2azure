@@ -211,6 +211,10 @@ internal static class ScanHandler
         // the projected set itself to avoid leaking non-projected attributes.
         bool gsiProjectionAll = isGsiScan
             && string.Equals(gsi!.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase);
+        IReadOnlyList<string>? gsiProjectedAttributes = isGsiScan && !gsiProjectionAll
+            ? SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashName!, gsiSortName)
+            : null;
+        Projection? gsiFilterProjection = Wrap(gsiProjectedAttributes);
 
         if (!IsAllowedSelect(req.Select, isIndexScan, out var selectError))
         {
@@ -266,7 +270,7 @@ internal static class ScanHandler
                 // above) always takes precedence; an explicit ALL_ATTRIBUTES /
                 // SPECIFIC_ATTRIBUTES / COUNT Select skips this branch.
                 projection = isGsiScan
-                    ? Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashName!, gsiSortName))
+                    ? gsiFilterProjection
                     : Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortName!));
             }
         }
@@ -283,8 +287,7 @@ internal static class ScanHandler
         // Reject any non-projected path.
         if (isGsiScan && !gsiProjectionAll && !string.IsNullOrWhiteSpace(req.ProjectionExpression))
         {
-            var allowed = SecondaryIndexResolver.ResolveIndexProjection(
-                meta, gsi!, gsiHashName!, gsiSortName)!;
+            var allowed = gsiProjectedAttributes!;
             foreach (var path in projection!.RootNames)
             {
                 bool projected = false;
@@ -329,17 +332,20 @@ internal static class ScanHandler
                 : new[] { gsiHashName!, gsiSortName };
         }
 
-        await ExecuteScanAsync(ctx, req, filter, projection, membershipAttrs, continuationIn, cosmos, ct).ConfigureAwait(false);
+        await ExecuteScanAsync(ctx, req, filter, projection, gsiFilterProjection, membershipAttrs, continuationIn, cosmos, ct).ConfigureAwait(false);
     }
 
     private static async Task ExecuteScanAsync(
         HttpContext ctx, ScanRequest req,
-        ConditionNode? filter, Projection? projection, IReadOnlyList<string>? membershipAttrs, string? continuationIn,
+        ConditionNode? filter, Projection? projection, Projection? gsiFilterProjection,
+        IReadOnlyList<string>? membershipAttrs, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool countOnly = string.Equals(req.Select, "COUNT", StringComparison.OrdinalIgnoreCase);
 
-        var pushdown = FilterPushdownVisitor.Translate(filter);
+        var pushdown = gsiFilterProjection is not null
+            ? new FilterPushdownResult(null, Array.Empty<CosmosSqlParameter>(), filter)
+            : FilterPushdownVisitor.Translate(filter);
         // The residual replaces the parsed filter: the pushable half
         // is already enforced by Cosmos so only the leftover needs
         // client-side evaluation.
@@ -416,8 +422,11 @@ internal static class ScanHandler
 
                 if (filter is not null)
                 {
+                    var filterItem = gsiFilterProjection is null
+                        ? itemMap
+                        : gsiFilterProjection.Apply(itemMap);
                     bool keep;
-                    try { keep = ConditionEvaluator.Evaluate(filter, itemMap); }
+                    try { keep = ConditionEvaluator.Evaluate(filter, filterItem); }
                     catch (ConditionEvaluationException ex)
                     {
                         await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message).ConfigureAwait(false);

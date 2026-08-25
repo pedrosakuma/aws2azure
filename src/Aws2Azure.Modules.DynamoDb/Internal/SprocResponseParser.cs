@@ -86,6 +86,26 @@ internal static class SprocResponseParser
                                 ResponseBody = body,
                             };
                         }
+                        if (!success
+                            && root.TryGetProperty("validationError", out _))
+                        {
+                            if (TryReadValidationError(root, out var validationError))
+                            {
+                                return new SprocExecuteResult
+                                {
+                                    ValidationFailed = true,
+                                    ValidationError = validationError,
+                                    ResponseBody = body,
+                                };
+                            }
+
+                            return new SprocExecuteResult
+                            {
+                                StatusCode = StatusCodes.Status502BadGateway,
+                                ErrorBody = "Stored procedure returned a malformed validation response.",
+                                ResponseBody = body,
+                            };
+                        }
                     }
                 }
             }

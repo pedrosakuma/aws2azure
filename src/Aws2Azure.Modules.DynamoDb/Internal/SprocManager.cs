@@ -24,8 +24,8 @@ internal sealed partial class SprocManager
     private readonly ILogger<SprocManager> _logger;
     private readonly ConcurrentDictionary<SprocCacheKey, SprocState> _sprocCache = new();
 
-    // atomicWrite_v2 is frozen by the persisted-format inventory. Its body is
-    // intentionally unchanged in this release.
+    // atomicWrite_v2 is frozen by the persisted-format inventory. The current
+    // single-write body therefore advances under a new ID.
     public const string SprocId = DynamoDbPersistedFormatContract.AtomicWriteStoredProcedureId;
 
     // Transaction bodies are immutable by ID. v5 starts the durable token window

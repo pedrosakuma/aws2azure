@@ -12,6 +12,7 @@ using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.DynamoDb.Internal;
 using Aws2Azure.Modules.DynamoDb.Operations;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.DynamoDb;
@@ -39,6 +40,34 @@ public class UpdateItemHandlerTests
         + "\"tableName\":\"orders\",\"creationDateTime\":0,"
         + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
         + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private static readonly string MetadataDocHashOnlyWithTtl =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\",\"creationDateTime\":0,"
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+        + "\"timeToLive\":{\"enabled\":true,\"attributeName\":\"expiresAt\"},"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private static readonly string MetadataDocHashOnlyWithNumericGsi =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\",\"creationDateTime\":0,"
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"gpk\",\"type\":\"S\"},{\"name\":\"score\",\"type\":\"N\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"}],"
+        + "\"globalSecondaryIndexes\":[{\"indexName\":\"byScore\","
+        + "\"keySchema\":[{\"name\":\"gpk\",\"keyType\":\"HASH\"},{\"name\":\"score\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
+        + "\"billingMode\":\"PAY_PER_REQUEST\"}";
+
+    private static readonly string MetadataDocHashRangeWithAllProjectedLsi =
+        "{\"id\":\"__aws2azure_table_meta__\",\"_a2a_pk\":\"__aws2azure_table_meta__\",\"_meta\":\"table\","
+        + "\"tableName\":\"orders\",\"creationDateTime\":0,"
+        + "\"attributeDefinitions\":[{\"name\":\"pk\",\"type\":\"S\"},{\"name\":\"sk\",\"type\":\"S\"},{\"name\":\"ix\",\"type\":\"S\"}],"
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"sk\",\"keyType\":\"RANGE\"}],"
+        + "\"localSecondaryIndexes\":[{\"indexName\":\"byIx\","
+        + "\"keySchema\":[{\"name\":\"pk\",\"keyType\":\"HASH\"},{\"name\":\"ix\",\"keyType\":\"RANGE\"}],"
+        + "\"projectionType\":\"ALL\"}],"
         + "\"billingMode\":\"PAY_PER_REQUEST\"}";
 
     private static CosmosClient BuildClient(ScriptedHandler handler)
@@ -93,6 +122,23 @@ public class UpdateItemHandlerTests
         using var d = JsonDocument.Parse(itemJson);
         return Aws2Azure.Modules.DynamoDb.Persistence.InferredAttributeStorage.BuildCosmosDocument(id, pk, d.RootElement);
     }
+
+    private static SprocContext EnabledSproc(StoredProcedureMode mode = StoredProcedureMode.Preferred)
+        => new(mode, new SprocManager(NullLogger<SprocManager>.Instance));
+
+    private static int UpdateItemPayloadBytesFromMaxSize(int delta)
+    {
+        using var d = JsonDocument.Parse(
+            """{"pk":{"S":"a"},"payload":{"S":""}}""");
+        Assert.True(DynamoDbItemSize.TryCalculate(d.RootElement, out var size, out var error), error);
+        return checked((int)(DynamoDbItemSize.MaximumBytes - size + delta));
+    }
+
+    private static string UpdateSetPayloadRequest(int payloadBytes)
+        => "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+           + "\"UpdateExpression\":\"SET payload = :p\","
+           + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\""
+           + new string('x', payloadBytes) + "\"}}}";
 
     [Fact]
     public async Task UpdateItem_all_old_image_byte_identical_for_binary_and_text_get_body()
@@ -344,6 +390,167 @@ public class UpdateItemHandlerTests
         await UpdateItemHandler.HandleUpdateItemAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, null, default);
         using var doc = JsonDocument.Parse(ReadResponse(body));
         Assert.Equal("1", doc.RootElement.GetProperty("Attributes").GetProperty("v").GetProperty("N").GetString());
+    }
+
+    [Fact]
+    public async Task UpdateItem_resulting_item_just_under_400_kib_is_accepted()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}"), etag: "\"e1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await UpdateItemHandler.HandleUpdateItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(UpdateSetPayloadRequest(UpdateItemPayloadBytesFromMaxSize(-1))),
+            cosmos,
+            null,
+            default);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task UpdateItem_resulting_item_over_400_kib_is_rejected_before_write()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnly),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"}}"), etag: "\"e1\""),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        await UpdateItemHandler.HandleUpdateItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(UpdateSetPayloadRequest(UpdateItemPayloadBytesFromMaxSize(1))),
+            cosmos,
+            null,
+            default);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        var response = ReadResponse(body);
+        Assert.Contains("ValidationException", response);
+        Assert.Contains("400 KiB", response, StringComparison.Ordinal);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task UpdateItem_ttl_enabled_table_falls_back_to_get_modify_put_even_when_sproc_required()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnlyWithTtl),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"), etag: "\"e1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"UpdateExpression\":\"SET v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"2\"}}}";
+
+        await UpdateItemHandler.HandleUpdateItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(req),
+            cosmos,
+            EnabledSproc(StoredProcedureMode.Required),
+            default);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath.Contains("/sprocs", StringComparison.Ordinal));
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+    }
+
+    [Fact]
+    public async Task UpdateItem_numeric_secondary_index_sort_key_table_falls_back_to_get_modify_put_even_when_sproc_required()
+    {
+        var (ctx, _) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashOnlyWithNumericGsi),
+                CosmosOk(DocWithItem("a", "a", "{\"pk\":{\"S\":\"a\"},\"v\":{\"N\":\"1\"}}"), etag: "\"e1\""),
+                CosmosOk("{}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+        var req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"}},"
+                  + "\"UpdateExpression\":\"SET v = :v\","
+                  + "\"ExpressionAttributeValues\":{\":v\":{\"N\":\"2\"}}}";
+
+        await UpdateItemHandler.HandleUpdateItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(req),
+            cosmos,
+            EnabledSproc(StoredProcedureMode.Required),
+            default);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.DoesNotContain(handler.Requests, request => request.Uri.AbsolutePath.Contains("/sprocs", StringComparison.Ordinal));
+        Assert.Equal(HttpMethod.Put, handler.Requests[2].Method);
+    }
+
+    [Fact]
+    public async Task UpdateItem_local_secondary_index_combined_size_gap_is_documented_by_sproc_path()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataDocHashRangeWithAllProjectedLsi),
+                new HttpResponseMessage(HttpStatusCode.Created)
+                {
+                    Content = new StringContent("{\"id\":\"atomicWrite_v3\"}", Encoding.UTF8, "application/json"),
+                },
+                CosmosOk("{\"success\":true,\"operation\":\"UPDATE\",\"oldItem\":{\"pk\":\"a\",\"sk\":\"1\",\"ix\":\"z\"},\"newItem\":{\"pk\":\"a\",\"sk\":\"1\",\"ix\":\"z\"}}"),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        string req = "{\"TableName\":\"orders\",\"Key\":{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"1\"}},"
+                     + "\"UpdateExpression\":\"SET payload = :p\","
+                     + "\"ConditionExpression\":\"attribute_exists(pk)\","
+                     + "\"ExpressionAttributeValues\":{\":p\":{\"S\":\""
+                     + new string('x', 204785)
+                     + "\"}}}";
+
+        await UpdateItemHandler.HandleUpdateItemAsync(
+            ctx,
+            Encoding.UTF8.GetBytes(req),
+            cosmos,
+            EnabledSproc(StoredProcedureMode.Required),
+            default);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Contains(
+            handler.Requests,
+            request => request.Uri.AbsolutePath.Contains(
+                "/sprocs/atomicWrite_v3",
+                StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            ReadResponse(body),
+            "ValidationException",
+            StringComparison.Ordinal);
     }
 
     [Fact]

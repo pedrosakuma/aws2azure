@@ -67,6 +67,24 @@ public sealed class SprocContractTests
     }
 
     [Fact]
+    public async Task Single_write_structured_validation_error_is_preserved()
+    {
+        using var response = CosmosOk(
+            "{\"success\":false,\"validationError\":{\"code\":\"ValidationException\",\"message\":\"Item is 409601 bytes; DynamoDB items must not exceed 409600 bytes (400 KiB).\"}}");
+
+        var result = await SprocResponseParser.ParseSingleWriteAsync(
+            response,
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.ConditionFailed);
+        Assert.True(result.ValidationFailed);
+        Assert.Equal(
+            "Item is 409601 bytes; DynamoDB items must not exceed 409600 bytes (400 KiB).",
+            result.ValidationError);
+    }
+
+    [Fact]
     public async Task Transaction_idempotency_mismatch_is_preserved()
     {
         using var response = CosmosOk(
@@ -207,6 +225,19 @@ public sealed class SprocContractTests
         Assert.Contains(
             "Incorrect operand type for begins_with",
             SprocManager.TransactSprocBody,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Single_write_script_validates_item_size_before_upsert()
+    {
+        Assert.Contains(
+            "validateDocumentSize(payload);",
+            SprocManager.SprocBody,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "validateDocumentSize(updatedDoc);",
+            SprocManager.SprocBody,
             StringComparison.Ordinal);
     }
 

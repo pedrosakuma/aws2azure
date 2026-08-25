@@ -109,7 +109,7 @@ public sealed class CrossPartitionOrderByNumericTests
 
         var result = await MergeAsync(
             backend.Ranges, Sk, numericOrderKey: true, forward: true, scanCap: 100, token: null,
-            backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+            backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
         Assert.Equal(
             new[] { "1", HiPrecLo, HiPrecHi, "2", "3", "1000000000000000000000" },
@@ -211,7 +211,7 @@ public sealed class CrossPartitionOrderByNumericTests
 
             var result = await MergeAsync(
                 backend.Ranges, Sk, numericOrderKey: true, forward, scanCapPerPage, token,
-                backend.Fetch, residualFilter: null, projection: null, CancellationToken.None);
+                backend.Fetch, residualFilter: null, filterProjection: null, projection: null, CancellationToken.None);
 
             collected.AddRange(RawValues(result.Items));
             if (result.Next is null) return collected;

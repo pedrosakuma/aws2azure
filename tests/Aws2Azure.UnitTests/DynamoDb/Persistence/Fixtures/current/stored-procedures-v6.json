@@ -1,0 +1,37 @@
+{
+  "identityVersion": 6,
+  "storedProcedures": [
+    {
+      "id": "atomicWrite_v3",
+      "bodySha256": "d707cad7010a0952b3996c9624ca75089b0b26df57f0960f56869d3c84c13d75"
+    },
+    {
+      "id": "atomicWrite_v2",
+      "bodySha256": "68bb5745f1725ed43b2b06bf195cc34ffeb37c4b30fb56b446faf5444747b06a"
+    },
+    {
+      "id": "atomicTransactWrite_v2",
+      "bodySha256": "592335a445a63d7722f859955e1124ebff0f5c02a2ba038273e2f3d19c4cc5f1"
+    },
+    {
+      "id": "atomicTransactWrite_v3",
+      "bodySha256": "c339afcc6fec9b86dc2e82e53d7e184143307129570cb40e70662bdb51bf8b10"
+    },
+    {
+      "id": "atomicTransactWrite_v4",
+      "bodySha256": "ae755180bc12ee68af21d2ef68cae13d8b553539835fba623d8396d930c9536d"
+    },
+    {
+      "id": "atomicTransactWrite_v5",
+      "bodySha256": "adb8ca4c99bed8d5753d0d14c6d95310a7cc7b0599680a1d0379a879cc527465"
+    },
+    {
+      "id": "atomicTransactWrite_v6",
+      "bodySha256": "e3b4095b04614ad17a9bd8a0709d23d3b889134732f73d65ebfc9aee19384bcd"
+    },
+    {
+      "id": "atomicTransactGet_v1",
+      "bodySha256": "355d2c74187d3d7c9c84b88f07992bca8954489e2e43f613a2934d978174db7b"
+    }
+  ]
+}

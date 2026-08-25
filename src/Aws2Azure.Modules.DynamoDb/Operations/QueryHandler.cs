@@ -209,6 +209,11 @@ internal static partial class QueryHandler
         // the projected set itself to avoid leaking non-projected attributes.
         bool gsiProjectionAll = isGsiQuery
             && string.Equals(gsi!.ProjectionType, "ALL", StringComparison.OrdinalIgnoreCase);
+        IReadOnlyList<string>? gsiProjectedAttributes = isGsiQuery && !gsiProjectionAll
+            ? SecondaryIndexResolver.ResolveIndexProjection(
+                meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)
+            : null;
+        Projection? gsiFilterProjection = Wrap(gsiProjectedAttributes);
 
         if (!IsAllowedSelect(req.Select, isLsiQuery || isGsiQuery, out var selectError))
         {
@@ -268,8 +273,7 @@ internal static partial class QueryHandler
                     // ProjectionExpression cannot reference attributes outside
                     // that set (DynamoDB cannot fetch them from the base table
                     // for a GSI). Reject any non-projected path.
-                    var allowed = SecondaryIndexResolver.ResolveIndexProjection(
-                        meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name)!;
+                    var allowed = gsiProjectedAttributes!;
                     foreach (var path in projection.RootNames)
                     {
                         bool projected = false;
@@ -298,7 +302,7 @@ internal static partial class QueryHandler
                 // ALL_ATTRIBUTES / SPECIFIC_ATTRIBUTES / COUNT Select skips
                 // this branch.
                 projection = isGsiQuery
-                    ? Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, gsi!, gsiHashKey!.Name, gsiSortKey?.Name))
+                    ? gsiFilterProjection
                     : Wrap(SecondaryIndexResolver.ResolveIndexProjection(meta, lsi!, lsiSortKey!.Name));
             }
         }
@@ -329,7 +333,7 @@ internal static partial class QueryHandler
 
         await ExecuteQueryAsync(ctx, req, meta, keyCond, gsiKey, gsiHashKey?.Name, gsiSortKey?.Name,
             gsiSortKey?.Type, filter, projection, lsiSortKey?.Name, lsiSortKey?.Type,
-            enableLsiNumericOrdering, continuationIn, cosmos, ct)
+            enableLsiNumericOrdering, gsiFilterProjection, continuationIn, cosmos, ct)
             .ConfigureAwait(false);
     }
 
@@ -339,7 +343,7 @@ internal static partial class QueryHandler
         KeyConditionAnalyser.AnalysedGsiKeyCondition? gsiKey,
         string? gsiHashName, string? gsiSortName, string? gsiSortType,
         ConditionNode? filter, Projection? projection, string? lsiSortName, string? lsiSortType,
-        bool enableLsiNumericOrdering, string? continuationIn,
+        bool enableLsiNumericOrdering, Projection? gsiFilterProjection, string? continuationIn,
         CosmosClient cosmos, CancellationToken ct)
     {
         bool forward = req.ScanIndexForward ?? true;
@@ -349,7 +353,9 @@ internal static partial class QueryHandler
 
         string sql;
         List<CosmosSqlParameter> sqlParams;
-        var pushdown = FilterPushdownVisitor.Translate(filter);
+        var pushdown = isGsiQuery && gsiFilterProjection is not null
+            ? new FilterPushdownResult(null, Array.Empty<CosmosSqlParameter>(), filter)
+            : FilterPushdownVisitor.Translate(filter);
         if (isGsiQuery)
         {
             // GSI query: there is no partition-key routing. The mandatory HASH
@@ -411,7 +417,7 @@ internal static partial class QueryHandler
                     CombineResidual(hashPush.Residual, skPush.Residual), pushdown.Residual);
                 await CrossPartitionOrderByQuery.ExecuteAsync(
                     ctx, req, gsiHashName!, gsiSortName, numericSort, forward,
-                    hashPush, skPush, pushdown, residual, projection, cosmos, ct)
+                    hashPush, skPush, pushdown, residual, gsiFilterProjection, projection, cosmos, ct)
                     .ConfigureAwait(false);
                 return;
             }
@@ -576,8 +582,11 @@ internal static partial class QueryHandler
 
                 if (filter is not null)
                 {
+                    var filterItem = gsiFilterProjection is null
+                        ? itemMap
+                        : gsiFilterProjection.Apply(itemMap);
                     bool keep;
-                    try { keep = ConditionEvaluator.Evaluate(filter, itemMap); }
+                    try { keep = ConditionEvaluator.Evaluate(filter, filterItem); }
                     catch (ConditionEvaluationException ex)
                     {
                         await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", ex.Message).ConfigureAwait(false);

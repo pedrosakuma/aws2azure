@@ -1446,6 +1446,35 @@ public class QueryHandlerTests
     }
 
     [Fact]
+    public async Task Query_gsi_filter_does_not_match_non_projected_attribute()
+    {
+        var (ctx, body) = NewCtx();
+        var handler = new ScriptedHandler
+        {
+            Responses =
+            {
+                CosmosOk(MetadataGsiInclude),
+                CosmosOk(QueryEnvelope(
+                    DocWithItem("a", "x",
+                        "{\"pk\":{\"S\":\"a\"},\"sk\":{\"S\":\"x\"},\"customer\":{\"S\":\"acme\"},\"total\":{\"N\":\"5\"},\"extra\":{\"S\":\"secret\"}}"))),
+            },
+        };
+        var cosmos = BuildClient(handler);
+
+        var req = "{\"TableName\":\"orders\",\"IndexName\":\"byCustomer\","
+                  + "\"KeyConditionExpression\":\"customer = :c\","
+                  + "\"FilterExpression\":\"extra = :e\","
+                  + "\"ExpressionAttributeValues\":{\":c\":{\"S\":\"acme\"},\":e\":{\"S\":\"secret\"}}}";
+
+        await QueryHandler.HandleQueryAsync(ctx, Encoding.UTF8.GetBytes(req), cosmos, enableGsi: EnableGsi, enableLsiNumericOrdering: false, default);
+
+        Assert.Equal(200, ctx.Response.StatusCode);
+        using var resp = JsonDocument.Parse(ReadResponse(body));
+        Assert.Equal(0, resp.RootElement.GetProperty("Count").GetInt32());
+        Assert.Equal(1, resp.RootElement.GetProperty("ScannedCount").GetInt32());
+    }
+
+    [Fact]
     public async Task Query_gsi_specific_attributes_without_projection_expression_is_rejected()
     {
         // SPECIFIC_ATTRIBUTES with no ProjectionExpression must be rejected — on

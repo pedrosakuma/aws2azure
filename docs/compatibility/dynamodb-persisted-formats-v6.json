@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "inventory_version": 6,
+  "write_policy": "v2-adjacent-dual-read-single-write; v1-isolated-export-import; stored-procedure identity sets are additive across adjacent runtimes; transaction idempotency records are internal, partition-local, and expiry-bounded",
+  "formats": [
+    {
+      "id": "item-envelope",
+      "class": "durable",
+      "current_write_version": 2,
+      "read_versions": [
+        1,
+        2
+      ],
+      "in_place_compatibility": "v2 only; v1 used /pk and nested item.* so it requires isolated export/import into a /_a2a_pk container",
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/item-envelope.json",
+      "v1_fixture_sha256": "4b8c83489de0201c4e7d01d5437e637bc1ebcd1ea925b043e2e123f8219bd053",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/item-document.json",
+      "current_fixture_sha256": "3dd5f7de9bfb6138062ecfbf543b1126d62b739e2ede61a6dc6355ea40a8a45d"
+    },
+    {
+      "id": "table-metadata",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [
+        1
+      ],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/table-metadata.json",
+      "v1_fixture_sha256": "b63fa2835541b0d9564581f4e5d3dd12e0c2fe83814ba7389b46bfac6aa5bf5e",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/table-metadata.json",
+      "current_fixture_sha256": "866d96fe7846b6a2592ffe1302147644e81b9a343fe09528d54e73e3b0935ebe"
+    },
+    {
+      "id": "ttl-index-derived-fields",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [
+        1
+      ],
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/item-derived-fields.json",
+      "current_fixture_sha256": "b7ab18a423a5f0c6dbcd04fde21d6a50c4a571b2bf733a4d0b55c8d16f07aca6"
+    },
+    {
+      "id": "query-scan-continuation",
+      "class": "rolling-upgrade",
+      "current_write_version": 1,
+      "read_versions": [
+        1
+      ],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/continuation-basic.json",
+      "v1_fixture_sha256": "38710c148b75e42a566818e81c3054e8a70fbf49ba001a62f2beed5843bfa968"
+    },
+    {
+      "id": "ordered-query-continuation",
+      "class": "rolling-upgrade",
+      "current_write_version": 1,
+      "read_versions": [
+        1
+      ],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/v1/continuation-ordered.json",
+      "v1_fixture_sha256": "3ac045661c7fb26aaaeaaeb1767bb10a2f713cd0f94ffbd4a2bd5d8564221456"
+    },
+    {
+      "id": "stored-procedure-identities",
+      "class": "durable",
+      "current_write_version": 6,
+      "read_versions": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "v1_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/stored-procedures.json",
+      "v1_fixture_sha256": "22f14da61ee2fc6ec38d2cd0446708c0cc427894aad52dbde67f3d95d7f30512",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/stored-procedures-v6.json",
+      "current_fixture_sha256": "d08c1dd164b63c20b07d7a0d07500cd93a5d264dfde4c287b922626aed805d1a"
+    },
+    {
+      "id": "transaction-idempotency-record",
+      "class": "durable",
+      "current_write_version": 1,
+      "read_versions": [
+        1
+      ],
+      "in_place_compatibility": "The v1 record is a proxy-reserved document in the same logical partition as the transaction. Older runtimes ignore it because Query/Scan select only _a2a=item and user keys cannot encode to its reserved id namespace.",
+      "current_fixture": "tests/Aws2Azure.UnitTests/DynamoDb/Persistence/Fixtures/current/transaction-idempotency-record.json",
+      "current_fixture_sha256": "af917428ffb763f55c7b7d255f9a852c738ecfef055e7bc5ec1dd0e5f4adbae3"
+    }
+  ],
+  "stored_procedures": [
+    {
+      "id": "atomicWrite_v3",
+      "body_sha256": "d707cad7010a0952b3996c9624ca75089b0b26df57f0960f56869d3c84c13d75"
+    },
+    {
+      "id": "atomicWrite_v2",
+      "body_sha256": "68bb5745f1725ed43b2b06bf195cc34ffeb37c4b30fb56b446faf5444747b06a"
+    },
+    {
+      "id": "atomicTransactWrite_v2",
+      "body_sha256": "592335a445a63d7722f859955e1124ebff0f5c02a2ba038273e2f3d19c4cc5f1"
+    },
+    {
+      "id": "atomicTransactWrite_v3",
+      "body_sha256": "c339afcc6fec9b86dc2e82e53d7e184143307129570cb40e70662bdb51bf8b10"
+    },
+    {
+      "id": "atomicTransactWrite_v4",
+      "body_sha256": "ae755180bc12ee68af21d2ef68cae13d8b553539835fba623d8396d930c9536d"
+    },
+    {
+      "id": "atomicTransactWrite_v5",
+      "body_sha256": "adb8ca4c99bed8d5753d0d14c6d95310a7cc7b0599680a1d0379a879cc527465"
+    },
+    {
+      "id": "atomicTransactWrite_v6",
+      "body_sha256": "e3b4095b04614ad17a9bd8a0709d23d3b889134732f73d65ebfc9aee19384bcd"
+    },
+    {
+      "id": "atomicTransactGet_v1",
+      "body_sha256": "355d2c74187d3d7c9c84b88f07992bca8954489e2e43f613a2934d978174db7b"
+    }
+  ]
+}

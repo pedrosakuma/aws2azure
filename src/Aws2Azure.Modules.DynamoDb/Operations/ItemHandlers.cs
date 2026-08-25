@@ -177,6 +177,12 @@ internal static partial class ItemHandlers
             return;
         }
 
+        if (!DynamoDbItemSize.TryValidateWriteSize(item, meta, "Item", out var itemSizeError))
+        {
+            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", itemSizeError).ConfigureAwait(false);
+            return;
+        }
+
         if (!ItemKeyFormatter.TryBuildFromItem(item, meta, out var pk, out var id, out var keyError))
         {
             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
@@ -259,6 +265,12 @@ internal static partial class ItemHandlers
                 if (sprocResult.ConditionFailed)
                 {
                     await ConditionFailureResponder.WriteAsync(ctx, sprocResult.OldItem, rvccf).ConfigureAwait(false);
+                    return;
+                }
+                if (sprocResult.ValidationError is not null)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        sprocResult.ValidationError).ConfigureAwait(false);
                     return;
                 }
                 // Sproc failed with an error but mode is Preferred - fall through to retry loop

@@ -136,6 +136,7 @@ internal static class CrossPartitionOrderByQuery
         FilterPushdownResult skPush,
         FilterPushdownResult userPush,
         Expressions.ConditionNode? residualFilter,
+        Projection? filterProjection,
         Projection? projection,
         CosmosClient cosmos,
         CancellationToken ct)
@@ -225,7 +226,7 @@ internal static class CrossPartitionOrderByQuery
         try
         {
             result = await MergeAsync(
-                ranges, gsiSortName, numericOrderKey, forward, scanCap, token, Fetch, residualFilter, projection, ct)
+                ranges, gsiSortName, numericOrderKey, forward, scanCap, token, Fetch, residualFilter, filterProjection, projection, ct)
                 .ConfigureAwait(false);
         }
         catch (CosmosFeedException ex)
@@ -284,6 +285,7 @@ internal static class CrossPartitionOrderByQuery
         OrderByToken? token,
         PartitionPageFetcher fetch,
         Expressions.ConditionNode? residualFilter,
+        Projection? filterProjection,
         Projection? projection,
         CancellationToken ct)
     {
@@ -356,7 +358,10 @@ internal static class CrossPartitionOrderByQuery
                 runCount = 1;
             }
 
-            bool keep = residualFilter is null || ConditionEvaluator.Evaluate(residualFilter, head);
+            var filterItem = filterProjection is null
+                ? head
+                : filterProjection.Apply(head);
+            bool keep = residualFilter is null || ConditionEvaluator.Evaluate(residualFilter, filterItem);
             if (keep)
             {
                 matched++;

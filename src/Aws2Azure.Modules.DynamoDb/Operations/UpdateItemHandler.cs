@@ -227,6 +227,12 @@ internal static class UpdateItemHandler
                     await ConditionFailureResponder.WriteAsync(ctx, sprocResult.OldItem, returnValuesOnConditionCheckFailure).ConfigureAwait(false);
                     return;
                 }
+                if (sprocResult.ValidationError is not null)
+                {
+                    await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                        sprocResult.ValidationError).ConfigureAwait(false);
+                    return;
+                }
                 // Sproc failed with an error but mode is Preferred - fall through to retry loop
                 if (sprocCtx.Mode == StoredProcedureMode.Required)
                 {
@@ -331,6 +337,12 @@ internal static class UpdateItemHandler
             if (!ItemHandlers.ValidateItemShape(newItemJson, out var shapeError))
             {
                 await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
+                return;
+            }
+
+            if (!DynamoDbItemSize.TryValidateWriteSize(newItemJson, meta, "Item", out var itemSizeError))
+            {
+                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", itemSizeError).ConfigureAwait(false);
                 return;
             }
 
