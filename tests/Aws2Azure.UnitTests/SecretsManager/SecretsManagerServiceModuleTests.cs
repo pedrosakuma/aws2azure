@@ -572,6 +572,65 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_CreateSecret_rejects_reused_client_request_token_with_different_payload()
+    {
+        var secretCreated = false;
+        var firstHash = KeyVaultSecretClient.GetPayloadSha256("first", null);
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(secretCreated ? HttpStatusCode.OK : HttpStatusCode.NotFound)
+                {
+                    Content = secretCreated
+                        ? new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/version-1\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json")
+                        : null,
+                });
+            }
+
+            if (request.Method == HttpMethod.Put && request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                secretCreated = true;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/version-1\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/secrets/demo/versions")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"value\":[{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/version-1\",\"attributes\":{{\"created\":1710000000}},\"tags\":{{\"aws2azure-client-request-token\":\"create-token\",\"aws2azure-payload-sha256\":\"{firstHash}\",\"aws2azure-version-stages\":\"AWSCURRENT\",\"aws2azure-publication-state\":\"published\"}}}}]}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var firstContext = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"first\",\"ClientRequestToken\":\"create-token\"}");
+        await module.HandleAsync(firstContext);
+        Assert.Equal(StatusCodes.Status200OK, firstContext.Response.StatusCode);
+
+        var secondContext = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"second\",\"ClientRequestToken\":\"create-token\"}");
+        await module.HandleAsync(secondContext);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, secondContext.Response.StatusCode);
+        var body = await ReadBodyAsync(secondContext);
+        Assert.Contains("ResourceExistsException", body, StringComparison.Ordinal);
+        Assert.Contains("ClientRequestToken is already associated with a different secret value.", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HandleAsync_CreateSecret_only_sends_tag_payload_to_key_vault()
     {
         string? requestBody = null;

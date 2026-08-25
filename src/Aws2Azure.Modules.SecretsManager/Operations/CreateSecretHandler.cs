@@ -22,6 +22,7 @@ internal static class CreateSecretHandler
             : KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(secretBinary));
         var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
 
         var exists = await SecretsManagerOperationSupport.SecretExistsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
         if (exists is null)
