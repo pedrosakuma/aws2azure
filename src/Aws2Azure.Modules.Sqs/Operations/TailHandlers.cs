@@ -204,6 +204,10 @@ internal static class TailHandlers
         var entry = await ReadQueueEntryAsync(context, parsed, sb, ct).ConfigureAwait(false);
         if (entry is null) return;
 
+        if (ResolveQueueNameOrNull(context, parsed) is { } queueName)
+        {
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, entry.Properties);
+        }
         var tags = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata).Tags;
         await SqsResponseWriter.WriteListQueueTagsAsync(context, parsed.Protocol, tags).ConfigureAwait(false);
     }
@@ -436,6 +440,7 @@ internal static class TailHandlers
             var read = await ReadQueueEntryWithETagAsync(context, parsed, sb, ct).ConfigureAwait(false);
             if (read is null) return false;
 
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.Entry.Properties);
             if (!SqsQueueTagStore.TryDecodeForMutation(
                     read.Entry.Properties.UserMetadata,
                     out var metadata,
@@ -480,7 +485,7 @@ internal static class TailHandlers
             using var putResp = await sb.UpdateQueueAsync(queueName, atomBody, read.ETag, ct).ConfigureAwait(false);
             if (putResp.IsSuccessStatusCode)
             {
-                SqsQueueMetadataCache.Set(sb, queueName, read.Entry.Properties);
+                SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, read.Entry.Properties);
                 return true;
             }
             if (putResp.StatusCode == HttpStatusCode.PreconditionFailed)

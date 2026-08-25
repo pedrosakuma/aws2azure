@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Internal;
@@ -168,8 +169,10 @@ internal static class AmqpSendMessageHandlers
         }
         catch (Exception ex)
         {
-            await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol,
-                SqsErrorMapping.InternalError($"AMQP send failed: {ex.GetType().Name}")).ConfigureAwait(false);
+            await SendMessageHandlers.WriteErrorAsync(
+                context,
+                parsed.Protocol,
+                MapSendBootstrapException(ex)).ConfigureAwait(false);
             return;
         }
 
@@ -226,4 +229,14 @@ internal static class AmqpSendMessageHandlers
 
         return msg;
     }
+
+    internal static SqsErrorMapping.Mapping MapSendBootstrapException(Exception ex) =>
+        ex switch
+        {
+            CbsAuthenticationException cbs when cbs.StatusCode is 404 or 410
+                => SqsErrorMapping.QueueDoesNotExist(),
+            CbsAuthenticationException
+                => SqsErrorMapping.FromAmqp(AmqpErrorKind.Auth, condition: null, operation: "SendMessage"),
+            _ => SqsErrorMapping.InternalError($"AMQP send failed: {ex.GetType().Name}"),
+        };
 }

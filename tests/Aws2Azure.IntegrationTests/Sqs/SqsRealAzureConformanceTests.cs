@@ -322,7 +322,7 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
     }
 
     [SkippableFact]
-    public async Task ChangeMessageVisibilityBatch_mixes_zero_timeout_lock_renewal_and_invalid_handles_against_real_service_bus()
+    public async Task ChangeMessageVisibilityBatch_rest_lane_documents_delayed_zero_timeout_redelivery_against_real_service_bus()
     {
         Skip.IfNot(fixture.ServiceBusConfigured,
             "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
@@ -387,21 +387,11 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             Assert.Equal("invalid", failure.Id);
             Assert.True(failure.SenderFault);
 
-            var zeroRedelivered = await ReceiveExpectedBodyAsync(
+            await AssertNoBodyAsync(
                 client,
                 queueUrl,
                 zeroBody,
                 TimeSpan.FromSeconds(3),
-                timeout.Token).ConfigureAwait(false);
-            Assert.Equal("2", zeroRedelivered.Attributes["ApproximateReceiveCount"]);
-            await client.DeleteMessageAsync(queueUrl, zeroRedelivered.ReceiptHandle, timeout.Token)
-                .ConfigureAwait(false);
-
-            await AssertNoBodyAsync(
-                client,
-                queueUrl,
-                renewedBody,
-                TimeSpan.FromSeconds(4),
                 timeout.Token).ConfigureAwait(false);
 
             var renewedRedelivered = await ReceiveExpectedBodyAsync(
@@ -411,6 +401,16 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 TimeSpan.FromSeconds(40),
                 timeout.Token).ConfigureAwait(false);
             await client.DeleteMessageAsync(queueUrl, renewedRedelivered.ReceiptHandle, timeout.Token)
+                .ConfigureAwait(false);
+
+            var zeroRedelivered = await ReceiveExpectedBodyAsync(
+                client,
+                queueUrl,
+                zeroBody,
+                TimeSpan.FromSeconds(40),
+                timeout.Token).ConfigureAwait(false);
+            Assert.Equal("2", zeroRedelivered.Attributes["ApproximateReceiveCount"]);
+            await client.DeleteMessageAsync(queueUrl, zeroRedelivered.ReceiptHandle, timeout.Token)
                 .ConfigureAwait(false);
         }
         finally

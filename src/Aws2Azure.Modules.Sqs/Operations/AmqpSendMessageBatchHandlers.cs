@@ -148,7 +148,7 @@ internal static class AmqpSendMessageBatchHandlers
         {
             // Whole-batch failure (could not even open the link). Surface
             // every entry as failed so the caller can retry uniformly.
-            var mapping = SqsErrorMapping.InternalError($"AMQP send link unavailable: {ex.GetType().Name}");
+            var mapping = AmqpSendMessageHandlers.MapSendBootstrapException(ex);
             var allFailed = new List<SendMessageBatchEntryError>(entries.Count);
             foreach (var e in entries)
             {

@@ -20,7 +20,7 @@ using Xunit;
 
 namespace Aws2Azure.UnitTests.Sqs;
 
-public sealed class QueueMetadataHandlersTests
+public sealed class QueueMetadataHandlersTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
     private const string SbNs = AtomQueueXmlReader.SbNs;
@@ -31,6 +31,16 @@ public sealed class QueueMetadataHandlersTests
         SasKeyName = "RootManageSharedAccessKey",
         SasKey = Convert.ToBase64String([1, 2, 3, 4, 5, 6, 7, 8]),
     };
+
+    public QueueMetadataHandlersTests()
+    {
+        SqsQueueMetadataCache.ResetForTesting();
+    }
+
+    public void Dispose()
+    {
+        SqsQueueMetadataCache.ResetForTesting();
+    }
 
     [Fact]
     public void QueueMetadata_round_trips_tags_and_defaults()
@@ -137,6 +147,59 @@ public sealed class QueueMetadataHandlersTests
     }
 
     [Fact]
+    public async Task GetQueueAttributes_prefers_recent_cached_metadata_when_management_read_lags()
+    {
+        const string queueName = "meta-stale-create-q";
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(_ => Atom200(queueName));
+        handler.Enqueue(_ => Atom200(queueName));
+
+        using var http = NewHttpClient(handler);
+        var sb = new ServiceBusClient(http, Creds);
+        var createCtx = NewCtx();
+
+        await QueueLifecycleHandlers.HandleAsync(createCtx, QueryParsed(SqsOperation.CreateQueue,
+            ("QueueName", queueName),
+            ("Attribute.1.Name", "DelaySeconds"),
+            ("Attribute.1.Value", "3"),
+            ("Attribute.2.Name", "ReceiveMessageWaitTimeSeconds"),
+            ("Attribute.2.Value", "2"),
+            ("Tag.Key", "env"),
+            ("Tag.Value", "prod")), sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, createCtx.Response.StatusCode);
+
+        var attrsCtx = NewCtx();
+        await QueueLifecycleHandlers.HandleAsync(attrsCtx, QueryParsed(SqsOperation.GetQueueAttributes,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{queueName}"),
+            ("AttributeName.1", "DelaySeconds"),
+            ("AttributeName.2", "ReceiveMessageWaitTimeSeconds")), sb, CancellationToken.None);
+
+        var attrsBody = ReadBody(attrsCtx);
+        Assert.Contains("<Name>DelaySeconds</Name><Value>3</Value>", attrsBody);
+        Assert.Contains("<Name>ReceiveMessageWaitTimeSeconds</Name><Value>2</Value>", attrsBody);
+
+        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName,
+            new SqsQueueTagStore.QueueMetadata(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["env"] = "prod",
+            })
+            {
+                DelaySeconds = 3,
+                ReceiveMessageWaitTimeSeconds = 2,
+            });
+
+        var tagsCtx = NewCtx();
+        await TailHandlers.HandleAsync(tagsCtx, QueryParsed(SqsOperation.ListQueueTags,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{queueName}")), sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, tagsCtx.Response.StatusCode);
+        Assert.Contains("<Key>env</Key>", ReadBody(tagsCtx));
+        Assert.Equal(3, handler.Calls.Count);
+    }
+
+    [Fact]
     public async Task CreateQueue_conflict_with_different_redrive_policy_returns_queue_name_exists()
     {
         var handler = new ScriptedHandler();
@@ -215,6 +278,49 @@ public sealed class QueueMetadataHandlersTests
             ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/meta-q"),
             ("Attribute.1.Name", "ReceiveMessageWaitTimeSeconds"),
             ("Attribute.1.Value", "11")), sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var updated = SqsQueueTagStore.DecodeMetadata(updatedUserMetadata);
+        Assert.Equal(6, updated.DelaySeconds);
+        Assert.Equal(11, updated.ReceiveMessageWaitTimeSeconds);
+        Assert.Equal("platform", updated.Tags["owner"]);
+    }
+
+    [Fact]
+    public async Task SetQueueAttributes_uses_recent_cached_metadata_when_management_read_is_stale()
+    {
+        const string queueName = "meta-stale-update-q";
+        var cached = new SqsQueueTagStore.QueueMetadata(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["owner"] = "platform",
+            })
+        {
+            DelaySeconds = 6,
+            ReceiveMessageWaitTimeSeconds = 2,
+        };
+
+        using var http = NewHttpClient(new ScriptedHandler());
+        var sb = new ServiceBusClient(http, Creds);
+        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, cached);
+
+        string? updatedUserMetadata = null;
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200(queueName, userMetadata: null));
+        handler.Enqueue(async req =>
+        {
+            updatedUserMetadata = ReadElementValue(await req.Content!.ReadAsStringAsync().ConfigureAwait(false), "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        using var updateHttp = NewHttpClient(handler);
+        var updateSb = new ServiceBusClient(updateHttp, Creds);
+        var ctx = NewCtx();
+
+        await BatchAdminHandlers.HandleAsync(ctx, QueryParsed(SqsOperation.SetQueueAttributes,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{queueName}"),
+            ("Attribute.1.Name", "ReceiveMessageWaitTimeSeconds"),
+            ("Attribute.1.Value", "11")), updateSb, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
         var updated = SqsQueueTagStore.DecodeMetadata(updatedUserMetadata);

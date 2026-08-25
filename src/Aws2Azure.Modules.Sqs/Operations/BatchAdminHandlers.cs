@@ -255,6 +255,7 @@ internal static class BatchAdminHandlers
                 return;
             }
 
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.Entry.Properties);
             SqsQueueTagStore.QueueMetadata? proxyMetadata = null;
             if (patch.DelaySeconds.HasValue || patch.ReceiveMessageWaitTimeSeconds.HasValue)
             {
@@ -318,7 +319,7 @@ internal static class BatchAdminHandlers
                 return;
             }
 
-            SqsQueueMetadataCache.Set(sb, queueName, merged);
+            SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, merged);
             await SqsResponseWriter.WriteSetQueueAttributesAsync(context, parsed.Protocol).ConfigureAwait(false);
             return;
         }
@@ -518,6 +519,7 @@ internal static class BatchAdminHandlers
                 return DistributedCooldownOutcome.Failed;
             }
 
+            SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, read.Entry.Properties);
             if (!SqsQueueTagStore.TryDecodeForMutation(
                     read.Entry.Properties.UserMetadata, out var metadata, out _))
             {
@@ -612,6 +614,7 @@ internal static class BatchAdminHandlers
                 var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
                 if (entry is null) return;
 
+                SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, entry.Properties);
                 if (!SqsQueueTagStore.TryDecodeForMutation(
                         entry.Properties.UserMetadata, out var metadata, out _))
                 {

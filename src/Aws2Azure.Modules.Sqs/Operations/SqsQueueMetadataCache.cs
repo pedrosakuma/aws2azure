@@ -11,7 +11,7 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 internal static class SqsQueueMetadataCache
 {
     private const int MaxEntries = 1024;
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(3);
     // Azure Service Bus's management-plane GetQueue can briefly answer a
     // recently-deleted queue with a 2xx response whose body isn't a
     // well-formed Atom <entry> (the delete itself already completed, but the
@@ -63,7 +63,7 @@ internal static class SqsQueueMetadataCache
             if (entry is not null)
             {
                 var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
-                Set(sb.Namespace, queueName, metadata);
+                Set(sb.Namespace, queueName, metadata, preferForEmptyReads: false);
                 return new LookupResult(true, SqsQueueTagStore.CloneMetadata(metadata), null);
             }
 
@@ -77,13 +77,44 @@ internal static class SqsQueueMetadataCache
     }
 
     internal static void Set(ServiceBusClient sb, string queueName, QueueDescriptionProperties props)
-        => Set(sb.Namespace, queueName, SqsQueueTagStore.DecodeMetadata(props.UserMetadata));
+        => Set(sb.Namespace, queueName, SqsQueueTagStore.DecodeMetadata(props.UserMetadata), preferForEmptyReads: false);
 
     internal static void Set(ServiceBusClient sb, string queueName, SqsQueueTagStore.QueueMetadata metadata)
-        => Set(sb.Namespace, queueName, metadata);
+        => Set(sb.Namespace, queueName, metadata, preferForEmptyReads: false);
+
+    internal static void RememberSuccessfulWrite(ServiceBusClient sb, string queueName, QueueDescriptionProperties props)
+        => Set(sb.Namespace, queueName, SqsQueueTagStore.DecodeMetadata(props.UserMetadata), preferForEmptyReads: true);
+
+    internal static void RememberSuccessfulWrite(ServiceBusClient sb, string queueName, SqsQueueTagStore.QueueMetadata metadata)
+        => Set(sb.Namespace, queueName, metadata, preferForEmptyReads: true);
 
     internal static void Invalidate(ServiceBusClient sb, string queueName)
         => Entries.TryRemove(BuildKey(sb.Namespace, queueName), out _);
+
+    internal static void ApplyFreshSnapshot(ServiceBusClient sb, string queueName, QueueDescriptionProperties props)
+    {
+        var key = BuildKey(sb.Namespace, queueName);
+        var now = DateTimeOffset.UtcNow;
+        if (!Entries.TryGetValue(key, out var entry) || entry.ExpiresAtUtc <= now || !entry.PreferForEmptyReads)
+        {
+            return;
+        }
+
+        var existing = SqsQueueTagStore.DecodeMetadata(props.UserMetadata);
+        if (!IsEmpty(existing) || IsEmpty(entry.Metadata))
+        {
+            return;
+        }
+
+        var readThrough = SqsQueueTagStore.CloneMetadata(entry.Metadata);
+        readThrough.PurgeCooldownUntilUnixSeconds = null;
+        if (!SqsQueueTagStore.TryEncodeMetadata(readThrough, out var userMetadata))
+        {
+            return;
+        }
+
+        props.UserMetadata = string.IsNullOrEmpty(userMetadata) ? null : userMetadata;
+    }
 
     private static bool TryGet(string serviceBusNamespace, string queueName, out SqsQueueTagStore.QueueMetadata metadata)
     {
@@ -104,7 +135,11 @@ internal static class SqsQueueMetadataCache
         return false;
     }
 
-    private static void Set(string serviceBusNamespace, string queueName, SqsQueueTagStore.QueueMetadata metadata)
+    private static void Set(
+        string serviceBusNamespace,
+        string queueName,
+        SqsQueueTagStore.QueueMetadata metadata,
+        bool preferForEmptyReads)
     {
         TrimExpired(DateTimeOffset.UtcNow);
         var key = BuildKey(serviceBusNamespace, queueName);
@@ -115,6 +150,7 @@ internal static class SqsQueueMetadataCache
 
         Entries[key] = new CacheEntry(
             SqsQueueTagStore.CloneMetadata(metadata),
+            preferForEmptyReads,
             DateTimeOffset.UtcNow + CacheTtl);
     }
 
@@ -132,7 +168,17 @@ internal static class SqsQueueMetadataCache
     private static string BuildKey(string serviceBusNamespace, string queueName)
         => serviceBusNamespace + "|" + queueName;
 
+    private static bool IsEmpty(SqsQueueTagStore.QueueMetadata metadata) =>
+        metadata.Tags.Count == 0
+        && metadata.DelaySeconds is null
+        && metadata.ReceiveMessageWaitTimeSeconds is null
+        && metadata.PurgeCooldownUntilUnixSeconds is null;
+
     private sealed record CacheEntry(
         SqsQueueTagStore.QueueMetadata Metadata,
+        bool PreferForEmptyReads,
         DateTimeOffset ExpiresAtUtc);
+
+    // Test-only hook so unit tests can isolate the bounded static cache.
+    internal static void ResetForTesting() => Entries.Clear();
 }

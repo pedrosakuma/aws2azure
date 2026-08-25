@@ -14,7 +14,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
-| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
+| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 29 |
 
 ## dynamodb
 
@@ -368,6 +368,7 @@ _No remaining feasible backlog is documented for this service._
 - Operation [SetQueueAttributes](operations/sqs/setqueueattributes.md) — 🔵 by design
 - Sub-feature [AddPermission](operations/sqs/addpermission.md#sub-feature-cross-account-permission-persistence) / Cross-account permission persistence — 🔵 by design
 - Sub-feature [ChangeMessageVisibilityBatch](operations/sqs/changemessagevisibilitybatch.md#sub-feature-renew-semantics) / Renew semantics — 🔵 by design
+- Sub-feature [ChangeMessageVisibilityBatch](operations/sqs/changemessagevisibilitybatch.md#sub-feature-visibilitytimeout0--immediate-release) / VisibilityTimeout=0 (immediate release) — 🔵 by design
 - Sub-feature [ChangeMessageVisibility](operations/sqs/changemessagevisibility.md#sub-feature-arbitrary-new-visibility-duration) / Arbitrary new visibility duration — 🔵 by design
 - Sub-feature [CreateQueue](operations/sqs/createqueue.md#sub-feature-attributefifoqueue---contentbaseddeduplication) / Attribute.FifoQueue / ContentBasedDeduplication — 🔵 by design
 - Sub-feature [CreateQueue](operations/sqs/createqueue.md#sub-feature-attributekmsmasterkeyid---kmsdatakeyreuseperiodseconds---sqsmanagedsseenabled) / Attribute.KmsMasterKeyId / KmsDataKeyReusePeriodSeconds / SqsManagedSseEnabled — 🔵 by design

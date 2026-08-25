@@ -119,7 +119,7 @@ internal static class QueueLifecycleHandlers
             }
         }
 
-        SqsQueueMetadataCache.Set(sb, queueName, props);
+        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, props);
 
         await SqsResponseWriter.WriteCreateQueueAsync(context, parsed.Protocol,
             QueueUrlBuilder.Build(context, queueName)).ConfigureAwait(false);
@@ -381,6 +381,7 @@ internal static class QueueLifecycleHandlers
             return;
         }
 
+        SqsQueueMetadataCache.ApplyFreshSnapshot(sb, queueName, entry.Properties);
         var metadata = SqsQueueTagStore.DecodeMetadata(entry.Properties.UserMetadata);
         entry.Properties.DelaySeconds = metadata.DelaySeconds;
         entry.Properties.ReceiveMessageWaitTimeSeconds = metadata.ReceiveMessageWaitTimeSeconds;

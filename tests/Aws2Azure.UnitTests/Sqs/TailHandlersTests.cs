@@ -24,7 +24,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// round-trip through QueueDescription.UserMetadata, and permission stubs
 /// gate on queue existence.
 /// </summary>
-public sealed class TailHandlersTests
+public sealed class TailHandlersTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
     private const string SbNs = AtomQueueXmlReader.SbNs;
@@ -35,6 +35,16 @@ public sealed class TailHandlersTests
         SasKeyName = "RootManageSharedAccessKey",
         SasKey = Convert.ToBase64String(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }),
     };
+
+    public TailHandlersTests()
+    {
+        SqsQueueMetadataCache.ResetForTesting();
+    }
+
+    public void Dispose()
+    {
+        SqsQueueMetadataCache.ResetForTesting();
+    }
 
     [Fact]
     public async Task ListDeadLetterSourceQueues_returns_only_queues_whose_dlq_matches_target()
