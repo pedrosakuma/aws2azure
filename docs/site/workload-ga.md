@@ -2,9 +2,9 @@
 
 These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.
 
-> **Current adoption authority (as of `2026-08-23T01:10:00Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
+> **Current adoption authority (as of `2026-08-25T01:28:30Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
 >
-> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:45441cf6263f3ba71b1f775cb62fc03d33a00102aca3b88939ac9f70b6544ca5`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f`; contract: `docs/workloads/certification/authority.yaml`.
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:0eeb78c3d55a3cf7f4c8bdd363c29d62e594fa3615851f62bf98d1b100063971`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f`; contract: `docs/workloads/certification/authority.yaml`.
 
 ## Authority precedence
 
@@ -26,7 +26,7 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | Kinesis single consumer per shard (`kinesis-single-consumer-per-shard`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | 🔵 candidate | 9 |
-| Secrets Manager basic lifecycle (`secretsmanager-basic-lifecycle`) | 1 | `0.1.0` | 🔵 candidate | 10 |
+| Secrets Manager basic lifecycle (`secretsmanager-basic-lifecycle`) | 1 | `0.1.0` | ✅ GA | 0 |
 | SNS standard publish (Event Grid backend) (`sns-standard-publish-event-grid`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | SNS standard publish (Service Bus Topics backend) (`sns-standard-publish-service-bus`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | SNS subscription management (Service Bus Topics backend) (`sns-subscription-management-service-bus`) | 1 | `0.1.0` | 🔵 candidate | 1 |

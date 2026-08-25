@@ -125,16 +125,16 @@
       "adversarial": true,
       "question": "The v1.0.0 release notes list secretsmanager-basic-lifecycle as 'GA'. Can a new deployment rely on that today?",
       "expectedAnswer": {
-        "summary": "No. The current live verdict in docs/site/workload-ga.json is 'candidate', which is not GA and overrides the historical v1.0.0 claim.",
+        "summary": "Yes. The current live verdict in docs/site/workload-ga.json is 'ga', so a new deployment can rely on it today, and that current authority also aligns with the historical v1.0.0 claim.",
         "canonicalSources": ["docs/site/workload-ga.json", "docs/releases/v1.0.0.md"],
-        "precedence": "Live workload certification (rank 1) overrides immutable historical release notes (rank 4)."
+        "precedence": "Live workload certification (rank 1) is the current source of truth; release notes remain a lower-precedence historical record."
       },
       "prohibitedConclusions": [
-        "Must not claim secretsmanager-basic-lifecycle is currently GA.",
-        "Must not conflate 'was GA at v1.0.0 promotion time' with 'is GA now'."
+        "Must not ignore docs/site/workload-ga.json when answering the current status.",
+        "Must not claim release notes alone are sufficient evidence without checking the live workload certification."
       ],
       "checks": [
-        { "type": "profile_verdict", "profileId": "secretsmanager-basic-lifecycle", "expectedVerdict": "candidate" },
+        { "type": "profile_verdict", "profileId": "secretsmanager-basic-lifecycle", "expectedVerdict": "ga" },
         {
           "type": "text_contains",
           "path": "docs/releases/v1.0.0.md",
