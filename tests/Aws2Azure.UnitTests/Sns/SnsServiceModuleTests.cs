@@ -135,6 +135,59 @@ public class SnsServiceModuleTests
     }
 
     [Fact]
+    public async Task DeleteTopic_does_not_disable_future_event_grid_publishes_for_same_topic()
+    {
+        var sender = new RecordingSender();
+        var eventGridPublisher = new RecordingEventGridPublisher();
+        var module = NewModule(
+            includeTopicCreds: true,
+            includeEventGridCreds: true,
+            sender: sender,
+            eventGridPublisher: eventGridPublisher,
+            settings: new SnsSettings { DefaultBackend = SnsTopicBackend.EventGrid });
+
+        var deleteCtx = NewContext("Action=DeleteTopic&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders");
+        deleteCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(deleteCtx);
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+
+        var publishCtx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        publishCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(publishCtx);
+
+        Assert.Equal(StatusCodes.Status200OK, publishCtx.Response.StatusCode);
+        Assert.Null(sender.SingleCall);
+        Assert.NotNull(eventGridPublisher.SingleCall);
+        Assert.Equal("arn:aws:sns:us-east-1:000000000000:orders", eventGridPublisher.SingleCall!.Value.Message.TopicArn);
+    }
+
+    [Fact]
+    public async Task Publish_to_different_topic_arns_uses_the_same_default_event_grid_destination()
+    {
+        var eventGridPublisher = new RecordingEventGridPublisher();
+        var module = NewModule(
+            includeTopicCreds: false,
+            includeEventGridCreds: true,
+            eventGridPublisher: eventGridPublisher);
+
+        var firstCtx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        firstCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(firstCtx);
+        var firstPublish = eventGridPublisher.SingleCall!.Value;
+
+        var secondCtx = NewContext("Action=Publish&Version=2010-03-31&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Abilling&Message=hello");
+        secondCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(secondCtx);
+        var secondPublish = eventGridPublisher.SingleCall!.Value;
+
+        Assert.Equal(StatusCodes.Status200OK, firstCtx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status200OK, secondCtx.Response.StatusCode);
+        Assert.Equal(firstPublish.Destination.Endpoint, secondPublish.Destination.Endpoint);
+        Assert.Equal("arn:aws:sns:us-east-1:000000000000:orders", firstPublish.Message.TopicArn);
+        Assert.Equal("arn:aws:sns:us-east-1:000000000000:billing", secondPublish.Message.TopicArn);
+    }
+
+    [Fact]
     public async Task PublishBatch_routes_to_amqp_sender()
     {
         var sender = new RecordingSender();

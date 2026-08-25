@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
@@ -86,19 +87,55 @@ public sealed class GetTopicAttributesHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_uses_service_bus_topic_alias_when_configured()
+    {
+        var credentials = SnsManagementClientTestSupport.NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal("https://myns.servicebus.windows.net/orders.v2?api-version=2021-05", request.RequestUri!.ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.v2", subscriptionCount: 3), Encoding.UTF8, "application/atom+xml"),
+            });
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await GetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("arn:aws:sns:us-west-2:123456789012:orders"),
+            credentials,
+            managementClient,
+            CancellationToken.None);
+
+        var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
+        Assert.Equal("arn:aws:sns:us-west-2:123456789012:orders", attributes["TopicArn"]);
+        Assert.Equal("3", attributes["SubscriptionsConfirmed"]);
+    }
+
+    [Fact]
     public async Task HandleAsync_preserves_legacy_fifo_content_based_deduplication_when_metadata_is_missing()
     {
-        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        const string topicName = "legacy-orders-dedup.fifo";
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), topicName);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 2, requiresDuplicateDetection: true), Encoding.UTF8, "application/atom+xml"),
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry(topicName, subscriptionCount: 2, requiresDuplicateDetection: true), Encoding.UTF8, "application/atom+xml"),
             }));
 
         var context = SnsManagementClientTestSupport.NewContext();
         await GetTopicAttributesHandler.HandleAsync(
             context,
-            NewParseResult("arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+            NewParseResult($"arn:aws:sns:us-west-2:000000000000:{topicName}"),
             SnsManagementClientTestSupport.NewCredentials(),
             managementClient,
             CancellationToken.None);

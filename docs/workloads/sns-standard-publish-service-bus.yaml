@@ -17,6 +17,8 @@ accepted_partial_operations:
   - sns:PublishBatch
 accepted_design_gaps:
   - "sns:Two backends with different fidelity"
+  - "sns:Event Grid topic lifecycle remains external"
+  - "sns:Default Event Grid routing multiplexes multiple SNS topics"
 required_sub_feature_seals:
   - operation: sns:Publish
     sub_feature: AMQP publish path

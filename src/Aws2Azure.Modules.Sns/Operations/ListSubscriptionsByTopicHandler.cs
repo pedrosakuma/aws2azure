@@ -28,6 +28,18 @@ internal static class ListSubscriptionsByTopicHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, topicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                topicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var skip = 0;
         if (parseResult.Parameters.TryGetValue("NextToken", out var nextToken)
             && !string.IsNullOrWhiteSpace(nextToken))
@@ -52,7 +64,7 @@ internal static class ListSubscriptionsByTopicHandler
             page = await managementClient.ListSubscriptionsAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    serviceBusTopicName,
                     skip,
                     SnsSubscriptionSupport.ListSubscriptionsPageSize,
                     cancellationToken)
@@ -76,7 +88,7 @@ internal static class ListSubscriptionsByTopicHandler
                     userMetadata = (await managementClient.GetSubscriptionAsync(
                             credentials,
                             SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            topicName,
+                            serviceBusTopicName,
                             item.SubscriptionName,
                             cancellationToken)
                         .ConfigureAwait(false))?.UserMetadata;

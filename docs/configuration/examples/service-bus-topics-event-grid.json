@@ -27,7 +27,7 @@
             },
             "audit": {
               "backend": "ServiceBusTopics",
-              "serviceBusTopicName": "audit-v2"
+              "serviceBusTopicName": "audit.v2"
             }
           },
           "eventGridFallback": {

@@ -22,6 +22,7 @@ Fetches the Service Bus subscription Atom entry, parses SubscriptionDescription 
 - Protocol and Endpoint come from aws2azure's UserMetadata blob rather than native Service Bus subscription fields. Missing or invalid UserMetadata falls back to empty strings and RawMessageDelivery=false.
 - ConfirmationWasAuthenticated is always true and PendingConfirmation is always false because this slice auto-confirms subscriptions.
 - FilterPolicy and FilterPolicyScope are returned from aws2azure's stored UserMetadata and correspond to the Service Bus rule currently programmed for the subscription. FilterPolicyScope defaults to MessageAttributes when legacy stored metadata has no explicit scope.
+- RawMessageDelivery is returned from aws2azure's stored metadata only. Setting it true does not change the publish-time delivery shape on either backend.
 - MessageBody-scope filters are enforced by projecting scalar JSON body fields into reserved Service Bus application properties during Publish / PublishBatch. Non-JSON bodies, array-valued fields, and unsupported SNS operators do not match those rules.
 - DeliveryPolicy, EffectiveDeliveryPolicy, and RedrivePolicy are omitted because Service Bus delivery and dead-letter settings do not match the SNS attribute shapes exposed by this API.
 - Attributes are read from Azure Service Bus subscriptions only; Azure Event Grid event-subscription properties are explicitly outside this profile.

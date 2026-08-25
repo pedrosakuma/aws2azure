@@ -18,10 +18,12 @@ Parses TopicArn, extracts the topic name, and issues DELETE https://{namespace}.
 
 ## Behaviour differences
 
+- When credentials.serviceBusTopics.topics[*].serviceBusTopicName is configured for an exact SNS topic name, DeleteTopic deletes that mapped Azure Service Bus topic path while continuing to accept the original SNS TopicArn.
 - DeleteTopic accepts only proxy-shaped ARNs of the form arn:aws:sns:{region}:{accountId}:{topicName}. The proxy currently synthesises accountId as 000000000000, but delete only uses the topic-name suffix when translating to Azure.
 - FIFO topics can be deleted by their .fifo ARN names once they have been provisioned on the Service Bus-backed subset described in CreateTopic / Publish / PublishBatch.
 - Azure deletes are asynchronous underneath Service Bus. A successful DeleteTopic response means the topic was accepted for deletion, not necessarily that every broker-side artifact is already gone.
 - DeleteTopic parses the topic name out of the ARN with the same AWS-side pattern CreateTopic enforces at creation time; it does not re-apply CreateTopic's additional Azure naming check, because a topic that could not have been created here (due to that check) also could not appear in a client-supplied ARN.
+- When the resolved publish backend is Event Grid, DeleteTopic removes only the Service Bus compatibility topic/metadata side. It does not delete the Azure Event Grid custom topic or prevent later Publish / PublishBatch calls to the same TopicArn while Event Grid routing remains configured.
 
 ## References
 

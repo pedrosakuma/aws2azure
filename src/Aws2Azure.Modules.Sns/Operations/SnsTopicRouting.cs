@@ -11,6 +11,111 @@ internal readonly record struct SnsTopicRoute(
 
 internal static class SnsTopicRouting
 {
+    public static string ResolveServiceBusTopicName(
+        ServiceBusTopicsCredentials? credentials,
+        string topicName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+
+        if (credentials is null)
+        {
+            return topicName;
+        }
+
+        var settings = ResolveTopicSettings(credentials.Topics, topicName);
+        return string.IsNullOrWhiteSpace(settings?.ServiceBusTopicName)
+            ? topicName
+            : settings!.ServiceBusTopicName!;
+    }
+
+    public static string ResolveSnsTopicName(
+        ServiceBusTopicsCredentials credentials,
+        string serviceBusTopicName,
+        string? userMetadata)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceBusTopicName);
+
+        if (TryResolveConfiguredSnsTopicName(credentials, serviceBusTopicName, out var configuredTopicName))
+        {
+            return configuredTopicName;
+        }
+
+        var metadataTopicName = SnsTopicAttributeSupport.ParseMetadata(userMetadata).SnsTopicName;
+        if (!string.IsNullOrWhiteSpace(metadataTopicName)
+            && SnsTopicSupport.IsValidTopicName(metadataTopicName))
+        {
+            return metadataTopicName;
+        }
+
+        if (credentials.Topics is not null)
+        {
+            foreach (var (pattern, settings) in credentials.Topics)
+            {
+                if (string.IsNullOrWhiteSpace(pattern)
+                    || HasWildcards(pattern)
+                    || !string.Equals(settings?.ServiceBusTopicName, serviceBusTopicName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                return pattern;
+            }
+        }
+
+        return serviceBusTopicName;
+    }
+
+    public static bool TryResolveConfiguredSnsTopicName(
+        ServiceBusTopicsCredentials credentials,
+        string serviceBusTopicName,
+        out string snsTopicName)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceBusTopicName);
+
+        if (credentials.Topics is not null)
+        {
+            foreach (var (pattern, settings) in credentials.Topics)
+            {
+                if (string.IsNullOrWhiteSpace(pattern)
+                    || HasWildcards(pattern)
+                    || !string.Equals(settings?.ServiceBusTopicName, serviceBusTopicName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                snsTopicName = pattern;
+                return true;
+            }
+        }
+
+        snsTopicName = string.Empty;
+        return false;
+    }
+
+    public static bool HasExactConfiguredServiceBusTopicAlias(
+        ServiceBusTopicsCredentials credentials,
+        string snsTopicName,
+        out string serviceBusTopicName)
+    {
+        ArgumentNullException.ThrowIfNull(credentials);
+        ArgumentException.ThrowIfNullOrWhiteSpace(snsTopicName);
+
+        if (credentials.Topics is not null
+            && credentials.Topics.TryGetValue(snsTopicName, out var settings)
+            && settings is not null
+            && !string.IsNullOrWhiteSpace(settings.ServiceBusTopicName)
+            && !string.Equals(settings.ServiceBusTopicName, snsTopicName, StringComparison.Ordinal))
+        {
+            serviceBusTopicName = settings.ServiceBusTopicName;
+            return true;
+        }
+
+        serviceBusTopicName = string.Empty;
+        return false;
+    }
+
     public static SnsTopicRoute Resolve(
         ServiceBusTopicsCredentials? credentials,
         SnsSettings snsSettings,
@@ -31,7 +136,7 @@ internal static class SnsTopicRouting
         var settings = ResolveTopicSettings(credentials.Topics, topicName);
         return new SnsTopicRoute(
             settings?.Backend ?? snsSettings.DefaultBackend,
-            string.IsNullOrWhiteSpace(settings?.ServiceBusTopicName) ? topicName : settings!.ServiceBusTopicName!,
+            ResolveServiceBusTopicName(credentials, topicName),
             settings?.EventGridTopicEndpoint,
             settings?.EventGridAccessKey);
     }

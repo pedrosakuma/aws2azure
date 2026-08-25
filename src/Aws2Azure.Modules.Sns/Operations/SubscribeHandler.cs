@@ -29,6 +29,18 @@ internal static class SubscribeHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, request.TopicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                request.TopicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var subscriptionId = SnsSubscriptionSupport.CreateSubscriptionId(request.TopicArn, request.Protocol, request.Endpoint);
         var subscriptionArn = SnsSubscriptionSupport.BuildSubscriptionArn(context, request.TopicName, subscriptionId);
         if (!SnsSubscriptionFilterSupport.TryBuildRuleDescription(request.Metadata, out var ruleDescription, out error))
@@ -44,7 +56,7 @@ internal static class SubscribeHandler
             await managementClient.CreateSubscriptionAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    request.TopicName,
+                    serviceBusTopicName,
                     subscriptionId,
                     request.UserMetadata,
                     cancellationToken)
@@ -61,7 +73,7 @@ internal static class SubscribeHandler
                 await managementClient.PutSubscriptionRuleAsync(
                         credentials,
                         SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                        request.TopicName,
+                        serviceBusTopicName,
                         subscriptionId,
                         ruleDescription,
                         updateExisting: true,
@@ -77,7 +89,7 @@ internal static class SubscribeHandler
                 existing = await managementClient.GetSubscriptionAsync(
                         credentials,
                         SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                        request.TopicName,
+                        serviceBusTopicName,
                         subscriptionId,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -99,7 +111,7 @@ internal static class SubscribeHandler
                     await managementClient.PutSubscriptionRuleAsync(
                             credentials,
                             SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            request.TopicName,
+                            serviceBusTopicName,
                             subscriptionId,
                             ruleDescription,
                             updateExisting: true,
@@ -122,7 +134,7 @@ internal static class SubscribeHandler
                     await managementClient.DeleteSubscriptionAsync(
                             credentials,
                             SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                            request.TopicName,
+                            serviceBusTopicName,
                             subscriptionId,
                             cancellationToken)
                         .ConfigureAwait(false);

@@ -57,6 +57,128 @@ public sealed class CreateTopicHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_uses_service_bus_topic_alias_when_configured()
+    {
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+
+        var managementClient = NewManagementClient(async (request, _) =>
+        {
+            Assert.Equal("https://myns.servicebus.windows.net/orders.v2?api-version=2021-05", request.RequestUri!.ToString());
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.Contains("\"snsTopicName\":\"orders\"", body);
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        });
+
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            NewParseResult("orders"),
+            credentials,
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_alias_conflicts_with_topics_owned_by_another_sns_name()
+    {
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+        var foreignMetadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                SnsTopicName = "payments",
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+        var requestCount = 0;
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            requestCount++;
+            return requestCount switch
+            {
+                1 => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)),
+                2 when request.Method == HttpMethod.Get => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.v2", userMetadata: foreignMetadata), Encoding.UTF8, "application/atom+xml"),
+                }),
+                _ => throw new Xunit.Sdk.XunitException("Unexpected request: " + request.Method + " " + request.RequestUri)
+            };
+        });
+
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            NewParseResult("orders"),
+            credentials,
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("already bound to a different SNS topic", ReadBody(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_treats_preprovisioned_aliased_topics_without_ownership_metadata_as_idempotent()
+    {
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+        var requestCount = 0;
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            requestCount++;
+            return requestCount switch
+            {
+                1 => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)),
+                2 when request.Method == HttpMethod.Get => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.v2"), Encoding.UTF8, "application/atom+xml"),
+                }),
+                _ => throw new Xunit.Sdk.XunitException("Unexpected request: " + request.Method + " " + request.RequestUri)
+            };
+        });
+
+        var context = NewContext();
+        await CreateTopicHandler.HandleAsync(
+            context,
+            NewParseResult("orders"),
+            credentials,
+            new SnsSettings(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders", ReadBody(context));
+    }
+
+    [Fact]
     public async Task HandleAsync_maps_supported_attributes_into_topic_description()
     {
         var managementClient = NewManagementClient(async (request, _) =>

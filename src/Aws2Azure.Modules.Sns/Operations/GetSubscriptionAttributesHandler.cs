@@ -28,13 +28,25 @@ internal static class GetSubscriptionAttributesHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, topicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                topicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         ServiceBusSubscriptionDescription? subscription;
         try
         {
             subscription = await managementClient.GetSubscriptionAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    serviceBusTopicName,
                     subscriptionId,
                     cancellationToken)
                 .ConfigureAwait(false);

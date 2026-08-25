@@ -62,7 +62,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -161,7 +161,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -350,7 +350,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -449,7 +449,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -572,7 +572,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -695,7 +695,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -788,7 +788,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -871,6 +871,18 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
+        "subject": "sns:Default Event Grid routing multiplexes multiple SNS topics",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Event Grid topic lifecycle remains external",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
         "subject": "sns:Two backends with different fidelity",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
       },
@@ -887,7 +899,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -970,6 +982,18 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
+        "subject": "sns:Default Event Grid routing multiplexes multiple SNS topics",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
+        "subject": "sns:Event Grid topic lifecycle remains external",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
         "subject": "sns:Two backends with different fidelity",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
       },
@@ -986,7 +1010,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -1121,7 +1145,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -1256,7 +1280,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -1349,7 +1373,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",
@@ -1490,7 +1514,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:ce2657ae16ad30b7f2d493eabf49e146c6f062ce8611f21f84b1324a38b4b4e2",
+        "canonical_inputs_revision": "sha256:d60d85eb3eb08187bcb243df2f6a381bbfc542ce085ff92fd97ad944548ee43c",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f",

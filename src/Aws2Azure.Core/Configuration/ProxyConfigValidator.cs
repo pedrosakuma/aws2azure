@@ -362,6 +362,7 @@ public static class ProxyConfigValidator
 
         if (credentials.Topics is { } topics)
         {
+            var resolvedServiceBusTopicNames = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (name, settings) in topics)
             {
                 if (string.IsNullOrWhiteSpace(name))
@@ -382,6 +383,19 @@ public static class ProxyConfigValidator
                 {
                     errors.Add($"{prefix}.topics.{name}.serviceBusTopicName: must be non-empty when set.");
                 }
+                if (settings.ServiceBusTopicName is not null
+                    && (name.Contains('*', StringComparison.Ordinal) || name.Contains('?', StringComparison.Ordinal)))
+                {
+                    errors.Add(
+                        $"{prefix}.topics.{name}.serviceBusTopicName: not valid for wildcard topic patterns; use an exact SNS topic name.");
+                }
+                if (!string.IsNullOrWhiteSpace(settings.ServiceBusTopicName)
+                    && !string.Equals(settings.ServiceBusTopicName, name, StringComparison.Ordinal)
+                    && LooksLikeSnsTopicName(settings.ServiceBusTopicName))
+                {
+                    errors.Add(
+                        $"{prefix}.topics.{name}.serviceBusTopicName: must not be another valid SNS topic name; use an Azure-only alias that cannot also be routed by SNS name.");
+                }
                 if (!string.IsNullOrWhiteSpace(settings.EventGridTopicEndpoint))
                 {
                     ValidateAbsoluteUri(settings.EventGridTopicEndpoint, $"{prefix}.topics.{name}.eventGridTopicEndpoint", errors, Uri.UriSchemeHttps);
@@ -392,6 +406,23 @@ public static class ProxyConfigValidator
                 }
                 if (settings.Backend == SnsTopicBackend.ServiceBusTopics)
                 {
+                    if (!name.Contains('*', StringComparison.Ordinal)
+                        && !name.Contains('?', StringComparison.Ordinal))
+                    {
+                        var resolvedTopicName = string.IsNullOrWhiteSpace(settings.ServiceBusTopicName)
+                            ? name
+                            : settings.ServiceBusTopicName!;
+                        if (resolvedServiceBusTopicNames.TryGetValue(resolvedTopicName, out var existingTopicName))
+                        {
+                            errors.Add(
+                                $"{prefix}.topics.{name}.serviceBusTopicName: resolves to '{resolvedTopicName}', which is already used by topic '{existingTopicName}'.");
+                        }
+                        else
+                        {
+                            resolvedServiceBusTopicNames[resolvedTopicName] = name;
+                        }
+                    }
+
                     if (settings.EventGridTopicEndpoint is not null)
                     {
                         errors.Add(
@@ -530,6 +561,35 @@ public static class ProxyConfigValidator
             && (!string.IsNullOrWhiteSpace(credentials.Endpoint)
                 || (!string.IsNullOrWhiteSpace(credentials.Namespace)
                     && !string.IsNullOrWhiteSpace(credentials.TopicName)));
+
+    private static bool LooksLikeSnsTopicName(string topicName)
+    {
+        if (string.IsNullOrWhiteSpace(topicName) || topicName.Length > 256)
+        {
+            return false;
+        }
+
+        var baseName = topicName;
+        if (topicName.EndsWith(".fifo", StringComparison.Ordinal))
+        {
+            baseName = topicName[..^5];
+            if (baseName.Length == 0)
+            {
+                return false;
+            }
+        }
+
+        for (var i = 0; i < baseName.Length; i++)
+        {
+            var c = baseName[i];
+            if (!char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static void ValidateDualAuth(
         string prefix,

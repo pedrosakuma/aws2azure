@@ -29,10 +29,13 @@ behavior_differences:
 - SequenceNumber is returned empty because neither Azure Service Bus nor Azure Event Grid exposes an SNS-compatible sequence number on publish.
 - MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet.
 - On the Service Bus Topics backend, MessageAttributes encode DataType in a parallel application property named '{Name}.DataType' so AWS-style attributes can be reconstructed by downstream consumers.
+- RawMessageDelivery stored on SNS subscriptions is not consulted at publish time. Service Bus publishes always send the raw message bytes, and Event Grid publishes always emit their Event Grid envelopes.
 - On the Event Grid backend, the proxy emits the classic Event Grid schema with eventType=aws.sns.Message; CloudEvents-formatted Event Grid topics are not supported in this slice.
 - On the Event Grid backend, MessageAttributes are emitted inside data.MessageAttributes as { Type, Value } objects.
 - On the Event Grid backend, returned MessageId values are the proxy-generated GUIDs used as the Event Grid envelope id fields.
 - On the Event Grid backend, HTTP-level failures are mapped to per-entry Failed results for every message in the affected HTTP batch, even though Event Grid itself accepts or rejects each POST atomically.
+- On the Event Grid backend, batch publish eligibility is determined solely by the configured Event Grid route/credentials. CreateTopic / DeleteTopic manage only the Service Bus compatibility side and do not create, delete, or existence-check the Azure Event Grid custom topic before PublishBatch.
+- On the Event Grid backend, multiple SNS TopicArns can share a single Azure Event Grid custom topic when routing falls back to the credential-level endpoint or namespace+topicName. Azure-side isolation is then by envelope fields (subject / data.TopicArn), not by dedicated Azure topic resources.
 - For Service Bus-backed FIFO topics, broker-side duplicate detection is still limited to the Service Bus duplicate-detection window; aws2azure provisions new FIFO topics with a 5-minute window but cannot enforce dedup forever or outside that broker window.
 - For Service Bus-backed FIFO topics, SequenceNumber remains empty even though SessionId ordering metadata is set, because Service Bus does not return an SNS-compatible batch publish sequence identifier.
 - For standard (non-.fifo) SNS topic names, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameter instead of being silently approximated.

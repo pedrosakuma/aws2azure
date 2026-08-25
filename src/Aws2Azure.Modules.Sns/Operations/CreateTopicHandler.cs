@@ -39,7 +39,8 @@ internal static class CreateTopicHandler
             return;
         }
 
-        if (!SnsTopicSupport.IsValidServiceBusTopicName(topicName))
+        var route = SnsTopicRouting.Resolve(credentials, snsSettings, topicName);
+        if (!SnsTopicSupport.IsValidServiceBusTopicName(route.ServiceBusTopicName))
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(
                     context,
@@ -55,7 +56,7 @@ internal static class CreateTopicHandler
         }
 
         if (attributes.IsFifoTopic
-            && SnsTopicRouting.Resolve(credentials, snsSettings, topicName).Backend == SnsTopicBackend.EventGrid)
+            && route.Backend == SnsTopicBackend.EventGrid)
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(
                     context,
@@ -64,13 +65,29 @@ internal static class CreateTopicHandler
             return;
         }
 
+        if (!string.Equals(route.ServiceBusTopicName, topicName, StringComparison.Ordinal))
+        {
+            var metadata = SnsTopicAttributeSupport.ParseMetadata(attributes.UserMetadata);
+            metadata.SnsTopicName = topicName;
+            if (!SnsTopicAttributeSupport.TryBuildUserMetadata(metadata, out var remappedUserMetadata))
+            {
+                await SnsTopicSupport.WriteInvalidParameterAsync(
+                        context,
+                        $"Topic metadata exceeds the Azure Service Bus UserMetadata limit of {SnsTopicAttributeSupport.UserMetadataMaxLength} characters.")
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            attributes = attributes with { UserMetadata = remappedUserMetadata };
+        }
+
         var namespaceFqdn = SnsTopicSupport.ResolveNamespaceFqdn(credentials);
         CreateTopicResult createResult;
 
         try
         {
             var description = new ServiceBusTopicDescription(
-                topicName,
+                route.ServiceBusTopicName,
                 SubscriptionCount: 0,
                 RequiresDuplicateDetection: attributes.RequiresDuplicateDetection,
                 UserMetadata: attributes.UserMetadata,
@@ -102,18 +119,49 @@ internal static class CreateTopicHandler
             return;
         }
 
+        if (!string.Equals(route.ServiceBusTopicName, topicName, StringComparison.Ordinal)
+            && createResult is CreateTopicResult.Conflict or CreateTopicResult.Ok)
+        {
+            ServiceBusTopicDescription? existingTopic;
+            try
+            {
+                existingTopic = await managementClient.GetTopicAsync(
+                        credentials,
+                        namespaceFqdn,
+                        route.ServiceBusTopicName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceBusTopicsManagementException ex)
+            {
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                return;
+            }
+
+            var existingMetadata = SnsTopicAttributeSupport.ParseMetadata(existingTopic?.UserMetadata);
+            if (!string.IsNullOrWhiteSpace(existingMetadata.SnsTopicName)
+                && !string.Equals(existingMetadata.SnsTopicName, topicName, StringComparison.Ordinal))
+            {
+                await SnsTopicSupport.WriteInvalidParameterAsync(
+                        context,
+                        $"Configured ServiceBusTopicName '{route.ServiceBusTopicName}' is already bound to a different SNS topic.")
+                    .ConfigureAwait(false);
+                return;
+            }
+        }
+
         if (createResult == CreateTopicResult.Created)
         {
             var metadata = SnsTopicAttributeSupport.ParseMetadata(attributes.UserMetadata);
             SnsFifoPublishSupport.RecordServiceBusTopicState(
                 credentials,
-                topicName,
+                route.ServiceBusTopicName,
                 attributes.RequiresDuplicateDetection,
                 metadata.ContentBasedDeduplication);
         }
         else
         {
-            SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, topicName);
+            SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, route.ServiceBusTopicName);
         }
 
         await SnsResponseWriter.WriteCreateTopicResponseAsync(

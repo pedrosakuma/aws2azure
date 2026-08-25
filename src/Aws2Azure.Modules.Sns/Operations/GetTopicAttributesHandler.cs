@@ -29,13 +29,25 @@ internal static class GetTopicAttributesHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, topicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                topicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         ServiceBusTopicDescription? topic;
         try
         {
             topic = await managementClient.GetTopicAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    serviceBusTopicName,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -57,7 +69,7 @@ internal static class GetTopicAttributesHandler
         var isFifo = metadata.FifoTopic ?? topicName.EndsWith(".fifo", StringComparison.Ordinal);
         var contentBasedDeduplication = metadata.ContentBasedDeduplication;
         if (contentBasedDeduplication is null
-            && SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out var cachedState))
+            && SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, serviceBusTopicName, out var cachedState))
         {
             contentBasedDeduplication = cachedState.ContentBasedDeduplication;
         }

@@ -49,11 +49,31 @@ internal static class ListTopicsHandler
             return;
         }
 
-        var topicArns = new string[page.TopicNames.Count];
+        var topicArns = new List<string>(page.TopicNames.Count);
         var region = SnsTopicSupport.ResolveRegion(context);
         for (var i = 0; i < page.TopicNames.Count; i++)
         {
-            topicArns[i] = SnsTopicSupport.BuildTopicArn(region, page.TopicNames[i]);
+            var serviceBusTopicName = page.TopicNames[i];
+            string? snsTopicName;
+            try
+            {
+                snsTopicName = await SnsTopicOwnershipSupport.ResolveListedSnsTopicNameAsync(
+                        credentials,
+                        managementClient,
+                        serviceBusTopicName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceBusTopicsManagementException ex)
+            {
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(snsTopicName))
+            {
+                topicArns.Add(SnsTopicSupport.BuildTopicArn(region, snsTopicName));
+            }
         }
 
         var responseNextToken = page.TopicNames.Count == SnsTopicSupport.ListTopicsPageSize

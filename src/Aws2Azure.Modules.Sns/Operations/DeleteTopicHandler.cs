@@ -32,12 +32,24 @@ internal static class DeleteTopicHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, topicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                topicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         try
         {
             await managementClient.DeleteTopicAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    serviceBusTopicName,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -47,7 +59,7 @@ internal static class DeleteTopicHandler
             return;
         }
 
-        SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, topicName);
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, serviceBusTopicName);
         await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "DeleteTopic").ConfigureAwait(false);
     }
 }
