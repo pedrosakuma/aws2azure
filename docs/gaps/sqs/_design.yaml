@@ -27,7 +27,7 @@ design_gaps:
   workaround: Do not rely on QueueDeletedRecently timing behaviour.
 - area: Transport-dependent capability differences
   status: by_design
-  summary: 'REST and AMQP transports differ beyond FIFO: receipt-handle formats, VisibilityTimeout=0 immediate release (AMQP only, via Abandon), per-entry partial-failure granularity on batch sends (real on AMQP, coarser on REST), and dead-letter attribution (AMQP only).'
+  summary: 'REST and AMQP transports differ beyond FIFO: receipt-handle formats, the mechanism used for VisibilityTimeout=0 immediate release (REST via Unlock Message, AMQP via Abandon), per-entry partial-failure granularity on batch sends (real on AMQP, coarser on REST), and dead-letter attribution (AMQP only).'
   impact: The same SQS operation can behave differently depending on the queue's configured transport; receipt handles are not interchangeable across transports.
   workaround: Choose the transport per queue based on the semantics required and keep receive/settle on the same transport.
 workload_patterns:

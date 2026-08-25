@@ -19,7 +19,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// deadline (cross-replica source of truth — see
 /// docs/gaps/sqs/PurgeQueue.yaml).
 /// </summary>
-public sealed class PurgeQueueHandlerTests
+public sealed class PurgeQueueHandlerTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
     private const string SbNs = AtomQueueXmlReader.SbNs;
@@ -30,6 +30,18 @@ public sealed class PurgeQueueHandlerTests
         SasKeyName = "RootManageSharedAccessKey",
         SasKey = Convert.ToBase64String(new byte[] { 1, 2, 3, 4 }),
     };
+
+    public PurgeQueueHandlerTests()
+    {
+        BatchAdminHandlers.ResetPurgeCoolDownForTesting();
+        SqsQueueMetadataCache.ResetForTesting();
+    }
+
+    public void Dispose()
+    {
+        BatchAdminHandlers.ResetPurgeCoolDownForTesting();
+        SqsQueueMetadataCache.ResetForTesting();
+    }
 
     [Fact]
     public async Task Empty_queue_succeeds_and_immediate_repeat_hits_local_cooldown_without_upstream_call()

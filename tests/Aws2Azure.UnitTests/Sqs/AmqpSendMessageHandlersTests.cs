@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.Sqs.Internal;
@@ -291,6 +292,27 @@ public sealed class AmqpSendMessageHandlersTests
         Assert.Contains("InvalidParameterValue", ReadBody(ctx));
     }
 
+    [Fact]
+    public async Task SendMessage_maps_cbs_404_to_nonexistent_queue()
+    {
+        await using var harness = await SenderHarness.OpenAsync(QueueName);
+        harness.Provider.ThrowOnGetSender = new CbsAuthenticationException(
+            "sb://ns.servicebus.windows.net/amqp-q",
+            statusCode: 404,
+            statusDescription: "messaging entity could not be found");
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MessageBody", "x"));
+
+        await AmqpSendMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("AWS.SimpleQueueService.NonExistentQueue", ReadBody(ctx));
+    }
+
     // --- harness + fakes ---------------------------------------------------
 
     private sealed class SenderHarness : IAsyncDisposable
@@ -354,6 +376,7 @@ public sealed class AmqpSendMessageHandlersTests
         private readonly string _expectedQueue;
         private readonly ServiceBusAmqpSender _sender;
         public int InvalidateCount { get; private set; }
+        public Exception? ThrowOnGetSender { get; set; }
 
         public FakeAmqpSenderProvider(string queueName, ServiceBusAmqpSender sender)
         {
@@ -364,6 +387,10 @@ public sealed class AmqpSendMessageHandlersTests
         public Task<ServiceBusAmqpSender> GetSenderAsync(string queueName, CancellationToken cancellationToken)
         {
             Assert.Equal(_expectedQueue, queueName);
+            if (ThrowOnGetSender is { } ex)
+            {
+                throw ex;
+            }
             return Task.FromResult(_sender);
         }
 
