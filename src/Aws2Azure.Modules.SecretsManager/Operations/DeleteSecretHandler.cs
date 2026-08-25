@@ -9,8 +9,37 @@ internal static class DeleteSecretHandler
     public static async Task HandleAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
     {
         var name = KeyVaultSecretClient.NormalizeSecretName(SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty);
-        var recoveryWindowInDays = SecretsManagerOperationSupport.ReadInt(document, "RecoveryWindowInDays");
-        var forceDeleteWithoutRecovery = SecretsManagerOperationSupport.ReadBool(document, "ForceDeleteWithoutRecovery") ?? false;
+        int? recoveryWindowInDays = null;
+        if (document.RootElement.TryGetProperty("RecoveryWindowInDays", out var recoveryWindowProperty))
+        {
+            if (recoveryWindowProperty.ValueKind != JsonValueKind.Number || !recoveryWindowProperty.TryGetInt32(out var parsedRecoveryWindowInDays))
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                    context,
+                    StatusCodes.Status400BadRequest,
+                    "InvalidParameterException",
+                    "RecoveryWindowInDays must be an integer between 7 and 30.").ConfigureAwait(false);
+                return;
+            }
+
+            recoveryWindowInDays = parsedRecoveryWindowInDays;
+        }
+
+        var forceDeleteWithoutRecovery = false;
+        if (document.RootElement.TryGetProperty("ForceDeleteWithoutRecovery", out var forceDeleteProperty))
+        {
+            if (forceDeleteProperty.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                    context,
+                    StatusCodes.Status400BadRequest,
+                    "InvalidParameterException",
+                    "ForceDeleteWithoutRecovery must be a boolean.").ConfigureAwait(false);
+                return;
+            }
+
+            forceDeleteWithoutRecovery = forceDeleteProperty.GetBoolean();
+        }
         if (recoveryWindowInDays is not null && forceDeleteWithoutRecovery)
         {
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(
@@ -21,13 +50,13 @@ internal static class DeleteSecretHandler
             return;
         }
 
-        if (recoveryWindowInDays is not null || forceDeleteWithoutRecovery)
+        if (recoveryWindowInDays is < 7 or > 30)
         {
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(
                 context,
-                StatusCodes.Status501NotImplemented,
-                "NotImplementedException",
-                "DeleteSecret recovery-window and force-delete options are not supported by aws2azure because Azure Key Vault retention and purge behavior are governed by vault-level soft-delete settings, not per-request AWS parameters.").ConfigureAwait(false);
+                StatusCodes.Status400BadRequest,
+                "InvalidParameterException",
+                "RecoveryWindowInDays must be between 7 and 30.").ConfigureAwait(false);
             return;
         }
 
@@ -36,24 +65,51 @@ internal static class DeleteSecretHandler
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        JsonDocument? deletedSecretDocument = null;
         if (!response.IsSuccessStatusCode)
         {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(response.StatusCode), SecretsManagerOperationSupport.MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
-            return;
+            if (!forceDeleteWithoutRecovery
+                || response.StatusCode is not System.Net.HttpStatusCode.NotFound and not System.Net.HttpStatusCode.Conflict)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(response.StatusCode), SecretsManagerOperationSupport.MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
+                return;
+            }
+        }
+        else
+        {
+            deletedSecretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
         }
 
-        using var deletedSecretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
-        var deletionDate = TryReadUnixTime(deletedSecretDocument.RootElement, "scheduledPurgeDate")
-            ?? TryReadUnixTime(deletedSecretDocument.RootElement, "deletedDate")
-            ?? DateTimeOffset.UtcNow;
+        if (forceDeleteWithoutRecovery)
+        {
+            var purgeResult = await PurgeDeletedSecretAsync(
+                context,
+                client,
+                token,
+                name,
+                allowNotFoundSuccess: !response.IsSuccessStatusCode,
+                cancellationToken).ConfigureAwait(false);
+            if (!purgeResult)
+            {
+                deletedSecretDocument?.Dispose();
+                return;
+            }
+        }
+
+        var deletionDate = forceDeleteWithoutRecovery
+            ? deletedSecretDocument is null ? null : TryReadUnixTime(deletedSecretDocument.RootElement, "deletedDate")
+            : deletedSecretDocument is null ? null : TryReadUnixTime(deletedSecretDocument.RootElement, "scheduledPurgeDate")
+                ?? TryReadUnixTime(deletedSecretDocument.RootElement, "deletedDate");
+        var effectiveDeletionDate = deletionDate ?? DateTimeOffset.UtcNow;
         var payload = new DeleteSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(name),
             Name: name,
-            DeletionDate: deletionDate,
+            DeletionDate: effectiveDeletionDate,
             DeletedDate: null,
             VersionId: null);
 
         await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.DeleteSecretResponse, cancellationToken).ConfigureAwait(false);
+        deletedSecretDocument?.Dispose();
     }
 
     private static DateTimeOffset? TryReadUnixTime(JsonElement root, string propertyName)
@@ -61,4 +117,75 @@ internal static class DeleteSecretHandler
             && property.ValueKind == JsonValueKind.Number
             ? DateTimeOffset.FromUnixTimeSeconds(property.GetInt64())
             : null;
+
+    private static async Task<bool> PurgeDeletedSecretAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        bool allowNotFoundSuccess,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            using var purgeRequest = new HttpRequestMessage(HttpMethod.Delete, client.BuildVaultUri(KeyVaultSecretClient.BuildDeletedSecretPath(name)));
+            purgeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var purgeResponse = await client.SendAsync(purgeRequest, cancellationToken).ConfigureAwait(false);
+            if (purgeResponse.IsSuccessStatusCode)
+            {
+                return true;
+            }
+
+            if (purgeResponse.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Conflict)
+            {
+                if (attempt < 7)
+                {
+                    var delay = Math.Min(50 << Math.Min(attempt, 4), 1_000);
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict)
+                {
+                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                        context,
+                        StatusCodes.Status400BadRequest,
+                        "InvalidRequestException",
+                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).").ConfigureAwait(false);
+                    return false;
+                }
+
+                if (allowNotFoundSuccess)
+                {
+                    return true;
+                }
+
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                    context,
+                    StatusCodes.Status503ServiceUnavailable,
+                    "InternalServiceError",
+                    "Deleted Key Vault secret did not become purgeable before the bounded retry window expired.").ConfigureAwait(false);
+                return false;
+            }
+
+            if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                    context,
+                    StatusCodes.Status403Forbidden,
+                    "AccessDeniedException",
+                    "ForceDeleteWithoutRecovery requires Key Vault purge permission on the target vault.").ConfigureAwait(false);
+                return false;
+            }
+
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                context,
+                SecretsManagerOperationSupport.MapStatusCode(purgeResponse.StatusCode),
+                SecretsManagerOperationSupport.MapErrorCode(purgeResponse.StatusCode),
+                "Key Vault request failed.").ConfigureAwait(false);
+            return false;
+        }
+
+        return false;
+    }
 }
