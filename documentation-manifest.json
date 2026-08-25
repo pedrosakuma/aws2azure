@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:f057b42236b4f0dfa6faef300ee261a9633f9b17d0f6b781c5929e18b6124d59",
+  "manifest_revision": "sha256:d3d47eabe293e396933ad5f98a01eed31937c927c138d80bf5ac1becd5a24440",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -34,7 +34,7 @@
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
     "contract_path": "docs/workloads/certification/authority.yaml",
-    "evaluated_as_of_utc": "2026-08-25T22:08:23Z",
+    "evaluated_as_of_utc": "2026-08-25T01:28:30Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
     "canonical_inputs_revision": "sha256:5754efea5bb5beb6f8ef7a4e4273042f0fdcc0dcf1025f7a62a529ceec11631a",
     "evaluator_schema_version": 3,
@@ -7081,10 +7081,10 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:1bf0c20739416563f2066f29f60f55119dea6c1219b952c23804024b229c062f",
+      "revision": "sha256:bc6086a00cd0a3171f0a5882b19e3917dc9687cb2858e107ce499519efa4b016",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-25T22:08:23Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
@@ -7095,10 +7095,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:23bbf2c95e59c9a5f0b2e9b01737e5b803e8fe1e6cf19ce26142528f31d8d080",
+      "revision": "sha256:62131463e4376cb589a148de533f4ba05042919d52f62a5cc064fef4e1b61c94",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-25T22:08:23Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
@@ -7109,10 +7109,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:185c268242fc1ddf41073e84f52a7eda09522396bff1723f0d9a21ed3e4c8e1a",
+      "revision": "sha256:d089754155fc5c45e71b51b831597e431d2f46c1dcc9e8781a10bcc102426036",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-25T22:08:23Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
