@@ -34,7 +34,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "s3",
-            Enumerate(S3ErrorMatrix.Cases, S3HappyPathMatrix.Cases),
+            EnumerateCases(S3ErrorMatrix.Cases, S3HappyPathMatrix.Cases),
             CreateContext("s3")).ConfigureAwait(false);
     }
 
@@ -61,7 +61,8 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
             await ExecuteServiceCasesAsync(
                 "dynamodb",
-                Enumerate(DynamoDbErrorMatrix.Cases, DynamoDbHappyPathMatrix.Cases),
+                DynamoDbRealAzureEvidenceCaseSelector.SelectCases(
+                    Environment.GetEnvironmentVariable("AWS2AZURE_DDB_STORED_PROCEDURE_MODE")),
                 CreateContext(
                     "dynamodb",
                     new Dictionary<string, string>(StringComparer.Ordinal)
@@ -89,7 +90,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "kinesis",
-            Enumerate(KinesisErrorMatrix.Cases, KinesisHappyPathMatrix.Cases),
+            EnumerateCases(KinesisErrorMatrix.Cases, KinesisHappyPathMatrix.Cases),
             CreateContext(
                 "kinesis",
                 new Dictionary<string, string>(StringComparer.Ordinal)
@@ -121,7 +122,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
             await ExecuteServiceCasesAsync(
                 "sns",
-                Enumerate(SnsErrorMatrix.Cases, SnsHappyPathMatrix.Cases),
+                EnumerateCases(SnsErrorMatrix.Cases, SnsHappyPathMatrix.Cases),
                 CreateContext("sns")).ConfigureAwait(false);
         }
         finally
@@ -142,7 +143,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
         await ExecuteServiceCasesAsync(
             "sqs",
-            Enumerate(SqsErrorMatrix.Cases, SqsHappyPathMatrix.Cases),
+            EnumerateCases(SqsErrorMatrix.Cases, SqsHappyPathMatrix.Cases),
             CreateContext("sqs")).ConfigureAwait(false);
     }
 
@@ -159,7 +160,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
         // rather than the default AwsAccessKey/Secret CreateContext() uses.
         await ExecuteServiceCasesAsync(
             "secretsmanager",
-            SecretsManagerHappyPathMatrix.Cases,
+            EnumerateCases(SecretsManagerHappyPathMatrix.Cases),
             CreateContext(
                 "secretsmanager",
                 accessKeyId: RealAzureProxyFixture.WiAwsAccessKey,
@@ -182,8 +183,10 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
             new Uri(fixture.GetServiceUrl(service)),
             Properties: properties);
 
-    private static IReadOnlyList<IConformanceCase> Enumerate(params IEnumerable<IConformanceCase>[] groups) =>
-        groups.SelectMany(static group => group).ToArray();
+    private static IReadOnlyList<ConformanceCaseSelection> EnumerateCases(params IEnumerable<IConformanceCase>[] groups) =>
+        groups.SelectMany(static group => group)
+            .Select(static testCase => new ConformanceCaseSelection(testCase))
+            .ToArray();
 
     private static async Task RunBatchesAsync<T>(
         IReadOnlyList<T> items,
@@ -270,7 +273,7 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
 
     private async Task ExecuteServiceCasesAsync(
         string service,
-        IReadOnlyList<IConformanceCase> cases,
+        IReadOnlyList<ConformanceCaseSelection> cases,
         ConformanceCaseContext context)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(service);
@@ -282,8 +285,22 @@ public sealed class RealAzureConformanceEvidenceTests(RealAzureProxyFixture fixt
             Timeout = TimeSpan.FromMinutes(2),
         };
 
-        foreach (var testCase in cases)
+        foreach (var selection in cases)
         {
+            var testCase = selection.Case;
+            if (selection.ShouldSkip)
+            {
+                store.SaveSkipped(new ConformanceEvidenceMetadata(
+                    ConformanceEvidenceMetadata.SourceRealAzureProxy,
+                    service,
+                    testCase.Name,
+                    testCase.Operation,
+                    ConformanceEvidenceStore.SkippedStepName,
+                    DateTimeOffset.UtcNow,
+                    SkippedReason: selection.SkipReason));
+                continue;
+            }
+
             var plan = await testCase.CreatePlanAsync(context).ConfigureAwait(false);
             if (plan.Steps.Count != testCase.Expected.Steps.Count)
             {

@@ -17,7 +17,8 @@ public sealed record ConformanceEvidenceMetadata(
     string Operation,
     string Step,
     DateTimeOffset CapturedAtUtc,
-    string? Note = null)
+    string? Note = null,
+    string? SkippedReason = null)
 {
     public const string SourceRealAzureProxy = "real-azure-proxy";
 }
@@ -41,6 +42,7 @@ public sealed record ConformanceEvidenceFile(
 public sealed class ConformanceEvidenceStore
 {
     private const string EvidenceFileSuffix = ".evidence";
+    public const string SkippedStepName = "skipped";
     private readonly string _root;
 
     public ConformanceEvidenceStore(string root)
@@ -95,6 +97,21 @@ public sealed class ConformanceEvidenceStore
         File.WriteAllText(path, Serialize(response, metadata));
     }
 
+    public void SaveSkipped(ConformanceEvidenceMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        if (string.IsNullOrWhiteSpace(metadata.SkippedReason))
+        {
+            throw new ArgumentException(
+                "Skipped evidence metadata must include a skipped reason.",
+                nameof(metadata));
+        }
+
+        var path = PathFor(metadata.Service, metadata.CaseName, metadata.Step);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, SerializeSkipped(metadata));
+    }
+
     internal static string Serialize(
         CanonicalResponse response,
         ConformanceEvidenceMetadata metadata)
@@ -117,6 +134,26 @@ public sealed class ConformanceEvidenceStore
         return builder.ToString();
     }
 
+    internal static string SerializeSkipped(ConformanceEvidenceMetadata metadata)
+    {
+        var builder = new StringBuilder();
+        builder.Append("# aws2azure conformance evidence\n");
+        builder.Append("# source: ").Append(metadata.Source).Append('\n');
+        builder.Append("# service: ").Append(metadata.Service).Append('\n');
+        builder.Append("# case: ").Append(metadata.CaseName).Append('\n');
+        builder.Append("# operation: ").Append(metadata.Operation).Append('\n');
+        builder.Append("# step: ").Append(metadata.Step).Append('\n');
+        builder.Append("# captured: ").Append(metadata.CapturedAtUtc.ToString("O")).Append('\n');
+        if (!string.IsNullOrWhiteSpace(metadata.Note))
+        {
+            builder.Append("# note: ").Append(metadata.Note).Append('\n');
+        }
+
+        builder.Append("# skipped: ").Append(metadata.SkippedReason).Append('\n');
+        builder.Append("# ---\n");
+        return builder.ToString();
+    }
+
     internal static ConformanceEvidenceFile Parse(string text)
     {
         string source = "unknown";
@@ -126,6 +163,7 @@ public sealed class ConformanceEvidenceStore
         string step = "unknown";
         DateTimeOffset captured = default;
         string? note = null;
+        string? skippedReason = null;
         var body = new StringBuilder();
 
         using var reader = new StringReader(text);
@@ -168,6 +206,9 @@ public sealed class ConformanceEvidenceStore
                         case "note":
                             note = value;
                             break;
+                        case "skipped":
+                            skippedReason = value;
+                            break;
                     }
                 }
 
@@ -185,7 +226,8 @@ public sealed class ConformanceEvidenceStore
                 operation,
                 step,
                 captured,
-                note),
+                note,
+                skippedReason),
             body.ToString());
     }
 }

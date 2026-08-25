@@ -261,7 +261,7 @@ public static class DynamoDbHappyPathMatrix
             ],
             semanticAssertion:
             "TransactGetItems must observe one coherent snapshot: the item written by the Put succeeds and is present, while the ConditionCheck-only key stays absent."),
-            static (context, _) =>
+            createPlanAsync: static (context, _) =>
             {
                 var table = context.GetProperty("transactTableName") ?? ("conf-happy-transact-table-" + Guid.NewGuid().ToString("N")[..12]);
                 const string pk = "pk-transact";
@@ -280,7 +280,8 @@ public static class DynamoDbHappyPathMatrix
                     new ConformanceRequestStep("delete-table", _ => BuildRequest(context, "DeleteTable",
                         $@"{{""TableName"":""{table}""}}")),
                 ], Tier1SkipReason));
-            });
+            },
+            requiresStoredProcedures: true);
 
     /// <summary>
     /// PutItem/UpdateItem/GetItem round-trip exercising the UpdateExpression

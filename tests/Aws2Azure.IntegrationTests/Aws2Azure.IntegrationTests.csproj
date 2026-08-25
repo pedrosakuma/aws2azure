@@ -73,6 +73,8 @@
              Link="Conformance\DynamoDb\DynamoDbErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs"
              Link="Conformance\DynamoDb\DynamoDbHappyPathMatrix.cs" />
+    <Compile Include="..\Aws2Azure.Conformance\DynamoDb\DynamoDbRealAzureEvidenceCaseSelector.cs"
+             Link="Conformance\DynamoDb\DynamoDbRealAzureEvidenceCaseSelector.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Kinesis\KinesisErrorMatrix.cs"
              Link="Conformance\Kinesis\KinesisErrorMatrix.cs" />
     <Compile Include="..\Aws2Azure.Conformance\Kinesis\KinesisHappyPathMatrix.cs"
