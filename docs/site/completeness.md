@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 0 | 0 | 121 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
@@ -125,7 +125,8 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-_No remaining feasible backlog is documented for this service._
+- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+- Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
 
 ### Workload maturity
 
@@ -249,6 +250,7 @@ _No remaining feasible backlog is documented for this service._
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-acls--x-amz-acl) / ACLs (x-amz-acl) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-object-lock---legal-hold---retention) / Object Lock / Legal Hold / Retention — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-server-side-encryption--sse-s3-sse-kms-sse-c) / server-side encryption (SSE-S3, SSE-KMS, SSE-C) — 🔵 by design
+- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-storage-class--x-amz-storage-class) / storage-class (x-amz-storage-class) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-versioning--x-amz-version-id) / versioning (x-amz-version-id) — 🔵 by design
 - Sub-feature [PutPublicAccessBlock](operations/s3/putpublicaccessblock.md#sub-feature-public-access-enforcement) / public-access enforcement — 🔵 by design
 - Sub-feature [RestoreObject](operations/s3/restoreobject.md#sub-feature-operation) / operation — 🔵 by design
