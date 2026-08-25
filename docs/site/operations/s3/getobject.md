@@ -61,6 +61,7 @@ response-content-type / response-content-disposition / response-content-encoding
 - The default object Content-Type when Azure has none is binary/octet-stream to match observed S3 behavior.
 - x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
 - Completed multipart objects carry a proxy-reserved hidden metadata marker recording the committed part count so later GetObject/HeadObject responses can keep the multipart-shaped ETag dash suffix, including one-part completes; the marker is not surfaced back as x-amz-meta-* and client writes using that reserved metadata name are ignored.
+- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not emitted on GetObject responses; Azure Blob exposes Content-MD5 but does not surface AWS's algorithm-specific flexible-checksum headers for reads, and the proxy does not synthesize them.
 - x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme]
 - Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host.
 - Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2]

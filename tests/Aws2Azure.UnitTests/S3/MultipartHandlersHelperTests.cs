@@ -49,6 +49,32 @@ public sealed class MultipartHandlersHelperTests
         Assert.Equal("InvalidArgument", result.Error.Value.Code);
     }
 
+    [Fact]
+    public void Normalize_copy_source_range_rejects_ranges_larger_than_five_gib()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["x-amz-copy-source-range"] = "bytes=0-5368709120";
+
+        var result = Invoke<(string? Value, S3ErrorMapping.Mapping? Error)>("NormalizeCopySourceRange", context.Request);
+
+        Assert.Null(result.Value);
+        Assert.NotNull(result.Error);
+        Assert.Equal("InvalidRequest", result.Error.Value.Code);
+    }
+
+    [Fact]
+    public void Normalize_copy_source_range_rejects_overflowing_ranges_larger_than_five_gib()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["x-amz-copy-source-range"] = "bytes=0-9223372036854775807";
+
+        var result = Invoke<(string? Value, S3ErrorMapping.Mapping? Error)>("NormalizeCopySourceRange", context.Request);
+
+        Assert.Null(result.Value);
+        Assert.NotNull(result.Error);
+        Assert.Equal("InvalidRequest", result.Error.Value.Code);
+    }
+
     [Theory]
     [InlineData(null, 1000, null)]
     [InlineData("0", 1000, null)]

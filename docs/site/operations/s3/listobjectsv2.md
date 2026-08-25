@@ -61,6 +61,7 @@
 - Pagination is server-driven against Azure; the proxy paginates internally to fill max-keys.
 - Blob storage is flat — delimiter-based grouping is computed by Azure and surfaced as CommonPrefixes.
 - CommonPrefixes are de-duplicated across Azure pages.
+- Contents.StorageClass is always STANDARD. Azure Blob listings expose Azure access tiers, not AWS storage classes, and the proxy currently does not map or persist an AWS-equivalent class.
 - NextContinuationToken / ContinuationToken use a proxy-defined opaque encoding of Azure's marker rather than AWS's token format; clients must treat them as opaque. [conformance:list-objects-v2-pagination::field-value:NextContinuationToken] [conformance:list-objects-v2-pagination::field-value:ContinuationToken]
 - Offline Tier-3 real-AWS vs real-Azure diffs normalize the echoed bucket Name field when captures were recorded against different ephemeral bucket names for the same case. [conformance:list-objects-v2-pagination::field-value:Name]
 

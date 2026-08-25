@@ -37,6 +37,20 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 
 **Gap.** Request's metadata + Content-Type override source via standard header forwarding.
 
+### x-amz-tagging-directive=COPY (default) {#sub-feature-x-amz-tagging-directivecopy--default}
+
+- **Capability ID:** `sub-feature:s3:copyobject:x-amz-tagging-directivecopy--default`
+- **Status:** ✅ implemented
+
+**Gap.** The proxy reads the source blob tags via Azure Get Blob Tags and reapplies them to the destination with Azure Put Blob Tags after the copy succeeds.
+
+### x-amz-tagging-directive=REPLACE {#sub-feature-x-amz-tagging-directivereplace}
+
+- **Capability ID:** `sub-feature:s3:copyobject:x-amz-tagging-directivereplace`
+- **Status:** ✅ implemented
+
+**Gap.** x-amz-tagging is parsed and validated with the same rules as PutObject, then applied to the destination with Azure Put Blob Tags after the copy succeeds.
+
 ### versionId source qualifier {#sub-feature-versionid-source-qualifier}
 
 - **Capability ID:** `sub-feature:s3:copyobject:versionid-source-qualifier`
@@ -61,6 +75,7 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 ## Behaviour differences
 
 - Intra-account copies are synchronous on Azure; the proxy verifies x-ms-copy-status=success before responding 200.
+- Tag COPY/REPLACE semantics require additional Azure tag calls outside the copy itself (Get Blob Tags on the source for COPY, then Put Blob Tags on the destination). Tag application is therefore non-atomic with the data copy: if the post-copy tag write fails, CopyObject returns that error even though the destination bytes were already copied.
 - ETag in CopyObjectResult is normalised to the same S3-shaped, proxy-translated value HEAD/GET emit for the destination blob (synthetic MD5 of Azure's raw ETag when Content-MD5 is absent), so clients can reuse it across operations without seeing two different ETags for the same object.
 - x-amz-copy-source-version-id is not emitted on the CopyObject response; Azure's Copy Blob response does not surface the source blob's version id (Azure returns x-ms-copy-source but no source-version header), so the proxy has no equivalent value to translate back to S3's per-copy header. [conformance:copy-object-roundtrip::missing-header:x-amz-copy-source-version-id]
 - x-amz-server-side-encryption is not emitted on the CopyObject response; Azure's Copy Blob response reports encryption state via x-ms-server-encrypted rather than a header the proxy currently mirrors onto CopyObject 200s. [conformance:copy-object-roundtrip::missing-header:x-amz-server-side-encryption]
