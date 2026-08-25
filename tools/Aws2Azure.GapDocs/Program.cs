@@ -26,6 +26,11 @@ if (args.Length > 0 && args[0] == "certify-workload")
     return CertifyWorkload(args[1..], repoRoot, gapsRoot);
 }
 
+if (args.Length > 0 && args[0] == "check-test-references")
+{
+    return CheckTestReferences(args[1..], repoRoot, gapsRoot);
+}
+
 if (args.Length > 0 && args[0] == "plan-conformance")
 {
     return PlanConformance(
@@ -478,6 +483,77 @@ static int CheckWorkload(string[] args, string gapsRoot)
     }
 
     return failOnBlocked && report.Compatibility == "blocked" ? 2 : 0;
+}
+
+static int CheckTestReferences(string[] args, string repoRoot, string gapsRoot)
+{
+    var format = "text";
+    string? outputPath = null;
+    for (var index = 0; index < args.Length; index++)
+    {
+        switch (args[index])
+        {
+            case "--format" when index + 1 < args.Length
+                                 && !args[index + 1].StartsWith("--", StringComparison.Ordinal):
+                format = args[++index].ToLowerInvariant();
+                break;
+            case "--output" when index + 1 < args.Length
+                                 && !args[index + 1].StartsWith("--", StringComparison.Ordinal):
+                outputPath = args[++index];
+                break;
+            default:
+                Console.Error.WriteLine(
+                    "Usage: Aws2Azure.GapDocs check-test-references [--format text|json] [--output <path>]");
+                return 1;
+        }
+    }
+
+    if (format is not ("text" or "json"))
+    {
+        Console.Error.WriteLine($"Unknown format '{format}'; expected text or json.");
+        return 1;
+    }
+
+    try
+    {
+        var docs = Loader.LoadAll(gapsRoot);
+        var designDocs = Loader.LoadDesignDocs(gapsRoot);
+        var migration = Loader.LoadRealAzureMigration(gapsRoot);
+        var errors = new List<string>();
+        errors.AddRange(Validator.Validate(docs, migration, DateOnly.FromDateTime(DateTime.UtcNow)));
+        errors.AddRange(Validator.ValidateDesign(designDocs, docs));
+        if (errors.Count > 0)
+        {
+            WriteErrors("gap-doc validation", errors);
+            return 1;
+        }
+
+        var findings = GapTestReferenceAudit.FindMissingReferences(docs);
+        var content = format == "json"
+            ? JsonSerializer.Serialize(
+                findings,
+                new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine
+            : GapTestReferenceAudit.RenderText(findings, repoRoot);
+
+        if (outputPath is null)
+        {
+            Console.Write(content);
+        }
+        else
+        {
+            File.WriteAllText(outputPath, content);
+        }
+
+        return 0;
+    }
+    catch (Exception exception) when (exception is YamlException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
 }
 
 static int PlanConformance(string[] args, string gapsRoot, string defaultMatrixPath)

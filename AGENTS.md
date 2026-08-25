@@ -171,6 +171,12 @@ Every implemented (or stubbed) operation **must** have a YAML at
 The YAML is the **single source of truth** — code reads from it, not the
 reverse.
 
+- Closing or accepting a documented gap requires executable evidence, not prose
+  alone: every `behavior_differences` item and every non-`implemented`
+  `sub_features` entry must cite or add a test that asserts the documented
+  behavior (for example an inline `[conformance:...]` tag or a fully-qualified
+  test name).
+
 Regenerate after editing any YAML:
 
 ```
