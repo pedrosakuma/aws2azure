@@ -40,6 +40,6 @@ A historical GA statement never overrides a later `candidate`, `conditional`, or
 - [Configuration schema](https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/config.schema.json)
 
 Current workload authority was evaluated at `2026-08-25T01:28:30Z`.
-Canonical workload inputs revision: `sha256:104e5c6bebfd7995410b3fd8aa9cec63bed798e7284be05335e94d62f011f817`.
+Canonical workload inputs revision: `sha256:f9fededa92ad4e3162d8c737b0e42607264250d7a1862dba24709ea099928c67`.
 Evaluator implementation revision: `sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f`.
-Documentation manifest revision: `sha256:68a70e73b8b2eaf12fd933cf7ffa25270cd78d2f74741352a5c8b470dc382d3d`.
+Documentation manifest revision: `sha256:63cc699f55de8f80c6f86f1e8c64b422ad50490211d8985e18f4b979329e8c6b`.

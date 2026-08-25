@@ -22,7 +22,9 @@ internal sealed record DeleteSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
     [property: JsonPropertyName("DeletionDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset DeletionDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("DeletedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? DeletedDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("VersionId")] string? VersionId);
 
 internal sealed record DescribeSecretResponse(
@@ -63,9 +65,12 @@ internal sealed record SecretsManagerTag(
 internal sealed record UpdateSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
-    [property: JsonPropertyName("VersionId")] string VersionId,
-    [property: JsonPropertyName("VersionStages")] IReadOnlyList<string> VersionStages,
-    [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonPropertyName("VersionId")] string? VersionId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonPropertyName("VersionStages")] IReadOnlyList<string>? VersionStages,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? CreatedDate);
 
 internal sealed record PutSecretValueResponse(
     [property: JsonPropertyName("ARN")] string Arn,

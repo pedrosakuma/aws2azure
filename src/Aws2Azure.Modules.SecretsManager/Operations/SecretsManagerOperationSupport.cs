@@ -29,6 +29,13 @@ internal static class SecretsManagerOperationSupport
         await context.Response.BodyWriter.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
 
+    public static Task WriteEmptySuccessAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = JsonContentType;
+        return Task.CompletedTask;
+    }
+
     public static async Task<JsonDocument> ReadJsonDocumentAsync(HttpContent content, CancellationToken cancellationToken)
     {
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -46,6 +53,33 @@ internal static class SecretsManagerOperationSupport
             && property.TryGetInt32(out var value)
             ? value
             : null;
+
+    public static bool? ReadBool(JsonDocument document, string propertyName)
+        => document.RootElement.TryGetProperty(propertyName, out var property)
+            && (property.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            ? property.GetBoolean()
+            : null;
+
+    public static void ValidateExactlyOneSecretValue(string? secretString, string? secretBinary)
+    {
+        var hasString = !string.IsNullOrEmpty(secretString);
+        var hasBinary = !string.IsNullOrEmpty(secretBinary);
+        if (hasString == hasBinary)
+        {
+            throw new ArgumentException("Exactly one of SecretString or SecretBinary must be supplied.");
+        }
+    }
+
+    public static void ValidateAtMostOneSecretValue(string? secretString, string? secretBinary)
+    {
+        if (!string.IsNullOrEmpty(secretString) && !string.IsNullOrEmpty(secretBinary))
+        {
+            throw new ArgumentException("Exactly one of SecretString or SecretBinary must be supplied.");
+        }
+    }
+
+    public static bool HasSecretValue(string? secretString, string? secretBinary)
+        => !string.IsNullOrEmpty(secretString) || !string.IsNullOrEmpty(secretBinary);
 
     public static async Task<bool?> SecretExistsAsync(HttpContext context, KeyVaultSecretClient client, string token, string name, CancellationToken cancellationToken)
     {

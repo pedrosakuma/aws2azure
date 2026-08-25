@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
@@ -472,6 +473,164 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_CreateSecret_replays_client_request_token_without_new_put()
+    {
+        var expectedHash = KeyVaultSecretClient.GetPayloadSha256("super-secret", null);
+        var putCount = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Put)
+            {
+                putCount++;
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"value\":[{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/real-version\",\"attributes\":{{\"created\":1710000000}},\"tags\":{{\"aws2azure-client-request-token\":\"create-token\",\"aws2azure-payload-sha256\":\"{expectedHash}\",\"aws2azure-version-stages\":\"AWSCURRENT\",\"aws2azure-publication-state\":\"published\"}}}}]}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"super-secret\",\"ClientRequestToken\":\"create-token\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(0, putCount);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("create-token", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionStages")[0].GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_CreateSecret_replays_client_request_token_after_initial_put_conflict()
+    {
+        var expectedHash = KeyVaultSecretClient.GetPayloadSha256("super-secret", null);
+        var listAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            if (request.Method == HttpMethod.Put)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                listAttempts++;
+                var body = listAttempts == 1
+                    ? "{\"value\":[]}"
+                    : $"{{\"value\":[{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/real-version\",\"attributes\":{{\"created\":1710000000}},\"tags\":{{\"aws2azure-client-request-token\":\"create-token\",\"aws2azure-payload-sha256\":\"{expectedHash}\",\"aws2azure-version-stages\":\"AWSCURRENT\",\"aws2azure-publication-state\":\"published\"}}}}]}}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"super-secret\",\"ClientRequestToken\":\"create-token\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.True(listAttempts >= 2);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("create-token", document.RootElement.GetProperty("VersionId").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_CreateSecret_rejects_reused_client_request_token_with_different_payload()
+    {
+        var secretCreated = false;
+        var firstHash = KeyVaultSecretClient.GetPayloadSha256("first", null);
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(secretCreated ? HttpStatusCode.OK : HttpStatusCode.NotFound)
+                {
+                    Content = secretCreated
+                        ? new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/version-1\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json")
+                        : null,
+                });
+            }
+
+            if (request.Method == HttpMethod.Put && request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                secretCreated = true;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/version-1\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/secrets/demo/versions")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"value\":[{{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/version-1\",\"attributes\":{{\"created\":1710000000}},\"tags\":{{\"aws2azure-client-request-token\":\"create-token\",\"aws2azure-payload-sha256\":\"{firstHash}\",\"aws2azure-version-stages\":\"AWSCURRENT\",\"aws2azure-publication-state\":\"published\"}}}}]}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var firstContext = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"first\",\"ClientRequestToken\":\"create-token\"}");
+        await module.HandleAsync(firstContext);
+        Assert.Equal(StatusCodes.Status200OK, firstContext.Response.StatusCode);
+
+        var secondContext = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"second\",\"ClientRequestToken\":\"create-token\"}");
+        await module.HandleAsync(secondContext);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, secondContext.Response.StatusCode);
+        var body = await ReadBodyAsync(secondContext);
+        Assert.Contains("ResourceExistsException", body, StringComparison.Ordinal);
+        Assert.Contains("ClientRequestToken is already associated with a different secret value.", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HandleAsync_CreateSecret_only_sends_tag_payload_to_key_vault()
     {
         string? requestBody = null;
@@ -677,7 +836,44 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
-    public async Task HandleAsync_DeleteSecret_returns_aws_shape_without_version_id()
+    public async Task HandleAsync_UpdateSecret_rejects_metadata_only_description_updates_as_unsupported()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"tags\":{\"env\":\"dev\"},\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo\"}", Encoding.UTF8, "application/json"),
+            };
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"Description\":\"rotated creds\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("Metadata-only UpdateSecret requests are not supported", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_uses_key_vault_delete_schedule_in_response()
     {
         using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
         {
@@ -689,7 +885,10 @@ public sealed class SecretsManagerServiceModuleTests
                 });
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+            });
         }), ownsHandler: false);
 
         var module = CreateModule(http);
@@ -702,8 +901,395 @@ public sealed class SecretsManagerServiceModuleTests
         using var document = JsonDocument.Parse(body);
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
         Assert.Equal("arn:aws:secretsmanager:azure:keyvault:secret:demo", document.RootElement.GetProperty("ARN").GetString());
-        var deletedDate = DateTimeOffset.FromUnixTimeMilliseconds((long)Math.Round(document.RootElement.GetProperty("DeletedDate").GetDouble() * 1000d));
-        Assert.True(deletedDate <= DateTimeOffset.UtcNow.AddSeconds(5));
+        Assert.Equal(1710604800d, document.RootElement.GetProperty("DeletionDate").GetDouble());
+        Assert.False(document.RootElement.TryGetProperty("DeletedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("VersionId", out _));
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_accepts_recovery_window_but_returns_key_vault_schedule()
+    {
+        string? requestedUri = null;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUri = request.RequestUri.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"RecoveryWindowInDays\":30}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(requestedUri);
+        Assert.Contains("/secrets/demo?api-version=7.4", requestedUri, StringComparison.Ordinal);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal(1710604800d, document.RootElement.GetProperty("DeletionDate").GetDouble());
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_purges_deleted_secret()
+    {
+        var requestUris = new List<string>();
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestUris.Add(request.RequestUri.ToString());
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(requestUris, uri => uri.Contains("/secrets/demo?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains("/deletedsecrets/demo?api-version=7.4", StringComparison.Ordinal));
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal(1710000000d, document.RootElement.GetProperty("DeletionDate").GetDouble());
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_retries_until_deleted_secret_becomes_purgeable()
+    {
+        var purgeAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Delete)
+            {
+                purgeAttempts++;
+                return Task.FromResult(new HttpResponseMessage(purgeAttempts <= 8 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.True(purgeAttempts > 8);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_succeeds_when_secret_is_already_missing()
+    {
+        var requestUris = new List<string>();
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestUris.Add(request.RequestUri.ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(requestUris, uri => uri.Contains("/secrets/demo?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains("/deletedsecrets/demo?api-version=7.4", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_treats_missing_deleted_secret_as_success_after_delete()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("{\"SecretId\":\"demo\",\"RecoveryWindowInDays\":7,\"ForceDeleteWithoutRecovery\":true}", "mutually exclusive")]
+    public async Task HandleAsync_DeleteSecret_rejects_mutually_exclusive_recovery_options(string requestJson, string expectedMessage)
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", requestJson);
+
+        await module.HandleAsync(context);
+
+        Assert.False(backendCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains(expectedMessage, body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(31)]
+    public async Task HandleAsync_DeleteSecret_rejects_out_of_range_recovery_windows(int recoveryWindowInDays)
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", $"{{\"SecretId\":\"demo\",\"RecoveryWindowInDays\":{recoveryWindowInDays}}}");
+
+        await module.HandleAsync(context);
+
+        Assert.False(backendCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("between 7 and 30", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_rejects_non_int32_recovery_window_values()
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"RecoveryWindowInDays\":2147483648}");
+
+        await module.HandleAsync(context);
+
+        Assert.False(backendCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("must be an integer between 7 and 30", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_rejects_non_boolean_force_delete_values()
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":\"true\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.False(backendCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("must be a boolean", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_does_not_require_deleted_secret_get_permission()
+    {
+        var purgeAttempts = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+
+            purgeAttempts++;
+            return Task.FromResult(new HttpResponseMessage(purgeAttempts == 1 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(2, purgeAttempts);
+    }
+
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_reports_non_purgeable_vault_without_deleted_secret_get_permission()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable\"}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("enforces soft-delete retention", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "requires Key Vault purge permission", null)]
+    [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "enforces soft-delete retention", "{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable\"}}")]
+    public async Task HandleAsync_DeleteSecret_reports_force_delete_limitations_honestly(HttpStatusCode purgeStatus, int expectedStatusCode, string expectedMessage, string? deletedSecretResponseJson)
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(deletedSecretResponseJson ?? "{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(purgeStatus));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(expectedStatusCode, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains(expectedMessage, body, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -750,6 +1336,28 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.False(backendCalled);
         // It is a known operation (routed/metered), derived from the action table.
         Assert.Contains("RotateSecret", module.KnownOperations);
+    }
+
+    [Fact]
+    public async Task HandleAsync_UpdateSecretVersionStage_is_rejected_as_documented_unsupported_without_backend_call()
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.UpdateSecretVersionStage", "{\"SecretId\":\"demo\",\"VersionStage\":\"AWSCURRENT\",\"MoveToVersionId\":\"candidate\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("UpdateSecretVersionStage is recognised but not supported", body);
+        Assert.False(backendCalled);
+        Assert.Contains("UpdateSecretVersionStage", module.KnownOperations);
     }
 
     [Fact]
@@ -805,6 +1413,14 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public void NormalizeSecretName_round_trips_the_proxy_synthetic_arn_shape()
+    {
+        var arn = KeyVaultSecretClient.BuildArn("demo");
+
+        Assert.Equal("demo", KeyVaultSecretClient.NormalizeSecretName(arn));
+    }
+
+    [Fact]
     public async Task HandleAsync_PutSecretValue_returns_aws_shape_for_new_version()
     {
         var backend = new InMemoryKeyVaultHandler(
@@ -840,6 +1456,91 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal("token-1", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionStages")[0].GetString());
         Assert.Equal("BLUE", document.RootElement.GetProperty("VersionStages")[1].GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_TagResource_and_UntagResource_round_trip_tags_and_preserve_them_across_new_versions()
+    {
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("base", "old-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+                ["owner"] = "team-a",
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+
+        var tagContext = CreateContext("SecretsManager.TagResource", "{\"SecretId\":\"demo\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"dev\"}]}");
+        await module.HandleAsync(tagContext);
+        Assert.Equal(StatusCodes.Status200OK, tagContext.Response.StatusCode);
+        Assert.Equal(string.Empty, await ReadBodyAsync(tagContext));
+
+        var putContext = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}");
+        await module.HandleAsync(putContext);
+        Assert.Equal(StatusCodes.Status200OK, putContext.Response.StatusCode);
+
+        var describeContext = CreateContext("SecretsManager.DescribeSecret", "{\"SecretId\":\"demo\"}");
+        await module.HandleAsync(describeContext);
+        var describeBody = await ReadBodyAsync(describeContext);
+        using (var describeDocument = JsonDocument.Parse(describeBody))
+        {
+            var tags = describeDocument.RootElement.GetProperty("Tags").EnumerateArray().ToArray();
+            Assert.Contains(tags, tag => tag.GetProperty("Key").GetString() == "env" && tag.GetProperty("Value").GetString() == "dev");
+            Assert.Contains(tags, tag => tag.GetProperty("Key").GetString() == "owner" && tag.GetProperty("Value").GetString() == "team-a");
+        }
+
+        var untagContext = CreateContext("SecretsManager.UntagResource", "{\"SecretId\":\"demo\",\"TagKeys\":[\"owner\"]}");
+        await module.HandleAsync(untagContext);
+        Assert.Equal(StatusCodes.Status200OK, untagContext.Response.StatusCode);
+        Assert.Equal(string.Empty, await ReadBodyAsync(untagContext));
+
+        describeContext = CreateContext("SecretsManager.DescribeSecret", "{\"SecretId\":\"demo\"}");
+        await module.HandleAsync(describeContext);
+        describeBody = await ReadBodyAsync(describeContext);
+        using var afterUntagDocument = JsonDocument.Parse(describeBody);
+        var afterTags = afterUntagDocument.RootElement.GetProperty("Tags").EnumerateArray().ToArray();
+        Assert.Contains(afterTags, tag => tag.GetProperty("Key").GetString() == "env");
+        Assert.DoesNotContain(afterTags, tag => tag.GetProperty("Key").GetString() == "owner");
+    }
+
+    [Fact]
+    public async Task HandleAsync_TagResource_patches_the_current_version_uri()
+    {
+        string? patchUri = null;
+        using var http = new AzureHttpClient(new ScriptedHandler(async (request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/current123\",\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"},\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+                };
+            }
+
+            patchUri = request.RequestUri!.ToString();
+            await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/current123\"}", Encoding.UTF8, "application/json"),
+            };
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.TagResource", "{\"SecretId\":\"demo\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"dev\"}]}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(patchUri);
+        Assert.Contains("/secrets/demo/current123?api-version=7.4", patchUri, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1030,6 +1731,134 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Theory]
+    [InlineData("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\"value\",\"SecretBinary\":\"dmFsdWU=\"}")]
+    [InlineData("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"value\",\"SecretBinary\":\"dmFsdWU=\"}")]
+    [InlineData("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"SecretString\":\"value\",\"SecretBinary\":\"dmFsdWU=\"}")]
+    [InlineData("SecretsManager.CreateSecret", "{\"Name\":\"demo\"}")]
+    [InlineData("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\"}")]
+    public async Task HandleAsync_write_operations_require_exactly_one_secret_value_field(string target, string requestJson)
+    {
+        var backendCalled = false;
+        using var http = new AzureHttpClient(new ScriptedHandler((_, _) =>
+        {
+            backendCalled = true;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext(target, requestJson);
+
+        await module.HandleAsync(context);
+
+        Assert.False(backendCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("Exactly one of SecretString or SecretBinary must be supplied.", await ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task HandleAsync_CreateSecret_accepts_whitespace_secret_string()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.Method == HttpMethod.Get)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/new-version\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.CreateSecret", "{\"Name\":\"demo\",\"SecretString\":\" \"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_PutSecretValue_accepts_whitespace_secret_string()
+    {
+        using var http = new AzureHttpClient(new InMemoryKeyVaultHandler(
+            new SecretVersionState("base", "old-secret", 1_710_000_000, new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azure-version-stages"] = "AWSCURRENT",
+            })), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\" \"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ListSecrets_documents_that_filters_sort_and_planned_deletion_are_ignored()
+    {
+        string? requestedUri = null;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            requestedUri = request.RequestUri.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/unmatched\",\"tags\":{\"env\":\"prod\"},\"attributes\":{\"created\":1710000000}}]}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext(
+            "SecretsManager.ListSecrets",
+            "{\"Filters\":[{\"Key\":\"name\",\"Values\":[\"demo\"]}],\"SortBy\":\"name\",\"SortOrder\":\"desc\",\"IncludePlannedDeletion\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.NotNull(requestedUri);
+        Assert.DoesNotContain("planned", requestedUri, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sort", requestedUri, StringComparison.OrdinalIgnoreCase);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("unmatched", document.RootElement.GetProperty("SecretList")[0].GetProperty("Name").GetString());
+    }
+
+    [Fact]
+    public void SecretsManager_gap_docs_capture_the_documented_audit_findings()
+    {
+        var gapsPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", "docs/gaps/secretsmanager"));
+        var createYaml = File.ReadAllText(Path.Combine(gapsPath, "CreateSecret.yaml"));
+        var deleteYaml = File.ReadAllText(Path.Combine(gapsPath, "DeleteSecret.yaml"));
+        var listYaml = File.ReadAllText(Path.Combine(gapsPath, "ListSecrets.yaml"));
+        var designYaml = File.ReadAllText(Path.Combine(gapsPath, "_design.yaml"));
+        var updateStageYaml = File.ReadAllText(Path.Combine(gapsPath, "UpdateSecretVersionStage.yaml"));
+
+        Assert.Contains("ClientRequestToken is persisted on the first Key Vault version", createYaml, StringComparison.Ordinal);
+        Assert.Contains("ForceDeleteWithoutRecovery now maps to Key Vault delete followed by purge", deleteYaml, StringComparison.Ordinal);
+        Assert.Contains("Filters, SortBy, SortOrder, and IncludePlannedDeletion are currently ignored", listYaml, StringComparison.Ordinal);
+        Assert.Contains("synthetic `arn:aws:secretsmanager:azure:keyvault:secret:{name}` shape", designYaml, StringComparison.Ordinal);
+        Assert.Contains("recognised by the wire-protocol router", updateStageYaml, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("SecretsManager.UpdateSecret", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}")]
     [InlineData("SecretsManager.PutSecretValue", "{\"SecretId\":\"demo\",\"SecretString\":\"new-secret\"}")]
     public async Task HandleAsync_write_operations_preserve_key_vault_created_timestamp(string target, string requestJson)
@@ -1179,7 +2008,8 @@ public sealed class SecretsManagerServiceModuleTests
             var path = request.RequestUri.AbsolutePath;
             if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
             {
-                return JsonResponse("{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}");
+                var current = ResolveCurrentVersion();
+                return JsonResponse(BuildCurrentSecretJson(current));
             }
 
             if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo/versions", StringComparison.Ordinal))
@@ -1213,6 +2043,20 @@ public sealed class SecretsManagerServiceModuleTests
                 var version = new SecretVersionState("new-version", value, 1_710_000_200, tags);
                 _versions.Add(version);
                 return JsonResponse(BuildVersionJson(version, includeValue: false));
+            }
+
+            if (request.Method == HttpMethod.Patch && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
+            {
+                var current = ResolveCurrentVersion();
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                using var document = JsonDocument.Parse(body);
+                current.Tags.Clear();
+                foreach (var tag in ReadRequestTags(document.RootElement))
+                {
+                    current.Tags[tag.Key] = tag.Value;
+                }
+
+                return JsonResponse(BuildCurrentSecretJson(current), etag: "\"test-etag\"");
             }
 
             if (request.Method == HttpMethod.Patch && path.StartsWith("/secrets/demo/", StringComparison.Ordinal))
@@ -1277,6 +2121,28 @@ public sealed class SecretsManagerServiceModuleTests
             var builder = new StringBuilder();
             AppendVersionJson(builder, version, includeValue);
             return builder.ToString();
+        }
+
+        private string BuildCurrentSecretJson(SecretVersionState version)
+        {
+            var builder = new StringBuilder();
+            builder.Append("{\"id\":\"https://example.vault.azure.net/secrets/demo/");
+            builder.Append(version.VersionId);
+            builder.Append("\",\"attributes\":{\"created\":1710000000},\"tags\":");
+            builder.Append(JsonSerializer.Serialize(version.Tags));
+            builder.Append('}');
+            return builder.ToString();
+        }
+
+        private SecretVersionState ResolveCurrentVersion()
+        {
+            var current = _versions
+                .Where(version => version.Tags.TryGetValue("aws2azure-version-stages", out var stages)
+                    && stages.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains("AWSCURRENT", StringComparer.Ordinal))
+                .OrderByDescending(version => version.Created)
+                .ThenByDescending(version => version.VersionId, StringComparer.Ordinal)
+                .FirstOrDefault();
+            return current ?? _versions.OrderByDescending(version => version.Created).ThenByDescending(version => version.VersionId, StringComparer.Ordinal).First();
         }
 
         private static void AppendVersionJson(StringBuilder builder, SecretVersionState version, bool includeValue)
