@@ -639,7 +639,7 @@ services:
         description: ChangeMessageVisibilityBatch on the dedicated REST lane preserves per-entry success and failure while zero-timeout entries immediately redeliver and renewed entries stay hidden past the original lock expiry.
         operations: [ChangeMessageVisibilityBatch]
         tests:
-          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.ChangeMessageVisibilityBatch_mixes_zero_timeout_lock_renewal_and_invalid_handles_against_real_service_bus
+          - Aws2Azure.IntegrationTests.Sqs.SqsRealAzureConformanceTests.ChangeMessageVisibilityBatch_rest_lane_documents_delayed_zero_timeout_redelivery_against_real_service_bus
       - id: queue-metadata-and-tags
         priority: p1
         category: core
