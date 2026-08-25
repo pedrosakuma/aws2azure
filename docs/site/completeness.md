@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 22 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
@@ -135,11 +135,14 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [Account-level recovery and delete-retention features remain operator-provisioned](design-gaps/s3/account-level-recovery-and-delete-retention-features-remain-operator-provisioned.md) — 🔵 by design
 - Design gap [Bucket sub-resource configs are not translated](design-gaps/s3/bucket-sub-resource-configs-are-not-translated.md) — 🔵 by design
 - Design gap [Multipart per-part ETag validation cannot be reproduced](design-gaps/s3/multipart-per-part-etag-validation-cannot-be-reproduced.md) — 🔵 by design
 - Design gap [Multipart upload keeps bounded durable proxy state](design-gaps/s3/multipart-upload-keeps-bounded-durable-proxy-state.md) — 🔵 by design
 - Design gap [No IAM / ACL / bucket-policy authorization model](design-gaps/s3/no-iam---acl---bucket-policy-authorization-model.md) — 🔵 by design
 - Design gap [No enforceable server-side-encryption configuration surface](design-gaps/s3/no-enforceable-server-side-encryption-configuration-surface.md) — 🔵 by design
+- Design gap [Object-lock-capable storage accounts must be provisioned up front](design-gaps/s3/object-lock-capable-storage-accounts-must-be-provisioned-up-front.md) — 🔵 by design
+- Design gap [Secondary-region blob reads are not attempted automatically](design-gaps/s3/secondary-region-blob-reads-are-not-attempted-automatically.md) — 🔵 by design
 - Operation [DeleteBucketCors](operations/s3/deletebucketcors.md) — 🔵 by design
 - Operation [DeleteBucketEncryption](operations/s3/deletebucketencryption.md) — 🔵 by design
 - Operation [DeleteBucketLifecycle](operations/s3/deletebucketlifecycle.md) — 🔵 by design

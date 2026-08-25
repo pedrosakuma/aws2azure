@@ -242,7 +242,7 @@ _None — every implemented operation carries a real-Azure seal._
 | s3 | [DeleteBucketEncryption](operations/s3/deletebucketencryption.md) | — | A subsequent GetBucketEncryption returns the synthetic default SSE-S3 AES256 configuration. |
 | s3 | [DeleteBucketOwnershipControls](operations/s3/deletebucketownershipcontrols.md) | — | The operation clears persisted proxy intent only. |
 | s3 | [DeleteBucketTagging](operations/s3/deletebuckettagging.md) | ✅ | Azure replaces the full metadata bag; the proxy uses bounded ETag/If-Match retry and removes only its bucket-tagging key. |
-| s3 | [DeleteObject](operations/s3/deleteobject.md) | ✅ | Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request. |
+| s3 | [DeleteObject](operations/s3/deleteobject.md) | ✅ | Soft-delete behavior depends on the configured Azure storage account; the proxy does not toggle it per-request. When blob soft delete is enabled, a successful versionless delete can leave a recoverable soft-deleted blob (and retained billable bytes) until the Azure retention window expires. |
 | s3 | [DeleteObject](operations/s3/deleteobject.md) | ✅ | Real S3 returns x-amz-version-id on successful DeleteObject responses, but Azure Blob Delete Blob does not surface an equivalent response header even when blob versioning is enabled; Tier-3 diff allow-lists [conformance:missing-header:x-amz-version-id] for delete-object and delete-object-version teardown steps until Azure exposes one. |
 | s3 | [DeleteObject](operations/s3/deleteobject.md) | ✅ | Presigned DELETE is accepted (see PresignedUrl.yaml). |
 | s3 | [DeleteObjectTagging](operations/s3/deleteobjecttagging.md) | ✅ | Returns 204 No Content matching the S3 spec. |
@@ -375,7 +375,7 @@ _None — every implemented operation carries a real-Azure seal._
 | s3 | [PutObjectLegalHold](operations/s3/putobjectlegalhold.md) | ✅ | Verified against real Azure only - Azurite does not support legal hold. |
 | s3 | [PutObjectLockConfiguration](operations/s3/putobjectlockconfiguration.md) | — | PUT returns HTTP 501 NotImplemented to make the absence explicit; the matching GET returns the documented 'never configured' shape. |
 | s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ | Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3. |
-| s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ | Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); opt-in per topology. |
+| s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ | Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); Azure only allows version-level immutability support to be enabled when the storage account is created, so existing accounts without it must be replaced before adopting object-lock workloads. |
 | s3 | [PutObjectRetention](operations/s3/putobjectretention.md) | ✅ | Verified against real Azure only - Azurite does not support immutability policies. |
 | s3 | [PutObjectTagging](operations/s3/putobjecttagging.md) | ✅ | AWS uses 200 OK with empty body; the proxy matches that. |
 | s3 | [PutObjectTagging](operations/s3/putobjecttagging.md) | ✅ | Version selection depends on Azure Blob versioning being enabled by the operator. |

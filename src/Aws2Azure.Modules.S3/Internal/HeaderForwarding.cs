@@ -24,6 +24,7 @@ internal static class HeaderForwarding
     private const string DefaultObjectContentType = "binary/octet-stream";
     internal const string InternalMultipartPartCountMetadataName = "aws2azuremultipartparts";
     private const string AzureMetadataPrefix = "x-ms-meta-";
+    private const string AzureBlobContentMd5Header = "x-ms-blob-content-md5";
     private const string S3MetadataPrefix = "x-amz-meta-";
     // S3 request → Azure PUT/GET/HEAD/DELETE request.
     //
@@ -312,6 +313,11 @@ internal static class HeaderForwarding
             target.Headers[HeaderNames.ETag] = translatedEtag;
         }
 
+        if (TryGetBlobContentMd5(source, out var blobContentMd5))
+        {
+            target.Headers[HeaderNames.ContentMD5] = blobContentMd5;
+        }
+
         if (source.Headers.TryGetValues("x-ms-request-id", out var azureReqId))
         {
             foreach (var v in azureReqId)
@@ -558,23 +564,46 @@ internal static class HeaderForwarding
         }
 
         string? contentMd5Base64 = null;
-        if (source.Content is { } content
-            && content.Headers.TryGetValues(HeaderNames.ContentMD5, out var md5))
+        if (TryGetBlobContentMd5(source, out var md5))
         {
-            foreach (var value in md5)
-            {
-                if (!string.IsNullOrEmpty(value))
-                {
-                    contentMd5Base64 = value;
-                    break;
-                }
-            }
+            contentMd5Base64 = md5;
         }
 
         int? multipartPartCount = TryGetMultipartPartCount(source, out var partCount)
             ? partCount
             : null;
         return "\"" + TranslateAzureEtagToS3(azureEtag, contentMd5Base64, multipartPartCount) + "\"";
+    }
+
+    private static bool TryGetBlobContentMd5(HttpResponseMessage source, out string value)
+    {
+        if (source.Headers.TryGetValues(AzureBlobContentMd5Header, out var persistedValues))
+        {
+            foreach (var persisted in persistedValues)
+            {
+                if (!string.IsNullOrEmpty(persisted))
+                {
+                    value = persisted;
+                    return true;
+                }
+            }
+        }
+
+        if (source.Content is { } content
+            && content.Headers.TryGetValues(HeaderNames.ContentMD5, out var contentValues))
+        {
+            foreach (var contentMd5 in contentValues)
+            {
+                if (!string.IsNullOrEmpty(contentMd5))
+                {
+                    value = contentMd5;
+                    return true;
+                }
+            }
+        }
+
+        value = string.Empty;
+        return false;
     }
 
     /// <summary>

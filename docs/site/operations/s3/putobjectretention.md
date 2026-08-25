@@ -20,7 +20,7 @@ GOVERNANCE->Unlocked, COMPLIANCE->Locked; RetainUntilDate (ISO8601) -> x-ms-immu
 ## Behaviour differences
 
 - Azure locked policies are irreversible and extend-only; bypassing/shortening COMPLIANCE is rejected by Azure as in S3.
-- Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); opt-in per topology.
+- Requires the storage account to have version-level immutability + blob versioning enabled (operator-provisioned via ARM); Azure only allows version-level immutability support to be enabled when the storage account is created, so existing accounts without it must be replaced before adopting object-lock workloads.
 - Verified against real Azure only - Azurite does not support immutability policies.
 
 ## References
