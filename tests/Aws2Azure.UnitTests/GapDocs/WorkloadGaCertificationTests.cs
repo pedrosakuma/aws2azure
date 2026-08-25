@@ -22,18 +22,20 @@ public sealed class WorkloadGaCertificationTests
         Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
 
     [Theory]
-    [InlineData("s3-basic-object-crud.yaml", "ga", 22)]
-    [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 22)]
-    [InlineData("sqs-standard-messaging.yaml", "ga", 22)]
-    [InlineData("dynamodb-basic-crud.yaml", "conditional", 22)]
-    [InlineData("dynamodb-query-scan-indexes.yaml", "conditional", 22)]
-    [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 27)]
-    [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 22)]
-    [InlineData("sns-standard-publish-event-grid.yaml", "candidate", 22)]
-    [InlineData("kinesis-basic-record-ingestion.yaml", "candidate", 22)]
+    [InlineData("s3-basic-object-crud.yaml", "ga", 2026, 7, 22)]
+    [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 2026, 8, 25)]
+    [InlineData("sqs-standard-messaging.yaml", "ga", 2026, 7, 22)]
+    [InlineData("dynamodb-basic-crud.yaml", "conditional", 2026, 7, 22)]
+    [InlineData("dynamodb-query-scan-indexes.yaml", "conditional", 2026, 7, 22)]
+    [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 2026, 7, 27)]
+    [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 2026, 7, 22)]
+    [InlineData("sns-standard-publish-event-grid.yaml", "candidate", 2026, 7, 22)]
+    [InlineData("kinesis-basic-record-ingestion.yaml", "candidate", 2026, 7, 22)]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,
         string expectedVerdict,
+        int evaluationYear,
+        int evaluationMonth,
         int evaluationDay)
     {
         var manifest = LoadManifest(fileName);
@@ -44,7 +46,7 @@ public sealed class WorkloadGaCertificationTests
             Operations,
             Designs,
             RepoRoot,
-            AtEndOfUtcDay(2026, 7, evaluationDay));
+            AtEndOfUtcDay(evaluationYear, evaluationMonth, evaluationDay));
 
         Assert.Equal(expectedVerdict, report.Verdict);
     }
@@ -220,7 +222,7 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal(1, root.GetProperty("schema_version").GetInt32());
         Assert.False(root.TryGetProperty("profile", out _));
         Assert.Equal(
-            "2026-08-23T01:10:00Z",
+            EvaluationContract.EvaluatedAsOfUtc,
             root.GetProperty("evaluation").GetProperty("evaluated_as_of_utc").GetString());
         Assert.Equal(
             "pedrosakuma/aws2azure",
@@ -297,12 +299,12 @@ public sealed class WorkloadGaCertificationTests
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
             EvaluationContract,
-            UtcInstant(2026, 8, 23, 1, 10, 0),
+            UtcInstant(2026, 8, 25, 1, 28, 30),
             WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot)));
         Assert.Equal(
-            UtcInstant(2026, 8, 23, 1, 10, 0),
+            UtcInstant(2026, 8, 25, 1, 28, 30),
             WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(EvaluationContract));
     }
 
@@ -1106,7 +1108,7 @@ public sealed class WorkloadGaCertificationTests
             Assert.Equal("s3-basic-object-crud", legacy[0].ProfileId);
             var markdown = File.ReadAllText(markdownPath);
             Assert.Contains(
-                "Current adoption authority (as of `2026-08-23T01:10:00Z`)",
+                $"Current adoption authority (as of `{EvaluationContract.EvaluatedAsOfUtc}`)",
                 markdown,
                 StringComparison.Ordinal);
             Assert.Contains("| 4 | Release notes | Immutable historical record |", markdown, StringComparison.Ordinal);

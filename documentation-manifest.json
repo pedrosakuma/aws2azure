@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:655096545d014288e0ff89699e46041343602b2e8aef784e7fef2ad36c34df05",
+  "manifest_revision": "sha256:68a70e73b8b2eaf12fd933cf7ffa25270cd78d2f74741352a5c8b470dc382d3d",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -34,9 +34,9 @@
   "workload_authority": {
     "current_verdict_path": "docs/site/workload-ga.json",
     "contract_path": "docs/workloads/certification/authority.yaml",
-    "evaluated_as_of_utc": "2026-08-23T01:10:00Z",
+    "evaluated_as_of_utc": "2026-08-25T01:28:30Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:45441cf6263f3ba71b1f775cb62fc03d33a00102aca3b88939ac9f70b6544ca5",
+    "canonical_inputs_revision": "sha256:104e5c6bebfd7995410b3fd8aa9cec63bed798e7284be05335e94d62f011f817",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:fe1d280ad85d6f84407015d61d15cc9eac9a49cb156a374524137147ae9ac46f"
@@ -6378,7 +6378,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "secretsmanager-basic-lifecycle",
-      "revision": "sha256:6a5a43db0c0521c374e6b341c239f150eaacc3237551e04f5eb39b1fab06ab9c",
+      "revision": "sha256:cb6be48aec33ec5399472cc02a83e248f2243d3deb7a64ae9e67321658242ee7",
       "freshness": {
         "mode": "current"
       }
@@ -6392,7 +6392,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "secretsmanager-basic-lifecycle",
-      "revision": "sha256:b89320ef0d7810c3823eea967505026763de7f07111465acf3a2e0a1e3966565",
+      "revision": "sha256:15a36e20b739be7c2b2d424a074a03fa8f606a1d44f6ded5005cab5502699db7",
       "freshness": {
         "mode": "current"
       }
@@ -6851,10 +6851,10 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:597a931a77082550ee81f791137c1902550fa5cc760c35421377a2a1633ce6a5",
+      "revision": "sha256:69b3ed4678494055bb9032e00e75cfefe7a5459039af30d8c79f0a49e3d1992f",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T01:10:00Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
@@ -6865,10 +6865,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:5d0f7479d67c6e9badb6614989503a09ccad73594183ea3ba47cfb9f393af157",
+      "revision": "sha256:417cf781e92523ccffaa5d10bf7f830c9c54bd2642814804ba54fd95e4f50208",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T01:10:00Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
@@ -6879,10 +6879,10 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:bfd5d1881ccc99f7691b5837f6b0d82d0fd7187dca588e4b0ce3bfc5298a386c",
+      "revision": "sha256:afb8da721fec522abe5800ba18d3cdc6990ca5502a67e37057f5ac7f81ecb752",
       "freshness": {
         "mode": "point-in-time",
-        "evaluated_as_of_utc": "2026-08-23T01:10:00Z"
+        "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
       }
     },
     {
