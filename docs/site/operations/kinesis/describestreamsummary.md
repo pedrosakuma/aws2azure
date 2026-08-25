@@ -21,6 +21,7 @@ Accepts either StreamName or the synthetic aws2azure StreamARN and resolves the 
 
 - OpenShardCount is the Event Hub partition count; Event Hubs does not expose a separate open/closed shard lifecycle.
 - EnhancedMonitoring is always the empty [{ShardLevelMetrics: []}] shape and ConsumerCount is always 0 because Event Hubs does not expose Kinesis-compatible consumer metadata here.
+- EncryptionType is always NONE and KeyId is omitted because the proxy does not project Event Hubs encryption metadata into AWS Kinesis stream-summary fields.
 - Retention, creation metadata, and OpenShardCount are verified against a live two-partition Event Hubs namespace; emulator-focused runs may instead use a configured static partition count.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 

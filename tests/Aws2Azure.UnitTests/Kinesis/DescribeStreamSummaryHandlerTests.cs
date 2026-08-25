@@ -36,6 +36,7 @@ public sealed class DescribeStreamSummaryHandlerTests
         Assert.Equal(4, summary.GetProperty("OpenShardCount").GetInt32());
         Assert.Equal(0, summary.GetProperty("ConsumerCount").GetInt32());
         Assert.Equal("NONE", summary.GetProperty("EncryptionType").GetString());
+        Assert.False(summary.TryGetProperty("KeyId", out _));
     }
 
     [Fact]

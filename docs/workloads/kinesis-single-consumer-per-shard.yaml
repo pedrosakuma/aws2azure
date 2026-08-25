@@ -20,6 +20,7 @@ accepted_partial_operations:
   - kinesis:GetRecords
 accepted_design_gaps:
   - "kinesis:Synthetic sequence numbers and iterator positioning"
+  - "kinesis:No shard-level throughput emulation"
   - "kinesis:Iterator link lifetime and durable replay"
 evidence:
   qualification_artifact: ""

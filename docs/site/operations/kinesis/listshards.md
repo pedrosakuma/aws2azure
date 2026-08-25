@@ -65,7 +65,7 @@ Rejected with InvalidArgumentException.
 ## Behaviour differences
 
 - Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:Shards[].ShardId]
-- HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
+- HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments, and those advertised ranges do not predict the proxy's actual modulo-based PutRecord/PutRecords routing.
 - NextToken is an aws2azure-specific cursor, not an AWS-issued token; it encodes stream name + last shard id and expires after 5 minutes. [conformance:field-value:NextToken]
 - Real-AWS-vs-real-Azure pagination diffs can arise when the compared streams do not expose the same shard/partition count. The proxy only emits NextToken when additional mapped Event Hubs partitions remain; if the Azure-backed stream has fewer partitions than the AWS capture stream, later AWS pages may not exist and their expected NextToken will be absent. [conformance:missing-field:NextToken]
 - AT_TRIM_HORIZON and AT_TIMESTAMP remain unsupported because Event Hubs can add partitions after creation in Premium/Dedicated tiers, but its APIs do not expose the per-partition open timestamps needed to answer those historical shard-topology queries.

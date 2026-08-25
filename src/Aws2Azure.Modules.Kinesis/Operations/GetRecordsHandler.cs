@@ -162,9 +162,10 @@ internal static class GetRecordsHandler
         }
 
         if (position.StartsWith("sequence:", StringComparison.Ordinal)
-            && long.TryParse(position["sequence:".Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var directSequence))
+            && long.TryParse(position["sequence:".Length..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var directSequence)
+            && directSequence >= 0)
         {
-            return new EventHubsReceivePosition.FromSequenceExclusive(directSequence);
+            return new EventHubsReceivePosition.FromSequenceExclusive(AdjustSequenceBoundary(directSequence, inclusive));
         }
 
         if (position.StartsWith("time:", StringComparison.Ordinal)
@@ -180,6 +181,9 @@ internal static class GetRecordsHandler
 
     private static DateTimeOffset AdjustSequenceBoundary(DateTimeOffset timestamp, bool inclusive)
         => inclusive ? timestamp.AddMilliseconds(-1) : timestamp;
+
+    private static long AdjustSequenceBoundary(long sequenceNumber, bool inclusive)
+        => inclusive ? sequenceNumber - 1 : sequenceNumber;
 
     internal static bool TryExtractSyntheticSequenceTimestamp(string? sequenceNumber, out DateTimeOffset timestamp)
     {
@@ -278,9 +282,10 @@ internal static class GetRecordsHandler
     {
         writer.WriteStartObject();
 
-        Span<byte> sequenceNumber = stackalloc byte[20];
-        Utf8Formatter.TryFormat(message.SequenceNumber ?? 0L, sequenceNumber, out var sequenceBytes);
-        writer.WriteString("SequenceNumber"u8, sequenceNumber[..sequenceBytes]);
+        Span<byte> sequenceNumber = stackalloc byte[29];
+        "sequence:"u8.CopyTo(sequenceNumber);
+        Utf8Formatter.TryFormat(message.SequenceNumber ?? 0L, sequenceNumber["sequence:".Length..], out var sequenceBytes);
+        writer.WriteString("SequenceNumber"u8, sequenceNumber[..("sequence:".Length + sequenceBytes)]);
 
         writer.WriteBase64String("Data"u8, message.Body.Span);
 

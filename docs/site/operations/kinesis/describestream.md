@@ -27,8 +27,9 @@ Paginates the Event Hubs partition list and sets HasMoreShards when more mapped 
 ## Behaviour differences
 
 - Kinesis shards map 1:1 to Event Hubs partitions; shard ids are synthesised as shardId-<partitionId.PadLeft(12,'0')>. [conformance:field-value:StreamDescription.Shards[].ShardId]
-- HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments.
+- HashKeyRange values are a uniform even split of the 128-bit Kinesis hash space; Event Hubs does not expose AWS-compatible hash-key assignments, and those advertised ranges do not predict the proxy's actual modulo-based PutRecord/PutRecords routing.
 - SequenceNumberRange.StartingSequenceNumber is always '0' and open shards omit EndingSequenceNumber because Event Hubs partitions do not surface native Kinesis sequence numbers.
+- EncryptionType is always NONE and KeyId is omitted because the proxy does not project Event Hubs encryption metadata into AWS Kinesis stream-description fields.
 - Retention, creation metadata, and the two-partition topology are verified against a live Event Hubs namespace; emulator-focused runs may instead use a configured static partition count.
 - Stream lifecycle (CreateStream / DeleteStream / IncreaseStreamRetentionPeriod) is out of scope — Event Hubs entities are provisioned out-of-band via ARM.
 

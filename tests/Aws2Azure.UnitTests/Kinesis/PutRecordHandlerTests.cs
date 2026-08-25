@@ -84,6 +84,42 @@ public sealed class PutRecordHandlerTests
         Assert.Equal(firstPath, sender.EntityPath);
     }
 
+    [Fact]
+    public async Task HandleAsync_does_not_locally_enforce_per_shard_write_throughput()
+    {
+        var sender = new FakeAmqpSender();
+        var metadataCache = new FakeMetadataCache((_, _, _, _) => ValueTask.FromResult(
+            new EventHubDescription(1, ["0"], 7, DateTimeOffset.UtcNow)));
+        var requestBody = JsonSerializer.Serialize(new
+        {
+            StreamName = "orders",
+            Data = Convert.ToBase64String(new byte[PutRecordCommon.MaxDataBytes]),
+            PartitionKey = "same-shard",
+        });
+
+        var first = CreateContext();
+        await PutRecordHandler.HandleAsync(
+            first,
+            NewParseResult(requestBody),
+            NewCredentials(),
+            metadataCache,
+            sender,
+            CancellationToken.None);
+
+        var second = CreateContext();
+        await PutRecordHandler.HandleAsync(
+            second,
+            NewParseResult(requestBody),
+            NewCredentials(),
+            metadataCache,
+            sender,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, first.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status200OK, second.Response.StatusCode);
+        Assert.Equal(2, sender.SendCount);
+    }
+
     [Theory]
     [InlineData("{}", "One of StreamName or StreamARN is required.")]
     [InlineData("{\"StreamName\":\"orders\"}", "Data is required.")]
@@ -268,9 +304,11 @@ public sealed class PutRecordHandlerTests
         public string? EntityPath { get; private set; }
         public byte[]? BodyBytes { get; private set; }
         public Dictionary<string, object>? Annotations { get; private set; }
+        public int SendCount { get; private set; }
 
         public async Task SendAsync(EventHubsCredentials credentials, string namespaceFqdn, string entityPath, ReadOnlyMemory<byte> body, IReadOnlyDictionary<string, object>? annotations, CancellationToken cancellationToken)
         {
+            SendCount++;
             NamespaceFqdn = namespaceFqdn;
             EntityPath = entityPath;
             BodyBytes = body.ToArray();

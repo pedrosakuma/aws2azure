@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Globalization;
+using System.Text;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Modules.Kinesis.Errors;
 using Aws2Azure.Modules.Kinesis.EventHubsAmqp;
@@ -19,17 +20,6 @@ internal static class PutRecordsHandler
         IEventHubsAmqpSender amqpSender,
         CancellationToken cancellationToken)
     {
-        if (parseResult.Body.Length > PutRecordCommon.MaxRequestPayloadBytes)
-        {
-            await KinesisErrorResponse.WriteAsync(
-                    context,
-                    StatusCodes.Status400BadRequest,
-                    "ValidationException",
-                    $"Request body must not exceed {PutRecordCommon.MaxRequestPayloadBytes} bytes.")
-                .ConfigureAwait(false);
-            return;
-        }
-
         if (!KinesisMetadataSupport.TryDeserialize(
                 parseResult.Body,
                 KinesisJsonSerializerContext.Default.PutRecordsRequest,
@@ -103,6 +93,7 @@ internal static class PutRecordsHandler
         var validRecords = new List<ValidatedRecord>(request.Records.Count);
         var groupedByPartition = new Dictionary<int, List<ValidatedRecord>>();
         var failedRecordCount = 0;
+        long totalPayloadBytes = 0;
 
         try
         {
@@ -115,6 +106,18 @@ internal static class PutRecordsHandler
                 }
 
                 validRecords.Add(validated);
+                totalPayloadBytes += validated.PayloadBytes;
+                if (totalPayloadBytes > PutRecordCommon.MaxRequestPayloadBytes)
+                {
+                    await KinesisErrorResponse.WriteAsync(
+                            context,
+                            StatusCodes.Status400BadRequest,
+                            "ValidationException",
+                            $"Combined decoded record data and UTF-8 partition keys must not exceed {PutRecordCommon.MaxRequestPayloadBytes} bytes.")
+                        .ConfigureAwait(false);
+                    return;
+                }
+
                 if (!groupedByPartition.TryGetValue(validated.PartitionIndex, out var partitionRecords))
                 {
                     partitionRecords = new List<ValidatedRecord>();
@@ -226,6 +229,7 @@ internal static class PutRecordsHandler
         }
 
         var partitionIndex = PutRecordCommon.ComputePartitionIndex(record.PartitionKey!, eventHub.PartitionCount);
+        var payloadBytes = checked(dataLength + Encoding.UTF8.GetByteCount(record.PartitionKey!));
         validated = new ValidatedRecord(
             requestIndex,
             record.PartitionKey!,
@@ -233,7 +237,8 @@ internal static class PutRecordsHandler
             PutRecordCommon.ResolvePartitionId(eventHub, partitionIndex),
             PutRecordCommon.FormatShardId(partitionIndex),
             rented,
-            dataLength);
+            dataLength,
+            payloadBytes);
         return true;
     }
 
@@ -299,5 +304,6 @@ internal static class PutRecordsHandler
         string PartitionId,
         string ShardId,
         byte[] Buffer,
-        int DataLength);
+        int DataLength,
+        int PayloadBytes);
 }

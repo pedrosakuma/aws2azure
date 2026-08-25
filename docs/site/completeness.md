@@ -10,7 +10,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
-| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 12 |
+| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
@@ -103,6 +103,7 @@ _No remaining feasible backlog is documented for this service._
 
 - Design gap [Iterator link lifetime and durable replay](design-gaps/kinesis/iterator-link-lifetime-and-durable-replay.md) — 🔵 by design
 - Design gap [No resharding / enhanced fan-out / KCL lease model](design-gaps/kinesis/no-resharding---enhanced-fan-out---kcl-lease-model.md) — 🔵 by design
+- Design gap [No shard-level throughput emulation](design-gaps/kinesis/no-shard-level-throughput-emulation.md) — 🔵 by design
 - Design gap [Synthetic sequence numbers and iterator positioning](design-gaps/kinesis/synthetic-sequence-numbers-and-iterator-positioning.md) — 🔵 by design
 - Operation [DescribeStreamSummary](operations/kinesis/describestreamsummary.md) — 🔵 by design
 - Operation [DescribeStream](operations/kinesis/describestream.md) — 🔵 by design

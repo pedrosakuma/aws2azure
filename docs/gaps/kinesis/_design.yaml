@@ -2,11 +2,18 @@ service: kinesis
 design_gaps:
 - area: Synthetic sequence numbers and iterator positioning
   status: by_design
-  summary: Kinesis sequence numbers are minted by the proxy as (unixMs << 20) | counter and mapped to an Event Hubs enqueue-time position. AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER are therefore best-effort at millisecond granularity, and MillisBehindLatest is derived from the last record's enqueue timestamp versus the proxy clock.
-  impact: Records sharing a millisecond may be returned together at a sequence-based boundary; exact per-record sequence positioning is not reproducible. ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
-  workaround: Prefer TRIM_HORIZON / LATEST / AT_TIMESTAMP iterators where exact sequence positioning is not required.
+  summary: PutRecord/PutRecords sequence numbers are minted by the proxy as (unixMs << 20) | counter and mapped back to Event Hubs enqueue-time positions. GetRecords now returns round-trippable Event Hubs broker sequence tokens as sequence:<x-opt-sequence-number>, but synthetic write sequence numbers remain best-effort only at millisecond granularity.
+  impact: PutRecord/PutRecords sequence boundaries can include sibling records that share the same millisecond enqueue time; exact per-record replay from synthetic write sequence numbers is not reproducible. ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
+  workaround: Feed GetRecords-returned sequence:<n> tokens back into AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER when callers need exact replay of already-read records; otherwise prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP.
   references:
   - https://learn.microsoft.com/rest/api/eventhub/
+- area: No shard-level throughput emulation
+  status: by_design
+  summary: The proxy does not maintain a local Kinesis-style per-shard byte, record, or TPS budget for reads or writes. Requests flow through to Event Hubs and only Azure-originated throttles are mapped back to ProvisionedThroughputExceededException.
+  impact: A workload that AWS Kinesis would throttle at the shard boundary can still succeed locally until Azure Event Hubs applies its own namespace, partition, or consumer throttles.
+  workaround: Capacity-plan the backing Event Hub for the real workload and treat Kinesis shard throughput limits as documentation-only rather than enforced simulation.
+  references:
+  - https://docs.aws.amazon.com/kinesis/latest/dev/service-sizes-and-limits.html
 - area: Iterator link lifetime and durable replay
   status: by_design
   summary: Each proxy-issued shard iterator has a distinct identity and therefore a distinct pooled AMQP receiver link. Iterator chains advance independently while their links are live. The embedded continuation position recreates a link after failure, idle eviction, or restart, but the supported profile deliberately stops at one consumer loop per partition and consumer group.
@@ -28,6 +35,7 @@ workload_patterns:
   - PutRecords
   design_gaps:
   - Synthetic sequence numbers and iterator positioning
+  - No shard-level throughput emulation
   guidance: Use partition keys for routing and do not depend on SequenceNumberForOrdering or exact AWS sequence-number semantics.
 - id: kinesis_single_consumer_per_shard
   name: Single consumer per shard
@@ -39,6 +47,7 @@ workload_patterns:
   - GetRecords
   design_gaps:
   - Synthetic sequence numbers and iterator positioning
+  - No shard-level throughput emulation
   - Iterator link lifetime and durable replay
   guidance: Prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP and dedicate a consumer group to each independent consumer.
 - id: kinesis_shared_consumer_group_replay
