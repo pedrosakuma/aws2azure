@@ -161,6 +161,39 @@ public sealed class SubscribeHandlerTests
         Assert.Equal(20, first.Length);
     }
 
+    [Theory]
+    [InlineData("https", "not-a-valid-https-endpoint")]
+    [InlineData("http", "still-not-a-valid-http-endpoint")]
+    [InlineData("sqs", "not-an-sqs-arn")]
+    public async Task HandleAsync_accepts_unvalidated_endpoints_for_supported_protocols(string protocol, string endpoint)
+    {
+        var capturedMetadata = string.Empty;
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            capturedMetadata = SnsManagementClientTestSupport.ReadElementValue(body, "UserMetadata");
+            return new HttpResponseMessage(HttpStatusCode.Created);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SubscribeHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders"),
+                ("Protocol", protocol),
+                ("Endpoint", endpoint)),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var metadata = JsonSerializer.Deserialize(capturedMetadata, SnsSubscriptionJsonContext.Default.SnsSubscriptionMetadata);
+        Assert.NotNull(metadata);
+        Assert.Equal(protocol, metadata!.Protocol);
+        Assert.Equal(endpoint, metadata.Endpoint);
+    }
+
     [Fact]
     public async Task HandleAsync_stores_filter_policy_in_user_metadata()
     {

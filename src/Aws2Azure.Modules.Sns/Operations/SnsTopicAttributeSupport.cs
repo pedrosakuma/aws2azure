@@ -119,6 +119,7 @@ internal static class SnsTopicAttributeSupport
         ArgumentNullException.ThrowIfNull(metadata);
 
         if (string.IsNullOrWhiteSpace(metadata.DisplayName)
+            && string.IsNullOrWhiteSpace(metadata.SnsTopicName)
             && string.IsNullOrWhiteSpace(metadata.PolicyJson)
             && string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson)
             && metadata.FifoTopic is null
@@ -218,6 +219,7 @@ internal readonly record struct CreateTopicAttributes(
 
 internal sealed class SnsTopicMetadata
 {
+    public string? SnsTopicName { get; set; }
     public string? DisplayName { get; set; }
     public string? PolicyJson { get; set; }
     public string? DeliveryPolicyJson { get; set; }

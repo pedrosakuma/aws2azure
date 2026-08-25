@@ -7,6 +7,7 @@ using Aws2Azure.Modules.Sns;
 using Aws2Azure.Modules.Sns.Amqp;
 using Aws2Azure.Modules.Sns.EventGrid;
 using Aws2Azure.Modules.Sns.Management;
+using Aws2Azure.Modules.Sns.Operations;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -132,6 +133,148 @@ public sealed class SnsSubscriptionOperationsModuleTests
     }
 
     [Fact]
+    public async Task ServiceBusTopicName_alias_is_used_consistently_across_subscription_lifecycle()
+    {
+        var management = new FakeManagementClient();
+        var module = NewModule(
+            management,
+            configureServiceBusTopics: credentials =>
+            {
+                credentials.Topics = new Dictionary<string, SnsTopicSettings>
+                {
+                    ["orders"] = new()
+                    {
+                        ServiceBusTopicName = "orders.v2",
+                    },
+                };
+            });
+
+        var subscribeCtx = NewContext(
+            "Action=Subscribe&Version=2010-03-31" +
+            "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders" +
+            "&Protocol=https&Endpoint=https%3A%2F%2Fexample.com%2Fhooks%2Forders");
+        subscribeCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(subscribeCtx);
+
+        Assert.Equal(StatusCodes.Status200OK, subscribeCtx.Response.StatusCode);
+        var subscriptionKey = Assert.Single(management.Subscriptions.Keys);
+        Assert.StartsWith("orders.v2/", subscriptionKey, StringComparison.Ordinal);
+        var subscriptionArn = SnsManagementClientTestSupport.ReadElementValue(ReadBody(subscribeCtx), "SubscriptionArn");
+
+        var setCtx = NewContext(
+            "Action=SetSubscriptionAttributes&Version=2010-03-31" +
+            "&SubscriptionArn=" + Uri.EscapeDataString(subscriptionArn) +
+            "&AttributeName=RawMessageDelivery&AttributeValue=true");
+        setCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(setCtx);
+        Assert.Equal(StatusCodes.Status200OK, setCtx.Response.StatusCode);
+
+        var getCtx = NewContext(
+            "Action=GetSubscriptionAttributes&Version=2010-03-31" +
+            "&SubscriptionArn=" + Uri.EscapeDataString(subscriptionArn));
+        getCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(getCtx);
+
+        Assert.Equal(StatusCodes.Status200OK, getCtx.Response.StatusCode);
+        Assert.Contains("<key>RawMessageDelivery</key><value>true</value>", ReadBody(getCtx));
+
+        var unsubscribeCtx = NewContext(
+            "Action=Unsubscribe&Version=2010-03-31" +
+            "&SubscriptionArn=" + Uri.EscapeDataString(subscriptionArn));
+        unsubscribeCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(unsubscribeCtx);
+
+        Assert.Equal(StatusCodes.Status200OK, unsubscribeCtx.Response.StatusCode);
+        Assert.Empty(management.Subscriptions);
+    }
+
+    [Fact]
+    public async Task Subscribe_rejects_renamed_aliases_when_existing_topic_is_owned_by_another_sns_name()
+    {
+        var management = new FakeManagementClient();
+        management.Topics["orders.v2"] = new ServiceBusTopicDescription(
+            "orders.v2",
+            0,
+            false,
+            System.Text.Json.JsonSerializer.Serialize(
+                new SnsTopicMetadata
+                {
+                    SnsTopicName = "orders",
+                },
+                SnsTopicJsonContext.Default.SnsTopicMetadata),
+            null,
+            null);
+        var module = NewModule(
+            management,
+            configureServiceBusTopics: credentials =>
+            {
+                credentials.Topics = new Dictionary<string, SnsTopicSettings>
+                {
+                    ["payments"] = new()
+                    {
+                        ServiceBusTopicName = "orders.v2",
+                    },
+                };
+            });
+
+        var ctx = NewContext(
+            "Action=Subscribe&Version=2010-03-31" +
+            "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Apayments" +
+            "&Protocol=https&Endpoint=https%3A%2F%2Fexample.com%2Fhooks%2Fpayments");
+        ctx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+
+        await module.HandleAsync(ctx);
+
+        Assert.Equal(StatusCodes.Status404NotFound, ctx.Response.StatusCode);
+        Assert.Contains("Topic does not exist", ReadBody(ctx));
+        Assert.Empty(management.Subscriptions);
+    }
+
+    [Fact]
+    public async Task RawMessageDelivery_is_metadata_only_for_service_bus_publish_shape()
+    {
+        var management = new FakeManagementClient();
+        var sender = new RecordingSender();
+        var module = NewModule(management, sender: sender);
+
+        var subscribeCtx = NewContext(
+            "Action=Subscribe&Version=2010-03-31" +
+            "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders" +
+            "&Protocol=sqs&Endpoint=arn%3Aaws%3Asqs%3Aus-east-1%3A000000000000%3Astub-queue" +
+            "&Attributes.entry.1.key=RawMessageDelivery&Attributes.entry.1.value=true");
+        subscribeCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(subscribeCtx);
+        var subscriptionArn = SnsManagementClientTestSupport.ReadElementValue(ReadBody(subscribeCtx), "SubscriptionArn");
+
+        var publishCtx = NewContext(
+            "Action=Publish&Version=2010-03-31" +
+            "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        publishCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(publishCtx);
+        var firstBody = Encoding.UTF8.GetString(sender.SingleCall!.Value.Message.Body.Span);
+        var firstProperties = sender.SingleCall.Value.Message.ApplicationProperties;
+
+        var setCtx = NewContext(
+            "Action=SetSubscriptionAttributes&Version=2010-03-31" +
+            "&SubscriptionArn=" + Uri.EscapeDataString(subscriptionArn) +
+            "&AttributeName=RawMessageDelivery&AttributeValue=false");
+        setCtx.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(setCtx);
+
+        var publishCtx2 = NewContext(
+            "Action=Publish&Version=2010-03-31" +
+            "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aorders&Message=hello");
+        publishCtx2.Items["aws2azure.accessKeyId"] = "AKIAEXAMPLE";
+        await module.HandleAsync(publishCtx2);
+        var secondBody = Encoding.UTF8.GetString(sender.SingleCall!.Value.Message.Body.Span);
+        var secondProperties = sender.SingleCall.Value.Message.ApplicationProperties;
+
+        Assert.Equal("hello", firstBody);
+        Assert.Equal(firstBody, secondBody);
+        Assert.Equal(firstProperties is null, secondProperties is null);
+    }
+
+    [Fact]
     public async Task Unsubscribe_requires_a_subscription_arn()
     {
         var module = NewModule();
@@ -214,17 +357,22 @@ public sealed class SnsSubscriptionOperationsModuleTests
         Assert.Contains("<key>DisplayName</key><value>Updated</value>", body);
     }
 
-    private static SnsServiceModule NewModule(IServiceBusTopicsManagementClient? managementClient = null)
+    private static SnsServiceModule NewModule(
+        IServiceBusTopicsManagementClient? managementClient = null,
+        ISnsAmqpSender? sender = null,
+        IEventGridPublisher? eventGridPublisher = null,
+        Action<ServiceBusTopicsCredentials>? configureServiceBusTopics = null,
+        SnsSettings? settings = null)
         => new(
-            GetResolver(),
-            new SnsSettings(),
+            GetResolver(configureServiceBusTopics),
+            settings ?? new SnsSettings(),
             managementClient ?? new FakeManagementClient(),
-            new NoopSender(),
-            new NoopEventGridPublisher(),
+            sender ?? new NoopSender(),
+            eventGridPublisher ?? new NoopEventGridPublisher(),
             NullLogger<SnsServiceModule>.Instance,
             new CapabilityMatrix("sns", []));
 
-    private static ICredentialResolver GetResolver()
+    private static ICredentialResolver GetResolver(Action<ServiceBusTopicsCredentials>? configureServiceBusTopics)
     {
         var azure = new AzureCredentials
         {
@@ -235,6 +383,7 @@ public sealed class SnsSubscriptionOperationsModuleTests
                 SasKey = "ZGVhZGJlZWY=",
             },
         };
+        configureServiceBusTopics?.Invoke(azure.ServiceBusTopics);
 
         return new StaticCredentialResolver(new ProxyConfig
         {
@@ -283,6 +432,20 @@ public sealed class SnsSubscriptionOperationsModuleTests
             => Task.CompletedTask;
 
         public Task<SnsBatchSendResult> PublishBatchAsync(EventGridPublishDestination destination, IReadOnlyList<EventGridPublishMessage> messages, CancellationToken cancellationToken)
+            => Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
+    }
+
+    private sealed class RecordingSender : ISnsAmqpSender
+    {
+        public (string NamespaceFqdn, string TopicName, SnsAmqpSendMessage Message)? SingleCall { get; private set; }
+
+        public Task SendAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, SnsAmqpSendMessage message, CancellationToken cancellationToken)
+        {
+            SingleCall = (namespaceFqdn, topicName, message);
+            return Task.CompletedTask;
+        }
+
+        public Task<SnsBatchSendResult> SendBatchAsync(ServiceBusTopicsCredentials credentials, string namespaceFqdn, string topicName, IReadOnlyList<SnsAmqpSendMessage> messages, CancellationToken cancellationToken)
             => Task.FromResult(new SnsBatchSendResult(messages.Select(_ => new SnsBatchSendOutcome(true, null, null, false)).ToArray()));
     }
 

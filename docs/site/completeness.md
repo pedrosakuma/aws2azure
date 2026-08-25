@@ -13,7 +13,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 16 |
-| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 17 |
+| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 19 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
 
 ## dynamodb
@@ -315,7 +315,9 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [Default Event Grid routing multiplexes multiple SNS topics](design-gaps/sns/default-event-grid-routing-multiplexes-multiple-sns-topics.md) — 🔵 by design
 - Design gap [Event Grid subscription management is excluded](design-gaps/sns/event-grid-subscription-management-is-excluded.md) — 🔵 by design
+- Design gap [Event Grid topic lifecycle remains external](design-gaps/sns/event-grid-topic-lifecycle-remains-external.md) — 🔵 by design
 - Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sns/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [No IAM-backed policy surface](design-gaps/sns/no-iam-backed-policy-surface.md) — 🔵 by design

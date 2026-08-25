@@ -19,6 +19,7 @@ Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader
 
 ## Behaviour differences
 
+- When credentials.serviceBusTopics.topics[*].serviceBusTopicName is configured for an exact SNS topic name, GetTopicAttributes reads the mapped Azure Service Bus topic while continuing to report the original SNS TopicArn in the response.
 - DisplayName, Policy, DeliveryPolicy, and EffectiveDeliveryPolicy come from aws2azure metadata stored in Service Bus TopicDescription.UserMetadata rather than native Service Bus topic fields.
 - Policy and DeliveryPolicy remain metadata-only compatibility state. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry policies, so GetTopicAttributes surfaces what aws2azure stored rather than a Service Bus-native enforcement model.
 - SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.

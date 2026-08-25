@@ -19,12 +19,26 @@ public sealed class ListTopicsHandlerTests
     {
         var managementClient = NewManagementClient((request, _) =>
         {
-            Assert.Equal(HttpMethod.Get, request.Method);
-            Assert.Equal("https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=0&$top=100", request.RequestUri!.ToString());
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            var uri = request.RequestUri!.ToString();
+            return uri switch
             {
-                Content = new StringContent(BuildFeed("orders", "payments"), Encoding.UTF8, "application/atom+xml"),
-            });
+                "https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=0&$top=100"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(BuildFeed("orders", "payments"), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                "https://myns.servicebus.windows.net/orders?api-version=2021-05"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders"), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                "https://myns.servicebus.windows.net/payments?api-version=2021-05"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("payments"), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                _ => throw new Xunit.Sdk.XunitException("Unexpected URI: " + uri)
+            };
         });
 
         var context = NewContext();
@@ -62,11 +76,24 @@ public sealed class ListTopicsHandlerTests
                 });
             }
 
-            Assert.Equal("https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=100&$top=100", uri);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            if (uri == "https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=100&$top=100")
             {
-                Content = new StringContent(BuildFeed("topic-100"), Encoding.UTF8, "application/atom+xml"),
-            });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(BuildFeed("topic-100"), Encoding.UTF8, "application/atom+xml"),
+                });
+            }
+
+            if (uri.StartsWith("https://myns.servicebus.windows.net/topic-", StringComparison.Ordinal))
+            {
+                var topicName = uri["https://myns.servicebus.windows.net/".Length..^"?api-version=2021-05".Length];
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry(topicName), Encoding.UTF8, "application/atom+xml"),
+                });
+            }
+
+            throw new Xunit.Sdk.XunitException("Unexpected URI: " + uri);
         });
 
         var firstContext = NewContext();
@@ -93,6 +120,105 @@ public sealed class ListTopicsHandlerTests
         var secondBody = ReadBody(secondContext);
         Assert.Contains("arn:aws:sns:us-west-2:000000000000:topic-100", secondBody);
         Assert.DoesNotContain("<NextToken>", secondBody);
+    }
+
+    [Fact]
+    public async Task HandleAsync_maps_alias_backed_topics_back_to_their_sns_names()
+    {
+        var topicMetadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                SnsTopicName = "orders",
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["orders"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            var uri = request.RequestUri!.ToString();
+            return uri switch
+            {
+                "https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=0&$top=100"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(BuildFeed("orders.v2"), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                "https://myns.servicebus.windows.net/orders.v2?api-version=2021-05"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.v2", userMetadata: topicMetadata), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                _ => throw new Xunit.Sdk.XunitException("Unexpected URI: " + uri)
+            };
+        });
+
+        var context = NewContext();
+        await ListTopicsHandler.HandleAsync(
+            context,
+            NewParseResult(null),
+            credentials,
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = ReadBody(context);
+        Assert.Contains("arn:aws:sns:us-west-2:000000000000:orders", body);
+        Assert.DoesNotContain("orders.v2", body);
+    }
+
+    [Fact]
+    public async Task HandleAsync_hides_topics_when_alias_config_no_longer_matches_stored_ownership()
+    {
+        var topicMetadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                SnsTopicName = "orders",
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+        var credentials = NewCredentials();
+        credentials.Topics = new Dictionary<string, SnsTopicSettings>
+        {
+            ["payments"] = new()
+            {
+                ServiceBusTopicName = "orders.v2",
+            },
+        };
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            var uri = request.RequestUri!.ToString();
+            return uri switch
+            {
+                "https://myns.servicebus.windows.net/$Resources/topics?api-version=2021-05&$skip=0&$top=100"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(BuildFeed("orders.v2"), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                "https://myns.servicebus.windows.net/orders.v2?api-version=2021-05"
+                    => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.v2", userMetadata: topicMetadata), Encoding.UTF8, "application/atom+xml"),
+                    }),
+                _ => throw new Xunit.Sdk.XunitException("Unexpected URI: " + uri)
+            };
+        });
+
+        var context = NewContext();
+        await ListTopicsHandler.HandleAsync(
+            context,
+            NewParseResult(null),
+            credentials,
+            managementClient,
+            CancellationToken.None);
+
+        var body = ReadBody(context);
+        Assert.DoesNotContain("arn:aws:sns:us-west-2:000000000000:orders", body);
+        Assert.DoesNotContain("arn:aws:sns:us-west-2:000000000000:payments", body);
     }
 
     private static ServiceBusTopicsCredentials NewCredentials() => new()

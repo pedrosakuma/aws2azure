@@ -608,6 +608,76 @@ public class ProxyConfigValidatorTests
     }
 
     [Fact]
+    public void Rejects_service_bus_topic_aliases_on_wildcard_patterns()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.ServiceBusTopics = new ServiceBusTopicsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            Topics = new Dictionary<string, SnsTopicSettings>
+            {
+                ["orders-*"] = new()
+                {
+                    ServiceBusTopicName = "orders-shared",
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("serviceBusTopicName: not valid for wildcard topic patterns", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_duplicate_resolved_service_bus_topic_names()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.ServiceBusTopics = new ServiceBusTopicsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            Topics = new Dictionary<string, SnsTopicSettings>
+            {
+                ["orders"] = new()
+                {
+                    ServiceBusTopicName = "shared-topic",
+                },
+                ["payments"] = new()
+                {
+                    ServiceBusTopicName = "shared-topic",
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("resolves to 'shared-topic', which is already used by topic 'orders'", ex.Message);
+    }
+
+    [Fact]
+    public void Rejects_service_bus_topic_aliases_that_are_also_valid_sns_topic_names()
+    {
+        var config = ValidBase();
+        config.Credentials[0].Azure.ServiceBusTopics = new ServiceBusTopicsCredentials
+        {
+            Namespace = "myns",
+            SasKeyName = "Root",
+            SasKey = "key",
+            Topics = new Dictionary<string, SnsTopicSettings>
+            {
+                ["orders"] = new()
+                {
+                    ServiceBusTopicName = "payments",
+                },
+            },
+        };
+
+        var ex = Assert.Throws<ProxyConfigException>(() => ProxyConfigValidator.Validate(config));
+        Assert.Contains("must not be another valid SNS topic name", ex.Message);
+    }
+
+    [Fact]
     public void Rejects_managed_identity_with_client_secret()
     {
         var config = ValidBase();

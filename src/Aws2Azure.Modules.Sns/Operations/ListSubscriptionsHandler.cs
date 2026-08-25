@@ -62,7 +62,29 @@ internal static class ListSubscriptionsHandler
         var consumedTopics = 0;
         for (var i = 0; i < topicPage.TopicNames.Count && subscriptions.Count < SnsSubscriptionSupport.ListSubscriptionsPageSize; i++)
         {
-            var topicName = topicPage.TopicNames[i];
+            var serviceBusTopicName = topicPage.TopicNames[i];
+            string? topicName;
+            try
+            {
+                topicName = await SnsTopicOwnershipSupport.ResolveListedSnsTopicNameAsync(
+                        credentials,
+                        managementClient,
+                        serviceBusTopicName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (ServiceBusTopicsManagementException ex)
+            {
+                await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(topicName))
+            {
+                consumedTopics++;
+                continue;
+            }
+
             var skip = i == 0 ? subscriptionSkipWithinTopic : 0;
             ServiceBusSubscriptionPage subscriptionPage;
             try
@@ -70,7 +92,7 @@ internal static class ListSubscriptionsHandler
                 subscriptionPage = await managementClient.ListSubscriptionsAsync(
                         credentials,
                         SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                        topicName,
+                        serviceBusTopicName,
                         skip,
                         SnsSubscriptionSupport.ListSubscriptionsPageSize - subscriptions.Count,
                         cancellationToken)
@@ -93,7 +115,7 @@ internal static class ListSubscriptionsHandler
                         userMetadata = (await managementClient.GetSubscriptionAsync(
                                 credentials,
                                 SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                                topicName,
+                                serviceBusTopicName,
                                 item.SubscriptionName,
                                 cancellationToken)
                             .ConfigureAwait(false))?.UserMetadata;

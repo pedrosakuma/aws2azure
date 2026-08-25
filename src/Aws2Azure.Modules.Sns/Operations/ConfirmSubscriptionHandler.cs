@@ -28,6 +28,18 @@ internal static class ConfirmSubscriptionHandler
             return;
         }
 
+        var serviceBusTopicName = SnsTopicRouting.ResolveServiceBusTopicName(credentials, topicName);
+        if (!await SnsTopicOwnershipSupport.EnsureTopicOwnershipAsync(
+                context,
+                credentials,
+                managementClient,
+                topicName,
+                serviceBusTopicName,
+                cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         if (!SnsSubscriptionSupport.TryResolveConfirmSubscriptionArn(
                 context,
                 topicArn,
@@ -51,7 +63,7 @@ internal static class ConfirmSubscriptionHandler
             subscription = await managementClient.GetSubscriptionAsync(
                     credentials,
                     SnsTopicSupport.ResolveNamespaceFqdn(credentials),
-                    topicName,
+                    serviceBusTopicName,
                     subscriptionId,
                     cancellationToken)
                 .ConfigureAwait(false);

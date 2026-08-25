@@ -34,6 +34,22 @@ design_gaps:
   references:
   - https://learn.microsoft.com/azure/event-grid/manage-event-delivery
   disposition: by_design
+- area: Event Grid topic lifecycle remains external
+  status: by_design
+  summary: When SNS routing resolves to Event Grid, Publish and PublishBatch use the configured Event Grid endpoint/credentials directly. CreateTopic and DeleteTopic still manage only the Service Bus compatibility topic used for SNS metadata/subscriptions; they do not create, delete, or existence-check the Azure Event Grid custom topic.
+  impact: Deleting the SNS topic through this compatibility layer does not prevent later Event Grid publishes to the same TopicArn while the configured Event Grid topic still exists and remains reachable.
+  workaround: Provision, validate, and delete Azure Event Grid custom topics with Azure-native tooling; treat SNS CreateTopic / DeleteTopic as Service Bus compatibility-state management only when Event Grid is the publish backend.
+  references:
+  - https://learn.microsoft.com/azure/event-grid/post-to-custom-topic
+  disposition: by_design
+- area: Default Event Grid routing multiplexes multiple SNS topics
+  status: by_design
+  summary: Without a per-topic Event Grid endpoint override, all SNS topics that resolve to Event Grid publish into the same configured Azure Event Grid custom topic endpoint. Topic identity is preserved only inside the emitted envelope (subject / data.TopicArn), not as distinct Azure topic resources.
+  impact: Azure-side isolation, quotas, monitoring, and RBAC apply at the shared Event Grid topic unless callers deliberately configure separate Event Grid endpoints for different SNS topics or topic-patterns.
+  workaround: Configure per-topic eventGridTopicEndpoint overrides whenever separate Azure Event Grid resources are required for isolation or lifecycle reasons.
+  references:
+  - https://learn.microsoft.com/azure/event-grid/post-to-custom-topic
+  disposition: by_design
 workload_patterns:
 - id: sns_standard_publish
   name: Standard topic publish
@@ -46,6 +62,8 @@ workload_patterns:
   - DeleteTopic
   design_gaps:
   - Two backends with different fidelity
+  - Event Grid topic lifecycle remains external
+  - Default Event Grid routing multiplexes multiple SNS topics
   guidance: Select the backend deliberately and validate message shape, delivery, and partial failures against that backend.
 - id: sns_subscription_management
   name: Subscription management

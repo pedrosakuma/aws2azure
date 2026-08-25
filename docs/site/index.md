@@ -12,7 +12,7 @@ that do not map to a single operation live in [design gaps](design-gaps.md).
 - [kinesis](kinesis.md) — 7 operation(s), 4 design gap(s)
 - [s3](s3.md) — 74 operation(s), 5 design gap(s)
 - [secretsmanager](secretsmanager.md) — 11 operation(s), 5 design gap(s)
-- [sns](sns.md) — 14 operation(s), 5 design gap(s)
+- [sns](sns.md) — 14 operation(s), 7 design gap(s)
 - [sqs](sqs.md) — 20 operation(s), 5 design gap(s)
 
 ## Cross-cutting
