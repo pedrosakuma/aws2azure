@@ -57,7 +57,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var complete = TestHttpContext.CreateContext(
             body: $$"""
@@ -76,7 +76,8 @@ public sealed class MultipartHandlersTests
         Assert.Equal(19, handler.Requests.Count);
         Assert.Equal(HttpMethod.Put, handler.Requests[4].Method);
         Assert.Equal(HttpMethod.Put, handler.Requests[16].Method);
-        Assert.Equal(HttpMethod.Delete, handler.Requests[18].Method);
+        Assert.Equal(HttpMethod.Put, handler.Requests[18].Method);
+        Assert.Contains("?comp=metadata", handler.Requests[18].RequestUri!.Query, StringComparison.Ordinal);
         Assert.EndsWith("/bucket/object.txt?comp=blocklist", handler.Requests[16].RequestUri!.PathAndQuery, StringComparison.Ordinal);
         Assert.Equal("application/xml", Assert.Single(handler.Requests[16].ContentHeaders["Content-Type"]));
         Assert.Equal(
@@ -152,7 +153,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var complete = TestHttpContext.CreateContext(
             body: $$"""
@@ -205,7 +206,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         // Virtual-hosted style: bucket lives on the host, only /key on the path.
         var complete = TestHttpContext.CreateContext(
@@ -267,7 +268,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         // Virtual-hosted style: bucket lives on the host only; the path is
         // just "/" + key, and here the key itself starts with "bucket/".
@@ -325,7 +326,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         // HttpRequest.Path is percent-DECODED by ASP.NET Core — mimic that
         // shape by assigning the raw decoded path directly.
@@ -422,7 +423,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var complete = TestHttpContext.CreateContext(
             body: $$"""
@@ -782,7 +783,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(ContainerHead());
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var complete = TestHttpContext.CreateContext(
             body: """
@@ -801,6 +802,7 @@ public sealed class MultipartHandlersTests
             "blocklisttype=all",
             handler.Requests.Single(r => r.Method == HttpMethod.Get && r.RequestUri!.PathAndQuery.Contains("comp=blocklist", StringComparison.Ordinal)).RequestUri!.PathAndQuery,
             StringComparison.Ordinal);
+        Assert.Contains("?comp=metadata", handler.Requests[^1].RequestUri!.Query, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -879,7 +881,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var retry = TestHttpContext.CreateContext(
             body: completeBody,
@@ -891,11 +893,11 @@ public sealed class MultipartHandlersTests
         var retryBody = await TestHttpContext.ReadBodyAsync(retry);
         Assert.Equal(StatusCodes.Status200OK, retry.Response.StatusCode);
         Assert.DoesNotContain("InvalidPart", retryBody, StringComparison.Ordinal);
-        Assert.Contains(handler.Requests, r => r.Method == HttpMethod.Delete);
+        Assert.Contains(handler.Requests, r => r.Method == HttpMethod.Put && r.RequestUri!.Query.Contains("comp=metadata", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task Abort_multipart_upload_deletes_state_and_future_use_returns_no_such_upload()
+    public async Task Abort_multipart_upload_retires_state_and_list_parts_immediately_returns_no_such_upload()
     {
         var handler = new ScriptedHandler();
         using var http = new AzureHttpClient(handler, ownsHandler: false);
@@ -905,7 +907,7 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(StateGet(upload));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(LeaseAcquired());
-        handler.Enqueue(StateDeleted());
+        handler.Enqueue(StateInvalidated());
 
         var abort = TestHttpContext.CreateContext(
             method: HttpMethods.Delete,
@@ -914,9 +916,52 @@ public sealed class MultipartHandlersTests
         await MultipartHandlers.HandleAsync(abort, Route(S3Operation.AbortMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status204NoContent, abort.Response.StatusCode);
-        Assert.Equal(HttpMethod.Delete, handler.Requests[^1].Method);
+        Assert.Contains("?comp=metadata", handler.Requests[^1].RequestUri!.Query, StringComparison.Ordinal);
 
-        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NotFound));
+        handler.Enqueue(StateHead(upload, containerGeneration: "retired-after-abort"));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(ContainerHead());
+        var listParts = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(listParts, Route(S3Operation.ListParts, "bucket", "object.txt"), blob, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status404NotFound, listParts.Response.StatusCode);
+        Assert.Contains("NoSuchUpload", await TestHttpContext.ReadBodyAsync(listParts), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Abort_on_already_retired_state_returns_no_such_upload()
+    {
+        var upload = await CaptureUploadAsync("bucket", "object.txt");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(StateGet(upload, containerGeneration: "retired-after-abort"));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(ContainerHead());
+
+        var abort = TestHttpContext.CreateContext(
+            method: HttpMethods.Delete,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+        await MultipartHandlers.HandleAsync(abort, Route(S3Operation.AbortMultipartUpload, "bucket", "object.txt"), blob, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status404NotFound, abort.Response.StatusCode);
+        Assert.Contains("NoSuchUpload", await TestHttpContext.ReadBodyAsync(abort), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Upload_part_after_retired_abort_state_returns_no_such_upload()
+    {
+        var upload = await CaptureUploadAsync("bucket", "object.txt");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+
+        handler.Enqueue(StateHead(upload, containerGeneration: "retired-after-abort"));
+        handler.Enqueue(ContainerHead());
         handler.Enqueue(ContainerHead());
         var reuse = TestHttpContext.CreateContext(
             body: "stale",
@@ -1341,6 +1386,7 @@ public sealed class MultipartHandlersTests
     }
 
     private static HttpResponseMessage StateDeleted() => new(HttpStatusCode.Accepted);
+    private static HttpResponseMessage StateInvalidated() => new(HttpStatusCode.OK);
 
     private static HttpResponseMessage StateHead(CapturedUpload upload, string? containerGeneration = null)
     {

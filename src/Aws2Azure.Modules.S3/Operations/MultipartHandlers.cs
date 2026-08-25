@@ -716,9 +716,19 @@ internal static class MultipartHandlers
         var deletedState = false;
         try
         {
-            if (await stateStore.DeleteLeasedAsync(bucket, uploadId, acquire.LeaseId!, deadlineCts.Token).ConfigureAwait(false) is { } deleteError)
+            var retiredState = await TryRetireMultipartStateAsync(
+                stateStore,
+                bucket,
+                uploadId,
+                acquire.Record!.Value.Summary,
+                acquire.LeaseId!,
+                deadlineCts.Token).ConfigureAwait(false);
+            if (!retiredState.Retired)
             {
-                await S3ErrorMapping.WriteAsync(ctx, deleteError).ConfigureAwait(false);
+                await S3ErrorMapping.WriteAsync(ctx, retiredState.Error ?? new S3ErrorMapping.Mapping(
+                    StatusCodes.Status500InternalServerError,
+                    "InternalError",
+                    "We encountered an internal error. Please try again.")).ConfigureAwait(false);
                 return;
             }
             deletedState = true;
@@ -1216,7 +1226,16 @@ internal static class MultipartHandlers
         return false;
     }
 
-    private static async Task<(bool Retired, S3ErrorMapping.Mapping? Error)> TryRetireCompletedStateAsync(
+    private static Task<(bool Retired, S3ErrorMapping.Mapping? Error)> TryRetireCompletedStateAsync(
+        MultipartUploadStateStore stateStore,
+        string bucket,
+        string uploadId,
+        MultipartUploadStateStore.MultipartUploadStateSummary summary,
+        string leaseId,
+        CancellationToken cancellationToken) =>
+        TryRetireMultipartStateAsync(stateStore, bucket, uploadId, summary, leaseId, cancellationToken);
+
+    private static async Task<(bool Retired, S3ErrorMapping.Mapping? Error)> TryRetireMultipartStateAsync(
         MultipartUploadStateStore stateStore,
         string bucket,
         string uploadId,
@@ -1224,22 +1243,27 @@ internal static class MultipartHandlers
         string leaseId,
         CancellationToken cancellationToken)
     {
-        var deleteError = await stateStore.DeleteLeasedAsync(bucket, uploadId, leaseId, cancellationToken).ConfigureAwait(false);
-        if (deleteError is null)
-        {
-            return (true, null);
-        }
-
+        // On versioned Azure storage accounts, deleting the current state blob
+        // can still leave an older version readable at the same name. Retire
+        // the record by writing a generation marker that can never match the
+        // live bucket first; future ReadSummaryAsync/ListParts checks then
+        // deterministically treat the upload as gone immediately after Abort.
         var invalidateError = await stateStore.InvalidateLeasedAsync(summary, leaseId, cancellationToken).ConfigureAwait(false);
         if (invalidateError is null)
         {
             return (true, null);
         }
 
-        var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
-        return stateRead.Kind is MultipartUploadStateStore.ResultKind.NotFound or MultipartUploadStateStore.ResultKind.BucketMissing
-            ? (true, null)
-            : (false, stateRead.Kind == MultipartUploadStateStore.ResultKind.Error ? stateRead.Error ?? invalidateError : invalidateError);
+        var deleteError = await stateStore.DeleteLeasedAsync(bucket, uploadId, leaseId, cancellationToken).ConfigureAwait(false);
+        if (deleteError is null)
+        {
+            var stateRead = await stateStore.ReadSummaryAsync(bucket, uploadId, cancellationToken).ConfigureAwait(false);
+            return stateRead.Kind is MultipartUploadStateStore.ResultKind.NotFound or MultipartUploadStateStore.ResultKind.BucketMissing
+                ? (true, null)
+                : (false, stateRead.Kind == MultipartUploadStateStore.ResultKind.Error ? stateRead.Error ?? invalidateError : invalidateError);
+        }
+
+        return (false, invalidateError);
     }
 
     private static async Task<bool> TryHandleMultipartStateStillActiveAsync(
