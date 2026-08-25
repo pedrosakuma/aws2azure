@@ -192,6 +192,24 @@ public class HeaderForwardingTests
         Assert.False(target.Headers.ContainsKey("x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
     }
 
+    [Fact]
+    public void CopyFromAzureResponse_prefers_persisted_blob_md5_for_content_md5_and_etag()
+    {
+        using var azure = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.ByteArrayContent("body"u8.ToArray()),
+        };
+        azure.Headers.TryAddWithoutValidation("ETag", "\"0x8DCC8B5F1A2B6C0\"");
+        azure.Headers.TryAddWithoutValidation("x-ms-blob-content-md5", "1B2M2Y8AsgTpgAmY7PhCfg==");
+        azure.Content.Headers.TryAddWithoutValidation("Content-MD5", "kAFQmDzST7DWlj99KOF/cg==");
+        var target = new Microsoft.AspNetCore.Http.DefaultHttpContext().Response;
+
+        HeaderForwarding.CopyFromAzureResponse(azure, target);
+
+        Assert.Equal("1B2M2Y8AsgTpgAmY7PhCfg==", target.Headers["Content-MD5"]);
+        Assert.Equal("\"d41d8cd98f00b204e9800998ecf8427e\"", target.Headers["ETag"]);
+    }
+
     // --- EvaluateEtagConditionals ---
 
     private static Microsoft.AspNetCore.Http.HttpRequest MakeRequest(params (string, string)[] headers)

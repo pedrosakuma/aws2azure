@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:d3d47eabe293e396933ad5f98a01eed31937c927c138d80bf5ac1becd5a24440",
+  "manifest_revision": "sha256:26a699e654db858b4f66c5a39277c245ec9d4280feed9003239cb42ba7c5b2a8",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-25T01:28:30Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:5754efea5bb5beb6f8ef7a4e4273042f0fdcc0dcf1025f7a62a529ceec11631a",
+    "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9"
@@ -440,6 +440,20 @@
       }
     },
     {
+      "id": "design-gap:s3:account-level-recovery-and-delete-retention-features-remain-operator-provisioned:reference",
+      "canonical_id": "design-gap:s3:account-level-recovery-and-delete-retention-features-remain-operator-provisioned",
+      "path": "docs/site/design-gaps/s3/account-level-recovery-and-delete-retention-features-remain-operator-provisioned.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "s3",
+      "revision": "sha256:114a423c804454f44344ec8180bf9e95b3701b317da0203cb3843b538b50f63b",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
       "id": "design-gap:s3:bucket-sub-resource-configs-are-not-translated:reference",
       "canonical_id": "design-gap:s3:bucket-sub-resource-configs-are-not-translated",
       "path": "docs/site/design-gaps/s3/bucket-sub-resource-configs-are-not-translated.md",
@@ -505,6 +519,34 @@
       "provenance": "generated",
       "service": "s3",
       "revision": "sha256:10b6f5200b510c8b6b11e3fde1955276e0cd676eb194c73cbf0f1607162fabdb",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:s3:object-lock-capable-storage-accounts-must-be-provisioned-up-front:reference",
+      "canonical_id": "design-gap:s3:object-lock-capable-storage-accounts-must-be-provisioned-up-front",
+      "path": "docs/site/design-gaps/s3/object-lock-capable-storage-accounts-must-be-provisioned-up-front.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "s3",
+      "revision": "sha256:e9a2c2c769045b7e0d264044b9ed2f6efc64a2d92c5a8223612eaa881a7132f6",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:s3:secondary-region-blob-reads-are-not-attempted-automatically:reference",
+      "canonical_id": "design-gap:s3:secondary-region-blob-reads-are-not-attempted-automatically",
+      "path": "docs/site/design-gaps/s3/secondary-region-blob-reads-are-not-attempted-automatically.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "s3",
+      "revision": "sha256:ac7605ddeea80497ce76935a0f513be91f593a41239f29a34fcea477696dfbc3",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1330,7 +1372,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:79c0a87d49fb16591bd8eebf47adbfa191aa179fd5bfdbd4c5e0e7f849f31f5d",
+      "revision": "sha256:faca16b3c987969f7ed9cb6167427d202aff03a55be654052544e73c6dcd3e81",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1354,7 +1396,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:89b9586c7092c7e78b083fb21a5cee94a1bea0161e15ec64883c58c67270b8d7",
+      "revision": "sha256:0025fa6c55e2adc93b95a6398e7c9b0060597d05af0721e25f91b662efdb0dcd",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1366,7 +1408,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:8f3eff29461cbae84b844cba3deab4f92ae75db9288930f9098c462571048fde",
+      "revision": "sha256:fe9a3a044f3498f2af494e70628eb30f4260a18bb2bce9fcf887b288b82ae36f",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1390,7 +1432,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:bc5023eae5a1d9eb14a01c05d24b97d4b1d6ed4891d23dd0cb3d67a807e4a96d",
+      "revision": "sha256:298360e2cfe0755fb764fe7a0f246c138db8182e3970272386ae3edb8954e87b",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1462,7 +1504,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:edf78ee2ab9773d7d4d3dd933ea45c371e2d62431e8e6f6a847df3d5df227ac4",
+      "revision": "sha256:369d715c823d1d713dc4d69f932f96f97e8a9d443e55c566fc53b388ab3e64fd",
       "freshness": {
         "mode": "derived-current"
       }
@@ -2939,7 +2981,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "DeleteObject",
-      "revision": "sha256:beda286cc6092e93452210d304ffca19ed15d00bdbeca6f5c831650a7cd8b0a9",
+      "revision": "sha256:250bf5fef72096a390b0b35b6934d911b3a2d5dcfbe3fb3a17ee9e7b75422c22",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -2955,7 +2997,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "DeleteObject",
-      "revision": "sha256:b4ecb7f3ec69d4e70d00fa05465b4fc540ab74b9b7feb6224271e4d3ed3c6e75",
+      "revision": "sha256:84336f8fcf04ac572269ad345035675134c2a145069a0b7aba9e06b1998952ae",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -4603,7 +4645,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "PutObjectRetention",
-      "revision": "sha256:bfdb853bab7eed02f8a07dcf6cb3b646ace5cc280fbf618c6c723afaaee85339",
+      "revision": "sha256:3ca0209dbcdf872ed9e94a703572ec096c49cb1e18a44e11e8a5622ac6fda3b1",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-06-29"
@@ -4619,7 +4661,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "PutObjectRetention",
-      "revision": "sha256:25d049810d027534eae1966cc1575d91d913c665e6f4b874bd298a1d2216e275",
+      "revision": "sha256:4faeee6f7a0a722675c99448ebeadb415644f5e902c2a2629fd627ed8f0c4176",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-06-29"
@@ -7027,7 +7069,7 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "s3",
-      "revision": "sha256:5210aae7fc33d37e3061bbba21429b34480af4bc8c69c83a5e359d11e56ff895",
+      "revision": "sha256:7ee6ea807698e502598037c0b28f7283b152ac69a563672d665c293fb0f240d7",
       "freshness": {
         "mode": "current"
       }
@@ -7081,7 +7123,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:bc6086a00cd0a3171f0a5882b19e3917dc9687cb2858e107ce499519efa4b016",
+      "revision": "sha256:3ceec9687b94d10efe4e46830970a62c73945e61cf1c98a45a51b3e94df41ceb",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
@@ -7095,7 +7137,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:62131463e4376cb589a148de533f4ba05042919d52f62a5cc064fef4e1b61c94",
+      "revision": "sha256:12fdd0197ffa4f3164831940f5b3283b90bb16dd1e3a125c6fa4584408a64587",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
@@ -7109,7 +7151,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:d089754155fc5c45e71b51b831597e431d2f46c1dcc9e8781a10bcc102426036",
+      "revision": "sha256:a3a949b5149a209ba9ccd76c4aa8016946ce63ddabc09358b1d16bcf94a6d1a9",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"

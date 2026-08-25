@@ -28,6 +28,24 @@ design_gaps:
   impact: Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event automation configured through these APIs have no effect.
   workaround: Use Azure Blob lifecycle-management policies, object replication, static website settings, and Event Grid subscriptions configured directly on the storage account.
   disposition: by_design
+- area: Account-level recovery and delete-retention features remain operator-provisioned
+  status: by_design
+  summary: Azure Blob point-in-time restore, change feed, soft delete, and blob versioning are storage-account features configured outside the proxy. DeleteObject/DeleteObjects follow the account's soft-delete policy, so a successful S3 delete can leave recoverable retained bytes until the Azure retention window expires.
+  impact: Disaster-recovery plans that expect account-level rollback must pre-enable the Azure features before data lands, and delete-heavy workloads can accumulate retained bytes/quota with no extra S3-side signal beyond the normal delete success path.
+  workaround: Decide the storage-account recovery posture up front; enable blob versioning + soft delete + change feed together when Azure PITR is required, and monitor retention/cost behavior through Azure's control plane rather than the S3 API.
+  disposition: by_design
+- area: Secondary-region blob reads are not attempted automatically
+  status: partial
+  summary: RA-GRS and RA-GZRS storage accounts expose a secondary read endpoint, but the proxy currently authenticates GetObject/HeadObject requests only against the configured primary Blob service endpoint and has no secondary-endpoint failover setting.
+  impact: During a primary endpoint outage, GetObject and HeadObject fail instead of serving potentially stale reads from the Azure secondary region.
+  workaround: Use Azure account failover, DNS/front-door indirection, or another external read-failover mechanism when the workload requires regional read continuity.
+  disposition: by_design
+- area: Object-lock-capable storage accounts must be provisioned up front
+  status: by_design
+  summary: S3 object-lock translation relies on Azure Blob version-level immutability plus blob versioning, and Azure only allows version-level immutability support to be enabled when the storage account is created.
+  impact: Pilots started on an existing storage account without that flag cannot add object-lock support later; adopting the workload can require migrating to a newly provisioned account.
+  workaround: Provision a dedicated storage account with blob versioning and version-level immutability enabled before adopting object-lock workloads, and validate retention/legal-hold flows against real Azure.
+  disposition: by_design
 workload_patterns:
 - id: s3_basic_object_crud
   name: Basic object CRUD
@@ -39,7 +57,7 @@ workload_patterns:
   - HeadObject
   - ListObjectsV2
   - DeleteObject
-  guidance: Suitable when applications need ordinary object CRUD and do not rely on S3 IAM/policy enforcement.
+  guidance: Suitable when applications need ordinary object CRUD and do not rely on S3 IAM/policy enforcement. RA-GRS/RA-GZRS secondary-read continuity remains an Azure/operator failover concern rather than an automatic proxy feature.
 - id: s3_multipart_upload
   name: Multipart upload
   compatibility: conditional
@@ -70,7 +88,9 @@ workload_patterns:
   - PutObjectLegalHold
   - GetObjectLockConfiguration
   - PutObjectLockConfiguration
-  guidance: Validate the exact flow against real Azure and configure Blob versioning and immutability outside the proxy before adoption.
+  design_gaps:
+  - Object-lock-capable storage accounts must be provisioned up front
+  guidance: Validate the exact flow against real Azure and provision Blob versioning plus version-level immutability before account creation when the workload needs object-lock semantics.
 - id: s3_metadata_compatibility_controls
   name: Metadata and compatibility control round-trip
   compatibility: conditional
