@@ -42,7 +42,7 @@ public sealed class GetRecordsHandlerTests
         using var document = JsonDocument.Parse(ReadBody(context));
         var records = document.RootElement.GetProperty("Records");
         Assert.Equal(3, records.GetArrayLength());
-        Assert.Equal("11", records[0].GetProperty("SequenceNumber").GetString());
+        Assert.Equal("sequence:11", records[0].GetProperty("SequenceNumber").GetString());
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("alpha")), records[0].GetProperty("Data").GetString());
         Assert.Equal("pk-1", records[0].GetProperty("PartitionKey").GetString());
         Assert.True(records[0].GetProperty("ApproximateArrivalTimestamp").GetDouble() > 0);
@@ -349,6 +349,53 @@ public sealed class GetRecordsHandlerTests
         Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1_735_689_600_123L).AddMilliseconds(-1), position.Value);
     }
 
+    [Theory]
+    [InlineData("AT_SEQUENCE_NUMBER", 1)]
+    [InlineData("AFTER_SEQUENCE_NUMBER", 0)]
+    public async Task HandleAsync_round_trips_returned_sequence_numbers_into_sequence_iterators(string iteratorType, int expectedRecordCount)
+    {
+        var codecFactory = NewCodecFactory();
+        var boundaryMessage = NewMessage("boundary", "pk-1", offset: "555", sequenceNumber: 42, enqueuedTime: FixedNow.AddSeconds(-1));
+
+        var initialReadContext = CreateContext();
+        await GetRecordsHandler.HandleAsync(
+            initialReadContext,
+            NewParseResult(BuildRequestBody(NewEncodedToken(codecFactory, new ShardIteratorToken("orders", "shardId-000000000001", ShardIteratorType.TrimHorizon, null, FixedNow.ToUnixTimeSeconds())))),
+            NewCredentials(),
+            NewMetadataCache(),
+            new FakeReceiver { Messages = { boundaryMessage } },
+            codecFactory,
+            CancellationToken.None);
+
+        using var initialRead = JsonDocument.Parse(ReadBody(initialReadContext));
+        var returnedSequenceNumber = initialRead.RootElement.GetProperty("Records")[0].GetProperty("SequenceNumber").GetString();
+
+        var iteratorContext = CreateContext();
+        await GetShardIteratorHandler.HandleAsync(
+            iteratorContext,
+            NewParseResult(BuildShardIteratorRequestBody(iteratorType, returnedSequenceNumber!)),
+            NewCredentials(),
+            NewMetadataCache(),
+            codecFactory,
+            CancellationToken.None);
+
+        using var iteratorDocument = JsonDocument.Parse(ReadBody(iteratorContext));
+        var shardIterator = iteratorDocument.RootElement.GetProperty("ShardIterator").GetString()!;
+
+        var readContext = CreateContext();
+        await GetRecordsHandler.HandleAsync(
+            readContext,
+            NewParseResult(BuildRequestBody(shardIterator)),
+            NewCredentials(),
+            NewMetadataCache(),
+            new BoundaryAwareReceiver(boundaryMessage),
+            codecFactory,
+            CancellationToken.None);
+
+        using var readDocument = JsonDocument.Parse(ReadBody(readContext));
+        Assert.Equal(expectedRecordCount, readDocument.RootElement.GetProperty("Records").GetArrayLength());
+    }
+
     [Fact]
     public async Task HandleAsync_returns_boundary_record_for_at_sequence_number_iterators()
     {
@@ -415,7 +462,7 @@ public sealed class GetRecordsHandlerTests
         Assert.Equal("555", position.Value);
         using var document = JsonDocument.Parse(ReadBody(context));
         var record = document.RootElement.GetProperty("Records")[0];
-        Assert.Equal("777", record.GetProperty("SequenceNumber").GetString());
+        Assert.Equal("sequence:777", record.GetProperty("SequenceNumber").GetString());
         Assert.Equal("pk-9", record.GetProperty("PartitionKey").GetString());
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("payload")), record.GetProperty("Data").GetString());
     }
@@ -507,6 +554,13 @@ public sealed class GetRecordsHandlerTests
             ? "{\"ShardIterator\":\"" + shardIterator + "\",\"Limit\":" + limit.Value + "}"
             : "{\"ShardIterator\":\"" + shardIterator + "\"}";
 
+    private static string BuildShardIteratorRequestBody(string iteratorType, string startingSequenceNumber)
+        => "{\"StreamName\":\"orders\",\"ShardId\":\"shardId-000000000001\",\"ShardIteratorType\":\""
+            + iteratorType
+            + "\",\"StartingSequenceNumber\":\""
+            + startingSequenceNumber
+            + "\"}";
+
     private static string NewEncodedToken(ShardIteratorTokenCodecFactory codecFactory, ShardIteratorToken token)
         => codecFactory.Create(NewCredentials()).Encode(token);
 
@@ -590,6 +644,7 @@ public sealed class GetRecordsHandlerTests
             var messages = position switch
             {
                 EventHubsReceivePosition.FromEnqueuedTime fromEnqueuedTime when _message.EnqueuedTime > fromEnqueuedTime.Value => [_message],
+                EventHubsReceivePosition.FromSequenceExclusive fromSequence when _message.SequenceNumber > fromSequence.Value => [_message],
                 _ => Array.Empty<EventHubsReceivedMessage>(),
             };
 

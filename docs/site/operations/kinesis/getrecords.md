@@ -26,11 +26,12 @@ Supports TRIM_HORIZON, LATEST, AT_TIMESTAMP, AT_SEQUENCE_NUMBER, and AFTER_SEQUE
 
 ## Behaviour differences
 
-- Returned SequenceNumber values are Event Hubs-assigned x-opt-sequence-number annotations, which differ from AWS Kinesis sequence numbers and the proxy's synthetic PutRecord/PutRecords values. [conformance:field-value:Records[].SequenceNumber]
+- Returned SequenceNumber values are proxy-formatted sequence:<x-opt-sequence-number> tokens so callers can feed them back into AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER. They still differ from native AWS Kinesis sequence numbers and from the proxy's synthetic PutRecord/PutRecords values. [conformance:field-value:Records[].SequenceNumber]
 - NextShardIterator uses the proxy's opaque token and internally prefers Event Hubs offsets (offset:<value>) to resume reads; callers must treat the token as opaque. [conformance:field-value:NextShardIterator]
 - MillisBehindLatest is best-effort only and is derived from the last returned record's enqueue timestamp versus the proxy clock.
 - AT_TIMESTAMP is translated to an Event Hubs enqueue-time selector that is exclusive (>) rather than AWS's inclusive semantics, so a record at the exact timestamp boundary may be skipped.
 - AT_SEQUENCE_NUMBER and AFTER_SEQUENCE_NUMBER are best-effort only: the proxy derives an Event Hubs enqueue-time position from aws2azure's synthetic PutRecord sequence number ((unixMs << 20) | counter). AT_SEQUENCE_NUMBER subtracts 1 ms before applying Event Hubs' exclusive selector so boundary records are included at millisecond granularity; records from the same millisecond may also be returned, which preserves AWS's inclusive boundary intent. If parsing fails the read falls back to the start of the shard.
+- Read throughput is not locally capped at Kinesis's 5 TPS / 2 MiB-per-shard model; the proxy only reports ProvisionedThroughputExceededException when Event Hubs itself throttles the receive path.
 - Receive links are pooled per signed shard-iterator identity, so distinct iterators over the same partition keep independent broker cursors. Idle links are evicted after the iterator's 5-minute TTL without closing the shared Event Hubs connection.
 - Within one iterator chain, NextShardIterator preserves the iterator identity and advances on the existing AMQP link. The position embedded in the continuation token is used to recreate the link only after a link failure or idle eviction.
 - Expired and future-issued iterator tokens are rejected as ExpiredIteratorException. Request cancellation propagates without issuing a continuation token, and a failed receive does not advance the iterator chain.

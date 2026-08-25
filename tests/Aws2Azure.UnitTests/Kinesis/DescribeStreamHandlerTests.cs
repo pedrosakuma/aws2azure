@@ -45,6 +45,7 @@ public sealed class DescribeStreamHandlerTests
         Assert.Equal("ACTIVE", description.GetProperty("StreamStatus").GetString());
         Assert.Equal(72, description.GetProperty("RetentionPeriodHours").GetInt32());
         Assert.Equal("NONE", description.GetProperty("EncryptionType").GetString());
+        Assert.False(description.TryGetProperty("KeyId", out _));
         Assert.False(description.GetProperty("HasMoreShards").GetBoolean());
         Assert.Equal(1718873100d, description.GetProperty("StreamCreationTimestamp").GetDouble());
         var enhanced = description.GetProperty("EnhancedMonitoring");

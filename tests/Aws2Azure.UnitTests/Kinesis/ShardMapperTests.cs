@@ -1,5 +1,8 @@
 using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
 using Aws2Azure.Modules.Kinesis.EventHubsRest;
+using Aws2Azure.Modules.Kinesis.Operations;
 
 namespace Aws2Azure.UnitTests.Kinesis;
 
@@ -43,5 +46,18 @@ public sealed class ShardMapperTests
 
         Assert.Equal(["1", "2", "10"], shards.Select(s => s.PartitionId).ToArray());
         Assert.Equal(["shardId-000000000001", "shardId-000000000002", "shardId-000000000010"], shards.Select(s => s.ShardId).ToArray());
+    }
+
+    [Fact]
+    public void MapShards_hash_key_ranges_do_not_describe_modulo_write_routing()
+    {
+        var shards = ShardMapper.MapShards(["0", "1"]);
+        var partitionKey = "a";
+        var routedPartitionIndex = PutRecordHandler.ComputePartitionIndex(partitionKey, shards.Count);
+        var hashKey = new BigInteger(MD5.HashData(Encoding.UTF8.GetBytes(partitionKey)), isUnsigned: true, isBigEndian: true);
+        var rangeIndex = Array.FindIndex(shards.ToArray(), shard => hashKey >= shard.StartingHashKey && hashKey <= shard.EndingHashKey);
+
+        Assert.Equal(0, rangeIndex);
+        Assert.Equal(1, routedPartitionIndex);
     }
 }

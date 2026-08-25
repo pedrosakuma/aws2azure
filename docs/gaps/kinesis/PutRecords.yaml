@@ -10,8 +10,11 @@ sub_features: []
 behavior_differences:
 - Sequence numbers are synthetic proxy-generated values, not Azure Event Hubs offsets. [conformance:field-value:Records[].SequenceNumber]
 - ShardId values are derived client-side by hashing PartitionKey with MD5 and mapping the result modulo the Event Hubs partition count. [conformance:field-value:Records[].ShardId]
+- DescribeStream/ListShards HashKeyRange values are synthetic even splits of the 128-bit Kinesis hash space; they do not describe the modulo-based write routing the proxy actually applies for PutRecords.
 - Batch sends are still grouped per partition, but broker dispositions are tracked per message; records accepted before a later reject remain successful in the PutRecords response so callers do not retry already-committed messages.
 - ExplicitHashKey is ignored; partition routing always follows the PartitionKey hash.
+- The 5 MiB request limit is enforced on combined decoded record data plus UTF-8 partition-key bytes, not the larger on-the-wire JSON/base64 body.
+- The proxy does not emulate Kinesis per-shard write quotas (records/sec or bytes/sec) before sending to Event Hubs; only Azure-originated throttles are mapped back to ProvisionedThroughputExceededException.
 - Batch record publication and per-entry result handling are validated against production Azure Event Hubs through the real-Azure conformance workflow.
 references:
 - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_PutRecords.html

@@ -14,6 +14,7 @@ accepted_partial_operations:
   - kinesis:PutRecords
 accepted_design_gaps:
   - "kinesis:Synthetic sequence numbers and iterator positioning"
+  - "kinesis:No shard-level throughput emulation"
 evidence:
   qualification_artifact: ""
   required_scenarios:

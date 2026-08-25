@@ -159,23 +159,59 @@ public sealed class PutRecordsHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_rejects_payloads_larger_than_five_mebibytes()
+    public async Task HandleAsync_accepts_raw_json_bodies_larger_than_five_mebibytes_when_decoded_payload_is_within_limit()
     {
-        var oversizedData = new string('A', PutRecordCommon.MaxRequestPayloadBytes);
-        var body = "{\"StreamName\":\"orders\",\"Records\":[{\"Data\":\"" + oversizedData + "\",\"PartitionKey\":\"pk\"}]}";
         var context = CreateContext();
+        var sender = new FakeAmqpSender();
+        var encodedData = Convert.ToBase64String(new byte[PutRecordCommon.MaxDataBytes]);
+        var requestBody = JsonSerializer.Serialize(new
+        {
+            StreamName = "orders",
+            Records = Enumerable.Range(0, 4)
+                .Select(i => new { Data = encodedData, PartitionKey = "pk-" + i })
+                .ToArray(),
+        });
+
+        Assert.True(Encoding.UTF8.GetByteCount(requestBody) > PutRecordCommon.MaxRequestPayloadBytes);
 
         await PutRecordsHandler.HandleAsync(
             context,
-            NewParseResult(body),
+            NewParseResult(requestBody),
             NewCredentials(),
             NewMetadataCache(),
-            new FakeAmqpSender(),
+            sender,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(4, sender.BatchCalls.Sum(call => call.Messages.Count));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_decoded_payloads_larger_than_five_mebibytes()
+    {
+        var context = CreateContext();
+        var sender = new FakeAmqpSender();
+        var encodedData = Convert.ToBase64String(new byte[PutRecordCommon.MaxDataBytes]);
+        var requestBody = JsonSerializer.Serialize(new
+        {
+            StreamName = "orders",
+            Records = Enumerable.Range(0, 5)
+                .Select(i => new { Data = encodedData, PartitionKey = "pk-" + i })
+                .ToArray(),
+        });
+
+        await PutRecordsHandler.HandleAsync(
+            context,
+            NewParseResult(requestBody),
+            NewCredentials(),
+            NewMetadataCache(),
+            sender,
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
         Assert.Contains("ValidationException", ReadBody(context));
         Assert.Contains(PutRecordCommon.MaxRequestPayloadBytes.ToString(), ReadBody(context));
+        Assert.Empty(sender.BatchCalls);
     }
 
     [Fact]
