@@ -115,7 +115,7 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.NotNull(requestedUri);
-        Assert.Contains("/secrets/demo/abc123?api-version=7.4", requestedUri);
+        Assert.Contains($"/secrets/demo/abc123?api-version={KeyVaultSecretClient.ApiVersion}", requestedUri);
         Assert.DoesNotContain("/versions/", requestedUri);
     }
 
@@ -154,8 +154,8 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/versions?api-version=7.4", StringComparison.Ordinal));
-        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/pending123?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/versions?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/pending123?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("pending-secret", document.RootElement.GetProperty("SecretString").GetString());
@@ -197,7 +197,7 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/current?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/current?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("current-secret", document.RootElement.GetProperty("SecretString").GetString());
@@ -254,8 +254,8 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/client-token-1?api-version=7.4", StringComparison.Ordinal));
-        Assert.Contains(requestedUris, uri => uri.Contains("/secrets/demo/real-kv-version?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/client-token-1?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/real-kv-version?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("client-token-1", document.RootElement.GetProperty("VersionId").GetString());
@@ -306,7 +306,7 @@ public sealed class SecretsManagerServiceModuleTests
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"name\":\"demo\",\"description\":\"account secret\",\"tags\":{\"env\":\"dev\"},\"attributes\":{\"created\":1710000000,\"updated\":1710001000}}],\"nextLink\":\"https://example.vault.azure.net/secrets?api-version=7.4&$skiptoken=abc123&maxresults=25\"}", Encoding.UTF8, "application/json"),
+                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"name\":\"demo\",\"description\":\"account secret\",\"tags\":{\"env\":\"dev\"},\"attributes\":{\"created\":1710000000,\"updated\":1710001000}}],\"nextLink\":\"https://example.vault.azure.net/secrets?api-version=7.6&$skiptoken=abc123&maxresults=25\"}", Encoding.UTF8, "application/json"),
             });
         }), ownsHandler: false);
 
@@ -934,7 +934,7 @@ public sealed class SecretsManagerServiceModuleTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.NotNull(requestedUri);
-        Assert.Contains("/secrets/demo?api-version=7.4", requestedUri, StringComparison.Ordinal);
+        Assert.Contains($"/secrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", requestedUri, StringComparison.Ordinal);
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal(1710604800d, document.RootElement.GetProperty("DeletionDate").GetDouble());
@@ -972,8 +972,8 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestUris, uri => uri.Contains("/secrets/demo?api-version=7.4", StringComparison.Ordinal));
-        Assert.Contains(requestUris, uri => uri.Contains("/deletedsecrets/demo?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains($"/secrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains($"/deletedsecrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal(1710000000d, document.RootElement.GetProperty("DeletionDate").GetDouble());
@@ -1046,8 +1046,8 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestUris, uri => uri.Contains("/secrets/demo?api-version=7.4", StringComparison.Ordinal));
-        Assert.Contains(requestUris, uri => uri.Contains("/deletedsecrets/demo?api-version=7.4", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains($"/secrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
+        Assert.Contains(requestUris, uri => uri.Contains($"/deletedsecrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1248,6 +1248,36 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Contains("enforces soft-delete retention", body, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task HandleAsync_DeleteSecret_returns_certificate_specific_invalid_request_for_managed_secret()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"MethodNotAllowed\",\"message\":\"Operation not allowed on managed secret.\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("InvalidRequestException", body);
+        Assert.Contains("certificate", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "requires Key Vault purge permission", null)]
     [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "enforces soft-delete retention", "{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable\"}}")]
@@ -1378,6 +1408,7 @@ public sealed class SecretsManagerServiceModuleTests
     [InlineData(HttpStatusCode.NotFound, StatusCodes.Status404NotFound, "ResourceNotFoundException")]
     [InlineData(HttpStatusCode.Conflict, StatusCodes.Status400BadRequest, "ResourceExistsException")]
     [InlineData(HttpStatusCode.BadRequest, StatusCodes.Status400BadRequest, "InvalidParameterException")]
+    [InlineData(HttpStatusCode.MethodNotAllowed, StatusCodes.Status400BadRequest, "InvalidRequestException")]
     [InlineData(HttpStatusCode.Unauthorized, StatusCodes.Status403Forbidden, "AccessDeniedException")]
     [InlineData(HttpStatusCode.Forbidden, StatusCodes.Status403Forbidden, "AccessDeniedException")]
     [InlineData(HttpStatusCode.RequestTimeout, StatusCodes.Status503ServiceUnavailable, "InternalServiceError")]
@@ -1421,6 +1452,81 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_GetSecretValue_maps_disabled_version_403_to_resource_not_found()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/disabled123\",\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Forbidden\",\"message\":\"Operation is disabled for this secret version.\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("ResourceNotFoundException", body);
+        Assert.DoesNotContain("AccessDeniedException", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_preserves_authorization_403_as_access_denied()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current123\",\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Forbidden\",\"innererror\":{\"code\":\"ForbiddenByRbac\"}}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("AccessDeniedException", body);
+    }
+
+    [Fact]
     public async Task HandleAsync_PutSecretValue_returns_aws_shape_for_new_version()
     {
         var backend = new InMemoryKeyVaultHandler(
@@ -1437,7 +1543,7 @@ public sealed class SecretsManagerServiceModuleTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.NotNull(backend.LastPutUri);
-        Assert.Contains("/secrets/demo?api-version=7.4", backend.LastPutUri);
+        Assert.Contains($"/secrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", backend.LastPutUri);
         Assert.NotNull(backend.LastPutBody);
         Assert.Contains("\"value\":\"new-secret\"", backend.LastPutBody);
         using (var requestDocument = JsonDocument.Parse(backend.LastPutBody))
@@ -1540,7 +1646,7 @@ public sealed class SecretsManagerServiceModuleTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.NotNull(patchUri);
-        Assert.Contains("/secrets/demo/current123?api-version=7.4", patchUri, StringComparison.Ordinal);
+        Assert.Contains($"/secrets/demo/current123?api-version={KeyVaultSecretClient.ApiVersion}", patchUri, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -295,6 +295,11 @@ public static class ProxyConfigValidator
             else
             {
                 ValidateAbsoluteUri(keyVault.VaultUrl, $"{keyVaultPrefix}.target.vaultUrl", errors, Uri.UriSchemeHttps);
+                if (Uri.TryCreate(keyVault.VaultUrl, UriKind.Absolute, out var keyVaultUri)
+                    && keyVaultUri.Host.Contains(".managedhsm.", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add($"{keyVaultPrefix}.target.vaultUrl: Managed HSM endpoints are not supported for Secrets Manager because Azure Managed HSM stores keys only, not secrets or certificates.");
+                }
             }
 
             var hasTenant = !string.IsNullOrWhiteSpace(keyVault.TenantId);

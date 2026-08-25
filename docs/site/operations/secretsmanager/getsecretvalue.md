@@ -14,6 +14,7 @@
 - Responses use the AWS JSON 1.1 wire shape (Unix-epoch numeric timestamps, Content-Type application/x-amz-json-1.1); validated end-to-end against a real Azure Key Vault through the proxy with the AWS SDK.
 - VersionStage lookup scans proxy-owned Key Vault version tags written by PutSecretValue; untagged legacy versions are treated as AWSCURRENT fallback for default reads. VersionId accepts either a raw Key Vault version id or a PutSecretValue ClientRequestToken, and VersionId+VersionStage requests are rejected when they do not refer to the same version. Full AWS rotation workflows such as RotateSecret are not implemented.
 - Version and token resolution use the same complete paginated inventory and deterministic created-time/version-id ordering as the write reconciler. If multiple physical versions still hold the requested explicit label, GetSecretValue returns ResourceExistsException instead of silently choosing an ambiguous winner.
+- Key Vault reports disabled secret versions as HTTP 403 with a specific `Forbidden` error message. aws2azure remaps only that exact disabled-version signature to ResourceNotFoundException so AWS rotation fallback patterns keep working, while genuine authorization failures remain AccessDeniedException.
 
 ## References
 

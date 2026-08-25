@@ -373,7 +373,7 @@ public sealed class SecretsManagerRealAzureSmokeTests
         {
             var vaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL")
                 ?? throw new InvalidOperationException("AZURE_KEYVAULT_URL is required.");
-            return $"{vaultUrl.TrimEnd('/')}/secrets/{Uri.EscapeDataString(name)}/{Uri.EscapeDataString(versionId)}?api-version=7.4";
+            return $"{vaultUrl.TrimEnd('/')}/secrets/{Uri.EscapeDataString(name)}/{Uri.EscapeDataString(versionId)}?api-version=7.6";
         }
     // Azure Key Vault does not guarantee read-your-write on the unversioned
     // GetSecret endpoint immediately after an update: the latest-version pointer

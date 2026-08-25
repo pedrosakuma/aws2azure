@@ -72,6 +72,16 @@ internal static class DeleteSecretHandler
         JsonDocument? deletedSecretDocument = null;
         if (!response.IsSuccessStatusCode)
         {
+            if (response.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+                    context,
+                    StatusCodes.Status400BadRequest,
+                    "InvalidRequestException",
+                    "The specified secret is certificate-backed in Azure Key Vault and must be deleted via the certificate API instead of DeleteSecret.").ConfigureAwait(false);
+                return;
+            }
+
             if (!forceDeleteWithoutRecovery
                 || response.StatusCode is not System.Net.HttpStatusCode.NotFound and not System.Net.HttpStatusCode.Conflict)
             {

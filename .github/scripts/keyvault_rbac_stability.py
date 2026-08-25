@@ -163,7 +163,7 @@ def build_list_secrets_url(vault_url: str) -> str:
         or parsed.path not in ("", "/")
     ):
         raise ValueError("vault URL must be an HTTPS Key Vault origin")
-    return urlunsplit((parsed.scheme, parsed.netloc, "/secrets", "api-version=7.4", ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, "/secrets", "api-version=7.6", ""))
 
 
 def classify_response(status_code: int, body: bytes) -> str:

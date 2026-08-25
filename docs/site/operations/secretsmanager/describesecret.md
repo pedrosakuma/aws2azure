@@ -4,7 +4,7 @@
 
 - **Capability ID:** `operation:secretsmanager:describesecret`
 - **Status:** ✅ implemented
-- **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4`
+- **Azure equivalent:** `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.6`
 - **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
 
 ## Behaviour differences
