@@ -14,7 +14,9 @@ behavior_differences:
 - SNS confirmation tokens are not validated against an out-of-band challenge flow.
 - Arbitrary, cross-topic, missing, and non-deterministic subscription tokens are rejected; the operation does not synthesize a fallback identifier.
 - ConfirmSubscription applies to the Service Bus subscription-management profile only and does not confirm Azure Event Grid event subscriptions.
+- Service Bus Geo-DR can replay this compatibility metadata only when the namespace/endpoints use the Geo-DR alias and the pairing has replicated the latest entity changes; it still does not preserve queued messages already held in the backing Service Bus subscription.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html
+- https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-geo-dr
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
 disposition: by_design

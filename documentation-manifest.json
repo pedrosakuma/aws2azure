@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:cee0fe061f323acf0babb39e96db0afad6a4dbfbaa2af8552c2c58ad8c5bc4be",
+  "manifest_revision": "sha256:d3d47eabe293e396933ad5f98a01eed31937c927c138d80bf5ac1becd5a24440",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-25T01:28:30Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:0bfa57f8a316f203d274c105cd93f3a1dab2f191283db66401cd6a4bec8c9622",
+    "canonical_inputs_revision": "sha256:5754efea5bb5beb6f8ef7a4e4273042f0fdcc0dcf1025f7a62a529ceec11631a",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9"
@@ -636,6 +636,34 @@
       }
     },
     {
+      "id": "design-gap:sns:event-grid-custom-topic-failover-remains-best-effort-and-external:reference",
+      "canonical_id": "design-gap:sns:event-grid-custom-topic-failover-remains-best-effort-and-external",
+      "path": "docs/site/design-gaps/sns/event-grid-custom-topic-failover-remains-best-effort-and-external.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "sns",
+      "revision": "sha256:ddfe38c6fd0096badecd0146ca6ef9f366f99f6a9c68d2bde35d15833463a39c",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:sns:event-grid-publish-auth-omits-sas-token-mode:reference",
+      "canonical_id": "design-gap:sns:event-grid-publish-auth-omits-sas-token-mode",
+      "path": "docs/site/design-gaps/sns/event-grid-publish-auth-omits-sas-token-mode.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "sns",
+      "revision": "sha256:78feaed348e0d0cebc11d4e98246e62965e88a8bc257309e5bf119317870af36",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
       "id": "design-gap:sns:event-grid-subscription-management-is-excluded:reference",
       "canonical_id": "design-gap:sns:event-grid-subscription-management-is-excluded",
       "path": "docs/site/design-gaps/sns/event-grid-subscription-management-is-excluded.md",
@@ -672,7 +700,7 @@
       "authority": "normative-capability",
       "provenance": "generated",
       "service": "sns",
-      "revision": "sha256:f9623eda893d1307b84bc6a4e55a1fa81d5938c36d580b1330a6b67b59dca099",
+      "revision": "sha256:4d5ba6023ae40dab884a74b960432e35c5444a0069ffd9b1152aaf0b391b9547",
       "freshness": {
         "mode": "derived-current"
       }
@@ -701,6 +729,20 @@
       "provenance": "generated",
       "service": "sns",
       "revision": "sha256:c63ac62ca885dacfa9950be521fe35e095c0138cddc7bd83afb5e9ad87dc4102",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:sns:service-bus-geo-dr-requires-alias-based-failover-planning:reference",
+      "canonical_id": "design-gap:sns:service-bus-geo-dr-requires-alias-based-failover-planning",
+      "path": "docs/site/design-gaps/sns/service-bus-geo-dr-requires-alias-based-failover-planning.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "sns",
+      "revision": "sha256:15957288d600438aec99332b3f90ebd1bdce6baa9633f6b6160e414cd83bfee9",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1288,7 +1330,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:75e13fbfdc99a38b85bbd597071f2ab72075ca9950ea10f9f8f74c9761bbb3a5",
+      "revision": "sha256:79c0a87d49fb16591bd8eebf47adbfa191aa179fd5bfdbd4c5e0e7f849f31f5d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1312,7 +1354,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:31cb7df550c7a74b216314bcfa3be41be60558c97b2f04202aedbfaf1983b660",
+      "revision": "sha256:89b9586c7092c7e78b083fb21a5cee94a1bea0161e15ec64883c58c67270b8d7",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1324,7 +1366,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:5b00da6957f014cdd10550158674a7bfcfe5af27c94f6e56324887888ff6bf86",
+      "revision": "sha256:8f3eff29461cbae84b844cba3deab4f92ae75db9288930f9098c462571048fde",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1348,7 +1390,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:d8f32e17f8c5140ede4ab74d4f3c2e77de3139e8ad797f76642cb59f4ac554b3",
+      "revision": "sha256:bc5023eae5a1d9eb14a01c05d24b97d4b1d6ed4891d23dd0cb3d67a807e4a96d",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1420,7 +1462,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:16f34171f3fe05e1495a07e437b4ea148d4b3b2cb5988a9b0254ffc3ee5451f6",
+      "revision": "sha256:edf78ee2ab9773d7d4d3dd933ea45c371e2d62431e8e6f6a847df3d5df227ac4",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5093,7 +5135,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "ConfirmSubscription",
-      "revision": "sha256:5a5875b7e048e5d1f386a613efeb7df2ec9d765253fad4fb9ce26d3709034c1b",
+      "revision": "sha256:0c9490ebbfb43306c0a6d26297606c28f2ed808e4343c22f79ae40434f2d7720",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-22"
@@ -5109,7 +5151,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "ConfirmSubscription",
-      "revision": "sha256:31810598a022ff01e4609dad8fd1fd5684ff8c974d2e58c7ab2f75ed73d75cab",
+      "revision": "sha256:4d3ee4db27f46501961e1ad8ea097650ea216d4ba3fc3f3c87774aa8193b2ac9",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-22"
@@ -5349,7 +5391,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:2368ab609369d408925ac5f66138b2e742ae3349a34d9c8b659426bf99ad38dc",
+      "revision": "sha256:6cb8d4ad95c75b50c475c38e287b7412d865dfe26a567380f830d5b2cd7752f5",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5365,7 +5407,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:baa5107438d84c621aa57a851c146afb4179062862917035e7b251d5b5f67b4f",
+      "revision": "sha256:86854c7636b2441e2f741d1ff7de503ba1f8cf6afc7b64a896c158fc0342556c",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5381,7 +5423,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "PublishBatch",
-      "revision": "sha256:2be3d36d42e900cd3f3cb4e89983353a394c8b1e35324a55eee2f265af1ecd26",
+      "revision": "sha256:995d36a27ab7a2ec5e78e72b7c8bfb8fd15acbd976d661bef64ae0cdabf0da57",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5397,7 +5439,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "PublishBatch",
-      "revision": "sha256:35d9dd5893832938d0a9b5ae112e815e136087b2177c216657aaca685168f90d",
+      "revision": "sha256:113e4a6f867fcc3801bf8f796985ff71a6681356931287f3eebefc9cd208c4fc",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5477,7 +5519,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "Subscribe",
-      "revision": "sha256:a8377e713d6aec7dfe36ebce75b64a7521547acbbcb7bc77155fe8ad64d53aca",
+      "revision": "sha256:077eb71b5de2bfd81dfd71fff78dff30aa725e6f0a36c845242a4f0686693c04",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5493,7 +5535,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "Subscribe",
-      "revision": "sha256:098a0815ee8390d36abd3a60e4f8f682a318229fdc50ad2a48ff759d655e8007",
+      "revision": "sha256:b72db8580c4d5d10e47f0ea97d679b33b777bbf5e29c6be61ebe63330c1f63a3",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -6665,7 +6707,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "sns-standard-publish-event-grid",
-      "revision": "sha256:f6323d5e31274b4d502093dd69a8e60c5e2027e448b19ee352d2cde0f56c2a6b",
+      "revision": "sha256:0309e4ad2968ce0907e306c0fc62fd5a0d5db6262ffac9277308e56a60fb8b80",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -6694,7 +6736,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "sns-standard-publish-service-bus",
-      "revision": "sha256:2391abcb1ea285d333a5991a4b4996d4727ed8dde0bb112f349695360a5ddc17",
+      "revision": "sha256:0b3b7100abf1237d3fae12a0f100da376681191aafbf5cb5803b2ad601cb7310",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -6723,7 +6765,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "sns-subscription-management-service-bus",
-      "revision": "sha256:53be07eb08ce40aa4d27f224b860c490d806fe2a88e9dce6ccd5408d1d4956aa",
+      "revision": "sha256:b8226733e36d7e9423687ec48976a4b332a876d88ced483a652b8f4dc7ad2aad",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -7013,7 +7055,7 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "sns",
-      "revision": "sha256:cf25c4724493d80144f787e433e5ddf173573883ea26008523d611786219570c",
+      "revision": "sha256:8e66000787c9743e1e29a1e2f5d1b8e4194b4b95d885eef31d182150dbf74781",
       "freshness": {
         "mode": "current"
       }
@@ -7039,7 +7081,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:cf335ad5224528d936efa5ea755448ced9ebd61aba103479558703110a2306f3",
+      "revision": "sha256:bc6086a00cd0a3171f0a5882b19e3917dc9687cb2858e107ce499519efa4b016",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
@@ -7053,7 +7095,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:91d0f6fbbbda6da1a8cbcc796a5946ffd72a1b4c6757bfb0c1be7691d1d8161d",
+      "revision": "sha256:62131463e4376cb589a148de533f4ba05042919d52f62a5cc064fef4e1b61c94",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"
@@ -7067,7 +7109,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:97b7c2a8b71992859d141e8693df021b4407d57f9a5c8dd158cdabd75c37763f",
+      "revision": "sha256:d089754155fc5c45e71b51b831597e431d2f46c1dcc9e8781a10bcc102426036",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-25T01:28:30Z"

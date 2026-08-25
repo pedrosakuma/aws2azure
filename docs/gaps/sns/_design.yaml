@@ -9,9 +9,34 @@ design_gaps:
   - https://learn.microsoft.com/azure/event-grid/post-to-custom-topic
 - area: FIFO topics are deferred
   status: partial
-  summary: 'aws2azure supports a bounded Service Bus subset for SNS .fifo topics. On the Service Bus backend, MessageGroupId maps to SessionId (AMQP group-id), MessageDeduplicationId maps to broker MessageId, and ContentBasedDeduplication=true falls back to SHA-256(message body) when no dedup id is supplied. Event Grid still cannot honor FIFO semantics and rejects them. Reclassified from feasible_backlog to by_design after re-review for #800: the three residual gaps below are structural boundaries of the Service Bus AMQP entity model rather than something further engineering here can close.'
+  summary: 'aws2azure supports a bounded Service Bus subset for SNS .fifo topics. On the Service Bus backend, MessageGroupId maps to SessionId (AMQP group-id), MessageDeduplicationId maps to broker MessageId, and ContentBasedDeduplication=true falls back to SHA-256(message body) when no dedup id is supplied. Event Grid still cannot honor FIFO semantics and rejects .fifo topics plus FIFO-only request fields. Reclassified from feasible_backlog to by_design after re-review for #800: the three residual gaps below are structural boundaries of the Service Bus AMQP entity model rather than something further engineering here can close.'
   impact: 'The proxy can approximate SNS FIFO only within the Service Bus backend''s native limits, for structural reasons: (1) Service Bus has no concept of an SNS-compatible, globally-orderable SequenceNumber -- its sequence number is a per-entity, broker-local counter with no cross-entity or cross-region portability guarantee, so surfacing it as an SNS SequenceNumber would misrepresent a guarantee the backend does not provide; (2) Service Bus duplicate detection is an intentionally time-windowed, broker-side dedup cache (bounded by DuplicateDetectionHistoryTimeWindow) with no unbounded, SNS-parity dedup guarantee to request; (3) making the SNS subscription-management APIs (Subscribe et al.) provision session-aware Service Bus subscriptions by default would require guessing a RequiresSession=true topology up front for every subscription regardless of whether the topic is FIFO, which is unsafe for non-FIFO topics and would need a new, deliberate opt-in configuration surface rather than a translation-fidelity fix.'
   workaround: Use the Service Bus backend for FIFO topics, keep publish retries within the topic's duplicate-detection window, and provision session-aware Service Bus subscriptions with Azure-native tooling when guaranteed ordered processing matters.
+  disposition: by_design
+- area: Service Bus Geo-DR requires alias-based failover planning
+  status: by_design
+  summary: Service Bus-backed SNS publish and subscription-management flows inherit Service Bus Geo-DR's alias model. The proxy must target the Geo-DR alias hostname/FQDN to follow failover; direct primary-namespace endpoints keep pointing at the old region. Geo-DR replicates topic/subscription metadata, including proxy-managed SNS subscription descriptions, but not queued topic/subscription messages or other live broker state.
+  impact: Regional failover for Service Bus-backed SNS workloads is not transparent unless callers route through the alias and rehearse failover. Proxy-created subscription entities survive as metadata, but buffered deliveries in those subscriptions do not; workloads that require active/active message replication or preserved in-flight backlog need Service Bus Geo-Replication instead of Geo-DR.
+  workaround: Configure Service Bus-backed SNS bindings to use the Geo-DR alias for data-plane and management-plane endpoints, use safe failover so pending metadata replications complete, and choose Geo-Replication when the workload must preserve queued topic/subscription data across regions.
+  references:
+  - https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-geo-dr
+  disposition: by_design
+- area: Event Grid custom-topic failover remains best-effort and external
+  status: by_design
+  summary: The SNS Event Grid backend targets classic Event Grid custom topics via EventGridCredentials.Endpoint or namespace+topicName-derived /api/events endpoints. Those topics are single-region for steady-state traffic; Azure's cross-region recovery is metadata-only and Microsoft-managed on a best-effort timeline, not a customer-controlled fast failover. Event Grid namespaces provide a different multitenant model that this proxy does not use for SNS publish.
+  impact: Regional outages on an Event Grid-backed SNS topic can interrupt Publish and PublishBatch for an extended period, and any unprocessed event data in the failed region can be lost. The proxy cannot provide SNS-style rapid regional failover or active/active publish continuity for this backend by itself.
+  workaround: 'Treat the Event Grid backend as requiring an external multiregion DR plan: configure retries/idempotency, dead-letter or archive where needed, and build client-side failover to separately provisioned Event Grid resources if bounded regional failover time matters.'
+  references:
+  - https://learn.microsoft.com/en-us/azure/reliability/reliability-event-grid
+  - https://learn.microsoft.com/en-us/azure/event-grid/post-to-custom-topic
+  disposition: by_design
+- area: Event Grid publish auth omits SAS-token mode
+  status: partial
+  summary: 'SNS Event Grid publishing currently supports only static access-key auth (`aeg-sas-key`) and Microsoft Entra bearer tokens. It does not accept or generate Event Grid SAS tokens (`aeg-sas-token` / `Authorization: SharedAccessSignature`) for time-bounded publish delegation.'
+  impact: Multi-tenant or delegated deployments cannot use short-lived, scopeable Event Grid SAS publish tokens through the proxy. Operators must either distribute a long-lived shared key or rely on Entra-issued bearer tokens.
+  workaround: Use Entra ID where possible, or provision/rotate Event Grid shared keys outside the proxy. Do not assume the SNS Event Grid backend can consume precomputed SAS tokens today.
+  references:
+  - https://learn.microsoft.com/en-us/azure/event-grid/authenticate-with-access-keys-shared-access-signatures
   disposition: by_design
 - area: No AWS region / account namespace
   status: by_design
@@ -62,9 +87,12 @@ workload_patterns:
   - DeleteTopic
   design_gaps:
   - Two backends with different fidelity
+  - Service Bus Geo-DR requires alias-based failover planning
+  - Event Grid custom-topic failover remains best-effort and external
+  - Event Grid publish auth omits SAS-token mode
   - Event Grid topic lifecycle remains external
   - Default Event Grid routing multiplexes multiple SNS topics
-  guidance: Select the backend deliberately and validate message shape, delivery, and partial failures against that backend.
+  guidance: Select the backend deliberately; for Service Bus use the Geo-DR alias if regional failover matters, and for Event Grid plan external multiregion failover plus the currently supported auth mode (shared key or Entra bearer).
 - id: sns_subscription_management
   name: Subscription management
   compatibility: conditional
@@ -80,8 +108,9 @@ workload_patterns:
   design_gaps:
   - Two backends with different fidelity
   - No AWS region / account namespace
+  - Service Bus Geo-DR requires alias-based failover planning
   - Event Grid subscription management is excluded
-  guidance: Use this profile only with the Service Bus Topics backend, avoid parsing AWS account identity from returned ARNs, and provision Event Grid event subscriptions separately when Event Grid is selected for publishing.
+  guidance: Use this profile only with the Service Bus Topics backend, route through the Geo-DR alias when regional failover matters, avoid parsing AWS account identity from returned ARNs, and provision Event Grid event subscriptions separately when Event Grid is selected for publishing.
 - id: sns_fifo
   name: FIFO topic ordering and deduplication
   compatibility: conditional
