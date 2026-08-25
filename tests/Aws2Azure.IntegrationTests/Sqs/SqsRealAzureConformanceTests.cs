@@ -322,7 +322,7 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
     }
 
     [SkippableFact]
-    public async Task ChangeMessageVisibilityBatch_rest_lane_documents_delayed_zero_timeout_redelivery_against_real_service_bus()
+    public async Task ChangeMessageVisibilityBatch_rest_lane_releases_zero_timeout_promptly_against_real_service_bus()
     {
         Skip.IfNot(fixture.ServiceBusConfigured,
             "AZURE_SB_CONNSTR not set — skipping real-Azure SQS conformance.");
@@ -387,11 +387,20 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             Assert.Equal("invalid", failure.Id);
             Assert.True(failure.SenderFault);
 
-            await AssertNoBodyAsync(
+            var zeroRedelivered = await ReceiveExpectedBodyAsync(
                 client,
                 queueUrl,
                 zeroBody,
                 TimeSpan.FromSeconds(3),
+                timeout.Token).ConfigureAwait(false);
+            Assert.Equal("2", zeroRedelivered.Attributes["ApproximateReceiveCount"]);
+            await client.DeleteMessageAsync(queueUrl, zeroRedelivered.ReceiptHandle, timeout.Token)
+                .ConfigureAwait(false);
+
+            await AssertQueueEmptyAsync(
+                client,
+                queueUrl,
+                TimeSpan.FromSeconds(23),
                 timeout.Token).ConfigureAwait(false);
 
             var renewedRedelivered = await ReceiveExpectedBodyAsync(
@@ -401,16 +410,6 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 TimeSpan.FromSeconds(40),
                 timeout.Token).ConfigureAwait(false);
             await client.DeleteMessageAsync(queueUrl, renewedRedelivered.ReceiptHandle, timeout.Token)
-                .ConfigureAwait(false);
-
-            var zeroRedelivered = await ReceiveExpectedBodyAsync(
-                client,
-                queueUrl,
-                zeroBody,
-                TimeSpan.FromSeconds(40),
-                timeout.Token).ConfigureAwait(false);
-            Assert.Equal("2", zeroRedelivered.Attributes["ApproximateReceiveCount"]);
-            await client.DeleteMessageAsync(queueUrl, zeroRedelivered.ReceiptHandle, timeout.Token)
                 .ConfigureAwait(false);
         }
         finally
@@ -493,32 +492,6 @@ public sealed class SqsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         }
 
         throw new TimeoutException($"Timed out waiting to receive '{expectedBody}'.");
-    }
-
-    private static async Task AssertNoBodyAsync(
-        IAmazonSQS client,
-        string queueUrl,
-        string unexpectedBody,
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-    {
-        var deadline = DateTimeOffset.UtcNow + timeout;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            var response = await client.ReceiveMessageAsync(new ReceiveMessageRequest
-            {
-                QueueUrl = queueUrl,
-                MaxNumberOfMessages = 1,
-                WaitTimeSeconds = 1,
-            }, cancellationToken).ConfigureAwait(false);
-            if (response.Messages is not { Count: > 0 })
-            {
-                continue;
-            }
-
-            var message = Assert.Single(response.Messages);
-            Assert.NotEqual(unexpectedBody, message.Body);
-        }
     }
 
     private static async Task AssertQueueEmptyAsync(
