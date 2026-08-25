@@ -109,6 +109,10 @@ Validation rules:
 - Any sub-feature whose `status` is not `implemented` must declare `disposition`.
 - Any design gap whose `status` is not `by_design` must declare `disposition`.
 - `tracking_issue` must look like `#<number>` and is required only when `disposition: feasible_backlog`; other dispositions must omit it.
+- Every `behavior_differences` item and every non-`implemented` `sub_features`
+  entry should carry a discoverable test reference in its own text. The audit
+  command below currently recognizes inline tags such as `[conformance:...]`
+  plus fully-qualified test identities ending in `Tests.<Method>`.
 
 Workload pattern IDs are the stable machine contract consumed by workload
 manifests. Rename one only as a deliberate schema-breaking change. A profile
@@ -153,3 +157,13 @@ The checker returns `0` after producing a compatible or conditional report,
 `1` for an invalid command/manifest, and `2` for a blocked report when
 `--fail-on-blocked` is enabled. Without that option, blocked reports are still
 rendered and return `0` so discovery remains inspectable.
+
+Audit gap docs for documented divergences that do not cite a discoverable test:
+
+```bash
+dotnet run --project tools/Aws2Azure.GapDocs -- check-test-references
+```
+
+This is an on-demand triage aid, not a hard CI gate. It validates the gap docs
+first, then lists each `behavior_differences` item and non-`implemented`
+sub-feature whose prose does not expose a recognizable test reference.

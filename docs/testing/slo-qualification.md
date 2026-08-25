@@ -94,6 +94,14 @@ The manifests are evidence, not substitutes for production-shaped load.
 Correctness and repeated load runs download and launch those exact bytes. A
 hash-equivalent rebuild is not accepted as the candidate.
 
+Before promoting or reaffirming a workload profile toward `qualified` / GA,
+re-run a per-operation AWS-contract-versus-implementation audit for that
+profile's required surface. The historical implementation PR and its gap-doc
+prose are not enough on their own: explicitly check whether AWS guarantees,
+edge cases, or envelope details remain unverified against the current
+Azure-backed implementation, then either add tests or record the accepted
+divergence with those tests cited.
+
 Generate a final qualification from a reviewed policy, a correctness candidate,
 and repeated immutable load evidence with:
 
