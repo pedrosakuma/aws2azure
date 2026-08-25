@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Text;
 using Aws2Azure.Amqp.Framing;
 
 namespace Aws2Azure.Amqp.Connection;
@@ -66,6 +67,7 @@ internal abstract class AmqpLink
     public bool IsClosed => Volatile.Read(ref _state) >= StateDetachingLocal;
     internal bool AttachWriteAttempted => Volatile.Read(ref _attachWriteAttempted) != 0;
     internal bool AttachFrameSent => Volatile.Read(ref _attachFrameSent) != 0;
+    internal int CurrentMaxFrameSize => _session.Connection.CurrentMaxFrameSize;
 
     protected AmqpSession Session => _session;
     protected AmqpLinkSettings Settings => _settings;
@@ -133,11 +135,16 @@ internal abstract class AmqpLink
         byte[]? rentedErr = null;
         if (error is { } e)
         {
-            rentedErr = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+            var descriptionBytes = string.IsNullOrEmpty(e.Description)
+                ? 0
+                : Encoding.UTF8.GetByteCount(e.Description);
+            rentedErr = ArrayPool<byte>.Shared.Rent(
+                checked(Performatives.ScratchSize + e.Info.Length + descriptionBytes + 256));
             AmqpError.Write(rentedErr, in e, out var el);
             errorMem = rentedErr.AsMemory(0, el);
         }
-        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var rented = ArrayPool<byte>.Shared.Rent(
+            checked(Performatives.ScratchSize + errorMem.Length + 128));
         try
         {
             var rejected = new Rejected { Error = errorMem };
@@ -494,7 +501,8 @@ internal abstract class AmqpLink
             Settled = settled,
             State = state,
         };
-        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var rented = ArrayPool<byte>.Shared.Rent(
+            checked(Performatives.ScratchSize + state.Length + 128));
         var writeStarted = false;
         try
         {
@@ -646,12 +654,17 @@ internal abstract class AmqpLink
         byte[]? rentedErr = null;
         if (error is { } e)
         {
-            rentedErr = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+            var descriptionBytes = string.IsNullOrEmpty(e.Description)
+                ? 0
+                : Encoding.UTF8.GetByteCount(e.Description);
+            rentedErr = ArrayPool<byte>.Shared.Rent(
+                checked(Performatives.ScratchSize + e.Info.Length + descriptionBytes + 256));
             AmqpError.Write(rentedErr, in e, out var errWritten);
             errorPayload = rentedErr.AsMemory(0, errWritten);
         }
 
-        var rented = ArrayPool<byte>.Shared.Rent(Performatives.ScratchSize);
+        var rented = ArrayPool<byte>.Shared.Rent(
+            checked(Performatives.ScratchSize + errorPayload.Length + 128));
         try
         {
             var detach = new AmqpDetach

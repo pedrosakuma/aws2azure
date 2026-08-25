@@ -1,6 +1,8 @@
 using System.Buffers;
 using Aws2Azure.Amqp.Codec;
+using Aws2Azure.Amqp.Connection;
 using Aws2Azure.Amqp.Framing;
+using Aws2Azure.Amqp.Transport;
 
 namespace Aws2Azure.Amqp.ServiceBus;
 
@@ -20,6 +22,15 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// </summary>
 internal static class ServiceBusDeadLetterInfo
 {
+    /// <summary>
+    /// Service Bus rejects oversized dead-letter metadata with
+    /// <c>InvalidValue</c>. Clamp both fields conservatively before
+    /// encoding so long AWS-originated text cannot fail the settle.
+    /// </summary>
+    public const int MaxFieldLength = 4096;
+    private const string DeadLetterCondition = "com.microsoft:dead-letter";
+    private const int AmqpFrameHeaderSize = 8;
+
     /// <summary>Symbol key Service Bus reads for the reason.</summary>
     public const string ReasonKey = "DeadLetterReason";
 
@@ -34,6 +45,9 @@ internal static class ServiceBusDeadLetterInfo
     /// </summary>
     public static ReadOnlyMemory<byte> Encode(string? reason, string? description)
     {
+        reason = Truncate(reason);
+        description = Truncate(description);
+
         var hasReason = !string.IsNullOrEmpty(reason);
         var hasDescription = !string.IsNullOrEmpty(description);
         var pairCount = (hasReason ? 1 : 0) + (hasDescription ? 1 : 0);
@@ -74,6 +88,121 @@ internal static class ServiceBusDeadLetterInfo
         finally
         {
             ArrayPool<byte>.Shared.Return(elementsRent);
+        }
+    }
+
+    public static (string? Reason, string? Description) ClampToFrame(
+        string? reason,
+        string? description,
+        int maxFrameSize)
+    {
+        reason = Truncate(reason);
+        description = Truncate(description);
+
+        var maxDispositionBodyBytes = Math.Max(0, maxFrameSize - AmqpFrameHeaderSize);
+        if (FitsDispositionFrame(reason, description, maxDispositionBodyBytes))
+        {
+            return (reason, description);
+        }
+
+        description = TrimFieldToFit(reason, description, maxDispositionBodyBytes, trimDescription: true);
+        if (FitsDispositionFrame(reason, description, maxDispositionBodyBytes))
+        {
+            return (reason, description);
+        }
+
+        reason = TrimFieldToFit(description, reason, maxDispositionBodyBytes, trimDescription: false);
+        if (FitsDispositionFrame(reason, description, maxDispositionBodyBytes))
+        {
+            return (reason, description);
+        }
+
+        return (null, null);
+    }
+
+    private static string? Truncate(string? value)
+        => string.IsNullOrEmpty(value) || value.Length <= MaxFieldLength
+            ? value
+            : value[..MaxFieldLength];
+
+    private static string? TrimFieldToFit(
+        string? otherField,
+        string? fieldToTrim,
+        int maxDispositionBodyBytes,
+        bool trimDescription)
+    {
+        if (string.IsNullOrEmpty(fieldToTrim))
+        {
+            return fieldToTrim;
+        }
+
+        var low = 0;
+        var high = fieldToTrim.Length;
+        while (low < high)
+        {
+            var mid = (low + high + 1) / 2;
+            var candidate = fieldToTrim[..mid];
+            var fits = trimDescription
+                ? FitsDispositionFrame(otherField, candidate, maxDispositionBodyBytes)
+                : FitsDispositionFrame(candidate, otherField, maxDispositionBodyBytes);
+            if (fits)
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return low == 0 ? null : fieldToTrim[..low];
+    }
+
+    private static bool FitsDispositionFrame(
+        string? reason,
+        string? description,
+        int maxDispositionBodyBytes)
+    {
+        if (maxDispositionBodyBytes <= 0)
+        {
+            return false;
+        }
+
+        var info = Encode(reason, description);
+        var errorBuffer = ArrayPool<byte>.Shared.Rent(checked(Performatives.ScratchSize + info.Length + 256));
+        var rejectedBuffer = ArrayPool<byte>.Shared.Rent(checked(Performatives.ScratchSize + info.Length + 512));
+        var dispositionBuffer = ArrayPool<byte>.Shared.Rent(checked(Performatives.ScratchSize + info.Length + 768));
+        try
+        {
+            var error = new AmqpError
+            {
+                Condition = DeadLetterCondition,
+                Description = null,
+                Info = info,
+            };
+            AmqpError.Write(errorBuffer, in error, out var errorLength);
+
+            var rejected = new Rejected
+            {
+                Error = errorBuffer.AsMemory(0, errorLength),
+            };
+            Rejected.Write(rejectedBuffer, in rejected, out var rejectedLength);
+
+            var disposition = new AmqpDisposition
+            {
+                Role = AmqpRole.Receiver,
+                First = uint.MaxValue,
+                Settled = false,
+                State = rejectedBuffer.AsMemory(0, rejectedLength),
+            };
+            AmqpDisposition.Write(dispositionBuffer, in disposition, out var dispositionLength);
+            return dispositionLength <= maxDispositionBodyBytes;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(errorBuffer);
+            ArrayPool<byte>.Shared.Return(rejectedBuffer);
+            ArrayPool<byte>.Shared.Return(dispositionBuffer);
         }
     }
 

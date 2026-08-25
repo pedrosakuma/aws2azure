@@ -150,6 +150,31 @@ public sealed class ServiceBusReceiverTests
     }
 
     [Fact]
+    public async Task DeadLetterAsync_accepts_max_length_dead_letter_metadata()
+    {
+        var (conn, broker, receiver, _) = await SetupReceiverAsync("q", EncodeMessage("m1"));
+        await using var _c = conn;
+        await using var _r = receiver;
+
+        var batch = await receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(5)).WaitAsync(TimeSpan.FromSeconds(15));
+        var msg = Assert.Single(batch);
+        var reason = new string('r', ServiceBusDeadLetterInfo.MaxFieldLength);
+        var description = new string('d', ServiceBusDeadLetterInfo.MaxFieldLength);
+
+        await receiver.DeadLetterAsync(msg, reason, description).WaitAsync(TimeSpan.FromSeconds(5));
+
+        await WaitForDispositionAsync(broker, msg.DeliveryId);
+        Assert.Equal(AmqpDispositionOutcome.Rejected, broker.Dispositions[msg.DeliveryId].Outcome);
+        Assert.True(broker.RejectedErrors.TryGetValue(msg.DeliveryId, out var err));
+        Assert.True(ServiceBusDeadLetterInfo.TryDecode(err.Info, out var decodedReason, out var decodedDescription));
+        Assert.Equal(reason, decodedReason);
+        Assert.NotNull(decodedDescription);
+        Assert.True(decodedDescription.Length <= ServiceBusDeadLetterInfo.MaxFieldLength);
+        Assert.True(decodedDescription.Length < description.Length);
+        Assert.StartsWith(decodedDescription, description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReceiveBatchAsync_caches_messages_with_16_byte_delivery_tags_by_lock_token()
     {
         var (conn, broker, receiver) = await SetupReceiverWithTagsAsync(

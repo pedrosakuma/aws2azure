@@ -79,4 +79,17 @@ public sealed class ServiceBusDeadLetterInfoTests
         Assert.Equal("café", reason);
         Assert.Equal("naïve 💥", description);
     }
+
+    [Fact]
+    public void Encode_truncates_fields_to_service_bus_limit()
+    {
+        var longReason = new string('r', ServiceBusDeadLetterInfo.MaxFieldLength + 25);
+        var longDescription = new string('d', ServiceBusDeadLetterInfo.MaxFieldLength + 40);
+
+        var encoded = ServiceBusDeadLetterInfo.Encode(longReason, longDescription);
+
+        Assert.True(ServiceBusDeadLetterInfo.TryDecode(encoded, out var reason, out var description));
+        Assert.Equal(new string('r', ServiceBusDeadLetterInfo.MaxFieldLength), reason);
+        Assert.Equal(new string('d', ServiceBusDeadLetterInfo.MaxFieldLength), description);
+    }
 }

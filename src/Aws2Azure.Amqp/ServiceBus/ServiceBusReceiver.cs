@@ -338,6 +338,11 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private Task RejectInternal(
         AmqpIncomingDelivery delivery, string? reason, string? description, CancellationToken cancellationToken)
     {
+        (reason, description) = ServiceBusDeadLetterInfo.ClampToFrame(
+            reason,
+            description,
+            _link.CurrentMaxFrameSize);
+
         // Service Bus reads DeadLetterReason / DeadLetterErrorDescription
         // off the typed fields map on error.info (slice 8c.4). When the
         // info map carries the values we deliberately leave

@@ -11,10 +11,10 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 122 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
-| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 22 |
-| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
+| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 19 |
+| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
 
 ## dynamodb
 
@@ -135,14 +135,11 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
-- Design gap [Account-level recovery and delete-retention features remain operator-provisioned](design-gaps/s3/account-level-recovery-and-delete-retention-features-remain-operator-provisioned.md) — 🔵 by design
 - Design gap [Bucket sub-resource configs are not translated](design-gaps/s3/bucket-sub-resource-configs-are-not-translated.md) — 🔵 by design
 - Design gap [Multipart per-part ETag validation cannot be reproduced](design-gaps/s3/multipart-per-part-etag-validation-cannot-be-reproduced.md) — 🔵 by design
 - Design gap [Multipart upload keeps bounded durable proxy state](design-gaps/s3/multipart-upload-keeps-bounded-durable-proxy-state.md) — 🔵 by design
 - Design gap [No IAM / ACL / bucket-policy authorization model](design-gaps/s3/no-iam---acl---bucket-policy-authorization-model.md) — 🔵 by design
 - Design gap [No enforceable server-side-encryption configuration surface](design-gaps/s3/no-enforceable-server-side-encryption-configuration-surface.md) — 🔵 by design
-- Design gap [Object-lock-capable storage accounts must be provisioned up front](design-gaps/s3/object-lock-capable-storage-accounts-must-be-provisioned-up-front.md) — 🔵 by design
-- Design gap [Secondary-region blob reads are not attempted automatically](design-gaps/s3/secondary-region-blob-reads-are-not-attempted-automatically.md) — 🔵 by design
 - Operation [DeleteBucketCors](operations/s3/deletebucketcors.md) — 🔵 by design
 - Operation [DeleteBucketEncryption](operations/s3/deletebucketencryption.md) — 🔵 by design
 - Operation [DeleteBucketLifecycle](operations/s3/deletebucketlifecycle.md) — 🔵 by design
@@ -322,14 +319,11 @@ _No remaining feasible backlog is documented for this service._
 ### Structural boundaries
 
 - Design gap [Default Event Grid routing multiplexes multiple SNS topics](design-gaps/sns/default-event-grid-routing-multiplexes-multiple-sns-topics.md) — 🔵 by design
-- Design gap [Event Grid custom-topic failover remains best-effort and external](design-gaps/sns/event-grid-custom-topic-failover-remains-best-effort-and-external.md) — 🔵 by design
-- Design gap [Event Grid publish auth omits SAS-token mode](design-gaps/sns/event-grid-publish-auth-omits-sas-token-mode.md) — 🔵 by design
 - Design gap [Event Grid subscription management is excluded](design-gaps/sns/event-grid-subscription-management-is-excluded.md) — 🔵 by design
 - Design gap [Event Grid topic lifecycle remains external](design-gaps/sns/event-grid-topic-lifecycle-remains-external.md) — 🔵 by design
 - Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sns/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [No IAM-backed policy surface](design-gaps/sns/no-iam-backed-policy-surface.md) — 🔵 by design
-- Design gap [Service Bus Geo-DR requires alias-based failover planning](design-gaps/sns/service-bus-geo-dr-requires-alias-based-failover-planning.md) — 🔵 by design
 - Design gap [Two backends with different fidelity](design-gaps/sns/two-backends-with-different-fidelity.md) — 🔵 by design
 - Operation [ConfirmSubscription](operations/sns/confirmsubscription.md) — 🔵 by design
 - Operation [GetSubscriptionAttributes](operations/sns/getsubscriptionattributes.md) — 🔵 by design
@@ -366,7 +360,9 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [FIFO AMQP production profile expects Service Bus Premium](design-gaps/sqs/fifo-amqp-production-profile-expects-service-bus-premium.md) — 🔵 by design
 - Design gap [FIFO ordering requires the AMQP transport](design-gaps/sqs/fifo-ordering-requires-the-amqp-transport.md) — 🔵 by design
+- Design gap [Geo-DR failover requires configuring the alias hostname](design-gaps/sqs/geo-dr-failover-requires-configuring-the-alias-hostname.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sqs/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [PurgeQueue is best-effort emulation](design-gaps/sqs/purgequeue-is-best-effort-emulation.md) — 🔵 by design
 - Design gap [Queue lifecycle eventual-consistency](design-gaps/sqs/queue-lifecycle-eventual-consistency.md) — 🔵 by design

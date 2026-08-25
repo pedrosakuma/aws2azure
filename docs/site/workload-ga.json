@@ -62,7 +62,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -161,7 +161,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -350,7 +350,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -449,7 +449,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -572,7 +572,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -695,7 +695,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -794,7 +794,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -883,25 +883,7 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
-        "subject": "sns:Event Grid custom-topic failover remains best-effort and external",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
-        "subject": "sns:Event Grid publish auth omits SAS-token mode",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
         "subject": "sns:Event Grid topic lifecycle remains external",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
-        "subject": "sns:Service Bus Geo-DR requires alias-based failover planning",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
       },
       {
@@ -923,7 +905,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -1012,25 +994,7 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
-        "subject": "sns:Event Grid custom-topic failover remains best-effort and external",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
-        "subject": "sns:Event Grid publish auth omits SAS-token mode",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
         "subject": "sns:Event Grid topic lifecycle remains external",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
-        "subject": "sns:Service Bus Geo-DR requires alias-based failover planning",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_standard_publish\u0027."
       },
       {
@@ -1052,7 +1016,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -1171,12 +1135,6 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
-        "subject": "sns:Service Bus Geo-DR requires alias-based failover planning",
-        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
-      },
-      {
-        "code": "design_gap_accepted",
-        "disposition": "advisory",
         "subject": "sns:Two backends with different fidelity",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sns_subscription_management\u0027."
       },
@@ -1193,7 +1151,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -1328,7 +1286,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -1405,6 +1363,12 @@
       {
         "code": "design_gap_accepted",
         "disposition": "advisory",
+        "subject": "sqs:FIFO AMQP production profile expects Service Bus Premium",
+        "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
+      },
+      {
+        "code": "design_gap_accepted",
+        "disposition": "advisory",
         "subject": "sqs:FIFO ordering requires the AMQP transport",
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_fifo_amqp\u0027."
       },
@@ -1421,7 +1385,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",
@@ -1562,7 +1526,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:40f0a3c530360d629e9a7eb795809cfeb9dba2921954ff3bb8f04137268baa64",
+        "canonical_inputs_revision": "sha256:02d491e1b426d99242becfe038aca03dc9e0acee9b3635cf8eebc52406a5f6f6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9",

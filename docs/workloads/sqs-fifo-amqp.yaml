@@ -2,6 +2,7 @@ schema_version: 1
 id: sqs-fifo-amqp
 version: 1
 name: SQS FIFO messaging over AMQP
+# Premium note: production FIFO qualification is against Service Bus Premium; Standard AMQP is dev/test only unless separately qualified.
 minimum_proxy_version: 0.1.0
 real_azure_seal_max_age_days: 90
 operations:
@@ -19,6 +20,7 @@ accepted_partial_operations: []
 accepted_design_gaps:
   - "sqs:FIFO ordering requires the AMQP transport"
   - "sqs:Transport-dependent capability differences"
+  - "sqs:FIFO AMQP production profile expects Service Bus Premium"
 required_sub_feature_seals:
   - operation: sqs:SendMessage
     sub_feature: MessageDeduplicationId (FIFO)
