@@ -26,6 +26,7 @@ accepted_design_gaps:
   - "sns:Two backends with different fidelity"
   - "sns:No AWS region / account namespace"
   - "sns:No IAM-backed policy surface"
+  - "sns:Service Bus Geo-DR requires alias-based failover planning"
   - "sns:Event Grid subscription management is excluded"
 evidence:
   qualification_artifact: ""

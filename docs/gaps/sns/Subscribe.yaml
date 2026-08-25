@@ -25,10 +25,12 @@ behavior_differences:
 - When credentials.serviceBusTopics.topics[*].serviceBusTopicName is configured for an exact SNS topic name, Subscribe stores the Azure subscription under that mapped Service Bus topic path while keeping the SNS-facing SubscriptionArn on the original topic name.
 - 'RawMessageDelivery is metadata-only compatibility state. Subscribe stores the flag for later Get/SetSubscriptionAttributes round-trips, but publish-time delivery shape does not change: Service Bus publishes remain raw message bytes and Event Grid publishes keep their Event Grid envelope.'
 - Subscribe manages Azure Service Bus topic subscriptions only. It never creates or updates an Azure Event Grid event subscription; Event Grid subscription semantics are explicitly outside this profile.
+- Service Bus Geo-DR only preserves this profile when the namespace/endpoints are configured through the Geo-DR alias. The subscription entity and its UserMetadata replicate as metadata, but queued messages already retained in the subscription do not; workloads needing preserved backlog across regions must use Geo-Replication instead.
 - 'Subscribers do not receive actively-pushed deliveries: aws2azure is publish-only and never forwards messages out to HTTPS/HTTP endpoints or SQS-backed queues (see the ''Subscriber delivery forwarder'' sub-feature — won''t implement, out of scope). Messages are readable from the backing Service Bus subscription by a native Azure consumer. Event Grid-backed SNS topics do not fan out to the Service Bus subscriptions created here.'
 - The Microsoft Service Bus emulator does not persist or echo subscription UserMetadata, where this proxy stores Protocol/Endpoint/FilterPolicy/RawMessageDelivery. Emulator-backed integration tests therefore skip the subscription lifecycle assertions; correctness is validated against real Azure Service Bus.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html
 - https://docs.aws.amazon.com/sns/latest/dg/sns-send-message-to-sqs-cross-account.html
+- https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-geo-dr
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
 disposition: non_goal

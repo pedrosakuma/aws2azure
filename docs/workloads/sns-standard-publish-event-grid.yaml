@@ -17,6 +17,9 @@ accepted_partial_operations:
   - sns:PublishBatch
 accepted_design_gaps:
   - "sns:Two backends with different fidelity"
+  - "sns:Service Bus Geo-DR requires alias-based failover planning"
+  - "sns:Event Grid custom-topic failover remains best-effort and external"
+  - "sns:Event Grid publish auth omits SAS-token mode"
   - "sns:Event Grid topic lifecycle remains external"
   - "sns:Default Event Grid routing multiplexes multiple SNS topics"
 required_sub_feature_seals:
