@@ -12,10 +12,14 @@ qualification and approved-runtime records do not override the live verdict.
 ## Required deployment contract
 
 - Configure Entra authentication and grant the binding's identity the required
-  Key Vault data-plane permissions.
+  Key Vault data-plane permissions: `Key Vault Secrets Officer` for this
+  read/write/delete profile, or the legacy access-policy permissions
+  `secrets: get/set/list/delete`. `Key Vault Secrets User` is read-only, and
+  `Key Vault Reader` / `Key Vault Contributor` do not grant secret-value
+  access.
 - Configure Key Vault soft-delete retention for the intended recovery posture.
   `RecoveryWindowInDays` and `ForceDeleteWithoutRecovery` cannot override vault
-  policy or missing purge permission.
+  policy, purge protection, or missing purge permission.
 - Treat proxy-owned `aws2azure-*` version tags as reserved implementation data.
   Out-of-band edits to those tags are unsupported.
 - Use a single writer per secret when the application requires ordering

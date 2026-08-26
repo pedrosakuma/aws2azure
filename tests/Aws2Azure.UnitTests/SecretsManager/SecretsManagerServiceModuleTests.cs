@@ -1951,15 +1951,22 @@ public sealed class SecretsManagerServiceModuleTests
     public void SecretsManager_gap_docs_capture_the_documented_audit_findings()
     {
         var gapsPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", "docs/gaps/secretsmanager"));
+        var docsPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../..", "docs"));
         var createYaml = File.ReadAllText(Path.Combine(gapsPath, "CreateSecret.yaml"));
         var deleteYaml = File.ReadAllText(Path.Combine(gapsPath, "DeleteSecret.yaml"));
         var listYaml = File.ReadAllText(Path.Combine(gapsPath, "ListSecrets.yaml"));
         var designYaml = File.ReadAllText(Path.Combine(gapsPath, "_design.yaml"));
+        var azureAuthDoc = File.ReadAllText(Path.Combine(docsPath, "azure-authentication.md"));
+        var workloadDoc = File.ReadAllText(Path.Combine(docsPath, "workloads", "secretsmanager-basic-lifecycle.md"));
         var updateStageYaml = File.ReadAllText(Path.Combine(gapsPath, "UpdateSecretVersionStage.yaml"));
 
         Assert.Contains("ClientRequestToken is persisted on the first Key Vault version", createYaml, StringComparison.Ordinal);
         Assert.Contains("ForceDeleteWithoutRecovery now maps to Key Vault delete followed by purge", deleteYaml, StringComparison.Ordinal);
         Assert.Contains("Filters, SortBy, SortOrder, and IncludePlannedDeletion are currently ignored", listYaml, StringComparison.Ordinal);
+        Assert.Contains("there is no Azure permission level that overrides purge protection", designYaml, StringComparison.Ordinal);
+        Assert.Contains("Key Vault Secrets Officer", designYaml, StringComparison.Ordinal);
+        Assert.Contains("Key Vault Reader", azureAuthDoc, StringComparison.Ordinal);
+        Assert.Contains("secrets: get/set/list/delete", workloadDoc, StringComparison.Ordinal);
         Assert.Contains("synthetic `arn:aws:secretsmanager:azure:keyvault:secret:{name}` shape", designYaml, StringComparison.Ordinal);
         Assert.Contains("recognised by the wire-protocol router", updateStageYaml, StringComparison.Ordinal);
     }

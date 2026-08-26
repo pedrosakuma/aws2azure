@@ -205,10 +205,15 @@ data-plane roles:
 | Event Hubs | `Azure Event Hubs Data Sender` (+ `Data Receiver` if consuming) | Namespace / hub |
 | Service Bus topics | `Azure Service Bus Data Sender` / `Data Receiver` (+ management role if the proxy creates topics) | Namespace |
 | Event Grid | `EventGrid Data Sender` | Topic |
-| Key Vault | `Key Vault Secrets User` (or Officer for write) under RBAC, or an access policy under the legacy model | Vault |
+| Key Vault | `Key Vault Secrets Officer` for read/write/delete flows, `Key Vault Secrets User` for read-only flows; under the legacy model grant `secrets: get/set/list/delete` (and `purge` only when force-delete is intentionally enabled on a vault without purge protection) | Vault |
 
 > Cosmos DB's control-plane `Contributor` role does **not** grant data-plane
 > access. Use the SQL-specific data role assignment.
+>
+> For Key Vault, `Key Vault Reader` and `Key Vault Contributor` do **not** grant
+> secret-value data-plane access. Those roles commonly cause confusing 403s
+> because they cover metadata/control-plane operations, not `GET`/`SET`/`DELETE`
+> on secret values.
 
 ---
 

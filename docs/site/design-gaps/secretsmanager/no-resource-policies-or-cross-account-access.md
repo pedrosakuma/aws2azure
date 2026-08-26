@@ -10,5 +10,10 @@ Secrets Manager resource policies and cross-account secret sharing have no Key V
 
 **Impact.** Policy-based or cross-account access patterns cannot be expressed through the proxy.
 
-**Workaround.** Use Key Vault RBAC / access policies at the Azure level for authorization.
+**Workaround.** Use Key Vault RBAC / access policies at the Azure level for authorization. For write/delete lifecycle workloads, grant the proxy identity a data-plane role such as Key Vault Secrets Officer; Key Vault Secrets User is read-only, and Key Vault Reader / Key Vault Contributor do not grant secret-value data-plane access. In legacy access-policy mode, grant the secrets get/set/list/delete permissions (plus purge only when purge protection is disabled and force-delete is intentionally allowed).
+
+## References
+
+- <https://learn.microsoft.com/en-us/azure/key-vault/general/rbac-guide>
+- <https://learn.microsoft.com/en-us/azure/key-vault/general/assign-access-policy>
 
