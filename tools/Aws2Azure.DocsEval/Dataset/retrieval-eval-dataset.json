@@ -100,7 +100,7 @@
       "adversarial": true,
       "question": "The v1.0.0 release notes list s3-basic-object-crud as 'GA'. Is that still true today?",
       "expectedAnswer": {
-        "summary": "No. docs/releases/v1.0.0.md is an immutable historical record of what was true when v1.0.0 was promoted. The current live verdict in docs/site/workload-ga.json is 'candidate', which overrides the historical GA claim per the release notes' own stated precedence.",
+        "summary": "Yes. docs/site/workload-ga.json is the current authority and now reports 'ga' for s3-basic-object-crud, so the historical v1.0.0 GA claim still matches today's live verdict.",
         "canonicalSources": ["docs/site/workload-ga.json", "docs/releases/v1.0.0.md"],
         "precedence": "Live workload certification (rank 1) overrides immutable historical release notes (rank 4); the release notes explicitly say so."
       },
@@ -109,7 +109,7 @@
         "Must not present the historical release claim as the current status without checking docs/site/workload-ga.json."
       ],
       "checks": [
-        { "type": "profile_verdict", "profileId": "s3-basic-object-crud", "expectedVerdict": "candidate" },
+        { "type": "profile_verdict", "profileId": "s3-basic-object-crud", "expectedVerdict": "ga" },
         {
           "type": "text_contains",
           "path": "docs/releases/v1.0.0.md",

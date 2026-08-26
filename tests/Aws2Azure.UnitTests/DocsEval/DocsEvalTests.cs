@@ -77,7 +77,7 @@ public sealed class DocsEvalTests
     }
 
     [Fact]
-    public void Detects_a_false_ga_claim_against_a_current_candidate_verdict()
+    public void Detects_a_false_candidate_claim_against_a_current_ga_verdict()
     {
         var dataset = new EvalDataset
         {
@@ -86,13 +86,13 @@ public sealed class DocsEvalTests
             [
                 new EvalCase
                 {
-                    Id = "synthetic-false-ga",
+                    Id = "synthetic-false-candidate",
                     Category = "adoption_status",
                     Service = "s3",
                     Question = "Is s3-basic-object-crud GA?",
                     ExpectedAnswer = new ExpectedAnswer
                     {
-                        Summary = "Synthetic case asserting an incorrect GA verdict.",
+                        Summary = "Synthetic case asserting an incorrect candidate verdict.",
                         CanonicalSources = ["docs/site/workload-ga.json"],
                         Precedence = "docs/site/workload-ga.json is authoritative.",
                     },
@@ -102,7 +102,7 @@ public sealed class DocsEvalTests
                         {
                             Type = "profile_verdict",
                             ProfileId = "s3-basic-object-crud",
-                            ExpectedVerdict = "ga",
+                            ExpectedVerdict = "candidate",
                         },
                     ],
                 },
@@ -114,7 +114,7 @@ public sealed class DocsEvalTests
         Assert.False(result.IsClean);
         Assert.Contains(
             result.Violations,
-            v => v.CaseId == "synthetic-false-ga" && v.Message.Contains("verdict is 'candidate'", StringComparison.Ordinal));
+            v => v.CaseId == "synthetic-false-candidate" && v.Message.Contains("verdict is 'ga'", StringComparison.Ordinal));
     }
 
     [Fact]

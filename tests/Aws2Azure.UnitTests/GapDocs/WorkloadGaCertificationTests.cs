@@ -22,7 +22,7 @@ public sealed class WorkloadGaCertificationTests
         Loader.LoadDesignDocs(Path.Combine(RepoRoot, "docs", "gaps"));
 
     [Theory]
-    [InlineData("s3-basic-object-crud.yaml", "ga", 2026, 7, 22)]
+    [InlineData("s3-basic-object-crud.yaml", "ga", 2026, 8, 26)]
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 2026, 8, 25)]
     [InlineData("sqs-standard-messaging.yaml", "ga", 2026, 7, 22)]
     [InlineData("dynamodb-basic-crud.yaml", "conditional", 2026, 7, 22)]
@@ -258,13 +258,13 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal(
             "s3-basic-object-crud",
             root.GetProperty("profile_id").GetString());
-        Assert.Equal("candidate", root.GetProperty("verdict").GetString());
+        Assert.Equal("ga", root.GetProperty("verdict").GetString());
 
         var legacy = JsonSerializer.Deserialize<LegacyWorkloadGaReport>(first);
         Assert.NotNull(legacy);
         Assert.Equal(1, legacy.SchemaVersion);
         Assert.Equal("s3-basic-object-crud", legacy.ProfileId);
-        Assert.Equal("candidate", legacy.Verdict);
+        Assert.Equal("ga", legacy.Verdict);
         Assert.NotEmpty(legacy.Findings);
     }
 
@@ -299,12 +299,12 @@ public sealed class WorkloadGaCertificationTests
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
             EvaluationContract,
-            UtcInstant(2026, 8, 25, 1, 28, 30),
+            UtcInstant(2026, 8, 26, 14, 29, 19),
             WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot)));
         Assert.Equal(
-            UtcInstant(2026, 8, 25, 1, 28, 30),
+            UtcInstant(2026, 8, 26, 14, 29, 19),
             WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(EvaluationContract));
     }
 
