@@ -2,8 +2,8 @@
 
 This profile is separate from `sqs-standard-messaging`. Its failures and
 qualification evidence must never block or strengthen that profile's own
-certification, whose current live verdict is `candidate` (see
-[`workload-ga.json`](../site/workload-ga.json)), not GA.
+certification, whose current live verdict is `ga` (see
+[`workload-ga.json`](../site/workload-ga.json)).
 
 FIFO queues require `transport: Amqp`. `MessageGroupId` maps to a Service Bus
 session and `MessageDeduplicationId` maps to the broker message id. FIFO batch

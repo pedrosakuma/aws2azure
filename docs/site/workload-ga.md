@@ -2,9 +2,9 @@
 
 These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.
 
-> **Current adoption authority (as of `2026-08-26T14:29:19Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
+> **Current adoption authority (as of `2026-08-26T20:36:24Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
 >
-> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:e9007a8c5236da7c782121bf424299ec0972a39a939fe212bc141b6c4bc54567`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9`; contract: `docs/workloads/certification/authority.yaml`.
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:83f569c76ab96f467637091b35c9e7bc9845438f83a9cfa1f89b01141e8a7bb4`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9`; contract: `docs/workloads/certification/authority.yaml`.
 
 ## Authority precedence
 
@@ -32,6 +32,6 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 | SNS subscription management (Service Bus Topics backend) (`sns-subscription-management-service-bus`) | 1 | `0.1.0` | 🔵 candidate | 1 |
 | SQS dead-letter and redrive (`sqs-dlq-redrive`) | 1 | `0.1.0` | ⛔ blocked | 7 |
 | SQS FIFO messaging over AMQP (`sqs-fifo-amqp`) | 1 | `0.1.0` | ⛔ blocked | 2 |
-| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | 🔵 candidate | 11 |
+| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | ✅ GA | 0 |
 
 A profile reaches GA only when every required operation is compatible or explicitly accepted, every real-Azure seal is fresh, and a matching reviewed qualification artifact is `qualified`.
