@@ -241,15 +241,15 @@
       "adversarial": false,
       "question": "What is the current certification status of SQS standard messaging?",
       "expectedAnswer": {
-        "summary": "Candidate, not GA.",
+        "summary": "GA.",
         "canonicalSources": ["docs/site/workload-ga.json"],
         "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
       },
       "prohibitedConclusions": [
-        "Must not claim sqs-standard-messaging is GA."
+        "Must not claim sqs-standard-messaging is candidate, conditional, or blocked."
       ],
       "checks": [
-        { "type": "profile_verdict", "profileId": "sqs-standard-messaging", "expectedVerdict": "candidate" }
+        { "type": "profile_verdict", "profileId": "sqs-standard-messaging", "expectedVerdict": "ga" }
       ]
     },
     {
