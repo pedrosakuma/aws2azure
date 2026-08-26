@@ -14,9 +14,11 @@ design_gaps:
   disposition: non_goal
 - area: Deletion recovery semantics differ
   status: by_design
-  summary: DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Vault soft-delete and purge, whose retention model and immediate-purge permissions are governed by the vault, not by AWS parameters.
-  impact: Recovery-window timing and force-delete behaviour follow the Key Vault soft-delete configuration rather than the exact AWS window semantics.
-  workaround: Configure the Key Vault soft-delete retention to match the intended recovery window; grant purge permission only where force-delete is needed.
+  summary: DeleteSecret's RecoveryWindowInDays / ForceDeleteWithoutRecovery map onto Key Vault soft-delete and purge, whose retention model, purgeability, and reported deletion timestamps are governed by the vault rather than by AWS request parameters.
+  impact: Recovery-window timing and force-delete behaviour follow the Key Vault soft-delete configuration rather than the exact AWS window semantics. If purge protection is enabled, ForceDeleteWithoutRecovery cannot succeed until the retention window expires regardless of RBAC role or access-policy grants. DescribeSecret also leaves deletion timestamps empty until deletion is actually initiated; it does not predict a future DeletionDate from the vault's recoverable-days setting.
+  workaround: Configure the Key Vault soft-delete retention to match the intended recovery window. Use ForceDeleteWithoutRecovery only on vaults where purge protection is disabled and the configured identity has purge permission; there is no Azure permission level that overrides purge protection during the retention window.
+  references:
+  - https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview#purge-protection
 - area: Managed HSM endpoints do not implement the secrets API
   status: unsupported
   summary: Azure Managed HSM stores and serves keys only. It does not expose the Key Vault secrets or certificates data-plane APIs that aws2azure's Secrets Manager translation requires.
@@ -45,7 +47,10 @@ design_gaps:
   status: unsupported
   summary: Secrets Manager resource policies and cross-account secret sharing have no Key Vault equivalent in the wire-protocol path; authorization is the static AWS-key-to-Azure-credential mapping, not server-side IAM.
   impact: Policy-based or cross-account access patterns cannot be expressed through the proxy.
-  workaround: Use Key Vault RBAC / access policies at the Azure level for authorization.
+  workaround: Use Key Vault RBAC / access policies at the Azure level for authorization. For write/delete lifecycle workloads, grant the proxy identity a data-plane role such as Key Vault Secrets Officer; Key Vault Secrets User is read-only, and Key Vault Reader / Key Vault Contributor do not grant secret-value data-plane access. In legacy access-policy mode, grant the secrets get/set/list/delete permissions (plus purge only when purge protection is disabled and force-delete is intentionally allowed).
+  references:
+  - https://learn.microsoft.com/en-us/azure/key-vault/general/rbac-guide
+  - https://learn.microsoft.com/en-us/azure/key-vault/general/assign-access-policy
   disposition: by_design
 workload_patterns:
 - id: secretsmanager_basic_lifecycle
@@ -62,7 +67,7 @@ workload_patterns:
   design_gaps:
   - Deletion recovery semantics differ
   - Managed HSM endpoints do not implement the secrets API
-  guidance: Suitable after configuring Entra ID authentication and validating Key Vault soft-delete behavior for the deployment.
+  guidance: Suitable after configuring Entra ID authentication, granting the proxy identity the required Key Vault data-plane permissions (typically Key Vault Secrets Officer for this read/write/delete profile), and validating Key Vault soft-delete behavior for the deployment. Key Vault Secrets User is read-only, while Key Vault Reader and Key Vault Contributor do not grant secret-value access.
 - id: secretsmanager_version_stages
   name: Version stages
   compatibility: conditional
