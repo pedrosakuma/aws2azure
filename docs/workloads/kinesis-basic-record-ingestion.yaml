@@ -15,6 +15,8 @@ accepted_partial_operations:
 accepted_design_gaps:
   - "kinesis:Synthetic sequence numbers and iterator positioning"
   - "kinesis:No shard-level throughput emulation"
+  - "kinesis:Idempotent or exclusive Event Hubs producers are unsupported"
+  - "kinesis:Event Hubs Capture archives Event Hubs envelopes, not raw Kinesis bytes"
 evidence:
   qualification_artifact: ""
   required_scenarios:

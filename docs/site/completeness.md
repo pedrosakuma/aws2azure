@@ -10,7 +10,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
-| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 13 |
+| [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 22 |
@@ -101,6 +101,9 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [Event Hubs Capture archives Event Hubs envelopes, not raw Kinesis bytes](design-gaps/kinesis/event-hubs-capture-archives-event-hubs-envelopes-not-raw-kinesis-bytes.md) — 🔵 by design
+- Design gap [Geo-DR / Geo-Replication failover requires alias planning and breaks iterator continuity](design-gaps/kinesis/geo-dr---geo-replication-failover-requires-alias-planning-and-breaks-iterator-continuity.md) — 🔵 by design
+- Design gap [Idempotent or exclusive Event Hubs producers are unsupported](design-gaps/kinesis/idempotent-or-exclusive-event-hubs-producers-are-unsupported.md) — 🔵 by design
 - Design gap [Iterator link lifetime and durable replay](design-gaps/kinesis/iterator-link-lifetime-and-durable-replay.md) — 🔵 by design
 - Design gap [No resharding / enhanced fan-out / KCL lease model](design-gaps/kinesis/no-resharding---enhanced-fan-out---kcl-lease-model.md) — 🔵 by design
 - Design gap [No shard-level throughput emulation](design-gaps/kinesis/no-shard-level-throughput-emulation.md) — 🔵 by design
