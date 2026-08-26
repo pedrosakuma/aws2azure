@@ -1,3 +1,4 @@
+using System.Buffers;
 using Aws2Azure.Amqp.Codec;
 
 namespace Aws2Azure.Amqp.Framing;
@@ -92,16 +93,26 @@ internal readonly record struct Rejected
 
     public static void Write(Span<byte> destination, in Rejected value, out int written)
     {
-        Span<byte> scratch = stackalloc byte[Performatives.ScratchSize];
         Span<int> offsets = stackalloc int[2];
+        byte[]? rented = null;
+        var scratchCapacity = checked(Performatives.ScratchSize + value.Error.Length + 64);
+        var scratch = scratchCapacity <= Performatives.ScratchSize
+            ? stackalloc byte[Performatives.ScratchSize]
+            : (rented = ArrayPool<byte>.Shared.Rent(scratchCapacity));
         int o = 0;
         int len;
+        try
+        {
+            offsets[0] = o;
+            PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Error.Span, out len); o += len;
 
-        offsets[0] = o;
-        PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Error.Span, out len); o += len;
-
-        offsets[1] = o;
-        written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 1);
+            offsets[1] = o;
+            written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 1);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public static void Read(ReadOnlyMemory<byte> source, out Rejected value, out int consumed)

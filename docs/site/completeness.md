@@ -14,7 +14,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
 | [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 22 |
-| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 28 |
+| [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
 
 ## dynamodb
 
@@ -366,7 +366,9 @@ _No remaining feasible backlog is documented for this service._
 
 ### Structural boundaries
 
+- Design gap [FIFO AMQP production profile expects Service Bus Premium](design-gaps/sqs/fifo-amqp-production-profile-expects-service-bus-premium.md) — 🔵 by design
 - Design gap [FIFO ordering requires the AMQP transport](design-gaps/sqs/fifo-ordering-requires-the-amqp-transport.md) — 🔵 by design
+- Design gap [Geo-DR failover requires configuring the alias hostname](design-gaps/sqs/geo-dr-failover-requires-configuring-the-alias-hostname.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sqs/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [PurgeQueue is best-effort emulation](design-gaps/sqs/purgequeue-is-best-effort-emulation.md) — 🔵 by design
 - Design gap [Queue lifecycle eventual-consistency](design-gaps/sqs/queue-lifecycle-eventual-consistency.md) — 🔵 by design

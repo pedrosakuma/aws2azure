@@ -1,3 +1,4 @@
+using System.Buffers;
 using Aws2Azure.Amqp.Codec;
 
 namespace Aws2Azure.Amqp.Framing;
@@ -783,36 +784,46 @@ internal readonly record struct AmqpDisposition
 
     public static void Write(Span<byte> destination, in AmqpDisposition value, out int written)
     {
-        Span<byte> scratch = stackalloc byte[Performatives.ScratchSize];
         Span<int> offsets = stackalloc int[7];
+        byte[]? rented = null;
+        var scratchCapacity = checked(Performatives.ScratchSize + value.State.Length + 64);
+        var scratch = scratchCapacity <= Performatives.ScratchSize
+            ? stackalloc byte[Performatives.ScratchSize]
+            : (rented = ArrayPool<byte>.Shared.Rent(scratchCapacity));
         int o = 0;
         int len;
+        try
+        {
+            offsets[0] = o;
+            AmqpPrimitiveWriter.WriteBoolean(scratch[o..], value.Role == AmqpRole.Receiver, out len); o += len;
+            offsets[1] = o;
+            AmqpPrimitiveWriter.WriteUInt(scratch[o..], value.First, out len); o += len;
 
-        offsets[0] = o;
-        AmqpPrimitiveWriter.WriteBoolean(scratch[o..], value.Role == AmqpRole.Receiver, out len); o += len;
-        offsets[1] = o;
-        AmqpPrimitiveWriter.WriteUInt(scratch[o..], value.First, out len); o += len;
+            offsets[2] = o;
+            if (value.Last is { } l) AmqpPrimitiveWriter.WriteUInt(scratch[o..], l, out len);
+            else PerformativeCodec.WriteNullField(scratch[o..], out len);
+            o += len;
 
-        offsets[2] = o;
-        if (value.Last is { } l) AmqpPrimitiveWriter.WriteUInt(scratch[o..], l, out len);
-        else PerformativeCodec.WriteNullField(scratch[o..], out len);
-        o += len;
+            offsets[3] = o;
+            if (value.Settled is { } s) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], s, out len);
+            else PerformativeCodec.WriteNullField(scratch[o..], out len);
+            o += len;
 
-        offsets[3] = o;
-        if (value.Settled is { } s) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], s, out len);
-        else PerformativeCodec.WriteNullField(scratch[o..], out len);
-        o += len;
+            offsets[4] = o;
+            PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.State.Span, out len); o += len;
 
-        offsets[4] = o;
-        PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.State.Span, out len); o += len;
+            offsets[5] = o;
+            if (value.Batchable is { } b) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], b, out len);
+            else PerformativeCodec.WriteNullField(scratch[o..], out len);
+            o += len;
 
-        offsets[5] = o;
-        if (value.Batchable is { } b) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], b, out len);
-        else PerformativeCodec.WriteNullField(scratch[o..], out len);
-        o += len;
-
-        offsets[6] = o;
-        written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 6);
+            offsets[6] = o;
+            written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 6);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public static void Read(ReadOnlyMemory<byte> source, out AmqpDisposition value, out int consumed)
@@ -874,24 +885,34 @@ internal readonly record struct AmqpDetach
 
     public static void Write(Span<byte> destination, in AmqpDetach value, out int written)
     {
-        Span<byte> scratch = stackalloc byte[Performatives.ScratchSize];
         Span<int> offsets = stackalloc int[4];
+        byte[]? rented = null;
+        var scratchCapacity = checked(Performatives.ScratchSize + value.Error.Length + 64);
+        var scratch = scratchCapacity <= Performatives.ScratchSize
+            ? stackalloc byte[Performatives.ScratchSize]
+            : (rented = ArrayPool<byte>.Shared.Rent(scratchCapacity));
         int o = 0;
         int len;
+        try
+        {
+            offsets[0] = o;
+            AmqpPrimitiveWriter.WriteUInt(scratch[o..], value.Handle, out len); o += len;
 
-        offsets[0] = o;
-        AmqpPrimitiveWriter.WriteUInt(scratch[o..], value.Handle, out len); o += len;
+            offsets[1] = o;
+            if (value.Closed is { } c) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], c, out len);
+            else PerformativeCodec.WriteNullField(scratch[o..], out len);
+            o += len;
 
-        offsets[1] = o;
-        if (value.Closed is { } c) AmqpPrimitiveWriter.WriteBoolean(scratch[o..], c, out len);
-        else PerformativeCodec.WriteNullField(scratch[o..], out len);
-        o += len;
+            offsets[2] = o;
+            PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Error.Span, out len); o += len;
 
-        offsets[2] = o;
-        PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Error.Span, out len); o += len;
-
-        offsets[3] = o;
-        written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 3);
+            offsets[3] = o;
+            written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 3);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public static void Read(ReadOnlyMemory<byte> source, out AmqpDetach value, out int consumed)

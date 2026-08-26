@@ -15,6 +15,14 @@ design_gaps:
   workaround: Do not depend on the account/region portion of returned ARNs. Region awareness is tracked as opt-in future work.
   references:
   - https://github.com/pedrosakuma/aws2azure/issues/267
+- area: Geo-DR failover requires configuring the alias hostname
+  status: by_design
+  summary: 'Azure Service Bus Premium Geo-DR fails over by re-pointing an alias hostname, but the SQS backend configuration exposes only a single namespace/host input (`ServiceBusCredentials.Namespace` in `src/Aws2Azure.Core/Configuration/ProxyConfig.cs`) that the proxy reuses for REST and AMQP endpoint resolution. If operators configure the primary namespace instead of the alias, the proxy stays pinned to the old hostname and failover does not redirect traffic.'
+  impact: 'Premium Geo-DR deployments lose transparent failover unless the alias hostname is configured up front. Geo-DR replicates metadata only, not in-flight or locked messages; Geo-Replication is a separate feature and is unvalidated by this proxy.'
+  workaround: 'Configure `azure.sqs.target.namespace` with the Geo-DR alias short name/FQDN (and `managementEndpoint` too when using a custom REST host), then rehearse failover against the alias rather than the primary namespace hostname.'
+  references:
+  - https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-geo-dr
+  - https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-geo-replication
 - area: PurgeQueue is best-effort emulation
   status: by_design
   summary: Service Bus has no native purge. The proxy emulates it by draining peek-locked messages and deleting them within a bounded 60s budget, so the queue is best-effort empty rather than guaranteed empty at the end of the call.
@@ -30,6 +38,13 @@ design_gaps:
   summary: 'REST and AMQP transports differ beyond FIFO: receipt-handle formats, the mechanism used for VisibilityTimeout=0 immediate release (REST via Unlock Message, AMQP via Abandon), per-entry partial-failure granularity on batch sends (real on AMQP, coarser on REST), and dead-letter attribution (AMQP only).'
   impact: The same SQS operation can behave differently depending on the queue's configured transport; receipt handles are not interchangeable across transports.
   workaround: Choose the transport per queue based on the semantics required and keep receive/settle on the same transport.
+- area: FIFO AMQP production profile expects Service Bus Premium
+  status: by_design
+  summary: 'Service Bus Standard can speak AMQP, but aws2azure''s `sqs_fifo_amqp` workload profile (sessions, ordered receive, connection-affine settlement, and DLQ/redrive qualification) is documented and sealed against Premium namespaces. `transport: Amqp` alone is therefore not a claim that Standard tier is production-equivalent for FIFO workloads.'
+  impact: 'Operators can misread the config surface as "AMQP implies FIFO parity" and deploy on Standard, where session-backed ordering, lock behavior, capacity, and SLA expectations have not been qualified as the same production lane.'
+  workaround: 'Use Service Bus Premium for production FIFO queues. Treat Standard AMQP as a dev/test lane unless you run separate workload-specific qualification and accept degraded guarantees.'
+  references:
+  - https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-premium-messaging
 workload_patterns:
 - id: sqs_standard_messaging
   name: Standard queue messaging
@@ -76,7 +91,8 @@ workload_patterns:
   design_gaps:
   - FIFO ordering requires the AMQP transport
   - Transport-dependent capability differences
-  guidance: 'Configure transport: Amqp. Treat restart or session-link eviction as a stale receipt-handle boundary and wait for lock expiry before receiving the group again.'
+  - FIFO AMQP production profile expects Service Bus Premium
+  guidance: 'Configure transport: Amqp and use Service Bus Premium for production FIFO lanes. Treat restart or session-link eviction as a stale receipt-handle boundary and wait for lock expiry before receiving the group again.'
 - id: sqs_dlq_redrive
   name: Dead-letter and redrive
   compatibility: conditional

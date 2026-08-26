@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text;
 using Aws2Azure.Amqp.Codec;
 
 namespace Aws2Azure.Amqp.Framing;
@@ -27,22 +29,36 @@ internal readonly record struct AmqpError
 
     public static void Write(Span<byte> destination, in AmqpError value, out int written)
     {
-        Span<byte> scratch = stackalloc byte[Performatives.ScratchSize];
         Span<int> offsets = stackalloc int[4];
+        byte[]? rented = null;
+        var descriptionBytes = string.IsNullOrEmpty(value.Description)
+            ? 0
+            : Encoding.UTF8.GetByteCount(value.Description);
+        var scratchCapacity = checked(
+            Performatives.ScratchSize + value.Info.Length + descriptionBytes + 128);
+        var scratch = scratchCapacity <= Performatives.ScratchSize
+            ? stackalloc byte[Performatives.ScratchSize]
+            : (rented = ArrayPool<byte>.Shared.Rent(scratchCapacity));
         int o = 0;
         int len;
+        try
+        {
+            offsets[0] = o;
+            AmqpVariableWriter.WriteSymbol(scratch[o..], value.Condition ?? string.Empty, out len); o += len;
 
-        offsets[0] = o;
-        AmqpVariableWriter.WriteSymbol(scratch[o..], value.Condition ?? string.Empty, out len); o += len;
+            offsets[1] = o;
+            PerformativeCodec.WriteStringOrNull(scratch[o..], value.Description, out len); o += len;
 
-        offsets[1] = o;
-        PerformativeCodec.WriteStringOrNull(scratch[o..], value.Description, out len); o += len;
+            offsets[2] = o;
+            PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Info.Span, out len); o += len;
 
-        offsets[2] = o;
-        PerformativeCodec.WriteOpaqueOrNull(scratch[o..], value.Info.Span, out len); o += len;
-
-        offsets[3] = o;
-        written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 3);
+            offsets[3] = o;
+            written = PerformativeCodec.WritePerformative(destination, Descriptor, scratch[..o], offsets, 3);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     public static void Read(ReadOnlyMemory<byte> source, out AmqpError value, out int consumed)
