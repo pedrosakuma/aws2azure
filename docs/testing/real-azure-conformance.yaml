@@ -883,6 +883,15 @@ services:
         operations: [Publish]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.Publish_to_nonexistent_topic_returns_native_not_found_error
+      - id: create-topic-azure-name-boundary
+        priority: p1
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        description: CreateTopic accepts ordinary AWS-valid names via the lifecycle scenarios and rejects the leading/trailing hyphen-or-underscore subset that the live Service Bus 2021-05 management REST endpoint also rejects.
+        operations: [CreateTopic]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.CreateTopic_rejects_names_that_live_service_bus_topic_rest_rejects
       - id: subscription-metadata-restart
         priority: p0
         category: core
