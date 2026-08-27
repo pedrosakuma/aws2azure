@@ -65,7 +65,7 @@ internal static class ListSecretsHandler
                     Description: description,
                     CreatedDate: createdDate,
                     LastChangedDate: lastChangedDate,
-                    Tags: SecretsManagerOperationSupport.ToTagArray(tags),
+                    Tags: SecretsManagerOperationSupport.ToOptionalTagArray(tags),
                     VersionIdsToStages: versionIdsToStages));
             }
         }

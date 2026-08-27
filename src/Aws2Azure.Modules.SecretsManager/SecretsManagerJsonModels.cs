@@ -6,7 +6,9 @@ internal sealed record GetSecretValueResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
     [property: JsonPropertyName("VersionId")] string VersionId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("SecretString")] string? SecretString,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("SecretBinary")] string? SecretBinary,
     [property: JsonPropertyName("VersionStages")] IReadOnlyList<string>? VersionStages,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? CreatedDate);
@@ -14,9 +16,7 @@ internal sealed record GetSecretValueResponse(
 internal sealed record CreateSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
-    [property: JsonPropertyName("VersionId")] string VersionId,
-    [property: JsonPropertyName("VersionStages")] IReadOnlyList<string> VersionStages,
-    [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate);
+    [property: JsonPropertyName("VersionId")] string VersionId);
 
 internal sealed record DeleteSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
@@ -30,24 +30,34 @@ internal sealed record DeleteSecretResponse(
 internal sealed record DescribeSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("Description")] string? Description,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("LastChangedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? LastChangedDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("Tags")] IReadOnlyList<SecretsManagerTag>? Tags,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("VersionIdsToStages")] IReadOnlyDictionary<string, IReadOnlyList<string>>? VersionIdsToStages,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("RotationEnabled")] bool? RotationEnabled,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("DeletedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? DeletedDate);
 
 internal sealed record ListSecretsResponse(
     [property: JsonPropertyName("SecretList")] IReadOnlyList<ListSecretsItem> SecretList,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("NextToken")] string? NextToken);
 
 internal sealed record ListSecretsItem(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("Description")] string? Description,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset CreatedDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("LastChangedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? LastChangedDate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("Tags")] IReadOnlyList<SecretsManagerTag>? Tags,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonPropertyName("VersionIdsToStages")] IReadOnlyDictionary<string, IReadOnlyList<string>>? VersionIdsToStages);
@@ -66,11 +76,7 @@ internal sealed record UpdateSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [property: JsonPropertyName("VersionId")] string? VersionId,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [property: JsonPropertyName("VersionStages")] IReadOnlyList<string>? VersionStages,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? CreatedDate);
+    [property: JsonPropertyName("VersionId")] string? VersionId);
 
 internal sealed record PutSecretValueResponse(
     [property: JsonPropertyName("ARN")] string Arn,
