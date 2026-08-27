@@ -445,3 +445,13 @@ sub-feature has a gap doc under [`docs/gaps/`](./gaps/) describing its status an
 any behavioral differences. The rendered coverage matrix is published from
 [`docs/site/`](./site/). When you hit a gap, check the relevant gap doc first —
 it is the single source of truth.
+
+## Real-world case studies
+
+For a worked example of a recognizable open-source application running
+unmodified against aws2azure, see
+[`pedrosakuma/aws2azure-showcases`](https://github.com/pedrosakuma/aws2azure-showcases) —
+a separate, lightweight repo (not part of this project's release, CI, or
+qualification process) with reproducible `docker-compose` case studies. The
+first one runs Apache Airflow's S3 remote task logging against Azure Blob
+Storage (via Azurite locally) with zero Airflow code changes.
