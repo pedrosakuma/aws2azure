@@ -90,7 +90,7 @@ public sealed partial class DynamoDbRealAzureTransactionTests
                                     TableName = table,
                                     Key = Key(partition, "target"),
                                     UpdateExpression =
-                                        "SET #count = #count + :inc, #state = :rolled-back",
+                                        "SET #count = #count + :inc, #state = :rolledBack",
                                     ConditionExpression = "#state = :pending",
                                     ReturnValuesOnConditionCheckFailure =
                                         Amazon.DynamoDBv2.ReturnValuesOnConditionCheckFailure.ALL_OLD,
@@ -102,7 +102,7 @@ public sealed partial class DynamoDbRealAzureTransactionTests
                                     ExpressionAttributeValues = new()
                                     {
                                         [":inc"] = new AttributeValue { N = "1" },
-                                        [":rolled-back"] = S("rolled-back"),
+                                        [":rolledBack"] = S("rolled-back"),
                                         [":pending"] = S("pending"),
                                     },
                                 },
