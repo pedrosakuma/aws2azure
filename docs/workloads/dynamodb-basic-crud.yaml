@@ -20,6 +20,8 @@ accepted_partial_operations:
   - dynamodb:UpdateItem
   - dynamodb:DeleteItem
 accepted_design_gaps:
+  - "dynamodb:Multi-write conflict resolution is Last-Write-Wins"
+  - "dynamodb:99.999% availability depends on Cosmos account topology"
   - "dynamodb:Consistency and read-your-writes"
   - "dynamodb:Key encoding and on-disk storage format"
 evidence:

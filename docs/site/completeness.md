@@ -9,7 +9,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 45 |
+| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 48 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
@@ -36,9 +36,12 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Structural boundaries
 
+- Design gap [99.999% availability depends on Cosmos account topology](design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md) — 🔵 by design
 - Design gap [Absent DynamoDB features](design-gaps/dynamodb/absent-dynamodb-features.md) — ⚫ non-goal
 - Design gap [Consistency and read-your-writes](design-gaps/dynamodb/consistency-and-read-your-writes.md) — 🔵 by design
+- Design gap [Cross-partition continuation tokens can be large](design-gaps/dynamodb/cross-partition-continuation-tokens-can-be-large.md) — 🔵 by design
 - Design gap [Key encoding and on-disk storage format](design-gaps/dynamodb/key-encoding-and-on-disk-storage-format.md) — 🔵 by design
+- Design gap [Multi-write conflict resolution is Last-Write-Wins](design-gaps/dynamodb/multi-write-conflict-resolution-is-last-write-wins.md) — 🔵 by design
 - Design gap [Secondary indexes (GSI / LSI)](design-gaps/dynamodb/secondary-indexes--gsi---lsi.md) — 🔵 by design
 - Design gap [Throughput and throttling model](design-gaps/dynamodb/throughput-and-throttling-model.md) — 🔵 by design
 - Design gap [Transaction execution has one configured Cosmos authority](design-gaps/dynamodb/transaction-execution-has-one-configured-cosmos-authority.md) — 🔵 by design
