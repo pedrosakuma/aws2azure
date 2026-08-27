@@ -13,7 +13,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
-| [sns](sns.md) | 2 | 12 | 0 | 0 | 2 | 9 | 1 | 1 | 0 | 22 |
+| [sns](sns.md) | 3 | 11 | 0 | 0 | 1 | 9 | 1 | 1 | 0 | 21 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
 
 ## dynamodb
@@ -311,13 +311,12 @@ _No remaining feasible backlog is documented for this service._
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 2 | 9 | 1 |
+| 🟡 partial | 1 | 9 | 1 |
 | ⚪ stub | 0 | 0 | 0 |
 | ⛔ unsupported | 0 | 0 | 0 |
 
 ### Feasible backlog
 
-- Operation [CreateTopic](operations/sns/createtopic.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 - Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 - Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
 
@@ -347,7 +346,6 @@ _No remaining feasible backlog is documented for this service._
 - Operation [SetTopicAttributes](operations/sns/settopicattributes.md) — 🔵 by design
 - Operation [Subscribe](operations/sns/subscribe.md) — ⚫ non-goal
 - Operation [Unsubscribe](operations/sns/unsubscribe.md) — 🔵 by design
-- Sub-feature [CreateTopic](operations/sns/createtopic.md#sub-feature-azure-service-bus-topic-path-naming-restriction-surfaced-separately-from-aws-side-validation) / Azure Service Bus topic-path naming restriction surfaced separately from AWS-side validation — 🔵 by design
 - Sub-feature [Subscribe](operations/sns/subscribe.md#sub-feature-subscriber-delivery-forwarder) / Subscriber delivery forwarder — ⚫ non-goal
 
 ## sqs

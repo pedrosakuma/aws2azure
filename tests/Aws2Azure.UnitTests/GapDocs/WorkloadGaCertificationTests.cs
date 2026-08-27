@@ -28,8 +28,8 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("dynamodb-basic-crud.yaml", "ga", 2026, 8, 27)]
     [InlineData("dynamodb-query-scan-indexes.yaml", "conditional", 2026, 7, 22)]
     [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 2026, 7, 27)]
-    [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 2026, 7, 22)]
-    [InlineData("sns-standard-publish-event-grid.yaml", "candidate", 2026, 7, 22)]
+    [InlineData("sns-standard-publish-service-bus.yaml", "conditional", 2026, 7, 22)]
+    [InlineData("sns-standard-publish-event-grid.yaml", "conditional", 2026, 7, 22)]
     [InlineData("kinesis-basic-record-ingestion.yaml", "candidate", 2026, 7, 22)]
     public void Repository_profiles_have_expected_mechanical_verdict(
         string fileName,

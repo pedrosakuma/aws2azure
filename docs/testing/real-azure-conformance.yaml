@@ -888,10 +888,10 @@ services:
         category: write
         evidence_source: real_azure
         establishes_verification: true
-        description: CreateTopic accepts ordinary AWS-valid names via the lifecycle scenarios and rejects the leading/trailing hyphen-or-underscore subset that the live Service Bus 2021-05 management REST endpoint also rejects.
+        description: CreateTopic preserves the AWS-valid leading/trailing hyphen-or-underscore boundary names because the live Service Bus 2021-05 management REST endpoint accepts them too; no extra Azure-side narrowing is imposed.
         operations: [CreateTopic]
         tests:
-          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.CreateTopic_rejects_names_that_live_service_bus_topic_rest_rejects
+          - Aws2Azure.IntegrationTests.Sns.SnsRealAzureErrorPathTests.CreateTopic_preserves_aws_valid_boundary_names_that_live_service_bus_topic_rest_accepts
       - id: subscription-metadata-restart
         priority: p0
         category: core

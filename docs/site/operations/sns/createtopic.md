@@ -3,11 +3,9 @@
 [← sns operation index](../../sns.md) · [Coverage matrix](../../coverage.md)
 
 - **Capability ID:** `operation:sns:createtopic`
-- **Status:** 🟡 partial
-- **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- **Status:** ✅ implemented
 - **Azure equivalent:** `Azure Service Bus Topics management REST API`
-- **Real-Azure verified:** ✅ 2026-07-16 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29473539261)
+- **Real-Azure verified:** ✅ 2026-08-27 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/33038733403) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/33038733403)
 
 ## Sub-features
 
@@ -16,7 +14,7 @@
 - **Capability ID:** `sub-feature:sns:createtopic:basic-topic-create-over-service-bus-topics-rest`
 - **Status:** ✅ implemented
 
-Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective.
+Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. Real-Azure probe coverage on 2026-08-27 also confirmed that the live 2021-05 management REST endpoint accepts the AWS-valid leading/trailing hyphen-or-underscore boundary names previously thought to need extra Azure-side rejection, so aws2azure now relies on the AWS CreateTopic name contract alone instead of imposing a narrower Service Bus-specific rule.
 
 ### Attribute translation {#sub-feature-attribute-translation}
 
@@ -32,16 +30,6 @@ CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only Cont
 
 Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, and uses the stored ContentBasedDeduplication flag later during Publish / PublishBatch when MessageDeduplicationId is omitted.
 
-### Azure Service Bus topic-path naming restriction surfaced separately from AWS-side validation {#sub-feature-azure-service-bus-topic-path-naming-restriction-surfaced-separately-from-aws-side-validation}
-
-- **Capability ID:** `sub-feature:sns:createtopic:azure-service-bus-topic-path-naming-restriction-surfaced-separately-from-aws-side-validation`
-- **Status:** 🟡 partial
-- **Disposition:** 🔵 by design
-
-CreateTopic now rejects, with a distinct InvalidParameter message, any AWS-valid topic name ([A-Za-z0-9_-]{1,256}, optionally .fifo) whose base name starts or ends with '-' or '_', because published Azure entity-naming guidance requires a Service Bus topic path to start with a letter and end with a letter or digit. Every other AWS-valid name is already within Azure's broader allowed character set (letters, digits, '.', '-', '_') and 260-character limit, so no further length/character narrowing is needed beyond this single edge case.
-
-**Gap.** This specific boundary (leading/trailing hyphen or underscore) is asserted from published Azure Service Bus / ARM entity-naming guidance, not from a real-Azure round trip against the exact management REST API version (2021-05) this proxy calls; real-Azure verification is still pending (tracked in
-
 ## Behaviour differences
 
 - When credentials.serviceBusTopics.topics[*].serviceBusTopicName is configured for an exact SNS topic name, CreateTopic provisions that mapped Azure Service Bus topic path while preserving the SNS-facing Name and returned TopicArn.
@@ -54,7 +42,6 @@ CreateTopic now rejects, with a distinct InvalidParameter message, any AWS-valid
 - When the resolved backend is Event Grid, CreateTopic still manages only the Service Bus compatibility side used for SNS metadata/subscription state. It does not create, validate, or lifecycle-manage the Azure Event Grid custom topic that Publish / PublishBatch target.
 - Topic metadata is constrained by the Azure Service Bus UserMetadata 1024-character limit. Requests whose serialized DisplayName/Policy/DeliveryPolicy payload would exceed that ceiling are rejected with InvalidParameter.
 - Service Bus duplicate detection remains time-windowed. aws2azure creates FIFO topics with the SNS-sized 5-minute window, but sends retried after that window expire are accepted as new messages.
-- Service Bus topic names are further constrained by Azure. The proxy validates the AWS-side [A-Za-z0-9_-]{1,256}(.fifo) pattern and additionally rejects names whose base name starts or ends with '-' or '_', because Azure requires a Service Bus topic path to start with a letter and end with a letter or digit. Every AWS-valid name that survives both checks already fits within Azure's broader character set and its 260-character topic-path limit, so no further narrowing is currently known to be required (see the CreateTopic sub-feature note; real-Azure verification of this specific boundary is pending).
 
 ## References
 

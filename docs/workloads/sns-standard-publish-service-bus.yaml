@@ -12,7 +12,6 @@ operations:
 requirements:
   - sns_standard_publish
 accepted_partial_operations:
-  - sns:CreateTopic
   - sns:Publish
   - sns:PublishBatch
 accepted_design_gaps:

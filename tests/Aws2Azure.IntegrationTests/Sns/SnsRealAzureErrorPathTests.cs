@@ -1,8 +1,5 @@
-using System.Globalization;
-using System.Net.Http.Headers;
-using System.Security.Cryptography;
-using System.Text;
 using System.Net;
+using Aws2Azure.Modules.Sns.Management;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Sns;
@@ -14,8 +11,6 @@ namespace Aws2Azure.IntegrationTests.Sns;
 [Collection(RealAzureCollection.Name)]
 public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
 {
-    private const string ServiceBusApiVersion = "2021-05";
-
     [SkippableFact]
     public async Task Publish_to_nonexistent_topic_returns_native_not_found_error()
     {
@@ -38,176 +33,58 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
     }
 
     [SkippableFact]
-    public async Task CreateTopic_rejects_names_that_live_service_bus_topic_rest_rejects()
+    public async Task CreateTopic_preserves_aws_valid_boundary_names_that_live_service_bus_topic_rest_accepts()
     {
         Skip.IfNot(fixture.SnsConfigured,
             "AZURE_SB_CONNSTR not set — skipping real-Azure SNS conformance.");
 
         using var client = fixture.CreateSnsClient();
-        var invalidNames = new[]
+        var boundaryCases = new[]
         {
-            "-" + SnsQueryApiClient.CreateTopicName("sns-real-invalidprefix"),
-            "_" + SnsQueryApiClient.CreateTopicName("sns-real-invalidprefix"),
-            SnsQueryApiClient.CreateTopicName("sns-real-invalidsuffix") + "-",
-            SnsQueryApiClient.CreateTopicName("sns-real-invalidsuffix") + "_",
-            "-" + SnsQueryApiClient.CreateTopicName("sns-real-invalidfifo") + ".fifo",
+            new TopicBoundaryCase("-" + SnsQueryApiClient.CreateTopicName("sns-real-leadinghyphen"), false),
+            new TopicBoundaryCase("_" + SnsQueryApiClient.CreateTopicName("sns-real-leadingunderscore"), false),
+            new TopicBoundaryCase(SnsQueryApiClient.CreateTopicName("sns-real-trailinghyphen") + "-", false),
+            new TopicBoundaryCase(SnsQueryApiClient.CreateTopicName("sns-real-trailingunderscore") + "_", false),
+            new TopicBoundaryCase("-" + SnsQueryApiClient.CreateTopicName("sns-real-leadinghyphenfifo") + ".fifo", true),
         };
 
-        foreach (var topicName in invalidNames)
+        foreach (var boundaryCase in boundaryCases)
         {
-            var azureResponse = await SendCreateTopicRestProbeAsync(topicName).ConfigureAwait(false);
-            var proxyResponse = await SnsQueryApiClient.SendActionAsync(
-                client,
-                "CreateTopic",
-                [new("Name", topicName)],
-                RealAzureProxyFixture.AwsAccessKey,
-                RealAzureProxyFixture.AwsSecret).ConfigureAwait(false);
-            Assert.True(
-                proxyResponse.StatusCode == HttpStatusCode.BadRequest
-                && string.Equals("InvalidParameter", SnsQueryApiClient.ReadErrorCode(proxyResponse), StringComparison.Ordinal),
-                $"Proxy unexpectedly handled topic '{topicName}'. "
-                    + $"Proxy={SnsQueryApiClient.FormatDiagnosticSummary(proxyResponse)}; "
-                    + $"Azure={azureResponse.FormatDiagnosticSummary()}");
+            var azureResponse = await SnsRealAzureManagementRestProbe.CreateTopicAsync(
+                fixture.CreateServiceBusConnectionString(),
+                boundaryCase.TopicName).ConfigureAwait(false);
             Assert.False(
-                azureResponse.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict,
-                $"Live Service Bus unexpectedly accepted topic '{topicName}' via the 2021-05 management REST API. "
+                azureResponse.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict),
+                $"Live Service Bus did not accept topic '{boundaryCase.TopicName}' via the 2021-05 management REST API. "
                     + azureResponse.FormatDiagnosticSummary());
+            var azureDelete = await SnsRealAzureManagementRestProbe.DeleteTopicAsync(
+                fixture.CreateServiceBusConnectionString(),
+                boundaryCase.TopicName).ConfigureAwait(false);
+            Assert.True(
+                azureDelete.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent or HttpStatusCode.NotFound,
+                $"Live Service Bus cleanup failed for topic '{boundaryCase.TopicName}'. "
+                    + azureDelete.FormatDiagnosticSummary());
+
+            var proxyResponse = boundaryCase.IsFifo
+                ? await SnsQueryApiClient.CreateTopicAsync(
+                    client,
+                    boundaryCase.TopicName,
+                    ("FifoTopic", "true")).ConfigureAwait(false)
+                : await SnsQueryApiClient.SendActionAsync(
+                    client,
+                    "CreateTopic",
+                    [new("Name", boundaryCase.TopicName)],
+                    RealAzureProxyFixture.AwsAccessKey,
+                    RealAzureProxyFixture.AwsSecret).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(proxyResponse, HttpStatusCode.OK, $"CreateTopic[{boundaryCase.TopicName}]");
+            var proxyDelete = await SnsQueryApiClient.DeleteTopicAsync(
+                client,
+                SnsQueryApiClient.ReadTopicArn(proxyResponse)).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(proxyDelete, HttpStatusCode.OK, $"DeleteTopic[{boundaryCase.TopicName}]");
         }
     }
 
-    private async Task<RestProbeResponse> SendCreateTopicRestProbeAsync(string topicName)
-    {
-        var connectionString = fixture.CreateServiceBusConnectionString();
-        var parts = ParseServiceBusConnectionString(connectionString);
-        var namespaceUri = new Uri(parts.Endpoint);
-        var requestUri = new Uri(
-            $"https://{namespaceUri.Host}/{Uri.EscapeDataString(topicName)}?api-version={ServiceBusApiVersion}",
-            UriKind.Absolute);
-
-        using var request = new HttpRequestMessage(HttpMethod.Put, requestUri);
-        request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
-        request.Headers.TryAddWithoutValidation(
-            "Authorization",
-            GenerateSharedAccessSignature(requestUri, parts.SharedAccessKeyName, parts.SharedAccessKey, DateTimeOffset.UtcNow.AddMinutes(20)));
-        request.Content = new StringContent(BuildTopicDescriptionEntryXml(), Encoding.UTF8, "application/atom+xml");
-        request.Content.Headers.ContentType!.Parameters.Add(new NameValueHeaderValue("type", "entry"));
-
-        using var httpClient = new HttpClient();
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-        return new RestProbeResponse(response.StatusCode, body, CollectHeaders(response));
-    }
-
-    private static string BuildTopicDescriptionEntryXml()
-        => """
-           <?xml version="1.0" encoding="utf-8"?>
-           <entry xmlns="http://www.w3.org/2005/Atom">
-             <content type="application/xml">
-               <TopicDescription xmlns:i="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemas.microsoft.com/netservices/2010/10/servicebus/connect">
-                 <RequiresDuplicateDetection>false</RequiresDuplicateDetection>
-               </TopicDescription>
-             </content>
-           </entry>
-           """;
-
-    private static ServiceBusConnectionStringParts ParseServiceBusConnectionString(string connectionString)
-    {
-        string? endpoint = null;
-        string? sharedAccessKeyName = null;
-        string? sharedAccessKey = null;
-
-        foreach (var segment in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var separator = segment.IndexOf('=');
-            if (separator <= 0)
-            {
-                continue;
-            }
-
-            var key = segment[..separator];
-            var value = segment[(separator + 1)..];
-            switch (key)
-            {
-                case "Endpoint":
-                    endpoint = value;
-                    break;
-                case "SharedAccessKeyName":
-                    sharedAccessKeyName = value;
-                    break;
-                case "SharedAccessKey":
-                    sharedAccessKey = value;
-                    break;
-            }
-        }
-
-        Assert.False(string.IsNullOrWhiteSpace(endpoint), "Service Bus connection string did not contain Endpoint.");
-        Assert.False(string.IsNullOrWhiteSpace(sharedAccessKeyName), "Service Bus connection string did not contain SharedAccessKeyName.");
-        Assert.False(string.IsNullOrWhiteSpace(sharedAccessKey), "Service Bus connection string did not contain SharedAccessKey.");
-        return new ServiceBusConnectionStringParts(endpoint!, sharedAccessKeyName!, sharedAccessKey!);
-    }
-
-    private static string GenerateSharedAccessSignature(
-        Uri resourceUri,
-        string keyName,
-        string keyValue,
-        DateTimeOffset expiry)
-    {
-        var resource = resourceUri.GetLeftPart(UriPartial.Path).TrimEnd('/').ToLowerInvariant();
-        var encodedResource = WebUtility.UrlEncode(resource);
-        var expirySeconds = expiry.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
-        var stringToSign = encodedResource + "\n" + expirySeconds;
-
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(keyValue));
-        var signature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign)));
-        return "SharedAccessSignature sr=" + encodedResource
-             + "&sig=" + WebUtility.UrlEncode(signature)
-             + "&se=" + expirySeconds
-             + "&skn=" + WebUtility.UrlEncode(keyName);
-    }
-
-    private sealed record ServiceBusConnectionStringParts(
-        string Endpoint,
-        string SharedAccessKeyName,
-        string SharedAccessKey);
-
-    private sealed record RestProbeResponse(
-        HttpStatusCode StatusCode,
-        string Body,
-        IReadOnlyDictionary<string, string> Headers)
-    {
-        public string FormatDiagnosticSummary()
-        {
-            var trimmedBody = string.IsNullOrWhiteSpace(Body)
-                ? "<empty>"
-                : Body.Replace('\r', ' ').Replace('\n', ' ').Trim();
-            if (trimmedBody.Length > 240)
-            {
-                trimmedBody = trimmedBody[..240] + "…";
-            }
-
-            return $"status={(int)StatusCode}; headers=[Server={GetHeader("Server") ?? "<missing>"}, "
-                + $"Content-Length={GetHeader("Content-Length") ?? "<missing>"}, "
-                + $"ETag={GetHeader("ETag") ?? "<missing>"}, "
-                + $"x-ms-request-id={GetHeader("x-ms-request-id") ?? "<missing>"}]; body={trimmedBody}";
-        }
-
-        private string? GetHeader(string name)
-            => Headers.TryGetValue(name, out var value) ? value : null;
-    }
-
-    private static IReadOnlyDictionary<string, string> CollectHeaders(HttpResponseMessage response)
-    {
-        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var header in response.Headers)
-        {
-            headers[header.Key] = string.Join(", ", header.Value);
-        }
-
-        foreach (var header in response.Content.Headers)
-        {
-            headers[header.Key] = string.Join(", ", header.Value);
-        }
-
-        return headers;
-    }
+    private sealed record TopicBoundaryCase(
+        string TopicName,
+        bool IsFifo);
 }

@@ -368,23 +368,38 @@ public sealed class CreateTopicHandlerTests
     [InlineData("orders_")]
     [InlineData("-orders.fifo")]
     [InlineData("orders-.fifo")]
-    public async Task HandleAsync_rejects_topic_names_that_violate_azure_service_bus_naming(string topicName)
+    public async Task HandleAsync_allows_aws_valid_topic_names_even_when_they_start_or_end_with_hyphen_or_underscore(string topicName)
     {
-        var managementClient = NewManagementClient((_, _) => throw new InvalidOperationException("HTTP should not be called."));
+        var requests = 0;
+        var managementClient = NewManagementClient((request, _) =>
+        {
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created));
+        });
         var context = NewContext();
+        var parseResult = topicName.EndsWith(".fifo", StringComparison.Ordinal)
+            ? new SnsParseResult(
+                SnsOperation.CreateTopic,
+                new Dictionary<string, string>
+                {
+                    ["Name"] = topicName,
+                    ["Attributes.entry.1.key"] = "FifoTopic",
+                    ["Attributes.entry.1.value"] = "true",
+                },
+                null)
+            : NewParseResult(topicName);
 
         await CreateTopicHandler.HandleAsync(
             context,
-            NewParseResult(topicName),
+            parseResult,
             NewCredentials(),
             new SnsSettings(),
             managementClient,
             CancellationToken.None);
 
-        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
-        var body = ReadBody(context);
-        Assert.Contains("InvalidParameter", body);
-        Assert.Contains("Azure Service Bus topic-path naming restriction", body);
+        Assert.Equal(1, requests);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Contains(topicName, ReadBody(context));
     }
 
     [Theory]

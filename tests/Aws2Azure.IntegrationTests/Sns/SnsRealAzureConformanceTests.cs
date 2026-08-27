@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Aws2Azure.Modules.Sns.Management;
+using Aws2Azure.Modules.Sns.Operations;
 using Xunit;
 
 namespace Aws2Azure.IntegrationTests.Sns;
@@ -141,11 +143,15 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 new("AttributeName", "FilterPolicy"),
                 new("AttributeValue", "{\"tenant\":[\"blue\"]}"),
             ]).ConfigureAwait(false);
+            var directRuleProbe = setFilterResponse.StatusCode == HttpStatusCode.OK
+                ? null
+                : await CollectDefaultRuleProbeSummaryAsync(topicName, subscriptionName).ConfigureAwait(false);
             Skip.If(
                 setFilterResponse.StatusCode != HttpStatusCode.OK,
                 $"Known unresolved real-Azure quirk (#691): SetSubscriptionAttributes[FilterPolicy] on a "
                     + $"fresh subscription's $Default rule did not succeed. "
                     + $"{SnsQueryApiClient.FormatDiagnosticSummary(setFilterResponse)}. "
+                    + $"DefaultRuleProbe={directRuleProbe ?? "<not-run>"}. "
                     + $"ProxyLogTail={FormatProxyLogTail(fixture.ProxyOutput)}. "
                     + "See docs/gaps/sns/SetSubscriptionAttributes.yaml for the evidence trail.");
             var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
@@ -774,6 +780,48 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             .Select(static line => line.Length > 240 ? line[..240] + "…" : line)
             .ToArray();
         return lines.Length == 0 ? "<empty>" : string.Join(" || ", lines);
+    }
+
+    private async Task<string> CollectDefaultRuleProbeSummaryAsync(string topicName, string subscriptionName)
+    {
+        var connectionString = fixture.CreateServiceBusConnectionString();
+        var metadata = new SnsSubscriptionMetadata
+        {
+            FilterPolicyJson = "{\"tenant\":[\"blue\"]}",
+            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
+        };
+        Assert.True(
+            SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var defaultRuleDescription, out var error),
+            error);
+
+        var defaultRuleGet = await SnsRealAzureManagementRestProbe.GetSubscriptionRuleAsync(
+            connectionString,
+            topicName,
+            subscriptionName,
+            SnsSubscriptionFilterSupport.DefaultRuleName).ConfigureAwait(false);
+        var defaultRulePut = await SnsRealAzureManagementRestProbe.PutSubscriptionRuleAsync(
+            connectionString,
+            topicName,
+            subscriptionName,
+            defaultRuleDescription).ConfigureAwait(false);
+        var probeRuleName = "aws2azure-probe";
+        var probeRulePut = await SnsRealAzureManagementRestProbe.PutSubscriptionRuleAsync(
+            connectionString,
+            topicName,
+            subscriptionName,
+            defaultRuleDescription with { RuleName = probeRuleName }).ConfigureAwait(false);
+        if (probeRulePut.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
+        {
+            _ = await SnsRealAzureManagementRestProbe.DeleteSubscriptionRuleAsync(
+                connectionString,
+                topicName,
+                subscriptionName,
+                probeRuleName).ConfigureAwait(false);
+        }
+
+        return $"GET[$Default]={defaultRuleGet.FormatDiagnosticSummary()} | "
+            + $"PUT[$Default]={defaultRulePut.FormatDiagnosticSummary()} | "
+            + $"PUT[{probeRuleName}]={probeRulePut.FormatDiagnosticSummary()}";
     }
 
     private static async Task RunBatchesBestEffortAsync<T>(
