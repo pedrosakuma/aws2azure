@@ -27,6 +27,7 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
     private readonly string _tenantId;
     private readonly string _clientId;
     private readonly string _federatedTokenFilePath;
+    private readonly Func<TimeSpan, CancellationToken, ValueTask>? _delayAsync;
 
     // Single-slot memo so repeated cache-hit calls with the same scope reuse the
     // precomputed cache-key string instead of re-allocating per call.
@@ -45,6 +46,18 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
         string federatedTokenFilePath,
         Uri? authority = null,
         TimeProvider? clock = null)
+        : this(http, tenantId, clientId, federatedTokenFilePath, authority, clock, delayAsync: null)
+    {
+    }
+
+    internal WorkloadIdentityTokenSource(
+        AzureHttpClient http,
+        string tenantId,
+        string clientId,
+        string federatedTokenFilePath,
+        Uri? authority,
+        TimeProvider? clock,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync)
         : base(clock)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -57,6 +70,7 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
         _clientId = clientId;
         _federatedTokenFilePath = federatedTokenFilePath;
         _authority = authority ?? DefaultAuthority;
+        _delayAsync = delayAsync;
         _fetch = RequestTokenAsync;
     }
 
@@ -104,7 +118,7 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
     }
 
     private ValueTask<AccessToken> RequestTokenAsync(string scope, CancellationToken cancellationToken)
-        => RequestWorkloadIdentityTokenAsync(_http, _authority, _tenantId, _clientId, _federatedTokenFilePath, scope, cancellationToken);
+        => RequestWorkloadIdentityTokenAsync(_http, _authority, _tenantId, _clientId, _federatedTokenFilePath, scope, cancellationToken, _delayAsync);
 
     private static async ValueTask<AccessToken> RequestWorkloadIdentityTokenAsync(
         AzureHttpClient http,
@@ -113,7 +127,8 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
         string clientId,
         string federatedTokenFilePath,
         string scope,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync = null)
     {
         string clientAssertion;
         try
@@ -144,18 +159,7 @@ public sealed class WorkloadIdentityTokenSource : CachedTokenSource, IEntraToken
             new("client_assertion", clientAssertion)
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new FormUrlEncodedContent(form)
-        };
-
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new EntraIdTokenException(response.StatusCode, body);
-        }
-
+        var body = await EntraIdTokenEndpointRetry.SendAsync(http, url, form, cancellationToken, delayAsync).ConfigureAwait(false);
         var token = JsonSerializer.Deserialize(body, EntraIdJsonContext.Default.EntraIdTokenResponse);
         if (token is null || string.IsNullOrEmpty(token.AccessToken))
         {

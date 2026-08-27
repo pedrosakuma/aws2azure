@@ -24,6 +24,7 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
     private readonly string _tenantId;
     private readonly string _clientId;
     private readonly string _clientSecret;
+    private readonly Func<TimeSpan, CancellationToken, ValueTask>? _delayAsync;
 
     public ClientCredentialsTokenSource(
         AzureHttpClient http,
@@ -32,6 +33,18 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
         string clientSecret,
         Uri? authority = null,
         TimeProvider? clock = null)
+        : this(http, tenantId, clientId, clientSecret, authority, clock, delayAsync: null)
+    {
+    }
+
+    internal ClientCredentialsTokenSource(
+        AzureHttpClient http,
+        string tenantId,
+        string clientId,
+        string clientSecret,
+        Uri? authority,
+        TimeProvider? clock,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync)
         : base(clock)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -43,6 +56,7 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
         _tenantId = tenantId;
         _clientId = clientId;
         _clientSecret = clientSecret;
+        _delayAsync = delayAsync;
         // Bound once per source so the cache-hit path never allocates a delegate.
         _fetch = RequestTokenAsync;
     }
@@ -54,7 +68,7 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
     }
 
     private ValueTask<AccessToken> RequestTokenAsync(string scope, CancellationToken cancellationToken)
-        => RequestClientCredentialsTokenAsync(_http, _authority, _tenantId, _clientId, _clientSecret, scope, cancellationToken);
+        => RequestClientCredentialsTokenAsync(_http, _authority, _tenantId, _clientId, _clientSecret, scope, cancellationToken, _delayAsync);
 
     /// <summary>
     /// Posts a <c>client_credentials</c> grant to the Entra ID v2.0 token endpoint and
@@ -70,7 +84,8 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
         string clientId,
         string clientSecret,
         string scope,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<TimeSpan, CancellationToken, ValueTask>? delayAsync = null)
     {
         var url = new Uri(authority, tenantId + "/oauth2/v2.0/token");
         var form = new List<KeyValuePair<string, string>>(4)
@@ -81,18 +96,7 @@ public sealed class ClientCredentialsTokenSource : CachedTokenSource, IEntraToke
             new("scope", scope)
         };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new FormUrlEncodedContent(form)
-        };
-
-        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new EntraIdTokenException(response.StatusCode, body);
-        }
-
+        var body = await EntraIdTokenEndpointRetry.SendAsync(http, url, form, cancellationToken, delayAsync).ConfigureAwait(false);
         var token = JsonSerializer.Deserialize(body, EntraIdJsonContext.Default.EntraIdTokenResponse);
         if (token is null || string.IsNullOrEmpty(token.AccessToken))
         {
