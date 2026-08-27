@@ -46,6 +46,9 @@ Architecture decisions that explain the project constraints are recorded in
 Before you run a proof of concept, check the
 [workload GA guide](./docs/site/workload-ga.md) for the profile that matches
 your use case and confirm whether it is GA, candidate, conditional, or blocked.
+If you want an AI coding agent to cross-check a binding config against the
+live published docs first, start with the
+[AI config pre-flight prompt](./docs/prompts/config-preflight.md).
 
 ## Quickstart
 
@@ -87,6 +90,7 @@ need:
   [Presigned URLs](./docs/presigned-urls.md)
 - **What works & what doesn't:**
   [workload compatibility](./docs/site/workload-compatibility.md) (go/no-go) →
+  [AI config pre-flight prompt](./docs/prompts/config-preflight.md) (agent-ready live-doc review) →
   [coverage matrix](./docs/site/coverage.md) (every operation) →
   per-service pages under [`docs/site/`](./docs/site/) (operation detail) →
   [design gaps](./docs/site/design-gaps.md) (architectural limits) →

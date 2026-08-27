@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:57d20f966871f84c609f062890957c698120a2ba6a486dcde29905c79aa92b19",
+  "manifest_revision": "sha256:b42e436800d3277ad99cc1ed30242e32b53cf3c68591de8cd42e92d5f85a241d",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1352,7 +1352,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:1b900501b1bab9b1f966df83a082d5c2cbe93b4dce0f2b8b59d7f536f7631e4e",
+      "revision": "sha256:078128f96616d6bb39d7f1ad42065d4b091fa16243958aede6250aea2fbbbcb6",
       "freshness": {
         "mode": "current"
       }
@@ -1485,6 +1485,18 @@
       "authority": "explanatory",
       "provenance": "source",
       "revision": "sha256:72124db1a86349bccfdfd8f94b0d840000484159cab4c4d1f235a86d8882a03f",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-prompts-config-preflight",
+      "path": "docs/prompts/config-preflight.md",
+      "type": "documentation-guide",
+      "scope": "prompts",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:037defc4cc0b75c99e1ba90a75f3602811217ab46057738dd4523b70862e3444",
       "freshness": {
         "mode": "current"
       }
@@ -1784,7 +1796,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:ce4557fe5b16a627aa62fb73a48c63b38b808add510d0743afcf7616359863e8",
+      "revision": "sha256:5748083bff4f3b09dc7e853e39e52f726e5e906cab65cd8ae42a3ef97c347dac",
       "freshness": {
         "mode": "current"
       }

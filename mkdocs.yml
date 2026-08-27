@@ -78,6 +78,7 @@ nav:
   - Evaluate:
       - Project maturity: project-maturity.md
       - Adoption checklist: adoption.md
+      - AI config pre-flight prompt: prompts/config-preflight.md
       - Workload compatibility: site/workload-compatibility.md
       - Workload GA certification: site/workload-ga.md
       - Operation coverage: site/coverage.md
