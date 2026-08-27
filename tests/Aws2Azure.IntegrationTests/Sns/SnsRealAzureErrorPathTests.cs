@@ -55,16 +55,23 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
 
         foreach (var topicName in invalidNames)
         {
-            var proxyResponse = await SnsQueryApiClient.CreateTopicAsync(client, topicName).ConfigureAwait(false);
-            Assert.Equal(HttpStatusCode.BadRequest, proxyResponse.StatusCode);
-            Assert.Equal("InvalidParameter", SnsQueryApiClient.ReadErrorCode(proxyResponse));
-
             var azureResponse = await SendCreateTopicRestProbeAsync(topicName).ConfigureAwait(false);
+            var proxyResponse = await SnsQueryApiClient.SendActionAsync(
+                client,
+                "CreateTopic",
+                [new("Name", topicName)],
+                RealAzureProxyFixture.AwsAccessKey,
+                RealAzureProxyFixture.AwsSecret).ConfigureAwait(false);
+            Assert.True(
+                proxyResponse.StatusCode == HttpStatusCode.BadRequest
+                && string.Equals("InvalidParameter", SnsQueryApiClient.ReadErrorCode(proxyResponse), StringComparison.Ordinal),
+                $"Proxy unexpectedly handled topic '{topicName}'. "
+                    + $"Proxy={SnsQueryApiClient.FormatDiagnosticSummary(proxyResponse)}; "
+                    + $"Azure={azureResponse.FormatDiagnosticSummary()}");
             Assert.False(
                 azureResponse.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict,
                 $"Live Service Bus unexpectedly accepted topic '{topicName}' via the 2021-05 management REST API. "
-                    + $"Status={(int)azureResponse.StatusCode}; "
-                    + $"Body={azureResponse.Body}");
+                    + azureResponse.FormatDiagnosticSummary());
         }
     }
 
@@ -88,7 +95,7 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
         using var httpClient = new HttpClient();
         using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-        return new RestProbeResponse(response.StatusCode, body);
+        return new RestProbeResponse(response.StatusCode, body, CollectHeaders(response));
     }
 
     private static string BuildTopicDescriptionEntryXml()
@@ -165,5 +172,42 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
 
     private sealed record RestProbeResponse(
         HttpStatusCode StatusCode,
-        string Body);
+        string Body,
+        IReadOnlyDictionary<string, string> Headers)
+    {
+        public string FormatDiagnosticSummary()
+        {
+            var trimmedBody = string.IsNullOrWhiteSpace(Body)
+                ? "<empty>"
+                : Body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (trimmedBody.Length > 240)
+            {
+                trimmedBody = trimmedBody[..240] + "…";
+            }
+
+            return $"status={(int)StatusCode}; headers=[Server={GetHeader("Server") ?? "<missing>"}, "
+                + $"Content-Length={GetHeader("Content-Length") ?? "<missing>"}, "
+                + $"ETag={GetHeader("ETag") ?? "<missing>"}, "
+                + $"x-ms-request-id={GetHeader("x-ms-request-id") ?? "<missing>"}]; body={trimmedBody}";
+        }
+
+        private string? GetHeader(string name)
+            => Headers.TryGetValue(name, out var value) ? value : null;
+    }
+
+    private static IReadOnlyDictionary<string, string> CollectHeaders(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in response.Headers)
+        {
+            headers[header.Key] = string.Join(", ", header.Value);
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            headers[header.Key] = string.Join(", ", header.Value);
+        }
+
+        return headers;
+    }
 }
