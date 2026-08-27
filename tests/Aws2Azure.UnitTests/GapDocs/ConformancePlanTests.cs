@@ -225,7 +225,7 @@ public sealed class ConformancePlanTests
             "sha256:72a44543a87d9eb1553d598c4b1aa8e9c1034e69115d9553dfeeca45af78dd21",
             query.ScenarioSetSha256);
         Assert.Equal(
-            "sha256:3c5f7ee943ffb9fc50c2a3effce767c003f4dd10066c69b3381ef1b7af2acb51",
+            "sha256:b91950349494aab66846b057f87c7fa3005941dc85695db0bba3042f7fbe6c5f",
             transactions.ScenarioSetSha256);
         Assert.Equal("Disabled", basic.Configuration.DynamoDbStoredProcedureMode);
         Assert.Equal("Disabled", query.Configuration.DynamoDbStoredProcedureMode);

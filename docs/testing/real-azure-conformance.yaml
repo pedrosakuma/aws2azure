@@ -404,6 +404,17 @@ services:
         tests:
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Supported_condition_subset_and_write_kinds_commit_expected_state
           - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Atomic_write_rollback_conditions_and_cancellation_are_aligned
+      - id: transaction-update-rvoccf
+        priority: p0
+        category: write
+        evidence_source: real_azure
+        establishes_verification: true
+        profiles: [dynamodb-single-partition-transactions]
+        requires_dynamo_db_stored_procedures: true
+        description: Stored-procedure-backed Update transact items commit atomically, preserve the committed post-state, and a failed Update condition with ReturnValuesOnConditionCheckFailure=ALL_OLD returns the pre-write snapshot without committing peer writes.
+        operations: [TransactWriteItems]
+        tests:
+          - Aws2Azure.IntegrationTests.DynamoDb.DynamoDbRealAzureTransactionTests.Update_actions_commit_and_all_old_condition_failures_return_atomic_snapshot
       - id: transaction-scope-rejection
         priority: p0
         category: core

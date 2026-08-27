@@ -192,6 +192,14 @@ public sealed class RealAzureTransactionWorkflowTests
             Matrix,
             StringComparison.Ordinal);
         Assert.Contains(
+            "transaction-update-rvoccf",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DynamoDbRealAzureTransactionTests.Update_actions_commit_and_all_old_condition_failures_return_atomic_snapshot",
+            Matrix,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "DynamoDbRealAzureTransactionTests.Conflicting_v5_sproc_body_fails_closed_and_is_restored_in_isolated_table",
             Matrix,
             StringComparison.Ordinal);
