@@ -2,6 +2,7 @@ service: kinesis
 design_gaps:
 - area: Synthetic sequence numbers and iterator positioning
   status: by_design
+  readiness_checklist_question: "Do you require exact AWS sequence-number semantics or replay boundaries from PutRecord/PutRecords responses?"
   summary: PutRecord/PutRecords sequence numbers are minted by the proxy as (unixMs << 20) | counter and mapped back to Event Hubs enqueue-time positions. GetRecords now returns round-trippable Event Hubs broker sequence tokens as sequence:<x-opt-sequence-number>, but synthetic write sequence numbers remain best-effort only at millisecond granularity.
   impact: PutRecord/PutRecords sequence boundaries can include sibling records that share the same millisecond enqueue time; exact per-record replay from synthetic write sequence numbers is not reproducible. Event Hubs also serves any AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER request below the retained BeginningSequenceNumber from the earliest retained event (TRIM_HORIZON-equivalent behavior). ExplicitHashKey and SequenceNumberForOrdering are accepted for wire compatibility but ignored.
   workaround: Feed GetRecords-returned sequence:<n> tokens back into AT_SEQUENCE_NUMBER / AFTER_SEQUENCE_NUMBER when callers need exact replay of already-read records; otherwise prefer TRIM_HORIZON, LATEST, or AT_TIMESTAMP.
@@ -9,6 +10,7 @@ design_gaps:
   - https://learn.microsoft.com/rest/api/eventhub/
 - area: Geo-DR / Geo-Replication failover requires alias planning and breaks iterator continuity
   status: by_design
+  readiness_checklist_question: "Do you expect regional failover to preserve iterator continuity without alias planning and checkpoint reacquisition?"
   summary: Like the Service Bus-backed SQS/SNS paths, the Event Hubs-backed Kinesis module follows regional failover only when the configured namespace/endpoint already targets the Event Hubs Geo-DR or Geo-Replication alias hostname/FQDN. The proxy otherwise derives a single namespace host from EventHubsCredentials.Namespace or its Endpoint override and stays pinned to that host, while shard iterators encode Event Hubs-local offset/sequence/time checkpoints from the original namespace.
   impact: Direct primary-namespace configuration loses transparent regional failover. Even when an alias is configured up front, existing shard iterators are not portable Kinesis leases; after failover the reopened selector runs against the secondary namespace's retained event store and can resume from an earlier retained position without a Kinesis-visible checkpoint-loss signal. Geo-DR replicates metadata only, and Geo-Replication does not make previously issued iterator checkpoints portable across namespaces.
   workaround: Configure azure.kinesis.target.namespace or endpoint with the Event Hubs alias hostname/FQDN before failover drills, and treat every regional failover as a consumer restart boundary that must reacquire checkpoints out of band.
@@ -17,6 +19,7 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-geo-replication
 - area: No shard-level throughput emulation
   status: by_design
+  readiness_checklist_question: "Do you rely on AWS Kinesis shard-level read/write throttling being enforced locally?"
   summary: The proxy does not maintain a local Kinesis-style per-shard byte, record, or TPS budget for reads or writes. Requests flow through to Event Hubs and only Azure-originated throttles are mapped back to ProvisionedThroughputExceededException.
   impact: A workload that AWS Kinesis would throttle at the shard boundary can still succeed locally until Azure Event Hubs applies its own namespace, partition, or consumer throttles.
   workaround: Capacity-plan the backing Event Hub for the real workload and treat Kinesis shard throughput limits as documentation-only rather than enforced simulation.
@@ -24,6 +27,7 @@ design_gaps:
   - https://docs.aws.amazon.com/kinesis/latest/dev/service-sizes-and-limits.html
 - area: Idempotent or exclusive Event Hubs producers are unsupported
   status: by_design
+  readiness_checklist_question: "Do your target Event Hubs require idempotent or exclusive producers?"
   summary: PutRecord/PutRecords open an ordinary AMQP sender link and set only standard Event Hubs message annotations. The Kinesis module does not negotiate Event Hubs idempotent-partition producer state or owner-level/exclusive-producer semantics for a partition.
   impact: Event Hubs entities that require idempotent publishing, or partitions already held by another exclusive producer, can reject Kinesis writes with Azure-side producer errors that have no AWS Kinesis equivalent.
   workaround: Use ordinary non-exclusive Event Hubs producers for streams behind the Kinesis module. Do not enable idempotent or exclusive-producer requirements on those entities.
@@ -31,6 +35,7 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-features#idempotency
 - area: Event Hubs Capture archives Event Hubs envelopes, not raw Kinesis bytes
   status: by_design
+  readiness_checklist_question: "Do downstream consumers need Event Hubs Capture to archive raw Kinesis record bytes instead of Event Hubs envelopes?"
   summary: Event Hubs Capture is an Event Hubs control-plane archive feature, not a Kinesis-aware export path. When the proxy publishes PutRecord/PutRecords into Event Hubs, Capture persists the resulting Event Hubs event representation and broker metadata rather than a raw AWS Kinesis record stream.
   impact: Operators who enable Capture for downstream analytics can be surprised that the archived payload is Event Hubs-shaped data with Event Hubs/AMQP context, not a clean dump of the original Kinesis record bytes alone.
   workaround: Treat Capture as Event Hubs-native archival and plan any downstream decoding around the captured Event Hubs envelope. Use a separate export/ETL path when consumers require raw Kinesis-compatible payload extraction.
@@ -38,11 +43,13 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/event-hubs/event-hubs-capture-overview
 - area: Iterator link lifetime and durable replay
   status: by_design
+  readiness_checklist_question: "Do you need multiple independently replaying consumers to share one consumer group durably?"
   summary: Each proxy-issued shard iterator has a distinct identity and therefore a distinct pooled AMQP receiver link. Iterator chains advance independently while their links are live. The embedded continuation position recreates a link after failure, idle eviction, or restart, but the supported profile deliberately stops at one consumer loop per partition and consumer group.
   impact: Multiple iterator identities on one consumer group are not a certified durable consumer-ownership or replay topology. Recreated links resume from the best available Event Hubs offset/enqueue-time position and inherit the synthetic-sequence and millisecond-boundary differences documented above.
   workaround: Use one consumer loop per partition. Assign distinct Event Hubs consumer groups when consumers require independently operated replay/checkpoint lifecycles.
 - area: No resharding / enhanced fan-out / KCL lease model
   status: unsupported
+  readiness_checklist_question: "Does your workload require resharding, enhanced fan-out, or the KCL lease model?"
   summary: Kinesis shards map to Event Hubs partitions, which are fixed at the hub level. Dynamic resharding (SplitShard/MergeShards), enhanced fan-out (SubscribeToShard), and the KCL DynamoDB lease/checkpoint model have no in-scope translation.
   impact: Applications that resize streams at runtime or rely on enhanced-fan-out throughput isolation cannot drive those code paths through the proxy.
   workaround: Provision Event Hubs partition count for peak load up front; use consumer groups for isolation.

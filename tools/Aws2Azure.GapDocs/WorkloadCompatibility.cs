@@ -389,6 +389,9 @@ public static class DocumentationLinks
 
     public static string ServicePage(string service) => $"{Anchor(service)}.md";
 
+    public static string ReadinessChecklistPage(string service) =>
+        $"readiness-checklists/{Anchor(service)}.md";
+
     public static string OperationPage(string service, string operation) =>
         $"operations/{Anchor(service)}/{Anchor(operation)}.md";
 
@@ -407,6 +410,9 @@ public static class DocumentationLinks
     public static string OperationCompatibilityAnchor(string operation) => Anchor(operation);
 
     public static string ServiceCanonicalAnchor(string service) => $"service-{Anchor(service)}";
+
+    public static string ReadinessChecklistCanonicalAnchor(string service) =>
+        $"before-you-migrate-{Anchor(service)}";
 
     public static string OperationCanonicalAnchor(string service, string operation) =>
         $"operation-{Anchor(service)}-{Anchor(operation)}";

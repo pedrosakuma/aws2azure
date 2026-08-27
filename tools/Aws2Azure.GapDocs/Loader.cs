@@ -636,6 +636,10 @@ public static class Validator
                 {
                     Err($"design_gaps[{i}] '{g.Area}' does not produce a stable documentation identity");
                 }
+                if (string.IsNullOrWhiteSpace(g.ReadinessChecklistQuestion))
+                {
+                    Err($"design_gaps[{i}].readiness_checklist_question missing");
+                }
                 if (string.IsNullOrWhiteSpace(g.Summary)) Err($"design_gaps[{i}].summary missing");
                 if (!StatusValues.DesignGap.Contains(g.Status))
                 {

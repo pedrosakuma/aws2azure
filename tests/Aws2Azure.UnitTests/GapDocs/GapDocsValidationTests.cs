@@ -55,6 +55,7 @@ public sealed class GapDocsValidationTests
                     Area = "Bucket sub-resource configs are not translated",
                     Status = "unsupported",
                     Disposition = "by_design",
+                    ReadinessChecklistQuestion = "Does your workload depend on bucket lifecycle or notification APIs?",
                     Summary = "Account-scoped or management-plane configuration remains outside the data path."
                 }
             ]

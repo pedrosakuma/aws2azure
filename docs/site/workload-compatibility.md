@@ -63,6 +63,8 @@ an explicit migration decision.
 
 ## dynamodb {#dynamodb}
 
+Quick screen: [Before you migrate DynamoDB](readiness-checklists/dynamodb.md).
+
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic table and item CRUD | 🟡 conditional | 3 implemented, 4 partial | 7/7 | Table lifecycle and item CRUD are translated, with expression, consistency, key-encoding, and Cosmos storage-model caveats.<br>Use a proxy-managed Cosmos database, keep keys within the documented limit, choose an account consistency/SLA topology that matches the workload, and avoid multi-write active/active non-idempotent updates unless Last-Write-Wins is acceptable.<br>[PutItem](operations/dynamodb/putitem.md) is partial<br>[GetItem](operations/dynamodb/getitem.md) is partial<br>[UpdateItem](operations/dynamodb/updateitem.md) is partial<br>[DeleteItem](operations/dynamodb/deleteitem.md) is partial<br>[Design gap](design-gaps/dynamodb/multi-write-conflict-resolution-is-last-write-wins.md): Multi-write conflict resolution is Last-Write-Wins<br>[Design gap](design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md): 99.999% availability depends on Cosmos account topology<br>[Design gap](design-gaps/dynamodb/consistency-and-read-your-writes.md): Consistency and read-your-writes<br>[Design gap](design-gaps/dynamodb/key-encoding-and-on-disk-storage-format.md): Key encoding and on-disk storage format | `dynamodb_basic_crud` |
@@ -73,6 +75,8 @@ an explicit migration decision.
 
 ## kinesis {#kinesis}
 
+Quick screen: [Before you migrate Kinesis](readiness-checklists/kinesis.md).
+
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic record ingestion | 🟡 conditional | 2 partial | 2/2 | PutRecord and PutRecords publish to provisioned Event Hubs partitions, but ordering-related request fields and returned sequence numbers differ.<br>Use partition keys for routing and do not depend on SequenceNumberForOrdering or exact AWS sequence-number semantics.<br>[PutRecord](operations/kinesis/putrecord.md) is partial<br>[PutRecords](operations/kinesis/putrecords.md) is partial<br>[Design gap](design-gaps/kinesis/synthetic-sequence-numbers-and-iterator-positioning.md): Synthetic sequence numbers and iterator positioning<br>[Design gap](design-gaps/kinesis/no-shard-level-throughput-emulation.md): No shard-level throughput emulation<br>[Design gap](design-gaps/kinesis/idempotent-or-exclusive-event-hubs-producers-are-unsupported.md): Idempotent or exclusive Event Hubs producers are unsupported<br>[Design gap](design-gaps/kinesis/event-hubs-capture-archives-event-hubs-envelopes-not-raw-kinesis-bytes.md): Event Hubs Capture archives Event Hubs envelopes, not raw Kinesis bytes | `kinesis_record_ingestion` |
@@ -81,6 +85,8 @@ an explicit migration decision.
 | Resharding, enhanced fan-out, or KCL lease management | ⛔ blocked | Design-level requirement | — | Dynamic shard topology and enhanced fan-out have no equivalent in the exposed proxy surface.<br>Provision partitions for peak demand and manage consumer isolation with Event Hubs consumer groups.<br>[Design gap](design-gaps/kinesis/no-resharding---enhanced-fan-out---kcl-lease-model.md): No resharding / enhanced fan-out / KCL lease model | `kinesis_resharding_enhanced_fanout_kcl` |
 
 ## s3 {#s3}
+
+Quick screen: [Before you migrate S3](readiness-checklists/s3.md).
 
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
@@ -92,6 +98,8 @@ an explicit migration decision.
 
 ## secretsmanager {#secretsmanager}
 
+Quick screen: [Before you migrate Secrets Manager](readiness-checklists/secretsmanager.md).
+
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Basic secret lifecycle | 🟡 conditional | 6 implemented | 6/6 | Create, inspect, retrieve, update, list, and delete secrets through the corresponding Key Vault data-plane APIs.<br>Suitable after configuring Entra ID authentication, granting the proxy identity the required Key Vault data-plane permissions (typically Key Vault Secrets Officer for this read/write/delete profile), and validating Key Vault soft-delete behavior for the deployment. Key Vault Secrets User is read-only, while Key Vault Reader and Key Vault Contributor do not grant secret-value access.<br>[Design gap](design-gaps/secretsmanager/deletion-recovery-semantics-differ.md): Deletion recovery semantics differ<br>[Design gap](design-gaps/secretsmanager/managed-hsm-endpoints-do-not-implement-the-secrets-api.md): Managed HSM endpoints do not implement the secrets API | `secretsmanager_basic_lifecycle` |
@@ -101,6 +109,8 @@ an explicit migration decision.
 
 ## sns {#sns}
 
+Quick screen: [Before you migrate SNS](readiness-checklists/sns.md).
+
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|
 | Standard topic publish | 🟡 conditional | 2 implemented, 2 partial | 4/4 | Publish and PublishBatch route through Service Bus Topics or Event Grid, whose delivery and partial-failure semantics differ.<br>Select the backend deliberately; for Service Bus use the Geo-DR alias if regional failover matters, and for Event Grid plan external multiregion failover plus the currently supported auth mode (shared key or Entra bearer).<br>[Publish](operations/sns/publish.md) is partial<br>[PublishBatch](operations/sns/publishbatch.md) is partial<br>[Design gap](design-gaps/sns/two-backends-with-different-fidelity.md): Two backends with different fidelity<br>[Design gap](design-gaps/sns/service-bus-geo-dr-requires-alias-based-failover-planning.md): Service Bus Geo-DR requires alias-based failover planning<br>[Design gap](design-gaps/sns/event-grid-custom-topic-failover-remains-best-effort-and-external.md): Event Grid custom-topic failover remains best-effort and external<br>[Design gap](design-gaps/sns/event-grid-publish-auth-omits-sas-token-mode.md): Event Grid publish auth omits SAS-token mode<br>[Design gap](design-gaps/sns/event-grid-topic-lifecycle-remains-external.md): Event Grid topic lifecycle remains external<br>[Design gap](design-gaps/sns/default-event-grid-routing-multiplexes-multiple-sns-topics.md): Default Event Grid routing multiplexes multiple SNS topics | `sns_standard_publish` |
@@ -109,6 +119,8 @@ an explicit migration decision.
 | IAM delivery and redrive policy administration | ⛔ blocked | 2 partial | 2/2 | SNS policy attributes are accepted as no-ops and do not configure Azure delivery authorization or reliability.<br>Configure authorization, retry, and dead-letter behavior directly on the Azure backend.<br>[SetTopicAttributes](operations/sns/settopicattributes.md) is partial<br>[SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) is partial<br>[Design gap](design-gaps/sns/no-iam-backed-policy-surface.md): No IAM-backed policy surface | `sns_policy_administration` |
 
 ## sqs {#sqs}
+
+Quick screen: [Before you migrate SQS](readiness-checklists/sqs.md).
 
 | Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |
 |---|---|---|---:|---|---|

@@ -79,6 +79,7 @@ public sealed class DesignGap
     public string Status { get; set; } = "by_design";
     public string Disposition { get; set; } = string.Empty;
     public string TrackingIssue { get; set; } = string.Empty;
+    public string ReadinessChecklistQuestion { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public string Impact { get; set; } = string.Empty;
     public string Workaround { get; set; } = string.Empty;

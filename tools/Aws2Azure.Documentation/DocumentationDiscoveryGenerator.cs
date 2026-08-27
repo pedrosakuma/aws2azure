@@ -475,6 +475,16 @@ public static class DocumentationDiscoveryGenerator
                 Current(),
                 canonicalId: $"service:{service}:design",
                 service: service);
+            Add(
+                $"service:{service}:readiness-checklist",
+                $"docs/site/{DocumentationLinks.ReadinessChecklistPage(designDoc.Service)}",
+                "service-readiness-checklist-reference",
+                "service",
+                "normative-capability",
+                "generated",
+                DerivedCurrent(),
+                canonicalId: $"service:{service}:readiness-checklist",
+                service: service);
             foreach (var gap in designDoc.DesignGaps)
             {
                 var canonicalId = DocumentationLinks.DesignGapIdentity(designDoc.Service, gap.Area);
@@ -881,6 +891,8 @@ public static class DocumentationDiscoveryGenerator
         var designDocs = Loader.LoadDesignDocs(Path.Combine(repoRoot, "docs", "gaps"));
         foreach (var designDoc in designDocs)
         {
+            requiredPaths.Add(
+                $"docs/site/{DocumentationLinks.ReadinessChecklistPage(designDoc.Service)}");
             foreach (var gap in designDoc.DesignGaps)
             {
                 requiredPaths.Add(

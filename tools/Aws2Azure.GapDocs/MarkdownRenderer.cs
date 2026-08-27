@@ -168,6 +168,7 @@ public static class MarkdownRenderer
         WriteCompleteness(byService, designDocs, siteRoot);
         WriteWorkloadCompatibility(byService, designDocs, siteRoot);
         WriteDivergences(byService, migration, siteRoot);
+        WriteReadinessChecklists(designDocs, siteRoot);
         WriteDesignGaps(designDocs, siteRoot);
         foreach (var group in byService)
         {
@@ -480,6 +481,10 @@ public static class MarkdownRenderer
                 $"## {serviceDoc.Service.ToLowerInvariant()} " +
                 $"{{#{DocumentationLinks.Anchor(serviceDoc.Service)}}}");
             sb.AppendLine();
+            sb.AppendLine(
+                $"Quick screen: [Before you migrate {ServiceDisplayName(serviceDoc.Service)}]" +
+                $"({DocumentationLinks.ReadinessChecklistPage(serviceDoc.Service)}).");
+            sb.AppendLine();
             sb.AppendLine("| Workload pattern | Assessment | Operation coverage | Operation seals | Decision guidance | Requirement ID |");
             sb.AppendLine("|---|---|---|---:|---|---|");
             foreach (var pattern in serviceDoc.WorkloadPatterns)
@@ -653,6 +658,8 @@ public static class MarkdownRenderer
         sb.AppendLine("each [service page](index.md). This page is an index whose links open");
         sb.AppendLine("stable, independently searchable design-gap pages. Existing public anchors");
         sb.AppendLine("remain on this index for compatibility.");
+        sb.AppendLine("Start with the per-service readiness checklists when you need a quick");
+        sb.AppendLine("yes/no migration screen before reading the full gap details.");
         sb.AppendLine();
         sb.AppendLine("Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned");
         sb.AppendLine();
@@ -672,6 +679,15 @@ public static class MarkdownRenderer
             return;
         }
 
+        sb.AppendLine("## Before you migrate {#before-you-migrate}");
+        sb.AppendLine();
+        foreach (var doc in ordered)
+        {
+            sb.AppendLine(
+                $"- [Before you migrate {ServiceDisplayName(doc.Service)}]" +
+                $"({DocumentationLinks.ReadinessChecklistPage(doc.Service)})");
+        }
+        sb.AppendLine();
         sb.AppendLine("## Summary {#summary}");
         sb.AppendLine();
         sb.AppendLine("| Service | Area | Status | Disposition | Tracking |");
@@ -700,6 +716,9 @@ public static class MarkdownRenderer
                 $"## {doc.Service.ToLowerInvariant()} " +
                 $"{{#{DocumentationLinks.Anchor(doc.Service)}}}");
             sb.AppendLine();
+            sb.AppendLine(
+                $"- [Before you migrate {ServiceDisplayName(doc.Service)}]" +
+                $"({DocumentationLinks.ReadinessChecklistPage(doc.Service)})");
             foreach (var gap in doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal))
             {
                 sb.AppendLine(
@@ -717,6 +736,43 @@ public static class MarkdownRenderer
             {
                 WriteDesignGapPage(doc.Service, gap, siteRoot);
             }
+        }
+    }
+
+    private static void WriteReadinessChecklists(
+        IReadOnlyList<ServiceDesignDoc> designDocs,
+        string siteRoot)
+    {
+        foreach (var doc in designDocs.OrderBy(d => d.Service, System.StringComparer.Ordinal))
+        {
+            var relativePath = DocumentationLinks.ReadinessChecklistPage(doc.Service);
+            var outputPath = Path.Combine(siteRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+            var sb = new StringBuilder();
+            sb.AppendLine(
+                $"# Before you migrate {ServiceDisplayName(doc.Service)} " +
+                $"{{#{DocumentationLinks.ReadinessChecklistCanonicalAnchor(doc.Service)}}}");
+            sb.AppendLine();
+            sb.AppendLine(
+                $"[← Workload compatibility](../workload-compatibility.md#{DocumentationLinks.Anchor(doc.Service)}) " +
+                $"· [Design gaps](../design-gaps.md#{DocumentationLinks.Anchor(doc.Service)})");
+            sb.AppendLine();
+            sb.AppendLine("Answer each question with **yes** or **no**.");
+            sb.AppendLine("If you answer **yes**, read the linked design gap and confirm its workaround");
+            sb.AppendLine("fits your workload before migrating.");
+            sb.AppendLine();
+
+            var orderedGaps = doc.DesignGaps.OrderBy(g => g.Area, System.StringComparer.Ordinal).ToList();
+            for (var i = 0; i < orderedGaps.Count; i++)
+            {
+                var gap = orderedGaps[i];
+                sb.AppendLine(
+                    $"{i + 1}. **{Esc(gap.ReadinessChecklistQuestion)}** " +
+                    $"→ [{Esc(gap.Area)}](../{DocumentationLinks.DesignGapPage(doc.Service, gap.Area)})");
+            }
+
+            File.WriteAllText(outputPath, sb.ToString());
         }
     }
 
@@ -804,6 +860,17 @@ public static class MarkdownRenderer
     };
 
     private static string Seal(RealAzureVerification? verified) => verified is null ? "—" : "✅";
+
+    private static string ServiceDisplayName(string service) => service.ToLowerInvariant() switch
+    {
+        "s3" => "S3",
+        "sqs" => "SQS",
+        "sns" => "SNS",
+        "dynamodb" => "DynamoDB",
+        "kinesis" => "Kinesis",
+        "secretsmanager" => "Secrets Manager",
+        _ => service
+    };
 
     private static string CompatibilityBadge(string compatibility) => compatibility.ToLowerInvariant() switch
     {
