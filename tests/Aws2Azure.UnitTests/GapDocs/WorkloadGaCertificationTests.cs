@@ -25,7 +25,7 @@ public sealed class WorkloadGaCertificationTests
     [InlineData("s3-basic-object-crud.yaml", "ga", 2026, 8, 26)]
     [InlineData("secretsmanager-basic-lifecycle.yaml", "ga", 2026, 8, 25)]
     [InlineData("sqs-standard-messaging.yaml", "ga", 2026, 8, 26)]
-    [InlineData("dynamodb-basic-crud.yaml", "conditional", 2026, 7, 22)]
+    [InlineData("dynamodb-basic-crud.yaml", "ga", 2026, 8, 27)]
     [InlineData("dynamodb-query-scan-indexes.yaml", "conditional", 2026, 7, 22)]
     [InlineData("dynamodb-single-partition-transactions.yaml", "ga", 2026, 7, 27)]
     [InlineData("sns-standard-publish-service-bus.yaml", "candidate", 2026, 7, 22)]
@@ -299,12 +299,12 @@ public sealed class WorkloadGaCertificationTests
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
             EvaluationContract,
-            UtcInstant(2026, 8, 26, 20, 36, 24),
+            UtcInstant(2026, 8, 27, 0, 19, 31),
             WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot)));
         Assert.Equal(
-            UtcInstant(2026, 8, 26, 20, 36, 24),
+            UtcInstant(2026, 8, 27, 0, 19, 31),
             WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(EvaluationContract));
     }
 
