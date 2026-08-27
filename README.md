@@ -9,29 +9,6 @@ this proxy by setting its `endpoint_url`, and it runs against Azure with no code
 changes. The goal is to reduce the cost and risk of migrating workloads from AWS
 to Azure.
 
-## Quickstart
-
-```bash
-git clone https://github.com/pedrosakuma/aws2azure.git
-cd aws2azure
-docker compose up --build
-
-# In another terminal — S3 against the bundled Azurite emulator:
-export AWS_ACCESS_KEY_ID=AKIADEVEXAMPLE
-export AWS_SECRET_ACCESS_KEY=dev-secret-key-change-me
-export AWS_DEFAULT_REGION=us-east-1
-
-aws --endpoint-url http://s3.localhost:8080 s3 mb s3://demo
-aws --endpoint-url http://s3.localhost:8080 s3 cp ./README.md s3://demo/readme
-aws --endpoint-url http://s3.localhost:8080 s3 ls s3://demo/
-```
-
-See the **[Getting Started guide](./docs/getting-started.md)** for configuration,
-enabling the other services, running from source, and pointing at real Azure. On
-Azure compute you can authenticate without a stored secret via Managed Identity
-or Workload Identity — see
-[Azure authentication](./docs/azure-authentication.md).
-
 ## Scope
 
 - **Direction:** AWS → Azure only (no reverse, no other clouds).
@@ -55,7 +32,7 @@ An available module means the proxy can route that service's AWS wire protocol;
 it does **not** imply full AWS service parity. The project-level meanings of
 module, operation, real-Azure, conditional, and GA claims are defined in
 [**Project maturity and support terms**](./docs/project-maturity.md). Start with
-the generated
+the generated [**workload GA guide**](./docs/site/workload-ga.md), then the
 [**workload compatibility guide**](./docs/site/workload-compatibility.md), then
 confirm every operation in the [coverage matrix](./docs/site/coverage.md).
 Every operation and sub-feature is documented exhaustively under
@@ -65,6 +42,33 @@ transaction scope, absent control-plane surfaces — are collected in
 
 Architecture decisions that explain the project constraints are recorded in
 [`docs/adr/`](./docs/adr/).
+
+Before you run a proof of concept, check the
+[workload GA guide](./docs/site/workload-ga.md) for the profile that matches
+your use case and confirm whether it is GA, candidate, conditional, or blocked.
+
+## Quickstart
+
+```bash
+git clone https://github.com/pedrosakuma/aws2azure.git
+cd aws2azure
+docker compose up --build
+
+# In another terminal — S3 against the bundled Azurite emulator:
+export AWS_ACCESS_KEY_ID=AKIADEVEXAMPLE
+export AWS_SECRET_ACCESS_KEY=dev-secret-key-change-me
+export AWS_DEFAULT_REGION=us-east-1
+
+aws --endpoint-url http://s3.localhost:8080 s3 mb s3://demo
+aws --endpoint-url http://s3.localhost:8080 s3 cp ./README.md s3://demo/readme
+aws --endpoint-url http://s3.localhost:8080 s3 ls s3://demo/
+```
+
+See the **[Getting Started guide](./docs/getting-started.md)** for configuration,
+enabling the other services, running from source, and pointing at real Azure. On
+Azure compute you can authenticate without a stored secret via Managed Identity
+or Workload Identity — see
+[Azure authentication](./docs/azure-authentication.md).
 
 ## Documentation
 
