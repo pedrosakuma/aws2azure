@@ -121,7 +121,9 @@ public sealed class DeterministicHttpFailureConformanceTests
                 SecretId = "deterministic-failure",
             }));
         AssertSdkError(exception, failure);
-        Assert.Equal(2, harness.Backend.TokenRequestCount);
+        // RawClient + AWS SDK each trigger a token-endpoint exchange, and a token 401
+        // now gets one bounded retry before surfacing as the same terminal 403.
+        Assert.Equal(4, harness.Backend.TokenRequestCount);
         Assert.Equal(0, harness.Backend.BackendRequestCount);
     }
 

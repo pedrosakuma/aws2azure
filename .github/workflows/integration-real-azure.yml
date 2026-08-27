@@ -726,17 +726,44 @@ jobs:
         env:
           FILTER: ${{ steps.filters.outputs.integration }}
         run: |
+          set -euo pipefail
+          retryable_pattern='Entra ID token request failed with HTTP 401.'
+          run_with_entra_401_retry() {
+            local log_file=$1
+            shift
+            local attempt status
+            for attempt in 1 2; do
+              rm -f "$log_file"
+              set +e
+              "$@" 2>&1 | tee "$log_file"
+              status=${PIPESTATUS[0]}
+              if [ "$status" -eq 0 ]; then
+                return 0
+              fi
+              if [ "$attempt" -ge 2 ] || ! grep -Fq "$retryable_pattern" "$log_file"; then
+                return "$status"
+              fi
+              echo "::warning::Retrying planned integration tests after transient Entra token-endpoint 401 (issue #922)."
+              sleep 1
+            done
+          }
+
           # AZURE_KEYVAULT_URL is exported from the ephemeral deployment output by
           # the "Export connection info" step (Secrets Manager -> Key Vault). When
           # provisioning is skipped (no OIDC) it stays unset and the SecretsManager
           # smoke skips. Workload-Identity auth uses the OIDC token minted above.
           status=0
           if [ -n "$FILTER" ]; then
-            dotnet test tests/Aws2Azure.IntegrationTests \
-              -c Release --no-build --nologo \
-              --filter "$FILTER" \
-              --results-directory "$TEST_RESULTS_DIR" \
-              --logger "trx;LogFileName=matrix-integration.trx" || status=$?
+            set +e
+            run_with_entra_401_retry \
+              "$TEST_RESULTS_DIR/matrix-integration-attempt.log" \
+              dotnet test tests/Aws2Azure.IntegrationTests \
+                -c Release --no-build --nologo \
+                --filter "$FILTER" \
+                --results-directory "$TEST_RESULTS_DIR" \
+                --logger "trx;LogFileName=matrix-integration.trx"
+            status=$?
+            set -e
           else
             echo "::notice::Selected conformance plan contains no integration tests."
           fi
@@ -748,6 +775,28 @@ jobs:
         env:
           SELECTED_SERVICE: ${{ inputs.service || 'all' }}
         run: |
+          set -euo pipefail
+          retryable_pattern='Entra ID token request failed with HTTP 401.'
+          run_with_entra_401_retry() {
+            local log_file=$1
+            shift
+            local attempt status
+            for attempt in 1 2; do
+              rm -f "$log_file"
+              set +e
+              "$@" 2>&1 | tee "$log_file"
+              status=${PIPESTATUS[0]}
+              if [ "$status" -eq 0 ]; then
+                return 0
+              fi
+              if [ "$attempt" -ge 2 ] || ! grep -Fq "$retryable_pattern" "$log_file"; then
+                return "$status"
+              fi
+              echo "::warning::Retrying conformance evidence tests after transient Entra token-endpoint 401 (issue #922)."
+              sleep 1
+            done
+          }
+
           status=0
           filter=
           case "$SELECTED_SERVICE" in
@@ -764,11 +813,16 @@ jobs:
               exit 0
               ;;
           esac
-          dotnet test tests/Aws2Azure.IntegrationTests \
-            -c Release --no-build --nologo \
-            --filter "$filter" \
-            --results-directory "$TEST_RESULTS_DIR" \
-            --logger "trx;LogFileName=conformance-case-evidence.trx" || status=$?
+          set +e
+          run_with_entra_401_retry \
+            "$TEST_RESULTS_DIR/conformance-case-evidence-attempt.log" \
+            dotnet test tests/Aws2Azure.IntegrationTests \
+              -c Release --no-build --nologo \
+              --filter "$filter" \
+              --results-directory "$TEST_RESULTS_DIR" \
+              --logger "trx;LogFileName=conformance-case-evidence.trx"
+          status=$?
+          set -e
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
 
       # Raw canonical evidence files (not just the TRX/summary reports) are the

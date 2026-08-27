@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -141,6 +142,139 @@ public class WorkloadIdentityTokenSourceTests
 
             Assert.Equal(HttpStatusCode.TooManyRequests, ex.StatusCode);
             Assert.Equal(HttpStatusCode.TooManyRequests, ex.BackendStatus);
+        }
+        finally
+        {
+            DeleteTokenFile(tokenFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_UnauthorizedThenSuccess_RetriesWithoutSleepingForRealTime()
+    {
+        var tokenFile = CreateTokenFile("jwt-assertion");
+        try
+        {
+            var delayCalls = 0;
+            TimeSpan? observedDelay = null;
+            var handler = new CapturingScriptedHandler();
+            var http = new AzureHttpClient(handler, ownsHandler: true);
+            var source = new WorkloadIdentityTokenSource(
+                http,
+                "tenant",
+                "client-id",
+                tokenFile,
+                authority: new Uri("https://login.test/"),
+                clock: null,
+                delayAsync: (delay, _) =>
+                {
+                    delayCalls++;
+                    observedDelay = delay;
+                    return ValueTask.CompletedTask;
+                });
+
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"first\"}", Encoding.UTF8, "application/json")
+            });
+            handler.Enqueue(MakeToken("access-token", expiresIn: 3600));
+
+            var started = Stopwatch.StartNew();
+            var token = await source.GetTokenAsync("https://storage.azure.com/.default");
+            started.Stop();
+
+            Assert.Equal("access-token", token);
+            Assert.Equal(2, handler.CallCount);
+            Assert.Equal(1, delayCalls);
+            Assert.Equal(EntraIdTokenEndpointRetry.UnauthorizedRetryDelay, observedDelay);
+            Assert.True(
+                started.Elapsed < TimeSpan.FromMilliseconds(500),
+                "Injected retry delay should keep the test below the real 750ms sleep budget.");
+        }
+        finally
+        {
+            DeleteTokenFile(tokenFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_UnauthorizedAfterRetryBudget_ThrowsTerminalException()
+    {
+        var tokenFile = CreateTokenFile("jwt-assertion");
+        try
+        {
+            var delayCalls = 0;
+            var handler = new CapturingScriptedHandler();
+            var http = new AzureHttpClient(handler, ownsHandler: true);
+            var source = new WorkloadIdentityTokenSource(
+                http,
+                "tenant",
+                "client-id",
+                tokenFile,
+                authority: new Uri("https://login.test/"),
+                clock: null,
+                delayAsync: (_, _) =>
+                {
+                    delayCalls++;
+                    return ValueTask.CompletedTask;
+                });
+
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"first\"}", Encoding.UTF8, "application/json")
+            });
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"second\"}", Encoding.UTF8, "application/json")
+            });
+
+            var ex = await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+                source.GetTokenAsync("https://storage.azure.com/.default").AsTask());
+
+            Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, ex.BackendStatus);
+            Assert.Equal(2, handler.CallCount);
+            Assert.Equal(1, delayCalls);
+        }
+        finally
+        {
+            DeleteTokenFile(tokenFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_BadRequest_IsNotRetried()
+    {
+        var tokenFile = CreateTokenFile("jwt-assertion");
+        try
+        {
+            var delayCalls = 0;
+            var handler = new CapturingScriptedHandler();
+            var http = new AzureHttpClient(handler, ownsHandler: true);
+            var source = new WorkloadIdentityTokenSource(
+                http,
+                "tenant",
+                "client-id",
+                tokenFile,
+                authority: new Uri("https://login.test/"),
+                clock: null,
+                delayAsync: (_, _) =>
+                {
+                    delayCalls++;
+                    return ValueTask.CompletedTask;
+                });
+
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"error\":\"invalid_request\"}", Encoding.UTF8, "application/json")
+            });
+
+            var ex = await Assert.ThrowsAsync<EntraIdTokenException>(() =>
+                source.GetTokenAsync("https://storage.azure.com/.default").AsTask());
+
+            Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
+            Assert.Equal(1, handler.CallCount);
+            Assert.Equal(0, delayCalls);
         }
         finally
         {
