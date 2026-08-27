@@ -62,6 +62,7 @@ public sealed class WorkloadGaReport
     public string Name { get; set; } = string.Empty;
     public string MinimumProxyVersion { get; set; } = string.Empty;
     public string Verdict { get; set; } = "blocked";
+    public DateTimeOffset? EvidenceExpiresAtUtc { get; set; }
     public List<WorkloadGaFinding> Findings { get; set; } = new();
     public WorkloadGaEvaluationMetadata? Evaluation { get; set; }
     public WorkloadGaAuthorityMetadata? Authority { get; set; }
@@ -598,6 +599,7 @@ public static class WorkloadGaEvaluator
         // any *other* direct reader (e.g. QualificationMatches below) sees the same
         // relative identifier without needing its own displayPath parameter.
         qualification.SourceFile = ToRepoRelativePath(resolvedPath, repoRoot);
+        report.EvidenceExpiresAtUtc = ComputeEvidenceExpiresAtUtc(qualification);
         var qualificationErrors = SloQualificationValidator.Validate(
                 qualification,
                 evaluatedAsOfUtc,
@@ -848,6 +850,86 @@ public static class WorkloadGaEvaluator
         return date >= currentDate.AddDays(-maxAgeDays) ? "fresh" : "expired";
     }
 
+    private static DateTimeOffset? ComputeEvidenceExpiresAtUtc(
+        SloQualificationDocument qualification)
+    {
+        List<DateTimeOffset>? expirations = null;
+
+        static void AddExpiration(ref List<DateTimeOffset>? values, DateTimeOffset value)
+        {
+            if (value == default)
+            {
+                return;
+            }
+
+            values ??= new List<DateTimeOffset>();
+            values.Add(value.ToUniversalTime());
+        }
+
+        static void AddArtifactExpiration(
+            ref List<DateTimeOffset>? values,
+            QualificationRunArtifactIdentity? artifact)
+        {
+            if (artifact is not null)
+            {
+                AddExpiration(ref values, artifact.Artifact.ExpiresAt);
+            }
+        }
+
+        if (qualification.Candidate.Runtime is not null)
+        {
+            AddExpiration(ref expirations, qualification.Candidate.Runtime.Artifact.ExpiresAt);
+        }
+
+        AddArtifactExpiration(
+            ref expirations,
+            qualification.Provenance.CorrectnessRun?.EvidenceArtifact);
+        foreach (var sourceRun in qualification.Provenance.SourceRuns)
+        {
+            AddArtifactExpiration(ref expirations, sourceRun.EvidenceArtifact);
+        }
+
+        if (HasValidQualificationMaxAge(qualification.Rules))
+        {
+            var freshnessWindow = TimeSpan.FromHours(qualification.Rules.MaxArtifactAgeHours);
+            AddExpiration(
+                ref expirations,
+                qualification.Provenance.GeneratedAtUtc + freshnessWindow);
+            if (qualification.Provenance.CorrectnessRun is not null)
+            {
+                AddExpiration(
+                    ref expirations,
+                    qualification.Provenance.CorrectnessRun.WindowEndUtc + freshnessWindow);
+            }
+            foreach (var sourceRun in qualification.Provenance.SourceRuns)
+            {
+                AddExpiration(ref expirations, sourceRun.WindowEndUtc + freshnessWindow);
+            }
+            foreach (var signal in qualification.Signals)
+            {
+                if (signal.Disposition == "blocking")
+                {
+                    AddExpiration(ref expirations, signal.CapturedAtUtc + freshnessWindow);
+                }
+            }
+            foreach (var scenario in qualification.Scenarios)
+            {
+                if (scenario.EvidenceSource == "real_azure")
+                {
+                    AddExpiration(ref expirations, scenario.CapturedAtUtc + freshnessWindow);
+                }
+            }
+        }
+
+        return expirations is null || expirations.Count == 0
+            ? null
+            : expirations.Min();
+    }
+
+    private static bool HasValidQualificationMaxAge(SloQualificationRules rules) =>
+        rules.MaxArtifactAgeHours > 0
+        && rules.MaxArtifactAgeHours <= TimeSpan.MaxValue.TotalHours;
+
     private static bool ContainsSymbolicLink(string root, string path)
     {
         var relative = Path.GetRelativePath(root, path);
@@ -906,6 +988,7 @@ public static class WorkloadGaRenderer
         WorkloadGaReport report,
         WorkloadGaEvaluationMetadata evaluation)
     {
+        var freshness = FormatFreshness(report.EvidenceExpiresAtUtc, evaluation);
         var builder = new StringBuilder();
         builder.AppendLine($"# Workload GA profile: {report.Name}");
         builder.AppendLine();
@@ -913,6 +996,7 @@ public static class WorkloadGaRenderer
         builder.AppendLine($"- **Profile:** `{report.ProfileId}` v{report.ProfileVersion}");
         builder.AppendLine($"- **Minimum proxy version:** `{report.MinimumProxyVersion}`");
         builder.AppendLine($"- **Verdict:** {Badge(report.Verdict)}");
+        builder.AppendLine($"- **Qualification freshness:** {freshness}");
         builder.AppendLine();
         builder.AppendLine("| Disposition | Code | Subject | Reason |");
         builder.AppendLine("|---|---|---|---|");
@@ -944,13 +1028,14 @@ public static class WorkloadGaRenderer
         AppendAuthorityNotice(builder, evaluation);
         builder.AppendLine("Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA");
         builder.AppendLine();
-        builder.AppendLine("| Profile | Version | Minimum proxy | Verdict | Blocking reasons |");
-        builder.AppendLine("|---|---:|---|---|---|");
+        builder.AppendLine("| Profile | Version | Minimum proxy | Verdict | Freshness | Blocking reasons |");
+        builder.AppendLine("|---|---:|---|---|---|---|");
         foreach (var report in ordered)
         {
             var blockers = report.Findings.Count(finding => finding.Disposition == "blocking");
+            var freshness = FormatFreshness(report.EvidenceExpiresAtUtc, evaluation);
             builder.AppendLine(
-                $"| {Esc(report.Name)} (`{report.ProfileId}`) | {report.ProfileVersion} | `{report.MinimumProxyVersion}` | {Badge(report.Verdict)} | {blockers} |");
+                $"| {Esc(report.Name)} (`{report.ProfileId}`) | {report.ProfileVersion} | `{report.MinimumProxyVersion}` | {Badge(report.Verdict)} | {Esc(freshness)} | {blockers} |");
         }
         builder.AppendLine();
         builder.AppendLine(
@@ -1011,6 +1096,43 @@ public static class WorkloadGaRenderer
         "ga" => "✅ GA",
         _ => verdict,
     };
+
+    private static string FormatFreshness(
+        DateTimeOffset? evidenceExpiresAtUtc,
+        WorkloadGaEvaluationMetadata evaluation)
+    {
+        if (evidenceExpiresAtUtc is null)
+        {
+            return "n/a";
+        }
+
+        var evaluatedAsOfUtc = DateTimeOffset.ParseExact(
+            evaluation.EvaluatedAsOfUtc,
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+        var expiresAtUtc = evidenceExpiresAtUtc.Value.ToUniversalTime();
+        var delta = expiresAtUtc - evaluatedAsOfUtc;
+        if (delta >= TimeSpan.Zero)
+        {
+            if (delta < TimeSpan.FromHours(1))
+            {
+                return $"expires in <1h ({FormatUtc(expiresAtUtc)})";
+            }
+
+            return $"expires in {Math.Floor(delta.TotalHours):0}h ({FormatUtc(expiresAtUtc)})";
+        }
+
+        if (delta > -TimeSpan.FromHours(1))
+        {
+            return $"expired <1h ago ({FormatUtc(expiresAtUtc)})";
+        }
+
+        return $"expired {Math.Floor(Math.Abs(delta.TotalHours)):0}h ago ({FormatUtc(expiresAtUtc)})";
+    }
+
+    private static string FormatUtc(DateTimeOffset value) =>
+        value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
     private static string Esc(string value) =>
         value.Replace("|", "\\|", StringComparison.Ordinal)
