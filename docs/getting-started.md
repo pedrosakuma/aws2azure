@@ -32,6 +32,9 @@ staging or production:
 Do not proceed unchanged when a required pattern is marked **blocked**.
 Conditional patterns require accepting the documented constraints and testing
 them against the selected Azure topology.
+If you want an AI coding agent to do a first pass over the binding config
+against the live published docs, start with the
+[AI config pre-flight prompt](./prompts/config-preflight.md).
 
 ---
 
