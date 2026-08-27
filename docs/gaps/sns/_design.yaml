@@ -57,6 +57,8 @@ design_gaps:
   summary: DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops because Service Bus / Event Grid expose no matching SNS attribute contract, and there is no server-side IAM evaluation.
   impact: Retry/redrive policy and role-based delivery configured via these attributes have no effect.
   workaround: Configure delivery reliability at the Azure backend level; do not rely on SNS policy attributes being enforced.
+  references:
+  - https://github.com/pedrosakuma/aws2azure/blob/main/docs/authorization-migration.md#sns-topic-policies-become-entra-scoped-publisher-identities-plus-azure-rbac
   disposition: by_design
 - area: Event Grid subscription management is excluded
   status: unsupported

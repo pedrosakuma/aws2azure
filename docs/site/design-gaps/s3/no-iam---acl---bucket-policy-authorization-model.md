@@ -13,5 +13,6 @@ Authorization is the static AWS-key-to-Azure-credential mapping validated by Sig
 
 ## References
 
+- <https://github.com/pedrosakuma/aws2azure/blob/main/docs/authorization-migration.md#s3-bucket-policies-bucket-acls-and-object-acls>
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html>
 

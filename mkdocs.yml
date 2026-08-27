@@ -91,6 +91,7 @@ nav:
       - Environment and overrides: configuration-environment.md
       - Production examples: configuration-examples.md
       - Azure authentication: azure-authentication.md
+      - Authorization migration: authorization-migration.md
       - Presigned URLs: presigned-urls.md
       - Workload profiles:
           - Profile overview: workloads/README.md

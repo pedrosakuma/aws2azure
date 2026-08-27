@@ -14,6 +14,7 @@ Secrets Manager resource policies and cross-account secret sharing have no Key V
 
 ## References
 
+- <https://github.com/pedrosakuma/aws2azure/blob/main/docs/authorization-migration.md#secrets-manager-resource-policies-and-cross-account-sharing-move-to-key-vault-access-design>
 - <https://learn.microsoft.com/en-us/azure/key-vault/general/rbac-guide>
 - <https://learn.microsoft.com/en-us/azure/key-vault/general/assign-access-policy>
 
