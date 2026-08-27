@@ -411,6 +411,18 @@ Identity** instead. Each AAD-capable backend's `auth` block takes a `mode`
 can be named once in a top-level `azureIdentities` pool. See
 [Azure authentication: Managed Identity & Workload Identity](./azure-authentication.md)
 for per-scenario config, required RBAC roles, and the startup-validation rules.
+For complete documents, start from
+[`single-tenant-managed-identity.json`](./configuration/examples/single-tenant-managed-identity.json)
+for one identity reused across AAD-capable backends, or
+[`mixed-auth-single-binding.json`](./configuration/examples/mixed-auth-single-binding.json)
+when the same AWS identity needs Blob shared keys and Key Vault Managed
+Identity in one binding.
+
+If one proxy instance fronts multiple environments, keep them as separate
+entries in `bindings[]` with distinct `aws.accessKeyId` values. The
+[`multi-environment-bindings.json`](./configuration/examples/multi-environment-bindings.json)
+example shows a dev/staging split that keeps Azure resources and credentials
+isolated behind one proxy process.
 
 ---
 

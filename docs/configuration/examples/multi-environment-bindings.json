@@ -1,0 +1,72 @@
+{
+  "services": {
+    "s3": {
+      "enabled": true
+    },
+    "sqs": {
+      "enabled": true
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIADEVWORKLOAD",
+        "secretAccessKey": "replace-with-dev-aws-signing-secret"
+      },
+      "azure": {
+        "s3": {
+          "kind": "blob",
+          "target": {
+            "accountName": "devstorageaccount"
+          },
+          "auth": {
+            "mode": "sharedKey",
+            "key": "replace-with-dev-storage-account-key"
+          }
+        },
+        "sqs": {
+          "kind": "serviceBus",
+          "target": {
+            "namespace": "dev-messaging",
+            "transport": "Amqp"
+          },
+          "auth": {
+            "mode": "sas",
+            "keyName": "aws2azure-dev",
+            "key": "replace-with-dev-service-bus-sas-key"
+          }
+        }
+      }
+    },
+    {
+      "aws": {
+        "accessKeyId": "AKIASTAGEWORKLOAD",
+        "secretAccessKey": "replace-with-staging-aws-signing-secret"
+      },
+      "azure": {
+        "s3": {
+          "kind": "blob",
+          "target": {
+            "accountName": "stagingstorageaccount"
+          },
+          "auth": {
+            "mode": "sharedKey",
+            "key": "replace-with-staging-storage-account-key"
+          }
+        },
+        "sqs": {
+          "kind": "serviceBus",
+          "target": {
+            "namespace": "staging-messaging",
+            "transport": "Amqp"
+          },
+          "auth": {
+            "mode": "sas",
+            "keyName": "aws2azure-staging",
+            "key": "replace-with-staging-service-bus-sas-key"
+          }
+        }
+      }
+    }
+  ]
+}

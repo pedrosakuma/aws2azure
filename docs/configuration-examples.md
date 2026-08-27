@@ -24,6 +24,9 @@ opaque iterator tokens forgeable.
 | SNS | Service Bus topics (`serviceBusTopics`) plus Event Grid fallback (`eventGrid`) | `managedIdentity` plus Event Grid `sharedKey` | [`service-bus-topics-event-grid.json`](configuration/examples/service-bus-topics-event-grid.json) |
 | Kinesis | Event Hubs (`eventHubs`) | `workloadIdentity` | [`event-hubs-workload-identity.json`](configuration/examples/event-hubs-workload-identity.json) |
 | Secrets Manager | Key Vault (`keyVault`) | named `reference` to `managedIdentity` | [`key-vault-reference.json`](configuration/examples/key-vault-reference.json) |
+| Multi-service, single binding | Cosmos + Event Hubs + Key Vault | named `reference` to `managedIdentity` | [`single-tenant-managed-identity.json`](configuration/examples/single-tenant-managed-identity.json) |
+| Multi-environment proxy | Blob + Service Bus across two bindings | `sharedKey` plus `sas` per environment | [`multi-environment-bindings.json`](configuration/examples/multi-environment-bindings.json) |
+| Mixed auth in one binding | Blob + Key Vault | `sharedKey` plus `managedIdentity` | [`mixed-auth-single-binding.json`](configuration/examples/mixed-auth-single-binding.json) |
 
 Together these examples exercise every canonical backend kind and every backend
 `auth.mode`: `sharedKey`, `sas`, `clientSecret`, `managedIdentity`,
@@ -60,3 +63,23 @@ For shared Entra credentials, define one `azureIdentities.<name>` and use
 `auth.mode: reference` in each AAD-capable backend. Names are case-sensitive.
 Configuration is loaded once at process start; rotate a file or environment
 secret through a controlled restart rather than expecting hot reload.
+
+[`single-tenant-managed-identity.json`](configuration/examples/single-tenant-managed-identity.json)
+shows one AWS identity mapped to Cosmos DB, Event Hubs, and Key Vault through a
+single named managed identity. Use this pattern when one workload owns one
+tenant-scoped Azure trust boundary and you want the proxy to avoid stored Entra
+client secrets; on AKS, keep the same binding shape and swap the named identity
+to `authMode: workloadIdentity`.
+
+[`multi-environment-bindings.json`](configuration/examples/multi-environment-bindings.json)
+shows two complete bindings in one document so the same proxy instance can host
+separate dev and staging credentials without sharing Azure resources. Use this
+when each environment needs its own AWS signing key, Blob account, or Service
+Bus namespace, but operationally you still want one proxy deployment.
+
+[`mixed-auth-single-binding.json`](configuration/examples/mixed-auth-single-binding.json)
+shows one AWS identity reaching multiple Azure services that do not share the
+same credential shape: Blob Storage stays on an account `sharedKey` while Key
+Vault uses Managed Identity. Use this when one application signs everything
+with one AWS keypair but each downstream Azure service should keep its native,
+least-privilege authentication mode.
