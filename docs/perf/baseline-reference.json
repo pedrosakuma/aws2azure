@@ -20,6 +20,7 @@
     "sqs.ReceiveMessage+Delete (1)":                               { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "sqs.ReceiveMessage+ChangeVisibility (0)":                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "sqs.ReceiveMessage+DeleteMessageBatch (10)":                  { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
+    "sqs.ReceiveMessage+DeleteMessageBatch (8, fifo multi-session)": { "minThroughputPerSec":   0.8, "maxP99Ms": 1500.0 },
     "azure-sdk.ServiceBus.SendMessage (256 B, queue)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)":            { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 

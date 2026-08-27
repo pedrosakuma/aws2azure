@@ -53,6 +53,7 @@ public sealed partial class KnownPerfScenariosTests
         "sqs.ReceiveMessage+Delete (1)",
         "sqs.ReceiveMessage+ChangeVisibility (0)",
         "sqs.ReceiveMessage+DeleteMessageBatch (10)",
+        "sqs.ReceiveMessage+DeleteMessageBatch (8, fifo multi-session)",
         "azure-sdk.ServiceBus.SendMessage (256 B, queue)",
         "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)",
 

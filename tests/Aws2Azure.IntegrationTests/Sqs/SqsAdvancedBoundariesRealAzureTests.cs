@@ -159,6 +159,60 @@ public sealed class SqsAdvancedBoundariesRealAzureTests(RealAzureProxyFixture fi
             }
             Assert.Empty(duplicateProbe.Messages);
 
+            var multiGroupA = "multi-group-a-" + run;
+            var multiGroupB = "multi-group-b-" + run;
+            await client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = "multi-group-body-a-" + run,
+                MessageGroupId = multiGroupA,
+                MessageDeduplicationId = "multi-group-dedup-a-" + run,
+            }, timeout.Token).ConfigureAwait(false);
+            await client.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = queueUrl,
+                MessageBody = "multi-group-body-b-" + run,
+                MessageGroupId = multiGroupB,
+                MessageDeduplicationId = "multi-group-dedup-b-" + run,
+            }, timeout.Token).ConfigureAwait(false);
+
+            ReceiveMessageResponse multiGroupReceive;
+            try
+            {
+                multiGroupReceive = await client.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 2,
+                    WaitTimeSeconds = 5,
+                    MessageSystemAttributeNames = new List<string> { "All" },
+                }, timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "FIFO multi-group receive failed. Proxy output tail:\n" +
+                    OutputTail(fixture.ProxyOutput, 8_000),
+                    ex);
+            }
+            Assert.Equal(2, multiGroupReceive.Messages.Count);
+            var observedGroups = multiGroupReceive.Messages
+                .Select(message => message.Attributes["MessageGroupId"])
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.Contains(multiGroupA, observedGroups);
+            Assert.Contains(multiGroupB, observedGroups);
+
+            var multiGroupDelete = await client.DeleteMessageBatchAsync(new DeleteMessageBatchRequest
+            {
+                QueueUrl = queueUrl,
+                Entries = multiGroupReceive.Messages.Select((message, i) => new DeleteMessageBatchRequestEntry
+                {
+                    Id = $"multi-delete-{i}",
+                    ReceiptHandle = message.ReceiptHandle,
+                }).ToList(),
+            }, timeout.Token).ConfigureAwait(false);
+            Assert.Equal(2, multiGroupDelete.Successful.Count);
+            Assert.Empty(multiGroupDelete.Failed);
+
             var batchSent = await client.SendMessageBatchAsync(new SendMessageBatchRequest
             {
                 QueueUrl = queueUrl,
