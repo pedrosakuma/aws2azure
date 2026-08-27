@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:d0cfd3fd16456f2072bbd0fd93457a7f0925f1d08c7d84925741424536e9dce8",
+  "manifest_revision": "sha256:57d20f966871f84c609f062890957c698120a2ba6a486dcde29905c79aa92b19",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,10 +36,10 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-27T00:19:31Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:7bec01297bf8b681a10d5f1c83db8dd76a64ded97a94565040f41544608eb33d",
+    "canonical_inputs_revision": "sha256:96a32009affb378f7437e29deaac7197f0301595a4276b7ccd46612226619cbb",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
-    "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9"
+    "evaluator_implementation_revision": "sha256:5fa11997be871f8692e4ad3caf182dbd725f7f7426a860be7fa2c0836439b34e"
   },
   "authority_precedence": [
     {
@@ -1520,7 +1520,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:e1501a4e091270fe0d154884d11625ee133d53a0188b0c79e58dc24e5dbd1fbd",
+      "revision": "sha256:65a772e4eec8fc81ba86ed3ac7ba6993b7d9495839e39162373a4f9b2d844363",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1628,7 +1628,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:ec90bedc158e3d6dee6eff70332eb88ee730c2808096ab0c51b5a316516cd3ec",
+      "revision": "sha256:d7316e3dda9e84e7bf7c7f84d33f37cf4b81956a23a1a9ed69f402cfff4c39ab",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1784,7 +1784,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:1f5d32ba2349b3ae89d941d3746f404c147cb8a57b73ca2894cb0dbf3076dfb3",
+      "revision": "sha256:ce4557fe5b16a627aa62fb73a48c63b38b808add510d0743afcf7616359863e8",
       "freshness": {
         "mode": "current"
       }
@@ -7169,9 +7169,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "dynamodb",
-      "revision": "sha256:42ec35d24a6157bf4de0a9b2b381b91b9c53e95daa198781cd943d3d283f4b09",
+      "revision": "sha256:4382d819c4a4201d5b60191ba5137aa38aba3e73ee25a7640b0c520b6968cfe5",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:dynamodb:readiness-checklist",
+      "canonical_id": "service:dynamodb:readiness-checklist",
+      "path": "docs/site/readiness-checklists/dynamodb.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "dynamodb",
+      "revision": "sha256:93843cd7548ad3893fd186408f8521485fa3cbeed4dc795a465ca2c1a710d92f",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7183,9 +7197,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "kinesis",
-      "revision": "sha256:03d56a0046d0150eaee5e92d58cdc594de570f38d9419940767accdcfeaf5052",
+      "revision": "sha256:832cf85b2736ad2827f566264af3ae08432e1d0bce3fb4de62be821e32e6ce2b",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:kinesis:readiness-checklist",
+      "canonical_id": "service:kinesis:readiness-checklist",
+      "path": "docs/site/readiness-checklists/kinesis.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "kinesis",
+      "revision": "sha256:e3cfddbc237908e29fe3bfabce75945c0c86fd7fa0cbbc7b2b9d1c6dce20910d",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7197,9 +7225,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "s3",
-      "revision": "sha256:57c82e9de09f9ab520f331d0f78665d548d23d43821f3dddefaf9d1946f3589d",
+      "revision": "sha256:c7e1fa38098637c33baa6b2ad10f7af6857afe0118fda5274e5adc7e7cf282b0",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:s3:readiness-checklist",
+      "canonical_id": "service:s3:readiness-checklist",
+      "path": "docs/site/readiness-checklists/s3.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "s3",
+      "revision": "sha256:aa841e66d0a6dfbae73362a695b120f7c3606246edb386f355206578b8706248",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7211,9 +7253,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "secretsmanager",
-      "revision": "sha256:5a06d77a5dfc5ebf4db444dcd2e97e904e9e713b0d57b39db902abf4eb1cc18e",
+      "revision": "sha256:93722ec5bbce4dd3a5161af5497feb0b774d526d27c2f037a509f64dddd76b3e",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:secretsmanager:readiness-checklist",
+      "canonical_id": "service:secretsmanager:readiness-checklist",
+      "path": "docs/site/readiness-checklists/secretsmanager.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "secretsmanager",
+      "revision": "sha256:0dcfabc84a1e93c4b57aee4c081a6ffdad4b22242720a3adaac151ca7283860b",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7225,9 +7281,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "sns",
-      "revision": "sha256:9c7de26ac5f49c153f0d1e810f06ead375a13d48b521f739e51977e674a026a5",
+      "revision": "sha256:0bc4f483efe4057daa394d6f1d96f47a4ce54c2832a4659594b8ed9c35dcf1cf",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:sns:readiness-checklist",
+      "canonical_id": "service:sns:readiness-checklist",
+      "path": "docs/site/readiness-checklists/sns.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "sns",
+      "revision": "sha256:9fc3321f87f9b188e01c78e27f6824d0be20eb7bdf2c0bad70759cdd7753c40e",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7239,9 +7309,23 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "sqs",
-      "revision": "sha256:5100dad209b43ea121a73c0b8ff67cf0974776c104b2d3b8ef3a6ad3975fa31d",
+      "revision": "sha256:adb29d6dd32f7d0bd3e775a280c652a0ea0981a29ef4512bd57308d02e039f6f",
       "freshness": {
         "mode": "current"
+      }
+    },
+    {
+      "id": "service:sqs:readiness-checklist",
+      "canonical_id": "service:sqs:readiness-checklist",
+      "path": "docs/site/readiness-checklists/sqs.md",
+      "type": "service-readiness-checklist-reference",
+      "scope": "service",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "sqs",
+      "revision": "sha256:dfb2948901a6ef328469b0f424d1d24f4440e7e0144eab3fb75661ef5b6c5176",
+      "freshness": {
+        "mode": "derived-current"
       }
     },
     {
@@ -7251,7 +7335,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:2c5c8b516f1ef00177ad6f662663df51700697521825bc6bab0fdf7f9ecde0b6",
+      "revision": "sha256:87c061d772aa5281dc520016c4355019ebaea278e38ade2495e5759ff786c4af",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7265,7 +7349,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:acae065e749d80ea54fc919728eec3984749720fcf581aa1326c8a161db279a5",
+      "revision": "sha256:c2af79d8d304f26ef5049a4ae704578412a43a195069451cd92a0d0b3cee79af",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7279,7 +7363,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:9797bf1f3232a63bc369f360e5578e8cd80839410b6416d6c37fa4ac79f3b0fe",
+      "revision": "sha256:0ece52641d8a5e8b3e813d283bce86ea15e3bff4509957bf5f675e784cb82a6b",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
