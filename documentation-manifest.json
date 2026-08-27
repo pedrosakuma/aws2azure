@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:5168c619247214a3f90453052eb363993e92950deede2005f8b4333f54cb0913",
+  "manifest_revision": "sha256:0b07be9085875dd74b719cfb697c2c191f93f337b5652b59eb828fefaceed00c",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -39,7 +39,7 @@
     "canonical_inputs_revision": "sha256:96a32009affb378f7437e29deaac7197f0301595a4276b7ccd46612226619cbb",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
-    "evaluator_implementation_revision": "sha256:9b2d33fccad3ce34a0a0070065c276da0a04115c94466b2b9953a4cd8f121625"
+    "evaluator_implementation_revision": "sha256:5b7ad5cb4fcb8905fb3fd86090714355471fc447ab528d6718abd21f6a2ebc55"
   },
   "authority_precedence": [
     {
@@ -1682,6 +1682,18 @@
       }
     },
     {
+      "id": "documentation:docs-testing-adopter-conformance-kit",
+      "path": "docs/testing/adopter-conformance-kit.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:95e3a8228bfefad295ebc01d48dd6200d01a3999d99ec83bbc7c8caee6d43b39",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-testing-documentation-quality",
       "path": "docs/testing/documentation-quality.md",
       "type": "documentation-guide",
@@ -1712,7 +1724,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:7ee4c187ca311de9943665e9072ed231f7907ea82ddc3eed9a1bab0274d7be39",
+      "revision": "sha256:1376a615a27aeccc5338344404dfbab86d246530868858717f339877da0d3215",
       "freshness": {
         "mode": "current"
       }
@@ -1760,7 +1772,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:faf5516ce8e17714199532a267b8241014080f692afbb42702b40f38e749080c",
+      "revision": "sha256:94f14299ee0b2f62baf5e521ddc1a4fdd7ed4aa1c37aca1e53a59348188a6fd7",
       "freshness": {
         "mode": "current"
       }
@@ -7383,7 +7395,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:d00db16145d9ee09c9072173ff60bcff3eb08aae0be4f5dca4033ad61aaf81d1",
+      "revision": "sha256:ba4f489afc1cfbd0be83b483c4a91210f84127775cda0c9fddcf1188d316f62b",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7397,7 +7409,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:a0336827d3f577d2c67de00f678efb667fd071073ac0e76623db9fd75918c7f2",
+      "revision": "sha256:0d1cf467aecb82eb677d2027da0bfd4a8ce4bee8a094731c5176a37f8c49c33d",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7411,7 +7423,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:a608aa4a1a57f1ce937ae50fde37801c2732eeab467e930fd22940ddcfe9c867",
+      "revision": "sha256:9b97938ef5e95e82265ed3d22a8f6a9628a266f1077260d6b0be0f4e67813393",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"

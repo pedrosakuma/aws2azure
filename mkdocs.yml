@@ -119,6 +119,7 @@ nav:
       - Operational qualification: testing/operational-qualification.md
       - SLO qualification: testing/slo-qualification.md
       - Real-Azure validation: testing/real-azure-nightly.md
+      - Adopter conformance kit: testing/adopter-conformance-kit.md
       - Local real-Azure repro: testing/local-real-azure-repro.md
       - Real-AWS differential capture: testing/real-aws-capture.md
       - Local real-AWS reproduction: testing/local-real-aws-repro.md

@@ -304,6 +304,9 @@ safely-quoted, sourceable env file, and tears the resource group down again.
 See [Local real-Azure/real-AWS reproduction](local-real-azure-repro.md) for
 the full walkthrough, prerequisites, cost expectations, and the sharp edges
 (Windows `az` CLI CRLF under WSL, semicolon-unsafe env files) it papers over.
+External adopters who want the same execution engine plus an exportable YAML
+self-validation report for **their own** subscription should use
+[Adopter real-Azure conformance kit](adopter-conformance-kit.md).
 
 The commands below are the equivalent manual steps, kept here as a reference
 for what the script automates:

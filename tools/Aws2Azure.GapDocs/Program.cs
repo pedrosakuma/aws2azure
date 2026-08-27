@@ -63,6 +63,14 @@ if (args.Length > 0 && args[0] == "generate-real-azure-workload-qualification")
     return GenerateRealAzureWorkloadQualification(args[1..], repoRoot);
 }
 
+if (args.Length > 0 && args[0] == "generate-adopter-real-azure-report")
+{
+    return GenerateAdopterRealAzureReport(
+        args[1..],
+        repoRoot,
+        Path.Combine(repoRoot, "docs", "testing", "real-azure-conformance.yaml"));
+}
+
 if (args.Length > 0 && args[0] == "generate-real-azure-load-qualification")
 {
     return GenerateRealAzureLoadQualification(args[1..], repoRoot);
@@ -1060,6 +1068,189 @@ static int GenerateRealAzureWorkloadQualification(string[] args, string repoRoot
     }
 }
 
+static int GenerateAdopterRealAzureReport(
+    string[] args,
+    string repoRoot,
+    string defaultMatrixPath)
+{
+    try
+    {
+        var trxPaths = new List<string>();
+        string? outputPath = null;
+        string? candidateId = null;
+        string? gitSha = null;
+        string? artifactPath = null;
+        string? artifactDigest = null;
+        string? configPath = null;
+        string? configDigest = null;
+        string? runId = null;
+        string? runUrl = null;
+        string? region = null;
+        string? backendDescription = null;
+        string? executionEngine = null;
+        string? matrixPath = null;
+        string? resourceGroup = null;
+        string? subscriptionId = null;
+        var runAttempt = 1;
+
+        for (var index = 0; index < args.Length; index++)
+        {
+            var option = args[index];
+            if (option is not (
+                "--trx" or "--output" or "--candidate-id" or "--git-sha"
+                or "--artifact" or "--artifact-digest" or "--config"
+                or "--config-digest" or "--run-id" or "--run-url"
+                or "--run-attempt" or "--region" or "--backend-description"
+                or "--execution-engine" or "--matrix" or "--resource-group"
+                or "--azure-subscription-id"))
+            {
+                Console.Error.WriteLine($"Unknown option '{option}'.");
+                return 1;
+            }
+
+            if (++index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"{option} requires a value.");
+                return 1;
+            }
+
+            switch (option)
+            {
+                case "--trx":
+                    trxPaths.Add(args[index]);
+                    break;
+                case "--output":
+                    outputPath = args[index];
+                    break;
+                case "--candidate-id":
+                    candidateId = args[index];
+                    break;
+                case "--git-sha":
+                    gitSha = args[index];
+                    break;
+                case "--artifact":
+                    artifactPath = args[index];
+                    break;
+                case "--artifact-digest":
+                    artifactDigest = args[index];
+                    break;
+                case "--config":
+                    configPath = args[index];
+                    break;
+                case "--config-digest":
+                    configDigest = args[index];
+                    break;
+                case "--run-id":
+                    runId = args[index];
+                    break;
+                case "--run-url":
+                    runUrl = args[index];
+                    break;
+                case "--run-attempt":
+                    if (!int.TryParse(args[index], NumberStyles.None, CultureInfo.InvariantCulture, out runAttempt)
+                        || runAttempt <= 0)
+                    {
+                        Console.Error.WriteLine("--run-attempt must be a positive integer.");
+                        return 1;
+                    }
+                    break;
+                case "--region":
+                    region = args[index];
+                    break;
+                case "--backend-description":
+                    backendDescription = args[index];
+                    break;
+                case "--execution-engine":
+                    executionEngine = args[index];
+                    break;
+                case "--matrix":
+                    matrixPath = args[index];
+                    break;
+                case "--resource-group":
+                    resourceGroup = args[index];
+                    break;
+                case "--azure-subscription-id":
+                    subscriptionId = args[index];
+                    break;
+            }
+        }
+
+        if (trxPaths.Count == 0 || string.IsNullOrWhiteSpace(outputPath) || string.IsNullOrWhiteSpace(candidateId))
+        {
+            Console.Error.WriteLine(
+                "generate-adopter-real-azure-report requires --trx <path>... --output <path> --candidate-id <id> " +
+                "[--git-sha <sha>] [--artifact <path>|--artifact-digest <digest>] " +
+                "[--config <path>|--config-digest <digest>] [--run-id <id>] [--run-url <url>] " +
+                "[--run-attempt <n>] [--region <region>] [--backend-description <text>] " +
+                "[--execution-engine <text>] [--matrix <path>] [--resource-group <name>] " +
+                "[--azure-subscription-id <id>].");
+            return 1;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifactPath) && !string.IsNullOrWhiteSpace(artifactDigest))
+        {
+            Console.Error.WriteLine("--artifact and --artifact-digest are mutually exclusive.");
+            return 1;
+        }
+        if (!string.IsNullOrWhiteSpace(configPath) && !string.IsNullOrWhiteSpace(configDigest))
+        {
+            Console.Error.WriteLine("--config and --config-digest are mutually exclusive.");
+            return 1;
+        }
+
+        var resolvedMatrixPath = Path.GetFullPath(matrixPath ?? defaultMatrixPath);
+        var matrix = ConformanceMatrixLoader.Load(resolvedMatrixPath);
+        var trxFiles = ExpandTrxPaths(trxPaths);
+        var trxResults = TrxParser.ParseFiles(trxFiles);
+        var report = AdopterRealAzureConformanceReportGenerator.Generate(
+            matrix,
+            trxResults,
+            new AdopterRealAzureConformanceReportMetadata
+            {
+                CandidateId = candidateId!,
+                GitSha = gitSha,
+                ArtifactDigest = ResolveSha256Digest("artifact", artifactPath, artifactDigest),
+                ConfigDigest = ResolveSha256Digest("config", configPath, configDigest),
+                RunId = string.IsNullOrWhiteSpace(runId)
+                    ? "local-" + DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssZ", CultureInfo.InvariantCulture)
+                    : runId!,
+                RunUrl = runUrl,
+                RunAttempt = runAttempt,
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+                Region = region,
+                BackendDescription = backendDescription,
+                ExecutionEngine = string.IsNullOrWhiteSpace(executionEngine)
+                    ? "caller-supplied TRX inputs parsed by generate-adopter-real-azure-report"
+                    : executionEngine!,
+                MatrixPath = Path.GetRelativePath(repoRoot, resolvedMatrixPath).Replace('\\', '/'),
+                ResourceGroup = resourceGroup,
+                AzureSubscriptionId = subscriptionId
+            });
+
+        AdopterRealAzureConformanceReportRenderer.RenderYaml(report, outputPath!);
+        Console.WriteLine(
+            $"[gap-docs] adopter real-Azure conformance report '{report.Verdict}' written to {outputPath}");
+        Console.WriteLine(
+            $"[gap-docs] evaluated {report.Services.Sum(service => service.Operations.Count)} operation(s) from {trxFiles.Count} TRX file(s)");
+        return report.Verdict switch
+        {
+            "failed" => 3,
+            "inconclusive" => 4,
+            _ => 0
+        };
+    }
+    catch (Exception exception) when (exception is ArgumentException
+                                      or FileNotFoundException
+                                      or InvalidDataException
+                                      or IOException
+                                      or UnauthorizedAccessException
+                                      or YamlException)
+    {
+        Console.Error.WriteLine("[gap-docs] " + exception.Message);
+        return 2;
+    }
+}
+
 static int GenerateRealAzureLoadQualification(string[] args, string repoRoot)
 {
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1647,6 +1838,36 @@ static int ValidateRcCalibrationReport(string[] args)
         Console.Error.WriteLine("[gap-docs] " + exception.Message);
         return 2;
     }
+}
+
+static string? ResolveSha256Digest(string subject, string? path, string? digest)
+{
+    if (!string.IsNullOrWhiteSpace(digest))
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(
+                digest,
+                "^sha256:[0-9a-f]{64}$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            throw new ArgumentException($"{subject} digest must use 'sha256:<64 lowercase hex>'.");
+        }
+        return digest;
+    }
+    if (string.IsNullOrWhiteSpace(path))
+    {
+        return null;
+    }
+
+    var fullPath = Path.GetFullPath(path);
+    if (!File.Exists(fullPath))
+    {
+        throw new FileNotFoundException($"{subject} file not found", fullPath);
+    }
+
+    using var stream = File.OpenRead(fullPath);
+    using var sha256 = System.Security.Cryptography.SHA256.Create();
+    var hash = sha256.ComputeHash(stream);
+    return "sha256:" + Convert.ToHexStringLower(hash);
 }
 
 static IReadOnlyList<string> ExpandTrxPaths(IReadOnlyList<string> paths)
