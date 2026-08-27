@@ -58,11 +58,18 @@ internal static class SnsQueryApiClient
         using var response = await client.SendAsync(request).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         var xml = string.IsNullOrWhiteSpace(body) ? null : XDocument.Parse(body);
-        return new SnsXmlResponse(response.StatusCode, body, xml);
+        return new SnsXmlResponse(response.StatusCode, body, xml, CollectHeaders(response));
     }
 
     public static Task<SnsXmlResponse> CreateTopicAsync(HttpClient client, string topicName)
         => SendActionAsync(client, "CreateTopic", [new("Name", topicName)]);
+
+    public static Task<SnsXmlResponse> CreateTopicAsync(
+        HttpClient client,
+        string topicName,
+        string accessKey,
+        string secret)
+        => SendActionAsync(client, "CreateTopic", [new("Name", topicName)], accessKey, secret);
 
     public static Task<SnsXmlResponse> CreateTopicAsync(
         HttpClient client,
@@ -84,8 +91,37 @@ internal static class SnsQueryApiClient
         return SendActionAsync(client, "CreateTopic", parameters);
     }
 
+    public static Task<SnsXmlResponse> CreateTopicAsync(
+        HttpClient client,
+        string topicName,
+        string accessKey,
+        string secret,
+        params (string Key, string Value)[] attributes)
+    {
+        var parameters = new List<KeyValuePair<string, string>>(1 + (attributes.Length * 2))
+        {
+            new("Name", topicName),
+        };
+
+        for (var i = 0; i < attributes.Length; i++)
+        {
+            var ordinal = i + 1;
+            parameters.Add(new KeyValuePair<string, string>($"Attributes.entry.{ordinal}.key", attributes[i].Key));
+            parameters.Add(new KeyValuePair<string, string>($"Attributes.entry.{ordinal}.value", attributes[i].Value));
+        }
+
+        return SendActionAsync(client, "CreateTopic", parameters, accessKey, secret);
+    }
+
     public static Task<SnsXmlResponse> DeleteTopicAsync(HttpClient client, string topicArn)
         => SendActionAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]);
+
+    public static Task<SnsXmlResponse> DeleteTopicAsync(
+        HttpClient client,
+        string topicArn,
+        string accessKey,
+        string secret)
+        => SendActionAsync(client, "DeleteTopic", [new("TopicArn", topicArn)], accessKey, secret);
 
     public static Task<SnsXmlResponse> ListTopicsAsync(HttpClient client)
         => SendActionAsync(client, "ListTopics", []);
@@ -176,11 +212,61 @@ internal static class SnsQueryApiClient
         return parts.Length == 7 ? parts[6] : string.Empty;
     }
 
+    public static string? ReadErrorCode(SnsXmlResponse response)
+        => response.Xml?.Descendants(Ns + "Code").FirstOrDefault()?.Value;
+
+    public static string? ReadErrorMessage(SnsXmlResponse response)
+        => response.Xml?.Descendants(Ns + "Message").FirstOrDefault()?.Value;
+
+    public static string FormatDiagnosticSummary(SnsXmlResponse response)
+    {
+        var body = string.IsNullOrWhiteSpace(response.Body)
+            ? "<empty>"
+            : response.Body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (body.Length > 240)
+        {
+            body = body[..240] + "…";
+        }
+
+        return $"status={(int)response.StatusCode}; code={ReadErrorCode(response) ?? "<none>"}; "
+             + $"message={ReadErrorMessage(response) ?? "<none>"}; "
+             + $"headers=[Server={response.GetHeader("Server") ?? "<missing>"}, "
+             + $"Content-Length={response.GetHeader("Content-Length") ?? "<missing>"}, "
+             + $"ETag={response.GetHeader("ETag") ?? "<missing>"}, "
+             + $"x-ms-request-id={response.GetHeader("x-ms-request-id") ?? "<missing>"}]; "
+             + $"body={body}";
+    }
+
+    private static IReadOnlyDictionary<string, string> CollectHeaders(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in response.Headers)
+        {
+            headers[header.Key] = string.Join(", ", header.Value);
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            headers[header.Key] = string.Join(", ", header.Value);
+        }
+
+        return headers;
+    }
+
     private static string ReadRequiredElement(SnsXmlResponse response, string localName)
         => response.Xml?.Descendants(Ns + localName).FirstOrDefault()?.Value
            ?? throw new InvalidOperationException($"SNS response did not contain '{localName}'. Body={response.Body}");
 }
 
-internal sealed record SnsXmlResponse(HttpStatusCode StatusCode, string Body, XDocument? Xml);
+internal sealed record SnsXmlResponse(
+    HttpStatusCode StatusCode,
+    string Body,
+    XDocument? Xml,
+    IReadOnlyDictionary<string, string> Headers)
+{
+    public string? GetHeader(string name)
+        => Headers.TryGetValue(name, out var value) ? value : null;
+}
+
 internal sealed record SnsListedSubscription(string SubscriptionArn, string Protocol, string Endpoint, string TopicArn);
 internal sealed record SnsBatchFailure(string Id, string Code, string Message, bool SenderFault);

@@ -116,7 +116,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | secretsmanager | [UpdateSecret](operations/secretsmanager/updatesecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}/versions` |
 | secretsmanager | [UpdateSecretVersionStage](operations/secretsmanager/updatesecretversionstage.md) | ⛔ unsupported | 🔵 by design | — | — | `None — no standalone Key Vault stage-label mutation API` |
 | sns | [ConfirmSubscription](operations/sns/confirmsubscription.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic subscriptions` |
-| sns | [CreateTopic](operations/sns/createtopic.md) | 🟡 partial | 🛠️ feasible backlog | [#800](https://github.com/pedrosakuma/aws2azure/issues/800) | ✅ | `Azure Service Bus Topics management REST API` |
+| sns | [CreateTopic](operations/sns/createtopic.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [DeleteTopic](operations/sns/deletetopic.md) | ✅ implemented | — | — | ✅ | `Azure Service Bus Topics management REST API` |
 | sns | [GetSubscriptionAttributes](operations/sns/getsubscriptionattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus subscription description` |
 | sns | [GetTopicAttributes](operations/sns/gettopicattributes.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Service Bus topic description` |

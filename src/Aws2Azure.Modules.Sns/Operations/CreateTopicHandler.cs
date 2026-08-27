@@ -40,15 +40,6 @@ internal static class CreateTopicHandler
         }
 
         var route = SnsTopicRouting.Resolve(credentials, snsSettings, topicName);
-        if (!SnsTopicSupport.IsValidServiceBusTopicName(route.ServiceBusTopicName))
-        {
-            await SnsTopicSupport.WriteInvalidParameterAsync(
-                    context,
-                    "Parameter 'Name' is a valid SNS topic name but is rejected by the underlying Azure Service Bus topic-path naming restriction: the name must start with a letter and end with a letter or digit (leading/trailing '-' or '_' is not allowed).")
-                .ConfigureAwait(false);
-            return;
-        }
-
         if (!SnsTopicAttributeSupport.TryParseCreateTopicAttributes(parseResult.Parameters, topicName, out var attributes, out error))
         {
             await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);

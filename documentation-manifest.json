@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:490215e8127cef94feba6c052de3ea1e923cf46e1daa719e4cf2b357a49ce956",
+  "manifest_revision": "sha256:aceb4b38963592ac1e7c0b8da4b7adb1c2e193560503279cafe5a11edb7d1f84",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-27T00:19:31Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:5e409e533a0c07f48efe04adf5c4271067e403e70b198771cac5fdb07ca19b74",
+    "canonical_inputs_revision": "sha256:8ecb2d4cba3e8b27e934a21ca972df1d5610c6af1a890651e9a37976ffafb584",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9"
@@ -1484,7 +1484,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:1b4bc9637587fa7cb174b11111d29f66c35446fda98c93b923e78197ec7c9f16",
+      "revision": "sha256:adb039e14e7ee8466b074e856b0be6c1548a457383409345e07f8a3d51cfa314",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1496,7 +1496,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:664b3419d5c8f7928b75a31e3c59ebbce7858b5b1eada12e0d4c1ff434d3c3f6",
+      "revision": "sha256:88a0860d55db86b803536ff46605481fb771c32002ed4879e69b9cd4156524d6",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1520,7 +1520,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:940484849754780cfd8a335d833c1890360e80dc492c3da6e3a37f4d6e10d1ff",
+      "revision": "sha256:61c60b8aaf77666b5614ed32636b9c8b93976b25a6f3b76336323abc37f89a3f",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1592,7 +1592,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:a505ffd5a0ebe6f30bf7943d922a7f42581c2f2bba688f48699ee60c9a3d6b38",
+      "revision": "sha256:fc2aa379867a4da5b8bb0a0d9bea608237d9e7390b07f35bd8de5368e52cca8e",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1616,7 +1616,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:22ef9b8f3f3bc59a8a2e99e83e32cd914d798d8898fd32fe534b0e551745f362",
+      "revision": "sha256:ec90bedc158e3d6dee6eff70332eb88ee730c2808096ab0c51b5a316516cd3ec",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5325,10 +5325,10 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "CreateTopic",
-      "revision": "sha256:525f270436e6c0701ec4a4e4995384d81214d76e3cb03918ec22a9ba58d4b3c6",
+      "revision": "sha256:7a20ae5c4345ad3d4705fe7e922bcced67df39318c5312e5eb2254d50e1020a1",
       "freshness": {
         "mode": "derived-current",
-        "verified_real_azure_date": "2026-07-16"
+        "verified_real_azure_date": "2026-08-27"
       }
     },
     {
@@ -5341,10 +5341,10 @@
       "provenance": "source",
       "service": "sns",
       "operation": "CreateTopic",
-      "revision": "sha256:67291320e254a7177b05b6af1727a10539e174196338d5124dc8f3e1b9da5e5a",
+      "revision": "sha256:cf75dbcca786c2de2831a4885733bee7e3a43c652df1e9f2468ffa857f52875f",
       "freshness": {
         "mode": "current",
-        "verified_real_azure_date": "2026-07-16"
+        "verified_real_azure_date": "2026-08-27"
       }
     },
     {
@@ -5357,7 +5357,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "DeleteTopic",
-      "revision": "sha256:a0d150ca04f185a3801cf88480b6546f4a74c595609e017b667bba8d1f4d362b",
+      "revision": "sha256:eb79e96c602a2dc34189f4edabe0376780e82ea5191c5f373b43e837ba58483d",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5373,7 +5373,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "DeleteTopic",
-      "revision": "sha256:1561816a3f03b6f201f0f5764dde983180046c7534e9380e3384311ccf5d82bc",
+      "revision": "sha256:f373f055ae4c86efc76074c32fca01490f1547a1e6a7760bd3264dc17e33f0ed",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5613,7 +5613,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:243e58c13c98c56d636df415a0f48a6d95edfaecb185a5c4ccd705e6b072ac04",
+      "revision": "sha256:463c06fe08b19e721325b75e0d444c2e037fa2fc58ab9d0316bcfbc2c9571f57",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-22"
@@ -5629,7 +5629,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:6f27a646a4fe1cf4963f348932aa550724ff33c8b75b6b68ea6d5ed3351c04e6",
+      "revision": "sha256:dba7b79967c34bec0291edaf2eeca645cf59da5f7c4e92ffe4b47a00140f0978",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-22"
@@ -6865,7 +6865,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "sns-standard-publish-event-grid",
-      "revision": "sha256:0309e4ad2968ce0907e306c0fc62fd5a0d5db6262ffac9277308e56a60fb8b80",
+      "revision": "sha256:11564ec2e8e1d37e7a9a46dc42bfdf8e877e4b376b43a8b3e7835f3ac97e2a8a",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -6894,7 +6894,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "sns-standard-publish-service-bus",
-      "revision": "sha256:0b3b7100abf1237d3fae12a0f100da376681191aafbf5cb5803b2ad601cb7310",
+      "revision": "sha256:984210fe0463c949f493c437606ed42b2c49df91ebf3cd67fa4105cb9c4aecf4",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -7092,7 +7092,7 @@
       "scope": "all-services",
       "authority": "normative-input",
       "provenance": "source",
-      "revision": "sha256:bff1f1df2bfc06527d90b6dfb966f1ca14148e786801052400e186e75e889a02",
+      "revision": "sha256:72b000bc5052d8383cbd49cae67eb82a5cc485a4d35fd873fd856c9b7b185929",
       "freshness": {
         "mode": "current"
       }
@@ -7239,7 +7239,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:1793ff8d32db235d9dab83d531e98238834a155e88b1b74e3369a2b218f9a922",
+      "revision": "sha256:9bc030e39ff552ed16ccfb7dc71669c4eaa943727208879370ff395b3ee15b3d",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7253,7 +7253,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:a0443f22387df4d8b47ca591f1f4a3cbee50bc27db01325e8aaf4a73cbff710c",
+      "revision": "sha256:ed70e425d5c9bf2765759cede6c9187c035287af826bb1dbf9117ee861afd0c4",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7267,7 +7267,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:c3b74c5b0c6f05a5f3849c4097dfc44c66f525d486efdab8d6be590d42d417c3",
+      "revision": "sha256:3956e3d8ac97c5c4ef6b74b8000f4a19a751066a06dc52d6753f3f0e9efd5b0d",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"

@@ -423,9 +423,10 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
             return;
         }
 
+        var responseHeaders = FormatResponseHeaders(response);
         SnsLog.TopicRequestFailed(_logger, nameof(CreateSubscriptionAsync), namespaceFqdn, topicName + "/subscriptions/" + subscriptionName, (int)response.StatusCode);
-        SnsLog.TopicRequestFailedWithBody(_logger, nameof(CreateSubscriptionAsync), FormatRequestUriForLog(requestUri) ?? (topicName + "/subscriptions/" + subscriptionName), (int)response.StatusCode, respBody);
-        throw new ServiceBusTopicsManagementException(response.StatusCode, respBody);
+        SnsLog.TopicRequestFailedWithResponse(_logger, nameof(CreateSubscriptionAsync), FormatRequestUriForLog(requestUri) ?? (topicName + "/subscriptions/" + subscriptionName), (int)response.StatusCode, responseHeaders, respBody);
+        throw new ServiceBusTopicsManagementException(response.StatusCode, respBody, responseHeaders);
     }
 
     public async ValueTask DeleteSubscriptionAsync(
@@ -778,9 +779,28 @@ public sealed class ServiceBusTopicsManagementClient : IServiceBusTopicsManageme
         CancellationToken cancellationToken)
     {
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var responseHeaders = FormatResponseHeaders(response);
         SnsLog.TopicRequestFailed(_logger, operationName, namespaceFqdn, entityName, (int)response.StatusCode);
-        SnsLog.TopicRequestFailedWithBody(_logger, operationName, FormatRequestUriForLog(requestUri) ?? entityName, (int)response.StatusCode, errorBody);
-        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody);
+        SnsLog.TopicRequestFailedWithResponse(_logger, operationName, FormatRequestUriForLog(requestUri) ?? entityName, (int)response.StatusCode, responseHeaders, errorBody);
+        return new ServiceBusTopicsManagementException(response.StatusCode, errorBody, responseHeaders);
+    }
+
+    private static string FormatResponseHeaders(HttpResponseMessage response)
+    {
+        var pairs = new List<string>();
+        foreach (var header in response.Headers)
+        {
+            pairs.Add(header.Key + "=" + string.Join(", ", header.Value));
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            pairs.Add(header.Key + "=" + string.Join(", ", header.Value));
+        }
+
+        return pairs.Count == 0
+            ? "<none>"
+            : string.Join("; ", pairs);
     }
 
     private static bool ShouldRetryAuthorizationFailure(HttpStatusCode statusCode, int attempt)
@@ -948,13 +968,15 @@ public sealed record ServiceBusSubscriptionRuleDescription(string RuleName, stri
 
 public sealed class ServiceBusTopicsManagementException : Exception
 {
-    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody)
+    public ServiceBusTopicsManagementException(HttpStatusCode statusCode, string? responseBody, string? responseHeaders = null)
         : base($"Service Bus Topics management API returned {(int)statusCode}.")
     {
         StatusCode = statusCode;
         ResponseBody = responseBody;
+        ResponseHeaders = responseHeaders;
     }
 
     public HttpStatusCode StatusCode { get; }
     public string? ResponseBody { get; }
+    public string? ResponseHeaders { get; }
 }

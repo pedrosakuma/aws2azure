@@ -65,8 +65,8 @@ internal static partial class SnsLog
     public static partial void UpdatingSubscription(ILogger logger, string namespaceFqdn, string topicName, string subscriptionName);
 
     [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
-        Message = "Service Bus Topics request '{Operation}' to '{RequestUri}' failed with HTTP {StatusCode}. Raw body: {Body}")]
-    public static partial void TopicRequestFailedWithBody(ILogger logger, string operation, string requestUri, int statusCode, string body);
+        Message = "Service Bus Topics request '{Operation}' to '{RequestUri}' failed with HTTP {StatusCode}. Response headers: {Headers}. Raw body: {Body}")]
+    public static partial void TopicRequestFailedWithResponse(ILogger logger, string operation, string requestUri, int statusCode, string headers, string body);
 
     [LoggerMessage(EventId = 12, Level = LogLevel.Warning,
         Message = "Service Bus Topics request '{Operation}' to '{RequestUri}' returned HTTP {StatusCode}; retry attempt {Attempt} of {MaxAttempts} after {DelaySeconds}s due to possible RBAC propagation delay.")]
