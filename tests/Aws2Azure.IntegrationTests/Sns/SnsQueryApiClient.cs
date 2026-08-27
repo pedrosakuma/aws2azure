@@ -67,6 +67,13 @@ internal static class SnsQueryApiClient
     public static Task<SnsXmlResponse> CreateTopicAsync(
         HttpClient client,
         string topicName,
+        string accessKey,
+        string secret)
+        => SendActionAsync(client, "CreateTopic", [new("Name", topicName)], accessKey, secret);
+
+    public static Task<SnsXmlResponse> CreateTopicAsync(
+        HttpClient client,
+        string topicName,
         params (string Key, string Value)[] attributes)
     {
         var parameters = new List<KeyValuePair<string, string>>(1 + (attributes.Length * 2))
@@ -84,8 +91,37 @@ internal static class SnsQueryApiClient
         return SendActionAsync(client, "CreateTopic", parameters);
     }
 
+    public static Task<SnsXmlResponse> CreateTopicAsync(
+        HttpClient client,
+        string topicName,
+        string accessKey,
+        string secret,
+        params (string Key, string Value)[] attributes)
+    {
+        var parameters = new List<KeyValuePair<string, string>>(1 + (attributes.Length * 2))
+        {
+            new("Name", topicName),
+        };
+
+        for (var i = 0; i < attributes.Length; i++)
+        {
+            var ordinal = i + 1;
+            parameters.Add(new KeyValuePair<string, string>($"Attributes.entry.{ordinal}.key", attributes[i].Key));
+            parameters.Add(new KeyValuePair<string, string>($"Attributes.entry.{ordinal}.value", attributes[i].Value));
+        }
+
+        return SendActionAsync(client, "CreateTopic", parameters, accessKey, secret);
+    }
+
     public static Task<SnsXmlResponse> DeleteTopicAsync(HttpClient client, string topicArn)
         => SendActionAsync(client, "DeleteTopic", [new("TopicArn", topicArn)]);
+
+    public static Task<SnsXmlResponse> DeleteTopicAsync(
+        HttpClient client,
+        string topicArn,
+        string accessKey,
+        string secret)
+        => SendActionAsync(client, "DeleteTopic", [new("TopicArn", topicArn)], accessKey, secret);
 
     public static Task<SnsXmlResponse> ListTopicsAsync(HttpClient client)
         => SendActionAsync(client, "ListTopics", []);

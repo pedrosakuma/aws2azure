@@ -69,6 +69,8 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
                 ? await SnsQueryApiClient.CreateTopicAsync(
                     client,
                     boundaryCase.TopicName,
+                    RealAzureProxyFixture.AwsAccessKey,
+                    RealAzureProxyFixture.AwsSecret,
                     ("FifoTopic", "true")).ConfigureAwait(false)
                 : await SnsQueryApiClient.SendActionAsync(
                     client,
@@ -79,7 +81,9 @@ public sealed class SnsRealAzureErrorPathTests(RealAzureProxyFixture fixture)
             SnsServiceBusTestSupport.AssertStatus(proxyResponse, HttpStatusCode.OK, $"CreateTopic[{boundaryCase.TopicName}]");
             var proxyDelete = await SnsQueryApiClient.DeleteTopicAsync(
                 client,
-                SnsQueryApiClient.ReadTopicArn(proxyResponse)).ConfigureAwait(false);
+                SnsQueryApiClient.ReadTopicArn(proxyResponse),
+                RealAzureProxyFixture.AwsAccessKey,
+                RealAzureProxyFixture.AwsSecret).ConfigureAwait(false);
             SnsServiceBusTestSupport.AssertStatus(proxyDelete, HttpStatusCode.OK, $"DeleteTopic[{boundaryCase.TopicName}]");
         }
     }
