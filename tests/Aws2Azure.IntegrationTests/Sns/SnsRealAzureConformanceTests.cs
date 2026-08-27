@@ -144,7 +144,8 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             Skip.If(
                 setFilterResponse.StatusCode != HttpStatusCode.OK,
                 $"Known unresolved real-Azure quirk (#691): SetSubscriptionAttributes[FilterPolicy] on a "
-                    + $"fresh subscription's $Default rule returned {(int)setFilterResponse.StatusCode}. "
+                    + $"fresh subscription's $Default rule did not succeed. "
+                    + $"{SnsQueryApiClient.FormatDiagnosticSummary(setFilterResponse)}. "
                     + "See docs/gaps/sns/SetSubscriptionAttributes.yaml for the evidence trail.");
             var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
             [
