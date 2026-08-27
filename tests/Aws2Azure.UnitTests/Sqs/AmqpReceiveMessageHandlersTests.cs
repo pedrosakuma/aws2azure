@@ -451,6 +451,92 @@ public sealed class AmqpReceiveMessageHandlersTests
         Assert.DoesNotContain("<Message>", ReadBody(ctx));
     }
 
+    [Fact]
+    public async Task ReceiveMessage_on_fifo_queue_accumulates_messages_across_multiple_sessions()
+    {
+        await using var first = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-A",
+            (Guid.Parse("11111111-aaaa-1111-aaaa-111111111111").ToByteArray(), EncodeMessage("fifo-group-a", groupId: "group-A")));
+        await using var second = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-B",
+            (Guid.Parse("22222222-bbbb-2222-bbbb-222222222222").ToByteArray(), EncodeMessage("fifo-group-b", groupId: "group-B")));
+        var provider = new FakeAmqpReceiverProvider(
+            FifoQueueName,
+            first.Receiver,
+            brokerAssignedSessionReceivers: [first.Receiver, second.Receiver]);
+
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx,
+            QueryParsed(
+                SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("MaxNumberOfMessages", "2"),
+                ("WaitTimeSeconds", "1"),
+                ("AttributeName.1", "MessageGroupId")),
+            provider,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(2, provider.AcquireSessionCount);
+        var body = ReadBody(ctx);
+        Assert.Contains("fifo-group-a", body);
+        Assert.Contains("fifo-group-b", body);
+        Assert.Contains("<Name>MessageGroupId</Name><Value>group-A</Value>", body);
+        Assert.Contains("<Name>MessageGroupId</Name><Value>group-B</Value>", body);
+
+        var handles = ExtractAllReceiptHandles(body);
+        Assert.Equal(2, handles.Count);
+        Assert.True(AmqpReceiptHandle.TryDecode(handles[0], out var firstHandle));
+        Assert.True(AmqpReceiptHandle.TryDecode(handles[1], out var secondHandle));
+        Assert.NotEqual(firstHandle.SessionId, secondHandle.SessionId);
+        Assert.Equal(1, first.Receiver.InFlightCount);
+        Assert.Equal(1, second.Receiver.InFlightCount);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_on_fifo_queue_returns_partial_batch_when_session_receiver_cap_hits_mid_accumulation()
+    {
+        await using var first = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-A",
+            (Guid.Parse("33333333-aaaa-3333-aaaa-333333333333").ToByteArray(), EncodeMessage("fifo-cap-a", groupId: "group-A")));
+        await using var second = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-B",
+            (Guid.Parse("44444444-bbbb-4444-bbbb-444444444444").ToByteArray(), EncodeMessage("fifo-cap-b", groupId: "group-B")));
+        var provider = new FakeAmqpReceiverProvider(
+            FifoQueueName,
+            first.Receiver,
+            brokerAssignedSessionReceivers: [first.Receiver, second.Receiver])
+        {
+            ThrowSessionReceiverLimitExceededOnAcquireAttempt = 2,
+        };
+
+        var ctx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx,
+            QueryParsed(
+                SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("MaxNumberOfMessages", "2"),
+                ("WaitTimeSeconds", "1")),
+            provider,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(2, provider.AcquireSessionAttemptCount);
+        Assert.Equal(1, provider.AcquireSessionCount);
+        var body = ReadBody(ctx);
+        Assert.Contains("fifo-cap-a", body);
+        Assert.DoesNotContain("fifo-cap-b", body);
+        Assert.Single(ExtractAllReceiptHandles(body));
+        Assert.Equal(1, first.Receiver.InFlightCount);
+        Assert.Equal(0, second.Receiver.InFlightCount);
+    }
+
     // --- Dead-letter surfacing ----------------------------------------
 
     [Fact]
@@ -884,6 +970,61 @@ public sealed class AmqpReceiveMessageHandlersTests
     }
 
     [Fact]
+    public async Task DeleteMessageBatch_on_fifo_queue_settles_mixed_session_batch_via_decoded_session_ids()
+    {
+        await using var first = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-A",
+            (Guid.Parse("55555555-aaaa-5555-aaaa-555555555555").ToByteArray(), EncodeMessage("fifo-mixed-1", groupId: "group-A")));
+        await using var second = await TestHarness.OpenSessionAsync(
+            FifoQueueName,
+            "group-B",
+            (Guid.Parse("66666666-bbbb-6666-bbbb-666666666666").ToByteArray(), EncodeMessage("fifo-mixed-2", groupId: "group-B")));
+        var provider = new FakeAmqpReceiverProvider(
+            FifoQueueName,
+            first.Receiver,
+            brokerAssignedSessionReceivers: [first.Receiver, second.Receiver]);
+
+        var receiveCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            receiveCtx,
+            QueryParsed(
+                SqsOperation.ReceiveMessage,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("MaxNumberOfMessages", "2"),
+                ("WaitTimeSeconds", "1")),
+            provider,
+            CancellationToken.None);
+        var handles = ExtractAllReceiptHandles(ReadBody(receiveCtx));
+        Assert.Equal(2, handles.Count);
+        Assert.True(AmqpReceiptHandle.TryDecode(handles[0], out var firstHandle));
+        Assert.True(AmqpReceiptHandle.TryDecode(handles[1], out var secondHandle));
+        Assert.NotEqual(firstHandle.SessionId, secondHandle.SessionId);
+
+        var deleteCtx = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            deleteCtx,
+            QueryParsed(
+                SqsOperation.DeleteMessageBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{FifoQueueName}"),
+                ("DeleteMessageBatchRequestEntry.1.Id", "m1"),
+                ("DeleteMessageBatchRequestEntry.1.ReceiptHandle", handles[0]),
+                ("DeleteMessageBatchRequestEntry.2.Id", "m2"),
+                ("DeleteMessageBatchRequestEntry.2.ReceiptHandle", handles[1])),
+            provider,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, deleteCtx.Response.StatusCode);
+        var body = ReadBody(deleteCtx);
+        Assert.Contains("<Id>m1</Id>", body);
+        Assert.Contains("<Id>m2</Id>", body);
+        Assert.DoesNotContain("BatchResultErrorEntry", body);
+        Assert.Equal(0, first.Receiver.InFlightCount);
+        Assert.Equal(0, second.Receiver.InFlightCount);
+        Assert.Equal(2, provider.InvalidateSessionCount);
+    }
+
+    [Fact]
     public async Task DeleteMessageBatch_aggregates_per_entry_failures_for_invalid_handles()
     {
         var tag = Guid.Parse("cccc1111-2222-3333-4444-555555555555").ToByteArray();
@@ -1100,24 +1241,46 @@ public sealed class AmqpReceiveMessageHandlersTests
     {
         private readonly string _expectedQueue;
         private readonly ServiceBusReceiver _receiver;
-        private readonly ServiceBusReceiver? _brokerAssignedSessionReceiver;
+        private readonly Dictionary<string, ServiceBusReceiver> _sessionReceiversById;
+        private readonly Queue<ServiceBusReceiver> _brokerAssignedSessionReceivers;
         private readonly ServiceBusManagementClient? _management;
         public int InvalidateCount { get; private set; }
         public int InvalidateManagementCount { get; private set; }
         public int InvalidateSessionCount { get; private set; }
         public int AcquireSessionCount { get; private set; }
+        public int AcquireSessionAttemptCount { get; private set; }
         public int TryGetExistingSessionCount { get; private set; }
         public bool BlockBrokerAssignedAcquire { get; set; }
+        public int? ThrowSessionReceiverLimitExceededOnAcquireAttempt { get; set; }
         public List<(string QueueName, AmqpMessage Message)> ForwardedMessages { get; } = new();
 
-        public FakeAmqpReceiverProvider(string queueName, ServiceBusReceiver receiver,
+        public FakeAmqpReceiverProvider(
+            string queueName,
+            ServiceBusReceiver receiver,
             ServiceBusManagementClient? management = null,
-            ServiceBusReceiver? brokerAssignedSessionReceiver = null)
+            ServiceBusReceiver? brokerAssignedSessionReceiver = null,
+            IReadOnlyList<ServiceBusReceiver>? brokerAssignedSessionReceivers = null)
         {
             _expectedQueue = queueName;
             _receiver = receiver;
             _management = management;
-            _brokerAssignedSessionReceiver = brokerAssignedSessionReceiver;
+            _sessionReceiversById = new Dictionary<string, ServiceBusReceiver>(StringComparer.Ordinal);
+            _brokerAssignedSessionReceivers = new Queue<ServiceBusReceiver>();
+
+            if (brokerAssignedSessionReceivers is not null)
+            {
+                for (var i = 0; i < brokerAssignedSessionReceivers.Count; i++)
+                {
+                    RegisterSessionReceiver(brokerAssignedSessionReceivers[i], enqueueForBrokerAcquire: true);
+                }
+            }
+
+            if (brokerAssignedSessionReceiver is not null)
+            {
+                RegisterSessionReceiver(
+                    brokerAssignedSessionReceiver,
+                    enqueueForBrokerAcquire: _brokerAssignedSessionReceivers.Count == 0);
+            }
         }
 
         public Task<ServiceBusReceiver> GetReceiverAsync(string queueName, CancellationToken cancellationToken)
@@ -1170,21 +1333,18 @@ public sealed class AmqpReceiveMessageHandlersTests
             // so GetSessionReceiverAsync is not reached for that flow.
             // Kept for future callers that need open-on-demand semantics.
             Assert.Equal(_expectedQueue, queueName);
-            if (_brokerAssignedSessionReceiver is null)
+            if (!_sessionReceiversById.TryGetValue(sessionId, out var receiver))
                 throw new NotSupportedException("Test harness did not wire a session receiver.");
-            return Task.FromResult(_brokerAssignedSessionReceiver);
+            return Task.FromResult(receiver);
         }
 
         public ServiceBusReceiver? TryGetExistingSessionReceiver(string queueName, string sessionId)
         {
             Assert.Equal(_expectedQueue, queueName);
             TryGetExistingSessionCount++;
-            // The fake tracks a single bound session receiver — once
-            // wired (by OpenSessionAsync) it stays cached for the test
-            // duration. Returning null lets tests exercise the
-            // stale-handle path by constructing a fake with
-            // brokerAssignedSessionReceiver: null.
-            return _brokerAssignedSessionReceiver;
+            return _sessionReceiversById.TryGetValue(sessionId, out var receiver)
+                ? receiver
+                : null;
         }
 
         public AmqpReceiverLease? TryAcquireExistingSessionReceiver(
@@ -1199,22 +1359,35 @@ public sealed class AmqpReceiveMessageHandlersTests
             string queueName, TimeSpan maxBrokerWait, CancellationToken cancellationToken)
         {
             Assert.Equal(_expectedQueue, queueName);
+            AcquireSessionAttemptCount++;
             if (BlockBrokerAssignedAcquire)
             {
                 await Task.Delay(maxBrokerWait, cancellationToken);
                 return new BrokerAssignedSessionReceiverResult(null, maxBrokerWait);
             }
-            if (_brokerAssignedSessionReceiver is null)
-                throw new NotSupportedException("Test harness did not wire a broker-assigned session receiver.");
+            if (ThrowSessionReceiverLimitExceededOnAcquireAttempt == AcquireSessionAttemptCount)
+                throw new SessionReceiverLimitExceededException();
+            if (_brokerAssignedSessionReceivers.Count == 0)
+                return new BrokerAssignedSessionReceiverResult(null, TimeSpan.Zero);
             AcquireSessionCount++;
             return new BrokerAssignedSessionReceiverResult(
-                _brokerAssignedSessionReceiver, TimeSpan.Zero);
+                _brokerAssignedSessionReceivers.Dequeue(), TimeSpan.Zero);
         }
 
         public Task InvalidateSessionReceiverAsync(string queueName, string sessionId)
         {
             InvalidateSessionCount++;
             return Task.CompletedTask;
+        }
+
+        private void RegisterSessionReceiver(
+            ServiceBusReceiver receiver,
+            bool enqueueForBrokerAcquire)
+        {
+            if (receiver.SessionId is { Length: > 0 } sessionId)
+                _sessionReceiversById[sessionId] = receiver;
+            if (enqueueForBrokerAcquire)
+                _brokerAssignedSessionReceivers.Enqueue(receiver);
         }
     }
 

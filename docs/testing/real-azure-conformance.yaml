@@ -701,7 +701,7 @@ services:
         category: core
         evidence_source: real_azure
         establishes_verification: true
-        description: FIFO batch send, deduplication, ordered one-at-a-time receive/delete, connection-affine settlement, and restart redelivery are verified against real Service Bus sessions.
+        description: FIFO batch send, deduplication, ordered one-at-a-time receive/delete, single-call multi-group receive, connection-affine settlement, and restart redelivery are verified against real Service Bus sessions.
         operations: [CreateQueue, SendMessage, SendMessageBatch, ReceiveMessage, DeleteMessage, DeleteMessageBatch, ChangeMessageVisibility, DeleteQueue]
         tests:
           - Aws2Azure.IntegrationTests.Sqs.SqsAdvancedBoundariesRealAzureTests.Fifo_batch_dedup_order_settlement_and_restart_are_connection_affine
