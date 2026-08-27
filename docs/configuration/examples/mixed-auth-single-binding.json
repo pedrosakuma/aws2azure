@@ -1,0 +1,40 @@
+{
+  "services": {
+    "s3": {
+      "enabled": true
+    },
+    "secretsmanager": {
+      "enabled": true
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAMIXEDAUTH",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "s3": {
+          "kind": "blob",
+          "target": {
+            "accountName": "sharedassetsstorage"
+          },
+          "auth": {
+            "mode": "sharedKey",
+            "key": "replace-with-storage-account-key"
+          }
+        },
+        "secretsmanager": {
+          "kind": "keyVault",
+          "target": {
+            "vaultUrl": "https://shared-platform-secrets.vault.azure.net/"
+          },
+          "auth": {
+            "mode": "managedIdentity",
+            "clientId": "55555555-5555-5555-5555-555555555555"
+          }
+        }
+      }
+    }
+  ]
+}

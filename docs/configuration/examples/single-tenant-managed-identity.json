@@ -1,0 +1,78 @@
+{
+  "services": {
+    "dynamodb": {
+      "enabled": true,
+      "useStoredProcedures": "Preferred",
+      "consistencyCheck": "Warn",
+      "cosmosBinaryResponses": false,
+      "cosmosBinaryRequests": false,
+      "enableGlobalSecondaryIndexQueries": false,
+      "enableLocalSecondaryIndexNumericOrdering": false
+    },
+    "kinesis": {
+      "enabled": true
+    },
+    "secretsmanager": {
+      "enabled": true
+    }
+  },
+  "azureIdentities": {
+    "single-tenant-platform": {
+      "authMode": "managedIdentity",
+      "clientId": "44444444-4444-4444-4444-444444444444"
+    }
+  },
+  "bindings": [
+    {
+      "aws": {
+        "accessKeyId": "AKIAPLATFORMAPP",
+        "secretAccessKey": "replace-with-aws-signing-secret"
+      },
+      "azure": {
+        "dynamodb": {
+          "kind": "cosmos",
+          "target": {
+            "endpoint": "https://tenant-a-data.documents.azure.com/",
+            "databaseName": "platform",
+            "preferredRegions": [
+              "East US",
+              "Central US"
+            ]
+          },
+          "auth": {
+            "mode": "reference",
+            "identity": "single-tenant-platform"
+          }
+        },
+        "kinesis": {
+          "kind": "eventHubs",
+          "target": {
+            "namespace": "tenant-a-streams"
+          },
+          "auth": {
+            "mode": "reference",
+            "identity": "single-tenant-platform"
+          },
+          "shardIteratorSigningKey": "cmVwbGFjZS13aXRoLXVuaXF1ZS1yYW5kb20ta2V5ISE=",
+          "streams": {
+            "orders": {
+              "eventHubName": "orders",
+              "consumerGroup": "aws-clients",
+              "partitionCount": 4
+            }
+          }
+        },
+        "secretsmanager": {
+          "kind": "keyVault",
+          "target": {
+            "vaultUrl": "https://tenant-a-secrets.vault.azure.net/"
+          },
+          "auth": {
+            "mode": "reference",
+            "identity": "single-tenant-platform"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:b42e436800d3277ad99cc1ed30242e32b53cf3c68591de8cd42e92d5f85a241d",
+  "manifest_revision": "sha256:54c105ba269300c17a5ac251b7f816216049f2c108ccfbb2bf02252b0f4d6b20",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -202,6 +202,30 @@
       }
     },
     {
+      "id": "configuration:example:mixed-auth-single-binding",
+      "path": "docs/configuration/examples/mixed-auth-single-binding.json",
+      "type": "configuration-example",
+      "scope": "operator-configuration",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:805bb18457b4f23efc539f253f8630b7a7d18c6a39f5a4c5c727d5afea028ba9",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "configuration:example:multi-environment-bindings",
+      "path": "docs/configuration/examples/multi-environment-bindings.json",
+      "type": "configuration-example",
+      "scope": "operator-configuration",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:0a4468ee9f92778b2fc34c089ce9bb4bbad36c866c523023c98523a612e8ce05",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "configuration:example:service-bus-sas",
       "path": "docs/configuration/examples/service-bus-sas.json",
       "type": "configuration-example",
@@ -226,6 +250,18 @@
       }
     },
     {
+      "id": "configuration:example:single-tenant-managed-identity",
+      "path": "docs/configuration/examples/single-tenant-managed-identity.json",
+      "type": "configuration-example",
+      "scope": "operator-configuration",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:6dae0fce6b44c47ae42af2f79f953a474f3257c2fb3c2984bf3c8feb32c7fd51",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "configuration:guide:configuration-environment",
       "path": "docs/configuration-environment.md",
       "type": "configuration-guide",
@@ -244,7 +280,7 @@
       "scope": "operator-configuration",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:bf064d10daf5f92f00251826e5f3640ccf55db0b160f27a48353c8e654ef4f3a",
+      "revision": "sha256:1677d609717fd2f51bd640f5b42f47ba8765dcb0b5ecc7e90a47bd728ed116a1",
       "freshness": {
         "mode": "current"
       }
@@ -1352,7 +1388,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:078128f96616d6bb39d7f1ad42065d4b091fa16243958aede6250aea2fbbbcb6",
+      "revision": "sha256:18754756677c5ec771fe767b00dbb19544b330ec32da7052a7d787f91a02f6e9",
       "freshness": {
         "mode": "current"
       }
