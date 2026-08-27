@@ -9,7 +9,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 | Service | Implemented | Partial | Stub | Unsupported | Feasible ops | By-design ops | Non-goal ops | Feasible sub-features | Feasible design gaps | Structural boundaries |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 2 | 0 | 48 |
+| [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 48 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 19 |
@@ -27,8 +27,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 
 ### Feasible backlog
 
-- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-update) / Update — [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
-- Sub-feature [TransactWriteItems](operations/dynamodb/transactwriteitems.md#sub-feature-returnvaluesonconditioncheckfailure) / ReturnValuesOnConditionCheckFailure — [#798](https://github.com/pedrosakuma/aws2azure/issues/798)
+_No remaining feasible backlog is documented for this service._
 
 ### Workload maturity
 
