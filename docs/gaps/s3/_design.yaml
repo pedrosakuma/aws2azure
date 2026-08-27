@@ -7,6 +7,7 @@ design_gaps:
   impact: Fine-grained S3 access control remains outside the proxy.
   workaround: Enforce authorization with Azure RBAC, SAS, and network controls.
   references:
+  - https://github.com/pedrosakuma/aws2azure/blob/main/docs/authorization-migration.md#s3-bucket-policies-bucket-acls-and-object-acls
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
 - area: No enforceable server-side-encryption configuration surface
   status: by_design
