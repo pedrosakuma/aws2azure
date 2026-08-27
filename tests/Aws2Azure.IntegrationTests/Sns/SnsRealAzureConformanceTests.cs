@@ -146,6 +146,7 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
                 $"Known unresolved real-Azure quirk (#691): SetSubscriptionAttributes[FilterPolicy] on a "
                     + $"fresh subscription's $Default rule did not succeed. "
                     + $"{SnsQueryApiClient.FormatDiagnosticSummary(setFilterResponse)}. "
+                    + $"ProxyLogTail={FormatProxyLogTail(fixture.ProxyOutput)}. "
                     + "See docs/gaps/sns/SetSubscriptionAttributes.yaml for the evidence trail.");
             var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
             [
@@ -758,6 +759,21 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
         {
             await Task.WhenAll(items.Skip(offset).Take(batchSize).Select(action)).ConfigureAwait(false);
         }
+    }
+
+    private static string FormatProxyLogTail(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return "<empty>";
+        }
+
+        var lines = output.Replace('\r', '\n')
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .TakeLast(8)
+            .Select(static line => line.Length > 240 ? line[..240] + "…" : line)
+            .ToArray();
+        return lines.Length == 0 ? "<empty>" : string.Join(" || ", lines);
     }
 
     private static async Task RunBatchesBestEffortAsync<T>(
