@@ -54,7 +54,7 @@ internal static class DescribeSecretHandler
             Description: description,
             CreatedDate: created,
             LastChangedDate: lastChanged,
-            Tags: SecretsManagerOperationSupport.ToTagArray(tags),
+            Tags: SecretsManagerOperationSupport.ToOptionalTagArray(tags),
             VersionIdsToStages: versionIdsToStages,
             RotationEnabled: null,
             DeletedDate: null);

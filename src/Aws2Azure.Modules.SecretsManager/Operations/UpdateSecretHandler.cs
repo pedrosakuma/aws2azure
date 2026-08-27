@@ -65,9 +65,7 @@ internal static class UpdateSecretHandler
         var payload = new UpdateSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(name),
             Name: name,
-            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? written.Value.VersionId : clientRequestToken,
-            VersionStages: written.Value.VersionStages,
-            CreatedDate: written.Value.CreatedDate);
+            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? written.Value.VersionId : clientRequestToken);
 
         await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.UpdateSecretResponse, cancellationToken).ConfigureAwait(false);
     }

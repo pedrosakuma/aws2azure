@@ -53,6 +53,7 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal("super-secret", document.RootElement.GetProperty("SecretString").GetString());
         Assert.Equal("abc123", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("arn:aws:secretsmanager:azure:keyvault:secret:demo", document.RootElement.GetProperty("ARN").GetString());
+        Assert.False(document.RootElement.TryGetProperty("SecretBinary", out _));
     }
 
     [Fact]
@@ -86,6 +87,53 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal(1710000000d, document.RootElement.GetProperty("CreatedDate").GetDouble());
         Assert.Equal(1710001000d, document.RootElement.GetProperty("LastChangedDate").GetDouble());
         Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionIdsToStages").GetProperty("abc123")[0].GetString());
+        Assert.False(document.RootElement.TryGetProperty("RotationEnabled", out _));
+        Assert.False(document.RootElement.TryGetProperty("DeletedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("Tags", out _));
+    }
+
+    [Fact]
+    public async Task HandleAsync_DescribeSecret_omits_empty_optional_fields()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri!.AbsolutePath.EndsWith("/versions", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/abc123\",\"attributes\":{\"created\":1710000000},\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}]}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"https://example.vault.azure.net/secrets/demo/versions/abc123\",\"name\":\"demo\",\"attributes\":{\"created\":1710000000}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DescribeSecret", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
+        Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionIdsToStages").GetProperty("abc123")[0].GetString());
+        Assert.False(document.RootElement.TryGetProperty("Description", out _));
+        Assert.False(document.RootElement.TryGetProperty("LastChangedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("RotationEnabled", out _));
+        Assert.False(document.RootElement.TryGetProperty("DeletedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("Tags", out _));
     }
 
     [Fact]
@@ -331,6 +379,42 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_ListSecrets_omits_empty_optional_item_fields()
+    {
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":\"https://example.vault.azure.net/secrets/demo\",\"attributes\":{\"created\":1710000000}}]}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.ListSecrets", string.Empty);
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        var secret = document.RootElement.GetProperty("SecretList")[0];
+        Assert.Equal("demo", secret.GetProperty("Name").GetString());
+        Assert.False(secret.TryGetProperty("Description", out _));
+        Assert.False(secret.TryGetProperty("LastChangedDate", out _));
+        Assert.False(secret.TryGetProperty("Tags", out _));
+        Assert.False(secret.TryGetProperty("VersionIdsToStages", out _));
+        Assert.False(document.RootElement.TryGetProperty("NextToken", out _));
+    }
+
+    [Fact]
     public async Task HandleAsync_ListSecrets_preserves_forbidden_without_production_retry()
     {
         var listAttempts = 0;
@@ -431,8 +515,8 @@ public sealed class SecretsManagerServiceModuleTests
         var secret = document.RootElement.GetProperty("SecretList")[0];
         Assert.Equal("prod-db", secret.GetProperty("Name").GetString());
         Assert.Equal("arn:aws:secretsmanager:azure:keyvault:secret:prod-db", secret.GetProperty("ARN").GetString());
-        Assert.Equal(JsonValueKind.Array, secret.GetProperty("Tags").ValueKind);
         Assert.Equal(JsonValueKind.Number, secret.GetProperty("CreatedDate").ValueKind);
+        Assert.False(secret.TryGetProperty("Tags", out _));
     }
 
     [Fact]
@@ -470,6 +554,8 @@ public sealed class SecretsManagerServiceModuleTests
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
         Assert.Equal("abc123", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("arn:aws:secretsmanager:azure:keyvault:secret:demo", document.RootElement.GetProperty("ARN").GetString());
+        Assert.False(document.RootElement.TryGetProperty("CreatedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("VersionStages", out _));
     }
 
     [Fact]
@@ -516,7 +602,8 @@ public sealed class SecretsManagerServiceModuleTests
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("create-token", document.RootElement.GetProperty("VersionId").GetString());
-        Assert.Equal("AWSCURRENT", document.RootElement.GetProperty("VersionStages")[0].GetString());
+        Assert.False(document.RootElement.TryGetProperty("CreatedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("VersionStages", out _));
     }
 
     [Fact]
@@ -569,6 +656,8 @@ public sealed class SecretsManagerServiceModuleTests
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("create-token", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.False(document.RootElement.TryGetProperty("CreatedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("VersionStages", out _));
     }
 
     [Fact]
@@ -773,6 +862,8 @@ public sealed class SecretsManagerServiceModuleTests
         using var document = JsonDocument.Parse(body);
         Assert.Equal("new-version", document.RootElement.GetProperty("VersionId").GetString());
         Assert.Equal("demo", document.RootElement.GetProperty("Name").GetString());
+        Assert.False(document.RootElement.TryGetProperty("CreatedDate", out _));
+        Assert.False(document.RootElement.TryGetProperty("VersionStages", out _));
     }
 
     [Fact]

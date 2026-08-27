@@ -143,6 +143,12 @@ internal static class SecretsManagerOperationSupport
         return result;
     }
 
+    public static SecretsManagerTag[]? ToOptionalTagArray(IReadOnlyDictionary<string, string> tags)
+    {
+        var array = ToTagArray(tags);
+        return array.Length == 0 ? null : array;
+    }
+
     public static int MapStatusCode(HttpStatusCode statusCode)
         => statusCode switch
         {

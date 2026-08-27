@@ -100,14 +100,10 @@ internal static class CreateSecretHandler
         var id = secretDocument.RootElement.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String
             ? idElement.GetString() ?? string.Empty
             : string.Empty;
-        var createdDate = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
-
         var payload = new CreateSecretResponse(
             Arn: KeyVaultSecretClient.BuildArn(name),
             Name: name,
-            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? KeyVaultSecretClient.GetVersionId(id) : clientRequestToken,
-            VersionStages: ["AWSCURRENT"],
-            CreatedDate: createdDate);
+            VersionId: string.IsNullOrWhiteSpace(clientRequestToken) ? KeyVaultSecretClient.GetVersionId(id) : clientRequestToken);
 
         await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.CreateSecretResponse, cancellationToken).ConfigureAwait(false);
     }
@@ -141,9 +137,7 @@ internal static class CreateSecretHandler
                 return new CreateSecretResponse(
                     Arn: KeyVaultSecretClient.BuildArn(name),
                     Name: name,
-                    VersionId: clientRequestToken,
-                    VersionStages: tokenResolution.Version.VersionStages,
-                    CreatedDate: DateTimeOffset.FromUnixTimeSeconds(tokenResolution.Version.Created));
+                    VersionId: clientRequestToken);
             }
 
             if (attempt < 7)

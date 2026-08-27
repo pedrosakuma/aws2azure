@@ -167,16 +167,21 @@ internal sealed class KeyVaultSecretClient
     public static string EncodeSecretBinary(byte[] bytes)
         => Convert.ToBase64String(bytes);
 
-    public static string GetDescription(JsonElement root)
+    public static string? GetDescription(JsonElement root)
     {
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("description", out var lower) && lower.ValueKind == JsonValueKind.String)
         {
-            return lower.GetString() ?? string.Empty;
+            var description = lower.GetString();
+            return string.IsNullOrEmpty(description) ? null : description;
         }
 
-        return root.TryGetProperty("Description", out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? string.Empty
-            : string.Empty;
+        if (root.TryGetProperty("Description", out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            var description = value.GetString();
+            return string.IsNullOrEmpty(description) ? null : description;
+        }
+
+        return null;
     }
 
     public static DateTimeOffset GetCreatedDate(JsonElement root)
