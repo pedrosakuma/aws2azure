@@ -2,6 +2,10 @@ service: dynamodb
 operation: DeleteItem
 azure_equivalent: Azure Cosmos DB (Core SQL API)
 status: partial
+verified_real_azure:
+  date: '2026-08-26'
+  evidence: https://github.com/pedrosakuma/aws2azure/actions/runs/33020812878
+  workflow_run: https://github.com/pedrosakuma/aws2azure/actions/runs/33020812878
 sub_features:
 - name: HASH-only key tables
   status: implemented

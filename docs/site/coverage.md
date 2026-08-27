@@ -7,14 +7,14 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | dynamodb | [BatchGetItem](operations/dynamodb/batchgetitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [BatchWriteItem](operations/dynamodb/batchwriteitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [CreateTable](operations/dynamodb/createtable.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — POST /dbs/{db}/colls` |
-| dynamodb | [DeleteItem](operations/dynamodb/deleteitem.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [DeleteItem](operations/dynamodb/deleteitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [DeleteTable](operations/dynamodb/deletetable.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — DELETE /dbs/{db}/colls/{name}` |
 | dynamodb | [DescribeTable](operations/dynamodb/describetable.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls/{name} + sidecar metadata` |
 | dynamodb | [DescribeTimeToLive](operations/dynamodb/describetimetolive.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB container `defaultTtl` / per-item `ttl`` |
 | dynamodb | [GetItem](operations/dynamodb/getitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [ListTables](operations/dynamodb/listtables.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB (Core SQL API) — GET /dbs/{db}/colls` |
 | dynamodb | [ListTagsOfResource](operations/dynamodb/listtagsofresource.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB account/resource tags (control plane)` |
-| dynamodb | [PutItem](operations/dynamodb/putitem.md) | 🟡 partial | 🔵 by design | — | — | `Azure Cosmos DB (Core SQL API)` |
+| dynamodb | [PutItem](operations/dynamodb/putitem.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Query](operations/dynamodb/query.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [Scan](operations/dynamodb/scan.md) | 🟡 partial | 🔵 by design | — | ✅ | `Azure Cosmos DB (Core SQL API)` |
 | dynamodb | [TagResource](operations/dynamodb/tagresource.md) | ✅ implemented | — | — | ✅ | `Azure Cosmos DB account/resource tags (control plane)` |

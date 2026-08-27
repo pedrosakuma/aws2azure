@@ -2,9 +2,9 @@
 
 These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.
 
-> **Current adoption authority (as of `2026-08-26T20:36:24Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
+> **Current adoption authority (as of `2026-08-27T00:19:31Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
 >
-> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:83f569c76ab96f467637091b35c9e7bc9845438f83a9cfa1f89b01141e8a7bb4`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9`; contract: `docs/workloads/certification/authority.yaml`.
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:551d104c75eed02cd415343ef60a5fe830248b3d6bbfefd6c8efcdbc134d321d`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:2314a7f491008f1237763023fe0e9d2ece00cd4500a5f54c094aaca5a1dd0cb9`; contract: `docs/workloads/certification/authority.yaml`.
 
 ## Authority precedence
 
@@ -20,7 +20,7 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 
 | Profile | Version | Minimum proxy | Verdict | Blocking reasons |
 |---|---:|---|---|---|
-| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | 🟡 conditional | 2 |
+| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | ✅ GA | 0 |
 | DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🟡 conditional | 1 |
 | DynamoDB single-table single-partition transactions (`dynamodb-single-partition-transactions`) | 1 | `0.1.0` | 🔵 candidate | 16 |
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | 1 |
