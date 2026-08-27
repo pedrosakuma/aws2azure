@@ -259,6 +259,9 @@ public sealed class WorkloadGaCertificationTests
             "s3-basic-object-crud",
             root.GetProperty("profile_id").GetString());
         Assert.Equal("ga", root.GetProperty("verdict").GetString());
+        Assert.Equal(
+            "2026-08-29T13:40:16.1664678+00:00",
+            root.GetProperty("evidence_expires_at_utc").GetString());
 
         var legacy = JsonSerializer.Deserialize<LegacyWorkloadGaReport>(first);
         Assert.NotNull(legacy);
@@ -266,6 +269,142 @@ public sealed class WorkloadGaCertificationTests
         Assert.Equal("s3-basic-object-crud", legacy.ProfileId);
         Assert.Equal("ga", legacy.Verdict);
         Assert.NotEmpty(legacy.Findings);
+    }
+
+    [Theory]
+    [InlineData(2026, 7, 18, 12, 0, 0, "expires in 27h")]
+    [InlineData(2026, 7, 20, 18, 0, 0, "expired 26h ago")]
+    public void Renderers_show_relative_qualification_freshness(
+        int year,
+        int month,
+        int day,
+        int hour,
+        int minute,
+        int second,
+        string expectedFreshness)
+    {
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-freshness-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Candidate.Runtime!.Artifact.ExpiresAt = UtcInstant(2026, 8, 1, 0, 0, 0);
+        qualification.Provenance.CorrectnessRun!.EvidenceArtifact!.Artifact.ExpiresAt =
+            UtcInstant(2026, 8, 1, 0, 0, 0);
+        qualification.Provenance.SourceRuns[0].EvidenceArtifact!.Artifact.ExpiresAt =
+            UtcInstant(2026, 8, 1, 0, 0, 0);
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var evaluatedAsOfUtc = UtcInstant(year, month, day, hour, minute, second);
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                evaluatedAsOfUtc);
+            var evaluation = CreateEvaluationMetadata(evaluatedAsOfUtc);
+
+            var markdown = WorkloadGaRenderer.RenderMarkdown(report, evaluation);
+            Assert.Contains(
+                $"- **Qualification freshness:** {expectedFreshness}",
+                markdown,
+                StringComparison.Ordinal);
+
+            var indexRoot = Path.Combine(
+                AppContext.BaseDirectory,
+                $"aws2azure-ga-index-freshness-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(indexRoot);
+            var markdownPath = Path.Combine(indexRoot, "workload-ga.md");
+            var jsonPath = Path.Combine(indexRoot, "workload-ga.json");
+            try
+            {
+                WorkloadGaRenderer.RenderIndex([report], evaluation, markdownPath, jsonPath);
+                Assert.Contains(
+                    expectedFreshness,
+                    File.ReadAllText(markdownPath),
+                    StringComparison.Ordinal);
+            }
+            finally
+            {
+                Directory.Delete(indexRoot, recursive: true);
+            }
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Missing_qualification_artifact_renders_freshness_as_na()
+    {
+        var manifest = MinimalManifest();
+        manifest.Evidence.QualificationArtifact = string.Empty;
+
+        var report = WorkloadGaEvaluator.Evaluate(
+            manifest,
+            MinimalOperations(),
+            [],
+            RepoRoot,
+            AtEndOfUtcDay(2026, 7, 16));
+
+        Assert.Null(report.EvidenceExpiresAtUtc);
+        Assert.Contains(
+            "- **Qualification freshness:** n/a",
+            WorkloadGaRenderer.RenderMarkdown(report, Evaluation),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Qualification_freshness_uses_the_earliest_artifact_or_max_age_cutoff()
+    {
+        var tempRoot = Path.Combine(
+            AppContext.BaseDirectory,
+            $"aws2azure-ga-artifact-freshness-{Guid.NewGuid():N}");
+        var evidencePath = Path.Combine(
+            tempRoot,
+            "docs",
+            "workloads",
+            "evidence",
+            "qualification.yaml");
+        Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
+        var qualification = QualifiedDocument();
+        qualification.Candidate.Runtime!.Artifact.ExpiresAt = UtcInstant(2026, 7, 17, 14, 0, 0);
+        qualification.Provenance.CorrectnessRun!.EvidenceArtifact!.Artifact.ExpiresAt =
+            UtcInstant(2026, 7, 18, 0, 0, 0);
+        qualification.Provenance.SourceRuns[0].EvidenceArtifact!.Artifact.ExpiresAt =
+            UtcInstant(2026, 7, 18, 6, 0, 0);
+        SloQualificationRenderer.RenderYaml(qualification, evidencePath);
+
+        try
+        {
+            var report = WorkloadGaEvaluator.Evaluate(
+                MinimalManifest(),
+                MinimalOperations(),
+                [],
+                tempRoot,
+                UtcInstant(2026, 7, 16, 12, 0, 0));
+
+            Assert.Equal(UtcInstant(2026, 7, 17, 14, 0, 0), report.EvidenceExpiresAtUtc);
+            Assert.Contains(
+                "expires in 26h",
+                WorkloadGaRenderer.RenderMarkdown(
+                    report,
+                    CreateEvaluationMetadata(UtcInstant(2026, 7, 16, 12, 0, 0))),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -2353,6 +2492,23 @@ public sealed class WorkloadGaCertificationTests
         using var snapshot = WorkloadGaInputSnapshot.Capture(RepoRoot);
         return WorkloadGaEvaluationMetadataBuilder.Build(snapshot);
     }
+
+    private static WorkloadGaEvaluationMetadata CreateEvaluationMetadata(
+        DateTimeOffset evaluatedAsOfUtc) =>
+        new()
+        {
+            EvaluatedAsOfUtc = evaluatedAsOfUtc.ToUniversalTime().ToString(
+                "yyyy-MM-ddTHH:mm:ssZ"),
+            Contract = "docs/workloads/certification/authority.yaml",
+            Source = new WorkloadGaSourceIdentity
+            {
+                Repository = "pedrosakuma/aws2azure",
+                CanonicalInputsRevision = "sha256:" + new string('a', 64),
+                EvaluatorSchemaVersion =
+                    WorkloadGaEvaluationMetadataBuilder.CurrentEvaluatorSchemaVersion,
+                EvaluatorImplementationRevision = "sha256:" + new string('b', 64),
+            },
+        };
 
     private sealed class LegacyWorkloadGaReport
     {
