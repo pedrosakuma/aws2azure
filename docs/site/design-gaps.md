@@ -6,8 +6,19 @@ between the AWS service and its Azure target. Per-operation behaviour lives on
 each [service page](index.md). This page is an index whose links open
 stable, independently searchable design-gap pages. Existing public anchors
 remain on this index for compatibility.
+Start with the per-service readiness checklists when you need a quick
+yes/no migration screen before reading the full gap details.
 
 Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
+
+## Before you migrate {#before-you-migrate}
+
+- [Before you migrate DynamoDB](readiness-checklists/dynamodb.md)
+- [Before you migrate Kinesis](readiness-checklists/kinesis.md)
+- [Before you migrate S3](readiness-checklists/s3.md)
+- [Before you migrate Secrets Manager](readiness-checklists/secretsmanager.md)
+- [Before you migrate SNS](readiness-checklists/sns.md)
+- [Before you migrate SQS](readiness-checklists/sqs.md)
 
 ## Summary {#summary}
 
@@ -66,6 +77,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## dynamodb {#dynamodb}
 
+- [Before you migrate DynamoDB](readiness-checklists/dynamodb.md)
 - [99.999% availability depends on Cosmos account topology](design-gaps/dynamodb/99999-availability-depends-on-cosmos-account-topology.md) — 🔵 by design · `design-gap:dynamodb:99999-availability-depends-on-cosmos-account-topology`
 - [Absent DynamoDB features](design-gaps/dynamodb/absent-dynamodb-features.md) — ⛔ unsupported · `design-gap:dynamodb:absent-dynamodb-features`
 - [Consistency and read-your-writes](design-gaps/dynamodb/consistency-and-read-your-writes.md) — 🔵 by design · `design-gap:dynamodb:consistency-and-read-your-writes`
@@ -79,6 +91,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## kinesis {#kinesis}
 
+- [Before you migrate Kinesis](readiness-checklists/kinesis.md)
 - [Event Hubs Capture archives Event Hubs envelopes, not raw Kinesis bytes](design-gaps/kinesis/event-hubs-capture-archives-event-hubs-envelopes-not-raw-kinesis-bytes.md) — 🔵 by design · `design-gap:kinesis:event-hubs-capture-archives-event-hubs-envelopes-not-raw-kinesis-bytes`
 - [Geo-DR / Geo-Replication failover requires alias planning and breaks iterator continuity](design-gaps/kinesis/geo-dr---geo-replication-failover-requires-alias-planning-and-breaks-iterator-continuity.md) — 🔵 by design · `design-gap:kinesis:geo-dr---geo-replication-failover-requires-alias-planning-and-breaks-iterator-continuity`
 - [Idempotent or exclusive Event Hubs producers are unsupported](design-gaps/kinesis/idempotent-or-exclusive-event-hubs-producers-are-unsupported.md) — 🔵 by design · `design-gap:kinesis:idempotent-or-exclusive-event-hubs-producers-are-unsupported`
@@ -89,6 +102,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## s3 {#s3}
 
+- [Before you migrate S3](readiness-checklists/s3.md)
 - [Account-level recovery and delete-retention features remain operator-provisioned](design-gaps/s3/account-level-recovery-and-delete-retention-features-remain-operator-provisioned.md) — 🔵 by design · `design-gap:s3:account-level-recovery-and-delete-retention-features-remain-operator-provisioned`
 - [Bucket sub-resource configs are not translated](design-gaps/s3/bucket-sub-resource-configs-are-not-translated.md) — ⛔ unsupported · `design-gap:s3:bucket-sub-resource-configs-are-not-translated`
 - [Multipart per-part ETag validation cannot be reproduced](design-gaps/s3/multipart-per-part-etag-validation-cannot-be-reproduced.md) — 🔵 by design · `design-gap:s3:multipart-per-part-etag-validation-cannot-be-reproduced`
@@ -100,6 +114,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## secretsmanager {#secretsmanager}
 
+- [Before you migrate Secrets Manager](readiness-checklists/secretsmanager.md)
 - [Certificate-backed secrets require the certificate API for deletion](design-gaps/secretsmanager/certificate-backed-secrets-require-the-certificate-api-for-deletion.md) — 🟡 partial · `design-gap:secretsmanager:certificate-backed-secrets-require-the-certificate-api-for-deletion`
 - [Deletion recovery semantics differ](design-gaps/secretsmanager/deletion-recovery-semantics-differ.md) — 🔵 by design · `design-gap:secretsmanager:deletion-recovery-semantics-differ`
 - [Disabled Key Vault secret versions use a backend-specific 403](design-gaps/secretsmanager/disabled-key-vault-secret-versions-use-a-backend-specific-403.md) — 🔵 by design · `design-gap:secretsmanager:disabled-key-vault-secret-versions-use-a-backend-specific-403`
@@ -111,6 +126,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## sns {#sns}
 
+- [Before you migrate SNS](readiness-checklists/sns.md)
 - [Default Event Grid routing multiplexes multiple SNS topics](design-gaps/sns/default-event-grid-routing-multiplexes-multiple-sns-topics.md) — 🔵 by design · `design-gap:sns:default-event-grid-routing-multiplexes-multiple-sns-topics`
 - [Event Grid custom-topic failover remains best-effort and external](design-gaps/sns/event-grid-custom-topic-failover-remains-best-effort-and-external.md) — 🔵 by design · `design-gap:sns:event-grid-custom-topic-failover-remains-best-effort-and-external`
 - [Event Grid publish auth omits SAS-token mode](design-gaps/sns/event-grid-publish-auth-omits-sas-token-mode.md) — 🟡 partial · `design-gap:sns:event-grid-publish-auth-omits-sas-token-mode`
@@ -124,6 +140,7 @@ Legend: 🔵 by design · 🟡 partial · ⛔ unsupported · 🗓️ planned
 
 ## sqs {#sqs}
 
+- [Before you migrate SQS](readiness-checklists/sqs.md)
 - [FIFO AMQP production profile expects Service Bus Premium](design-gaps/sqs/fifo-amqp-production-profile-expects-service-bus-premium.md) — 🔵 by design · `design-gap:sqs:fifo-amqp-production-profile-expects-service-bus-premium`
 - [FIFO ordering requires the AMQP transport](design-gaps/sqs/fifo-ordering-requires-the-amqp-transport.md) — 🟡 partial · `design-gap:sqs:fifo-ordering-requires-the-amqp-transport`
 - [Geo-DR failover requires configuring the alias hostname](design-gaps/sqs/geo-dr-failover-requires-configuring-the-alias-hostname.md) — 🔵 by design · `design-gap:sqs:geo-dr-failover-requires-configuring-the-alias-hostname`

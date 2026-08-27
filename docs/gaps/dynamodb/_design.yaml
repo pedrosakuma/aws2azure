@@ -2,6 +2,7 @@ service: dynamodb
 design_gaps:
 - area: Transaction scope is single-partition, single-table
   status: by_design
+  readiness_checklist_question: "Do you need ACID transactions that span multiple tables or partition-key values?"
   summary: TransactWriteItems / TransactGetItems are translated to a Cosmos DB stored-procedure transaction, which is scoped to one container and one logical partition. Operations spanning more than one table, or more than one partition-key value, are rejected with ValidationException.
   impact: DynamoDB's cross-table / cross-partition ACID surface (up to 100 items across tables and partitions) is not reproducible. Applications that rely on multi-entity transactions must be remodelled so all transacted items share a partition key.
   workaround: Co-locate transacted items under a single partition key, or fall back to idempotent application-level compensation.
@@ -9,6 +10,7 @@ design_gaps:
   - https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs
 - area: Transaction execution has one configured Cosmos authority
   status: by_design
+  readiness_checklist_question: "Do your transactions need to stay available after the preferred writable Cosmos region is down without reconfiguration?"
   summary: Cosmos stored procedures execute through a writable region. To preserve one atomic snapshot and one durable ClientRequestToken history, every TransactGetItems/TransactWriteItems execution uses one deployment-stable regional authority. On a multi-write account this is exactly target.preferredRegions[0], not the first currently available match. The proxy never replays a transaction in a second independently writable region or through the dynamically routed global account endpoint.
   impact: Multi-write deployments must configure the same first preferred region on every replica and binding that targets the same data. Losing that region makes transactions unavailable even if another write region remains healthy; this is the availability cost of preserving one transaction/idempotency authority. Non-transactional routing and read failover are unchanged.
   workaround: Prefer a single-write Cosmos account for this profile, or configure an explicit preferredRegions list whose first entry is the intended transaction authority. Restore that region before retrying. Change the first entry only as a coordinated migration after outstanding 10-minute idempotency windows and replication have converged; restarting alone never changes authority.
@@ -17,6 +19,7 @@ design_gaps:
   - https://learn.microsoft.com/azure/cosmos-db/nosql/stored-procedures-triggers-udfs
 - area: Multi-write conflict resolution is Last-Write-Wins
   status: by_design
+  readiness_checklist_question: "Do you require active/active non-idempotent writes without Last-Write-Wins conflict risk?"
   summary: On Cosmos accounts with multiple write regions, concurrent updates to the same item in different regions are resolved by Cosmos's default Last-Write-Wins policy on the system timestamp. A non-idempotent DynamoDB write such as UpdateItem ADD can therefore succeed twice at the proxy boundary yet still lose one increment when replication later resolves the conflict.
   impact: DynamoDB callers do not get a conflict error for this case. Multi-region active/active deployments can silently lose one side of a concurrent non-idempotent write, which is a correctness hazard DynamoDB operators would normally address with conditional writes or a single-writer topology rather than backend LWW.
   workaround: Prefer a single-write Cosmos account, or constrain all non-idempotent writes for a dataset to one authoritative writable region. If active/active writes are required, use idempotent mutations or explicit application-level version checks / conditional writes so overwrites are detectable.
@@ -24,6 +27,7 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/cosmos-db/conflict-resolution-policies
 - area: 99.999% availability depends on Cosmos account topology
   status: by_design
+  readiness_checklist_question: "Do you require the Cosmos 99.999% read/write SLA without pre-provisioning the matching account topology?"
   summary: Cosmos's 99.999% read/write SLA is an account-provisioning property, not something the proxy can add at request time. It depends on the operator creating a multi-write account with at least two write regions, automatic failover, and Session-or-stronger default consistency.
   impact: A workload that is functionally compatible with dynamodb_basic_crud can still run on a single-region or Eventual-consistency Cosmos account and therefore miss the documented Cosmos SLA tier an operator may assume. The proxy does not surface or enforce this distinction during normal CRUD calls.
   workaround: Choose and document the Cosmos account topology per deployment. If the workload requires the 99.999% SLA tier, provision the account with the corresponding Azure prerequisites before routing production traffic through the proxy.
@@ -31,6 +35,7 @@ design_gaps:
   - https://azure.microsoft.com/en-us/support/legal/sla/cosmos-db/v1_5/
 - area: Consistency and read-your-writes
   status: by_design
+  readiness_checklist_question: "Do you expect read-your-writes across separate proxy calls on Session or Eventual Cosmos consistency?"
   summary: 'Ordinary operations issue independent Cosmos REST calls and do not propagate Cosmos session tokens between requests, so read-your-write determinism depends on the account''s default consistency level. On a Session-consistency account this means separate proxy HTTP calls do not share the Cosmos session required for session-token-based read-your-writes, so they behave effectively like Eventual reads unless the account default is stronger. Single-partition TransactGetItems is the exception: it executes as one server-side stored-procedure snapshot. ConsistentRead effectiveness for non-transactional reads remains account-dependent.'
   impact: A DynamoDB client that assumes strong read-your-writes may observe stale reads if the Cosmos account is configured for Session/Eventual consistency. Operators who choose Session because it is the cheaper Cosmos default should treat independent proxy calls as effectively Eventual for read-your-writes purposes. GSI reads are always eventually consistent (ConsistentRead=true is rejected, matching DynamoDB).
   workaround: Provision the Cosmos account with Strong (or at least Bounded Staleness) default consistency for workloads that need DynamoDB-equivalent semantics across independent proxy calls, and record the chosen level per deployment. If you intentionally run at Session for cost, document that cross-call read-your-writes is degraded. Full session-token propagation would require the proxy to keep and replay per-request Cosmos session state across otherwise stateless AWS calls, which conflicts with the proxy's request-per-call model and is therefore documented as a by-design limitation.
@@ -38,17 +43,20 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/cosmos-db/how-to-manage-consistency#utilize-session-tokens
 - area: Throughput and throttling model
   status: by_design
+  readiness_checklist_question: "Do you depend on DynamoDB RCU/WCU behavior rather than Azure Cosmos RU/s throttling?"
   summary: Capacity is Cosmos RU/s, not DynamoDB RCU/WCU. Cosmos 429 (throttled) is surfaced to clients as ProvisionedThroughputExceededException (or as UnprocessedKeys for BatchGetItem), so the AWS SDK's native retry/backoff still engages, but the underlying accounting and limits are Azure's.
   impact: ConsumedCapacity figures, burst behaviour, and adaptive-capacity dynamics differ from DynamoDB. Large Scans throttle differently than on DynamoDB.
   workaround: Size the Cosmos container/database RU/s (or use autoscale/serverless) for the workload; do not rely on DynamoDB capacity semantics.
 - area: Secondary indexes (GSI / LSI)
   status: partial
+  readiness_checklist_question: "Do you need DynamoDB index semantics such as native GSIs/LSIs, UTF-8 byte-order collation, or portable index metrics?"
   summary: All attributes live in one base container; GSI queries are opt-in and LSI queries are always available over that container. GSI Query is a cross-partition fan-out (unlike a base-table Query's single-partition guarantee); string sort keys follow Cosmos code-point collation rather than DynamoDB UTF-8 byte order; numeric ordering relies on a synthetic order-preserving field written at item-write time.
   impact: Items written before the encoded-ordering field existed are excluded from ordered numeric-GSI results until rewritten (a backfill gap). Binary sort keys cannot be ordered. Index ItemCount / IndexSizeBytes / Backfilling remain unavailable for non-empty tables because there is no separate physical index resource to meter cheaply or truthfully.
   workaround: Keep GSI Query default-off unless the collation and live-base-document caveats are acceptable. Enable exact numeric LSI ordering only after rewriting pre-existing items to populate ordering fields.
   disposition: by_design
 - area: Cross-partition continuation tokens can be large
   status: by_design
+  readiness_checklist_question: "Do your clients assume LastEvaluatedKey stays small or inspect its internal structure?"
   summary: Cross-partition Scan and unordered/hash-only GSI Query pagination reuses the raw Cosmos continuation token, wrapped into DynamoDB's LastEvaluatedKey / ExclusiveStartKey sentinel shape. The proxy does not set x-ms-documentdb-responsecontinuationtoken-limitinkb, so a continuation token that encodes per-partition progress can grow to several KB.
   impact: AWS callers usually treat LastEvaluatedKey as a small key-attribute map. Large continuation tokens can exceed assumptions in SDK versions, custom clients, or persistence layers that cap pagination-state size much more aggressively than Cosmos does. Ordered composite-GSI queries use a separate proxy-defined continuation shape, so this size risk applies specifically to the raw-Cosmos-token paths above.
   workaround: Validate pagination against representative high-fan-out datasets before migration, and persist LastEvaluatedKey opaquely rather than inspecting or truncating it. If client-side token size limits are strict, prefer partition-scoped access patterns over broad Scan / GSI fan-out.
@@ -56,11 +64,13 @@ design_gaps:
   - https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
 - area: Key encoding and on-disk storage format
   status: by_design
+  readiness_checklist_question: "Do you need DynamoDB keys longer than the documented limit or direct portability to raw Cosmos storage?"
   summary: DynamoDB key attribute values are encoded into the internal Cosmos id/partition-key (S -> hex(UTF-8), B -> hex(raw), N -> order-preserving digit string) to accept Cosmos-forbidden characters and fix binary byte-ordering. Effective raw key limit is ~127 bytes.
   impact: Keys longer than the limit are rejected with ValidationException. The storage layout is a proxy-owned format, not portable to a raw Cosmos client, and changed across earlier builds (a breaking on-disk change).
   workaround: Keep key attributes within the size limit; treat the backing container as proxy-managed, not directly queryable with DynamoDB semantics.
 - area: Absent DynamoDB features
   status: unsupported
+  readiness_checklist_question: "Does your workload require DynamoDB Streams, DAX, global tables, PITR/backups, or auto-scaling control-plane features?"
   summary: DynamoDB Streams, DAX, point-in-time recovery / on-demand backups, global tables, and auto-scaling have no in-scope Cosmos translation and are not exposed by the proxy.
   impact: Applications depending on these control-plane / streaming features cannot run through the proxy for those code paths.
   workaround: Use the corresponding Azure Cosmos capability directly (change feed, continuous backup, multi-region writes) outside the AWS wire protocol.

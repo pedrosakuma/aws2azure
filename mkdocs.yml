@@ -61,6 +61,7 @@ exclude_docs: |
 not_in_nav: |
   site/operations/**/*.md
   site/design-gaps/**/*.md
+  site/readiness-checklists/**/*.md
 
 validation:
   nav:

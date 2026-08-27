@@ -2,6 +2,7 @@ service: s3
 design_gaps:
 - area: No IAM / ACL / bucket-policy authorization model
   status: by_design
+  readiness_checklist_question: "Does your workload depend on S3 IAM, bucket policies, or ACLs being enforced by the storage layer?"
   summary: Authorization is the static AWS-key-to-Azure-credential mapping validated by SigV4; there is no server-side IAM. ACLs are synthesised as owner-only and bucket-policy enforcement is not translated.
   impact: Fine-grained S3 access control remains outside the proxy.
   workaround: Enforce authorization with Azure RBAC, SAS, and network controls.
@@ -9,39 +10,46 @@ design_gaps:
   - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html
 - area: No enforceable server-side-encryption configuration surface
   status: by_design
+  readiness_checklist_question: "Does your workload require SSE-C, SSE-KMS, or per-request S3 encryption semantics instead of account-level Azure encryption?"
   summary: Azure Blob Storage encrypts at rest transparently. The proxy can persist some S3 encryption intent, but it does not map SSE request headers to distinct Azure key material or KMS workflows.
   impact: Applications that require SSE-C/SSE-KMS semantics cannot preserve them.
   workaround: Configure encryption and customer-managed keys at the Azure Storage account level.
 - area: Multipart upload keeps bounded durable proxy state
   status: by_design
+  readiness_checklist_question: "Does your workload forbid the proxy from storing any durable multipart-upload control state in Azure?"
   summary: Azure Blob Storage has no native cross-blob multipart-upload enumeration primitive, so aws2azure persists one bounded state record per active multipart upload in a hidden Azure container. Record names begin with the zero-padded initiation timestamp, record bodies store only the headers needed to finish the upload (16 KiB cap), and Create/List opportunistically delete a bounded number of expired records.
   impact: Multipart enumeration and metadata fidelity now survive proxy restart, but the proxy deliberately owns a small amount of durable control-plane state.
   workaround: Treat the hidden multipart-state container as proxy-owned implementation data; do not manage or replicate it through S3.
 - area: Multipart per-part ETag validation cannot be reproduced
   status: by_design
+  readiness_checklist_question: "Does your workload rely on CompleteMultipartUpload rejecting stale per-part ETags after a part is overwritten?"
   summary: Even with durable multipart state, Azure still exposes no primitive that lets the proxy re-read the true MD5/ETag of each staged uncommitted block. CompleteMultipartUpload and ListParts therefore cannot validate or replay AWS's per-part ETag contract exactly.
   impact: Workloads that overwrite a PartNumber with different bytes and rely on AWS rejecting the stale ETag at CompleteMultipartUpload will observe different behaviour.
   workaround: Gate those workloads out or avoid re-uploading the same PartNumber with different content inside one multipart session.
 - area: Bucket sub-resource configs are not translated
   status: unsupported
+  readiness_checklist_question: "Does your workload configure lifecycle, replication, website, logging, notifications, acceleration, or Requester Pays through S3 bucket APIs?"
   summary: Lifecycle, replication, website hosting, event notifications, Requester Pays, acceleration, and logging bucket configurations have no Blob-storage equivalent in the wire-protocol path.
   impact: Automated tiering/expiry, cross-region replication, static-website hosting, and S3 event automation configured through these APIs have no effect.
   workaround: Use Azure Blob lifecycle-management policies, object replication, static website settings, and Event Grid subscriptions configured directly on the storage account.
   disposition: by_design
 - area: Account-level recovery and delete-retention features remain operator-provisioned
   status: by_design
+  readiness_checklist_question: "Do you need point-in-time restore, delete retention, or account-level recovery to be provisioned automatically through S3 APIs?"
   summary: Azure Blob point-in-time restore, change feed, soft delete, and blob versioning are storage-account features configured outside the proxy. DeleteObject/DeleteObjects follow the account's soft-delete policy, so a successful S3 delete can leave recoverable retained bytes until the Azure retention window expires.
   impact: Disaster-recovery plans that expect account-level rollback must pre-enable the Azure features before data lands, and delete-heavy workloads can accumulate retained bytes/quota with no extra S3-side signal beyond the normal delete success path.
   workaround: Decide the storage-account recovery posture up front; enable blob versioning + soft delete + change feed together when Azure PITR is required, and monitor retention/cost behavior through Azure's control plane rather than the S3 API.
   disposition: by_design
 - area: Secondary-region blob reads are not attempted automatically
   status: partial
+  readiness_checklist_question: "During a primary-region outage, must reads automatically fail over to the Azure secondary region?"
   summary: RA-GRS and RA-GZRS storage accounts expose a secondary read endpoint, but the proxy currently authenticates GetObject/HeadObject requests only against the configured primary Blob service endpoint and has no secondary-endpoint failover setting.
   impact: During a primary endpoint outage, GetObject and HeadObject fail instead of serving potentially stale reads from the Azure secondary region.
   workaround: Use Azure account failover, DNS/front-door indirection, or another external read-failover mechanism when the workload requires regional read continuity.
   disposition: by_design
 - area: Object-lock-capable storage accounts must be provisioned up front
   status: by_design
+  readiness_checklist_question: "Do you need to add object-lock support later to an existing storage account?"
   summary: S3 object-lock translation relies on Azure Blob version-level immutability plus blob versioning, and Azure only allows version-level immutability support to be enabled when the storage account is created.
   impact: Pilots started on an existing storage account without that flag cannot add object-lock support later; adopting the workload can require migrating to a newly provisioned account.
   workaround: Provision a dedicated storage account with blob versioning and version-level immutability enabled before adopting object-lock workloads, and validate retention/legal-hold flows against real Azure.
