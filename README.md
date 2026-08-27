@@ -21,12 +21,12 @@ to Azure.
 
 | AWS Service | Azure Target | Module | Compatibility |
 |---|---|---|---|
-| S3 | Blob Storage | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#s3) · [readiness checklist](./docs/site/readiness-checklists/s3.md) |
+| S3 | Blob Storage | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#s3) · [readiness checklist](./docs/site/readiness-checklists/s3.md) · [auth migration](./docs/authorization-migration.md#s3-bucket-policies-bucket-acls-and-object-acls) |
 | SQS | Service Bus | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#sqs) · [readiness checklist](./docs/site/readiness-checklists/sqs.md) |
 | DynamoDB | Cosmos DB (NoSQL API) | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#dynamodb) · [readiness checklist](./docs/site/readiness-checklists/dynamodb.md) |
 | Kinesis | Event Hubs | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#kinesis) · [readiness checklist](./docs/site/readiness-checklists/kinesis.md) |
-| SNS | Service Bus Topics / Event Grid | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#sns) · [readiness checklist](./docs/site/readiness-checklists/sns.md) |
-| Secrets Manager | Key Vault | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#secretsmanager) · [readiness checklist](./docs/site/readiness-checklists/secretsmanager.md) |
+| SNS | Service Bus Topics / Event Grid | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#sns) · [readiness checklist](./docs/site/readiness-checklists/sns.md) · [auth migration](./docs/authorization-migration.md#sns-topic-policies-become-entra-scoped-publisher-identities-plus-azure-rbac) |
+| Secrets Manager | Key Vault | Available | Workload-dependent — [review profile](./docs/site/workload-compatibility.md#secretsmanager) · [readiness checklist](./docs/site/readiness-checklists/secretsmanager.md) · [auth migration](./docs/authorization-migration.md#secrets-manager-resource-policies-and-cross-account-sharing-move-to-key-vault-access-design) |
 
 An available module means the proxy can route that service's AWS wire protocol;
 it does **not** imply full AWS service parity. The project-level meanings of

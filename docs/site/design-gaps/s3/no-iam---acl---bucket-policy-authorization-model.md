@@ -11,6 +11,10 @@ Authorization is the static AWS-key-to-Azure-credential mapping validated by Sig
 
 **Workaround.** Enforce authorization with Azure RBAC, SAS, and network controls.
 
+## See also
+
+- [Authorization migration guide](../../../authorization-migration.md#s3-bucket-policies-bucket-acls-and-object-acls)
+
 ## References
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicy.html>

@@ -12,3 +12,6 @@ DeliveryPolicy, RedrivePolicy, and SubscriptionRoleArn are accepted as no-ops be
 
 **Workaround.** Configure delivery reliability at the Azure backend level; do not rely on SNS policy attributes being enforced.
 
+## See also
+
+- [Authorization migration guide](../../../authorization-migration.md#sns-topic-policies-become-entra-scoped-publisher-identities-plus-azure-rbac)
