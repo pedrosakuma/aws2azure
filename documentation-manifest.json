@@ -1682,6 +1682,18 @@
       }
     },
     {
+      "id": "documentation:docs-testing-adopter-conformance-kit",
+      "path": "docs/testing/adopter-conformance-kit.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:95e3a8228bfefad295ebc01d48dd6200d01a3999d99ec83bbc7c8caee6d43b39",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-testing-documentation-quality",
       "path": "docs/testing/documentation-quality.md",
       "type": "documentation-guide",
@@ -1712,7 +1724,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:7ee4c187ca311de9943665e9072ed231f7907ea82ddc3eed9a1bab0274d7be39",
+      "revision": "sha256:1376a615a27aeccc5338344404dfbab86d246530868858717f339877da0d3215",
       "freshness": {
         "mode": "current"
       }
@@ -1760,7 +1772,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:faf5516ce8e17714199532a267b8241014080f692afbb42702b40f38e749080c",
+      "revision": "sha256:94f14299ee0b2f62baf5e521ddc1a4fdd7ed4aa1c37aca1e53a59348188a6fd7",
       "freshness": {
         "mode": "current"
       }

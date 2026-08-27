@@ -10,6 +10,11 @@ by hand and wiring together ad-hoc environment files was slow and error-prone.
 a contributor (or agent) can reproduce the `integration-real-azure` nightly job
 locally in a few commands.
 
+> **External adopters:** if you are validating `aws2azure` against **your own**
+> Azure subscription before rollout, use
+> [Adopter real-Azure conformance kit](adopter-conformance-kit.md). This page
+> stays focused on contributor/agent reproduction of the repository's nightly path.
+
 > **Non-goal.** This is purely about local/agent reproducibility. It does not
 > change CI cadence or labels, and it does not add nightly-flake tracking
 > (tracked separately per #838).
@@ -190,6 +195,7 @@ up) the reaper are the only cleanup surfaces.
 ## Related documents
 
 - [Nightly real-Azure integration tests](real-azure-nightly.md)
+- [Adopter real-Azure conformance kit](adopter-conformance-kit.md)
 - [Real-AWS capture for Tier-3 differential](real-aws-capture.md)
 - [`eng/repro-real-azure.sh`](../../eng/repro-real-azure.sh)
 - [`deploy/realazure/main.bicep`](../../deploy/realazure/main.bicep)
