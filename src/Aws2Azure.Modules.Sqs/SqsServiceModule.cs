@@ -64,6 +64,19 @@ public sealed class SqsServiceModule : IServiceModule
     public string ServiceName => "sqs";
     public bool RequiresSigV4 => true;
 
+    // SQS's AWS-JSON 1.0 clients (boto3/botocore's default SigV4Auth, unlike
+    // S3's SigV4Auth subclass) never attach x-amz-content-sha256, even though
+    // they still sign every body-bearing request (GetQueueUrl, CreateQueue,
+    // SendMessage, ...) using the real payload hash as part of the canonical
+    // request. Without buffering, ResolvePayloadHash falls back to a
+    // deterministic sentinel that never matches, so every such call is
+    // rejected with InvalidSignatureException/SignatureDoesNotMatch — this
+    // affects any spec-compliant AWS-JSON SQS client that omits the header,
+    // which is the common case, not an edge case. See
+    // IServiceModule.BuffersRequestBodyForSigV4's doc comment, which already
+    // names "SQS-Json" as a service that should enable this.
+    public bool BuffersRequestBodyForSigV4 => true;
+
     // Module-level ErrorFormat covers auth errors emitted by the registry
     // BEFORE the per-request wire protocol has been negotiated. Modern AWS
     // SDKs talk AWS JSON 1.0 to SQS, so JSON is the right default. Per-op
