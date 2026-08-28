@@ -12,6 +12,7 @@ using Aws2Azure.Modules.Sqs;
 using Aws2Azure.Modules.Sqs.Internal;
 using Aws2Azure.Modules.Sqs.Operations;
 using Aws2Azure.Modules.Sqs.WireProtocol;
+using Aws2Azure.Modules.Sqs.Xml;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 
@@ -27,6 +28,9 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// </summary>
 public sealed class GetQueueUrlHandlerTests
 {
+    private const string AtomNs = AtomQueueXmlReader.AtomNs;
+    private const string SbNs = AtomQueueXmlReader.SbNs;
+
     private static readonly ServiceBusCredentials Creds = new()
     {
         Namespace = "fake-ns",
@@ -89,13 +93,53 @@ public sealed class GetQueueUrlHandlerTests
     }
 
     [Fact]
+    public async Task Emulator_feed_fallback_for_unknown_queue_maps_to_non_existent_queue()
+    {
+        // Regression test for issue #955: the local Service Bus Emulator
+        // answers management-plane GET /{queueName} for an unknown queue
+        // with 200 OK and a generic Atom "service document" <feed> (no
+        // matching <entry>), instead of the 404 real Azure Service Bus
+        // returns. GetQueueUrl must not treat that phantom 200 as "queue
+        // exists" — doing so breaks check-then-create clients (e.g. kombu's
+        // SQS transport) that skip CreateQueue once GetQueueUrl "succeeds".
+        var ctx = NewCtx();
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "<feed xmlns=\"" + AtomNs + "\"><title type=\"text\">Publicly Listed Services</title></feed>",
+                Encoding.UTF8,
+                "application/atom+xml"),
+        });
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var sb = new ServiceBusClient(http, Creds);
+
+        await QueueLifecycleHandlers.HandleAsync(
+            ctx,
+            QueryParsed(SqsOperation.GetQueueUrl, ("QueueName", "totally-fresh-queue-xyz")),
+            sb,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("AWS.SimpleQueueService.NonExistentQueue", ReadBody(ctx));
+    }
+
+    [Fact]
     public async Task Existing_queue_resolves_to_placeholder_account_url()
     {
         var ctx = NewCtx();
         var handler = new ScriptedHandler();
         handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(string.Empty, Encoding.UTF8, "application/atom+xml"),
+            Content = new StringContent(
+                "<entry xmlns=\"" + AtomNs + "\">" +
+                  "<title>existing-queue</title>" +
+                  "<content type=\"application/xml\">" +
+                    "<QueueDescription xmlns=\"" + SbNs + "\"></QueueDescription>" +
+                  "</content>" +
+                "</entry>",
+                Encoding.UTF8,
+                "application/atom+xml"),
         });
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var sb = new ServiceBusClient(http, Creds);
