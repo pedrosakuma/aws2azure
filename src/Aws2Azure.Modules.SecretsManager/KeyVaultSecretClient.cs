@@ -18,6 +18,18 @@ internal sealed class KeyVaultSecretClient
     internal const string IntendedVersionStagesTag = InternalTagPrefix + "intended-version-stages";
     internal const string DefaultStageTransitionTag = InternalTagPrefix + "default-stage-transition";
     internal const string PublicationStateTag = InternalTagPrefix + "publication-state";
+    internal const string AwsSecretNameTag = InternalTagPrefix + "secret-name";
+
+    /// <summary>
+    /// Key Vault secret names must match <c>^[0-9a-zA-Z-]+$</c> and be at most 127
+    /// characters, while AWS Secrets Manager names allow <c>/_+=.@-</c> and up to
+    /// ~512 characters (hierarchical, slash-separated names are the default
+    /// convention for tools such as Airflow's SecretsManagerBackend). Leave the
+    /// budget for the hash suffix appended below.
+    /// </summary>
+    private const int MaxSanitizedPrefixLength = 110;
+    private const int HashSuffixHexLength = 16;
+    private const int MaxTagValueLength = 256;
 
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
@@ -342,6 +354,7 @@ internal sealed class KeyVaultSecretClient
     }
 
     public static IReadOnlyDictionary<string, string> BuildInternalTags(
+        string name,
         string? clientRequestToken,
         string payloadSha256,
         IReadOnlyList<string> intendedVersionStages,
@@ -356,6 +369,11 @@ internal sealed class KeyVaultSecretClient
             [PublicationStateTag] = "pending",
         };
 
+        if (CanStoreAsAwsSecretNameTag(name))
+        {
+            tags[AwsSecretNameTag] = name;
+        }
+
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
         {
             tags[ClientRequestTokenTag] = clientRequestToken;
@@ -363,6 +381,16 @@ internal sealed class KeyVaultSecretClient
 
         return tags;
     }
+
+    /// <summary>
+    /// Key Vault tag values are capped at 256 characters, while AWS Secrets
+    /// Manager names allow up to 512. A name in that gap cannot be round-tripped
+    /// verbatim via <see cref="AwsSecretNameTag"/>; <see cref="ListSecretsHandler"/>
+    /// falls back to the (encoded, non-AWS) Key Vault id-derived name for such
+    /// secrets, which is a documented residual gap rather than a bug.
+    /// </summary>
+    public static bool CanStoreAsAwsSecretNameTag(string name)
+        => name.Length <= MaxTagValueLength;
 
     public static IReadOnlyDictionary<string, string> WithVersionStages(IReadOnlyDictionary<string, string>? tags, IReadOnlyList<string> versionStages)
     {
@@ -431,13 +459,82 @@ internal sealed class KeyVaultSecretClient
         return JsonSerializer.Serialize(payload, SecretsManagerJsonContext.Default.KeyVaultSecretTagsRequest);
     }
 
-    public static string BuildSecretPath(string name) => "/secrets/" + Uri.EscapeDataString(name);
+    public static string BuildSecretPath(string name) => "/secrets/" + Uri.EscapeDataString(EncodeVaultSecretName(name));
 
-    public static string BuildSecretVersionPath(string name, string versionId) => "/secrets/" + Uri.EscapeDataString(name) + "/" + Uri.EscapeDataString(versionId);
+    public static string BuildSecretVersionPath(string name, string versionId) => "/secrets/" + Uri.EscapeDataString(EncodeVaultSecretName(name)) + "/" + Uri.EscapeDataString(versionId);
 
-    public static string BuildSecretVersionsPath(string name) => "/secrets/" + Uri.EscapeDataString(name) + "/versions";
+    public static string BuildSecretVersionsPath(string name) => "/secrets/" + Uri.EscapeDataString(EncodeVaultSecretName(name)) + "/versions";
 
-    public static string BuildDeletedSecretPath(string name) => "/deletedsecrets/" + Uri.EscapeDataString(name);
+    public static string BuildDeletedSecretPath(string name) => "/deletedsecrets/" + Uri.EscapeDataString(EncodeVaultSecretName(name));
+
+    /// <summary>
+    /// Maps an AWS Secrets Manager secret name (which may contain <c>/</c> and
+    /// other characters Key Vault rejects, e.g. the Airflow
+    /// <c>SecretsManagerBackend</c> hierarchical convention <c>airflow/connections/foo</c>)
+    /// to a deterministic, Key-Vault-legal name (<c>^[0-9a-zA-Z-]+$</c>, &#8804;127 chars).
+    /// Already-legal names pass through unchanged for readability and backward
+    /// compatibility with pre-existing Key Vault secrets. Because the mapping is
+    /// lossy (disallowed characters become <c>-</c>, and long names are
+    /// truncated), a hash suffix derived from the full original name guarantees
+    /// distinct AWS names never collide on the same Key Vault name. The
+    /// original AWS name is separately preserved via <see cref="AwsSecretNameTag"/>
+    /// so it can be recovered exactly (see <see cref="BuildInternalTags"/>).
+    /// </summary>
+    public static string EncodeVaultSecretName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            throw new ArgumentException("Secret name is required.", nameof(name));
+        }
+
+        if (IsKeyVaultLegalName(name))
+        {
+            return name;
+        }
+
+        var sanitized = new StringBuilder(Math.Min(name.Length, MaxSanitizedPrefixLength));
+        foreach (var ch in name)
+        {
+            if (sanitized.Length >= MaxSanitizedPrefixLength)
+            {
+                break;
+            }
+
+            sanitized.Append(IsLegalNameCharacter(ch) ? ch : '-');
+        }
+
+        var prefix = sanitized.ToString().Trim('-');
+        if (prefix.Length == 0)
+        {
+            prefix = "secret";
+        }
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(name)));
+        var suffix = hash[..HashSuffixHexLength].ToLowerInvariant();
+
+        return prefix + "-" + suffix;
+    }
+
+    private static bool IsKeyVaultLegalName(string name)
+    {
+        if (name.Length == 0 || name.Length > 127)
+        {
+            return false;
+        }
+
+        foreach (var ch in name)
+        {
+            if (!IsLegalNameCharacter(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsLegalNameCharacter(char ch)
+        => (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-';
 
     private static bool IsInternalTag(string name)
         => name.StartsWith(InternalTagPrefix, StringComparison.Ordinal);

@@ -59,6 +59,10 @@ internal static class CreateSecretHandler
             [KeyVaultSecretClient.VersionStagesTag] = "AWSCURRENT",
             [KeyVaultSecretClient.PublicationStateTag] = "published",
         };
+        if (KeyVaultSecretClient.CanStoreAsAwsSecretNameTag(name))
+        {
+            tags[KeyVaultSecretClient.AwsSecretNameTag] = name;
+        }
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
         {
             tags[KeyVaultSecretClient.ClientRequestTokenTag] = clientRequestToken;

@@ -61,6 +61,13 @@ design_gaps:
   - https://learn.microsoft.com/en-us/azure/key-vault/general/rbac-guide
   - https://learn.microsoft.com/en-us/azure/key-vault/general/assign-access-policy
   disposition: by_design
+- area: Hierarchical (slash-containing) secret names require Key Vault name translation
+  status: by_design
+  readiness_checklist_question: "Do your secret names use characters outside [0-9a-zA-Z-] (for example hierarchical / paths, as used by Airflow's SecretsManagerBackend) or exceed 127 characters?"
+  summary: Azure Key Vault secret names must match `^[0-9a-zA-Z-]+$` and be at most 127 characters, while AWS Secrets Manager names allow `/_+=.@-` and up to 512 characters. The proxy deterministically maps any non-Key-Vault-legal AWS name to a sanitized-prefix-plus-SHA-256-hash Key Vault name before every Key Vault REST call, and preserves the exact original AWS name in the `aws2azure-secret-name` internal tag so all operations still report the AWS name the caller used.
+  impact: "Without this translation, any AWS-style hierarchical name would 404 against real Key Vault with a raw IIS error instead of a clean AWS error. The residual gap is names between 257 and 512 characters, which are past Key Vault's 256-character tag-value limit: CreateSecret still succeeds and echoes the exact AWS name in its own response, but ListSecrets can only recover the Key-Vault-legal encoded name for that specific secret (not the original AWS name) until it is renamed shorter."
+  workaround: Keep hierarchical secret names at or below 256 characters to retain exact-name recovery in ListSecrets. Any length is otherwise supported end-to-end for CreateSecret/GetSecretValue/DescribeSecret/PutSecretValue/UpdateSecret/DeleteSecret/TagResource/UntagResource, which always receive and echo the caller-supplied AWS name directly.
+  disposition: by_design
 workload_patterns:
 - id: secretsmanager_basic_lifecycle
   name: Basic secret lifecycle
@@ -76,6 +83,7 @@ workload_patterns:
   design_gaps:
   - Deletion recovery semantics differ
   - Managed HSM endpoints do not implement the secrets API
+  - Hierarchical (slash-containing) secret names require Key Vault name translation
   guidance: Suitable after configuring Entra ID authentication, granting the proxy identity the required Key Vault data-plane permissions (typically Key Vault Secrets Officer for this read/write/delete profile), and validating Key Vault soft-delete behavior for the deployment. Key Vault Secrets User is read-only, while Key Vault Reader and Key Vault Contributor do not grant secret-value access.
 - id: secretsmanager_version_stages
   name: Version stages
