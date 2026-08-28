@@ -26,9 +26,10 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// the SQS-native NonExistentQueue response — none of which had dedicated unit
 /// coverage before this change (QueueLifecycleHandlers.GetQueueUrlAsync).
 /// </summary>
-public sealed class GetQueueUrlHandlerTests : IDisposable
+public sealed class GetQueueUrlHandlerTests
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
+    private const string SbNs = AtomQueueXmlReader.SbNs;
 
     private static readonly ServiceBusCredentials Creds = new()
     {
@@ -36,16 +37,6 @@ public sealed class GetQueueUrlHandlerTests : IDisposable
         SasKeyName = "RootManageSharedAccessKey",
         SasKey = Convert.ToBase64String([1, 2, 3, 4, 5, 6, 7, 8]),
     };
-
-    public GetQueueUrlHandlerTests()
-    {
-        SqsQueueMetadataCache.ResetForTesting();
-    }
-
-    public void Dispose()
-    {
-        SqsQueueMetadataCache.ResetForTesting();
-    }
 
     [Fact]
     public async Task Missing_queue_name_returns_invalid_parameter_value()
@@ -113,16 +104,13 @@ public sealed class GetQueueUrlHandlerTests : IDisposable
         // SQS transport) that skip CreateQueue once GetQueueUrl "succeeds".
         var ctx = NewCtx();
         var handler = new ScriptedHandler();
-        for (var i = 0; i < 15; i++)
+        handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "<feed xmlns=\"" + AtomNs + "\"><title type=\"text\">Publicly Listed Services</title></feed>",
-                    Encoding.UTF8,
-                    "application/atom+xml"),
-            });
-        }
+            Content = new StringContent(
+                "<feed xmlns=\"" + AtomNs + "\"><title type=\"text\">Publicly Listed Services</title></feed>",
+                Encoding.UTF8,
+                "application/atom+xml"),
+        });
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var sb = new ServiceBusClient(http, Creds);
 
@@ -143,7 +131,15 @@ public sealed class GetQueueUrlHandlerTests : IDisposable
         var handler = new ScriptedHandler();
         handler.Enqueue(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent(string.Empty, Encoding.UTF8, "application/atom+xml"),
+            Content = new StringContent(
+                "<entry xmlns=\"" + AtomNs + "\">" +
+                  "<title>existing-queue</title>" +
+                  "<content type=\"application/xml\">" +
+                    "<QueueDescription xmlns=\"" + SbNs + "\"></QueueDescription>" +
+                  "</content>" +
+                "</entry>",
+                Encoding.UTF8,
+                "application/atom+xml"),
         });
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var sb = new ServiceBusClient(http, Creds);

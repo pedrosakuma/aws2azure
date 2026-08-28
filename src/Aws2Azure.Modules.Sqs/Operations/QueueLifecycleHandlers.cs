@@ -241,21 +241,39 @@ internal static class QueueLifecycleHandlers
         }
 
         // SQS GetQueueUrl returns NonExistentQueue when the queue is unknown,
-        // so we verify against SB before synthesising the URL. Reuse the
-        // shared metadata-cache lookup (SqsQueueMetadataCache.GetAsyncCore)
-        // rather than a raw GetQueueAsync + IsSuccessStatusCode check: real
-        // Azure Service Bus returns 404 for an unknown queue, but the local
-        // Service Bus Emulator instead answers 200 OK with a generic Atom
-        // "service document" <feed> (no matching <entry>) for any
-        // unrecognised path. The shared lookup already parses the Atom body
-        // and treats an unparseable/non-entry 2xx as not-found (with the same
-        // bounded retry it uses for the real-Azure delete-settling window),
-        // so this also protects check-then-create callers such as kombu's
-        // SQS transport. See issue #955.
-        var lookup = await SqsQueueMetadataCache.GetAsync(sb, queueName, ct).ConfigureAwait(false);
-        if (!lookup.Success)
+        // so we verify against SB before synthesising the URL. Real Azure
+        // Service Bus returns 404 for an unknown queue, but the local Service
+        // Bus Emulator instead answers 200 OK with a generic Atom "service
+        // document" <feed> (no matching <entry>) for any unrecognised path.
+        // Parse the body and treat a 2xx that doesn't actually describe the
+        // requested queue the same as not-found, so check-then-create
+        // callers (e.g. kombu's SQS transport) aren't misled into skipping
+        // CreateQueue. See issue #955.
+        //
+        // Deliberately a single probe with no retry: DeleteQueue.yaml already
+        // documents that GetQueueUrl's existence-probe eventual-consistency
+        // window against real Azure (issue #626) has no empirically bounded
+        // upper bound, so adding a bounded retry here would just add latency
+        // to every genuinely-nonexistent-queue lookup without a reliable
+        // fix for the real-Azure case.
+        using var response = await sb.GetQueueAsync(queueName, ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            await WriteErrorAsync(context, parsed.Protocol, lookup.Error!.Value).ConfigureAwait(false);
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
+            return;
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            await WriteErrorAsync(context, parsed.Protocol,
+                SqsErrorMapping.FromServiceBus(response)).ConfigureAwait(false);
+            return;
+        }
+
+        var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var entry = AtomQueueXmlReader.ParseQueueEntry(xml);
+        if (entry is null)
+        {
+            await WriteErrorAsync(context, parsed.Protocol, SqsErrorMapping.QueueDoesNotExist()).ConfigureAwait(false);
             return;
         }
 
