@@ -6,7 +6,7 @@
 - **Status:** 🔵 by design
 - **Disposition:** 🔵 by design
 
-Azure Key Vault secret names must match `^[0-9a-zA-Z-]+$` and be at most 127 characters, while AWS Secrets Manager names allow `/_+=.@-` and up to 512 characters. The proxy deterministically maps any non-Key-Vault-legal AWS name to a sanitized-prefix-plus-SHA-256-hash Key Vault name before every Key Vault REST call, and preserves the exact original AWS name in the `aws2azure-secret-name` internal tag so all operations still report the AWS name the caller used.
+Azure Key Vault secret names must match `^[0-9a-zA-Z-]+$` and be at most 127 characters, while AWS Secrets Manager names allow `/_+=.@-` and up to 512 characters. The proxy deterministically maps any non-Key-Vault-legal AWS name to a sanitized-prefix-plus-hash Key Vault name (a non-cryptographic FNV-1a 64-bit hash, chosen over a cryptographic hash since the only actor able to trigger a collision already owns every secret under that AWS account) before every Key Vault REST call, and preserves the exact original AWS name in the `aws2azure-secret-name` internal tag so all operations still report the AWS name the caller used.
 
 **Impact.** Without this translation, any AWS-style hierarchical name would 404 against real Key Vault with a raw IIS error instead of a clean AWS error. The residual gap is names between 257 and 512 characters, which are past Key Vault's 256-character tag-value limit: CreateSecret still succeeds and echoes the exact AWS name in its own response, but ListSecrets can only recover the Key-Vault-legal encoded name for that specific secret (not the original AWS name) until it is renamed shorter.
 
