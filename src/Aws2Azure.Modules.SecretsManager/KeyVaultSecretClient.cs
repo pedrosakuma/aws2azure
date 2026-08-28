@@ -28,7 +28,6 @@ internal sealed class KeyVaultSecretClient
     /// budget for the hash suffix appended below.
     /// </summary>
     private const int MaxSanitizedPrefixLength = 110;
-    private const int HashSuffixHexLength = 16;
     private const int MaxTagValueLength = 256;
 
     private readonly AzureHttpClient _http;
@@ -479,6 +478,13 @@ internal sealed class KeyVaultSecretClient
     /// distinct AWS names never collide on the same Key Vault name. The
     /// original AWS name is separately preserved via <see cref="AwsSecretNameTag"/>
     /// so it can be recovered exactly (see <see cref="BuildInternalTags"/>).
+    /// The suffix uses FNV-1a-64 (not SHA-256): the "attacker" here is always
+    /// the same authenticated identity that owns every secret under the AWS
+    /// account bound to this Key Vault, so there is no adversarial-collision
+    /// threat model to defend against — only the collision-avoidance already
+    /// covered by 64 bits of hash space at typical per-account secret counts.
+    /// This keeps the request-path CPU/allocation cost far lower than a
+    /// cryptographic hash, matching the sidecar's low-overhead footprint goal.
     /// </summary>
     public static string EncodeVaultSecretName(string name)
     {
@@ -509,10 +515,38 @@ internal sealed class KeyVaultSecretClient
             prefix = "secret";
         }
 
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(name)));
-        var suffix = hash[..HashSuffixHexLength].ToLowerInvariant();
+        var suffix = Fnv1a64Hex(name);
 
         return prefix + "-" + suffix;
+    }
+
+    /// <summary>
+    /// FNV-1a, 64-bit variant (public-domain algorithm by Fowler/Noll/Vo;
+    /// http://www.isthe.com/chongo/tech/comp/fnv/). Verified against the
+    /// published test vectors in <c>KeyVaultSecretNameEncodingTests</c>.
+    /// Deliberately non-cryptographic and dependency-free: it is pure
+    /// unsigned 64-bit XOR/multiply arithmetic over the name's UTF-8 bytes
+    /// processed strictly left-to-right, so the result depends only on the
+    /// (portable, standardized) UTF-8 byte sequence — never on pointer
+    /// layout, struct field order, or native endianness — and is therefore
+    /// identical across every OS/CPU architecture and every execution mode
+    /// this project ships (JIT, ReadyToRun, Native AOT). This is required
+    /// because the same secret name must always encode to the same Key
+    /// Vault name regardless of which proxy instance/host produced it.
+    /// </summary>
+    internal static string Fnv1a64Hex(string name)
+    {
+        const ulong OffsetBasis = 0xcbf29ce484222325;
+        const ulong Prime = 0x100000001b3;
+
+        var hash = OffsetBasis;
+        foreach (var b in Encoding.UTF8.GetBytes(name))
+        {
+            hash ^= b;
+            hash *= Prime;
+        }
+
+        return hash.ToString("x16");
     }
 
     private static bool IsKeyVaultLegalName(string name)

@@ -91,6 +91,33 @@ public sealed class KeyVaultSecretNameEncodingTests
         Assert.Matches(KeyVaultLegalName, encoded);
     }
 
+    // Known-answer tests (KAT) for the FNV-1a, 64-bit hash used for the hash
+    // suffix, using the published test vectors from the algorithm's reference
+    // site (http://www.isthe.com/chongo/tech/comp/fnv/). These pin the exact
+    // hash value so the algorithm's portability (identical output on every
+    // OS/CPU/execution mode, since it's pure UTF-8-byte arithmetic with no
+    // platform-dependent memory layout or endianness involved) and any future
+    // accidental algorithm change are both caught by test failures.
+    [Theory]
+    [InlineData("", "cbf29ce484222325")]
+    [InlineData("a", "af63dc4c8601ec8c")]
+    [InlineData("foobar", "85944171f73967e8")]
+    public void Fnv1a64Hex_matches_published_test_vectors(string input, string expectedHex)
+    {
+        Assert.Equal(expectedHex, KeyVaultSecretClient.Fnv1a64Hex(input));
+    }
+
+    [Fact]
+    public void EncodeVaultSecretName_hash_suffix_matches_Fnv1a64Hex_of_the_full_original_name()
+    {
+        const string name = "airflow/connections/my_conn";
+
+        var encoded = KeyVaultSecretClient.EncodeVaultSecretName(name);
+        var expectedSuffix = KeyVaultSecretClient.Fnv1a64Hex(name);
+
+        Assert.EndsWith("-" + expectedSuffix, encoded, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task HandleAsync_CreateSecret_with_slash_name_targets_encoded_key_vault_path_and_tags_raw_name()
     {
