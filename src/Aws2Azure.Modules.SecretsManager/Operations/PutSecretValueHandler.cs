@@ -123,6 +123,7 @@ internal static class PutSecretValueHandler
         }
 
         var internalTags = KeyVaultSecretClient.BuildInternalTags(
+            name,
             clientRequestToken,
             payloadSha256,
             versionStages,
