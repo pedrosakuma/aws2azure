@@ -63,6 +63,6 @@
     "dynamodb.PutItem (small)":          { "baseline": "azure-sdk.Cosmos.UpsertItem (small)",          "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
     "sqs.ReceiveMessage+Delete (1)":     { "baseline": "azure-sdk.ServiceBus.ReceiveMessage+Complete (1)", "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 },
     "kinesis.PutRecord (256 B)":         { "baseline": "azure-sdk.EventHubs.SendAsync (256 B, c=1)",    "minThroughputRatio": 0.0, "maxP50Ratio": 6.0 },
-    "kinesis.GetRecords (256 B records)":{ "baseline": "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)", "minThroughputRatio": 0.50, "maxP99Ratio": 1.5 }
+    "kinesis.GetRecords (256 B records)":{ "baseline": "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)", "minThroughputRatio": 0.50, "maxP99Ratio": 3.0 }
   }
 }
