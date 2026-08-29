@@ -375,6 +375,11 @@ internal sealed class CosmosClient
         }
         catch (EntraIdTokenException ex)
         {
+            if (_regionLogger is { } logger)
+            {
+                DynamoDbLog.TokenAcquisitionFailed(logger, endpoint.AbsoluteUri, ex.Message);
+            }
+
             return new HttpResponseMessage(ex.BackendStatus)
             {
                 RequestMessage = new HttpRequestMessage(
@@ -511,6 +516,11 @@ internal sealed class CosmosClient
             catch (EntraIdTokenException ex)
             {
                 lastFailoverResponse?.Dispose();
+                if (_regionLogger is { } logger)
+                {
+                    DynamoDbLog.TokenAcquisitionFailed(logger, endpoint.AbsoluteUri, ex.Message);
+                }
+
                 // AAD token acquisition failed before the Cosmos request was sent.
                 // Surface a synthetic response carrying the normalised backend status so
                 // the existing CosmosOpsShared.WriteCosmosErrorAsync mapping renders the

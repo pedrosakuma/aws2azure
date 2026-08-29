@@ -81,4 +81,18 @@ internal static partial class DynamoDbLog
         string containerName,
         int statusCode,
         string errorBody);
+
+    // Message text is deliberately just ex.Message ("Entra ID token request
+    // failed with HTTP {code}."), never ex.ResponseBody — the response body can
+    // carry Azure auth diagnostics and must not be logged/echoed (see
+    // EntraIdTokenException.ResponseBody). Surfacing this distinguishing string
+    // to the proxy's console output lets integration-real-azure.yml's transient
+    // Entra 401 retry (issue #922) detect and retry failures whose synthetic
+    // Cosmos response otherwise renders only as a generic DynamoDB
+    // AccessDeniedException/Forbidden with no trace of the underlying cause.
+    [LoggerMessage(
+        EventId = 1074823881,
+        Level = LogLevel.Warning,
+        Message = "Cosmos request against {Endpoint} failed before it was sent: {Reason}")]
+    public static partial void TokenAcquisitionFailed(ILogger logger, string endpoint, string reason);
 }
