@@ -160,6 +160,16 @@ each path, and only pairs against a baseline that is itself a stable ruler:
   the observed minimum of **0.484×**.
 - Other **REST + AMQP receive** pairs keep **p99-ratio** when their latency
   distribution and SDK baseline are demonstrated stable.
+- **Kinesis GetRecords** (`kinesis.GetRecords (256 B records)` vs
+  `azure-sdk.EventHubs.ReceiveBatchAsync`) raised its **p99-ratio ceiling from
+  1.5× to 3.0×**, matching the other AMQP-receive pairings
+  (`dynamodb.PutItem`, `sqs.ReceiveMessage+Delete`). The 1.5× ceiling was an
+  outlier vs. every sibling pairing (3.0×–4.5×) and tripped the gate on
+  `main` in 3 of the last ~20 nightly `perf.yml` runs with no accompanying
+  code change — each failing run's p99 ratio was in the 1.6×–1.8× band, i.e.
+  within normal AMQP cold-attach/receive-loop jitter for a single-worker,
+  30 s, no-warmup scenario, not a regression. No accepted proxy behavior
+  change motivates this bump; it corrects a miscalibrated ceiling.
 - **EventHubs send** (`kinesis.PutRecord`) gates on **p50-ratio (median)**. A
   send's distribution is bimodal — a steady mode plus rare multi-second cold
   link-attach spikes — and which side those spikes land in p99 (vs max) is
