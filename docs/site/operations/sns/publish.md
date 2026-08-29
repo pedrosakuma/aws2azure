@@ -35,6 +35,7 @@ For Service Bus-backed topics whose SNS names end in .fifo, Publish requires Mes
 
 ## Behaviour differences
 
+- Publish accepts the legacy TargetArn parameter as a fallback alias for TopicArn when TopicArn is absent, matching real AWS SNS's backward-compatible behavior (TargetArn predates TopicArn and is still sent by some SNS clients, including Apache Airflow's SnsPublishOperator). aws2azure only supports the topic-publish use case; TargetArn values pointing at mobile push platform endpoints are not supported. Confirmed by PublishHandlerTests.HandleAsync_accepts_legacy_TargetArn_as_alias_for_TopicArn.
 - MessageId is a proxy-generated GUID, not an AWS-generated SNS identifier.
 - SequenceNumber is returned empty because neither Azure Service Bus nor Azure Event Grid exposes an SNS-compatible sequence number on publish.
 - MessageStructure=json is passed through as-is; the proxy does not filter per-protocol payloads yet.

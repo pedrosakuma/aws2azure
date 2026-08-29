@@ -40,6 +40,52 @@ public sealed class PublishHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_accepts_legacy_TargetArn_as_alias_for_TopicArn()
+    {
+        // Real AWS SNS's Publish API has accepted TargetArn as a
+        // backward-compatible alias for publishing to a topic since before
+        // TopicArn existed. Airflow's SnsPublishOperator (and other older
+        // SNS clients) always send TargetArn, never TopicArn.
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("TargetArn", "arn:aws:sns:us-west-2:000000000000:orders"), ("Message", "hello world")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+             RejectingManagementClient(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("hello world", Encoding.UTF8.GetString(sender.SingleCall!.Value.Message.Body.Span));
+    }
+
+    [Fact]
+    public async Task HandleAsync_rejects_when_both_TopicArn_and_TargetArn_are_missing()
+    {
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(("Message", "hello world")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+             RejectingManagementClient(),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Null(sender.SingleCall);
+    }
+
+    [Fact]
     public async Task HandleAsync_routes_to_event_grid_when_topic_backend_matches()
     {
         var context = NewContext();
