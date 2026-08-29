@@ -55,7 +55,7 @@ services:
   # The target database must be created before use (see docs/getting-started.md).
   # ───────────────────────────────────────────────────────────────────────────
   cosmos:
-    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
     profiles: ["dynamodb", "full"]
     tty: true
     mem_limit: 3g
