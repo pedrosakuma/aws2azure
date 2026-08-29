@@ -44,7 +44,7 @@ services:
       - "5300:5300"
 
   cosmos-emulator:
-    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
     container_name: aws2azure-cosmos
     tty: true
     mem_limit: 3g
