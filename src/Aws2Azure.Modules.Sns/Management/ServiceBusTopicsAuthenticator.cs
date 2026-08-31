@@ -18,6 +18,7 @@ public interface IServiceBusTopicsAuthenticator
 public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticator
 {
     public const string ServiceBusScope = "https://servicebus.azure.net/.default";
+    private const string DefaultRuleSuffix = "/rules/$Default";
 
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly TimeProvider _clock;
@@ -52,7 +53,12 @@ public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticat
 
             request.Headers.TryAddWithoutValidation(
                 "Authorization",
-                GenerateSharedAccessSignature(request.RequestUri, credentials.SasKeyName, credentials.SasKey, _clock.GetUtcNow().Add(_tokenTtl)));
+                GenerateSharedAccessSignature(
+                    request.RequestUri,
+                    credentials.SasKeyName,
+                    credentials.SasKey,
+                    _clock.GetUtcNow().Add(_tokenTtl),
+                    UseNamespaceScopedSasAudience(request.RequestUri)));
             return;
         }
 
@@ -76,13 +82,22 @@ public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticat
         }
     }
 
-    internal static string GenerateSharedAccessSignature(Uri resourceUri, string keyName, string keyValue, DateTimeOffset expiry)
+    internal static string GenerateSharedAccessSignature(
+        Uri resourceUri,
+        string keyName,
+        string keyValue,
+        DateTimeOffset expiry,
+        bool namespaceScoped = false)
     {
         ArgumentNullException.ThrowIfNull(resourceUri);
         ArgumentException.ThrowIfNullOrWhiteSpace(keyName);
         ArgumentException.ThrowIfNullOrWhiteSpace(keyValue);
 
-        var resource = resourceUri.GetLeftPart(UriPartial.Path).TrimEnd('/').ToLowerInvariant();
+        var resource = (namespaceScoped
+                ? resourceUri.GetLeftPart(UriPartial.Authority)
+                : resourceUri.GetLeftPart(UriPartial.Path))
+            .TrimEnd('/')
+            .ToLowerInvariant();
         var encodedResource = HttpUtility.UrlEncode(resource);
         var expirySeconds = expiry.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
         var stringToSign = encodedResource + "\n" + expirySeconds;
@@ -94,5 +109,16 @@ public sealed class ServiceBusTopicsAuthenticator : IServiceBusTopicsAuthenticat
              + "&sig=" + HttpUtility.UrlEncode(signature)
              + "&se=" + expirySeconds
              + "&skn=" + HttpUtility.UrlEncode(keyName);
+    }
+
+    internal static bool UseNamespaceScopedSasAudience(Uri resourceUri)
+    {
+        ArgumentNullException.ThrowIfNull(resourceUri);
+        // Real Service Bus only needs the broader namespace-scoped SAS audience
+        // for the reserved $Default rule subresource; other SNS admin routes keep
+        // their original entity-scoped audience so existing least-privilege SAS
+        // policies continue to work (#800).
+        return Uri.UnescapeDataString(resourceUri.AbsolutePath)
+            .EndsWith(DefaultRuleSuffix, StringComparison.OrdinalIgnoreCase);
     }
 }

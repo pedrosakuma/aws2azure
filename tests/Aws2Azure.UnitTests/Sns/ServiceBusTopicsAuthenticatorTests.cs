@@ -8,6 +8,56 @@ namespace Aws2Azure.UnitTests.Sns;
 
 public sealed class ServiceBusTopicsAuthenticatorTests
 {
+    [Fact]
+    public void GenerateSharedAccessSignature_scopes_default_rule_sas_to_namespace_root()
+    {
+        var expiry = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+        var resourceUri = new Uri("https://myns.servicebus.windows.net/orders/subscriptions/sub123/rules/%24Default?api-version=2021-05");
+
+        var signature = ServiceBusTopicsAuthenticator.GenerateSharedAccessSignature(
+            resourceUri,
+            "RootManageSharedAccessKey",
+            "secret",
+            expiry,
+            ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(resourceUri));
+
+        Assert.Contains(
+            "sr=https%3a%2f%2fmyns.servicebus.windows.net",
+            signature,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("orders%2fsubscriptions", signature, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GenerateSharedAccessSignature_keeps_non_default_rule_sas_entity_scoped()
+    {
+        var expiry = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+        var resourceUri = new Uri("https://myns.servicebus.windows.net/orders/subscriptions/sub123?api-version=2021-05");
+
+        var signature = ServiceBusTopicsAuthenticator.GenerateSharedAccessSignature(
+            resourceUri,
+            "RootManageSharedAccessKey",
+            "secret",
+            expiry,
+            ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(resourceUri));
+
+        Assert.Contains(
+            "sr=https%3a%2f%2fmyns.servicebus.windows.net%2forders%2fsubscriptions%2fsub123",
+            signature,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UseNamespaceScopedSasAudience_matches_only_reserved_default_rule()
+    {
+        Assert.True(ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(
+            new Uri("https://myns.servicebus.windows.net/orders/subscriptions/sub123/rules/%24Default?api-version=2021-05")));
+        Assert.False(ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(
+            new Uri("https://myns.servicebus.windows.net/orders/subscriptions/sub123/rules/custom?api-version=2021-05")));
+        Assert.False(ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(
+            new Uri("https://myns.servicebus.windows.net/orders/subscriptions/sub123?api-version=2021-05")));
+    }
+
     // A token-endpoint failure during AAD auth must be converted into the module's
     // status-carrying ServiceBusTopicsManagementException so the existing
     // SnsTopicSupport mapping renders the faithful SNS error (429 -> Throttled,
