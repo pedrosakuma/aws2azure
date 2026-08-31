@@ -246,7 +246,7 @@ emulator — the proxy boots regardless and only connects on the first request.
 | AWS service | Azure target | Local emulator | Turnkey? |
 |---|---|---|---|
 | **S3** | Blob Storage | Azurite (default) | ✅ Yes — dynamic containers/blobs |
-| **DynamoDB** | Cosmos DB (NoSQL) | Cosmos emulator (`--profile dynamodb`) | ⚠️ Database must be created first; serves a self-signed TLS cert |
+| **DynamoDB** | Cosmos DB (NoSQL) | Cosmos emulator (`--profile dynamodb`) | ⚠️ Database must be created first (plain HTTP, no TLS bypass needed) |
 | **SQS** | Service Bus | Service Bus emulator (`--profile messaging`) | ⚠️ Queues must be pre-declared in the emulator config |
 | **SNS** | Service Bus Topics / Event Grid | Service Bus emulator (`--profile messaging`) | ⚠️ Topics must be pre-declared |
 | **Kinesis** | Event Hubs | *(none)* | ❌ No emulator — point at a real Event Hubs namespace |
@@ -261,8 +261,9 @@ docker compose --profile full up         # adds everything
 The Service Bus emulator does **not** create queues/topics dynamically — declare
 them up front in
 [`deploy/emulators/servicebus/Config.json`](../deploy/emulators/servicebus/Config.json).
-The Cosmos emulator needs ~3 GB of RAM, takes 1–2 minutes to start, and serves a
-self-signed certificate.
+The Cosmos emulator needs ~3 GB of RAM, takes 1–2 minutes to start, and serves
+plain HTTP on port 8081 (no TLS bypass needed, matching `docker/config.json`'s
+`http://cosmos:8081/` target).
 
 > **Emulators are not behavior-equivalent to real Azure.** They diverge on
 > consistency, throttling, auth edge cases, and feature surface. Treat "works

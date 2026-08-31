@@ -37,6 +37,7 @@ public sealed class DynamoDbLogTests
             [nameof(DynamoDbLog.LogSprocCreated)] = 1859797362,
             [nameof(DynamoDbLog.ProbeFailed)] = 353337968,
             [nameof(DynamoDbLog.SelectedEndpoint)] = 86962373,
+            [nameof(DynamoDbLog.TokenAcquisitionFailed)] = 1074823881,
         };
 
         Assert.Equal(

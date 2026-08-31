@@ -22,6 +22,7 @@
 - Returned QueueUrl is '{request-scheme}://{request-host}/000000000000/{queue}' so the AWS SDK keeps routing back to the same proxy endpoint the caller reached.
 - Existence check uses Service Bus GET; an unknown queue returns AWS.SimpleQueueService.NonExistentQueue.
 - Validated against real Azure Service Bus through both the standard message lifecycle and queue discovery after proxy restart.
+- Against the local Service Bus Emulator, an unknown queue's management-plane GET returns 200 OK with a generic Atom service-document <feed> instead of the 404 real Azure Service Bus returns; the existence check treats an unparseable/non-entry 2xx body the same as not-found so this does not surface as a false-positive success. [conformance:Aws2Azure.UnitTests.Sqs.GetQueueUrlHandlerTests.Emulator_feed_fallback_for_unknown_queue_maps_to_non_existent_queue]
 
 ## References
 

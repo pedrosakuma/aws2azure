@@ -68,7 +68,12 @@ internal static class SnsRealAzureManagementRestProbe
         request.Headers.TryAddWithoutValidation("Accept", "application/atom+xml");
         request.Headers.TryAddWithoutValidation(
             "Authorization",
-            GenerateSharedAccessSignature(requestUri, parts.SharedAccessKeyName, parts.SharedAccessKey, DateTimeOffset.UtcNow.AddMinutes(20)));
+            GenerateSharedAccessSignature(
+                requestUri,
+                parts.SharedAccessKeyName,
+                parts.SharedAccessKey,
+                DateTimeOffset.UtcNow.AddMinutes(20),
+                ServiceBusTopicsAuthenticator.UseNamespaceScopedSasAudience(requestUri)));
 
         if (body is not null)
         {
@@ -122,9 +127,14 @@ internal static class SnsRealAzureManagementRestProbe
         Uri resourceUri,
         string keyName,
         string keyValue,
-        DateTimeOffset expiry)
+        DateTimeOffset expiry,
+        bool namespaceScoped)
     {
-        var resource = resourceUri.GetLeftPart(UriPartial.Path).TrimEnd('/').ToLowerInvariant();
+        var resource = (namespaceScoped
+                ? resourceUri.GetLeftPart(UriPartial.Authority)
+                : resourceUri.GetLeftPart(UriPartial.Path))
+            .TrimEnd('/')
+            .ToLowerInvariant();
         var encodedResource = WebUtility.UrlEncode(resource);
         var expirySeconds = expiry.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
         var stringToSign = encodedResource + "\n" + expirySeconds;

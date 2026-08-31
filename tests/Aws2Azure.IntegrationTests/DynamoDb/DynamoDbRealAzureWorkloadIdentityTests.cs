@@ -72,46 +72,64 @@ public sealed class DynamoDbRealAzureWorkloadIdentityTests
             }).ConfigureAwait(false);
             tableCreated = true;
 
-            // Wait for readiness through the WI client: DescribeTable performs the
-            // first (cold) read of the table-metadata sidecar doc, so the
-            // AAD-authenticated metadata path — not just the item writes — is
-            // exercised before the item CRUD warms the shared metadata cache.
-            await WaitForTableActiveAsync(wi, table).ConfigureAwait(false);
-
-            await wi.PutItemAsync(new PutItemRequest
+            try
             {
-                TableName = table,
-                Item = new Dictionary<string, AttributeValue>
+                // Wait for readiness through the WI client: DescribeTable performs the
+                // first (cold) read of the table-metadata sidecar doc, so the
+                // AAD-authenticated metadata path — not just the item writes — is
+                // exercised before the item CRUD warms the shared metadata cache.
+                await WaitForTableActiveAsync(wi, table).ConfigureAwait(false);
+
+                await wi.PutItemAsync(new PutItemRequest
                 {
-                    ["pk"] = new AttributeValue { S = "item-1" },
-                    ["payload"] = new AttributeValue { S = "real-azure-wi" },
-                },
-            }).ConfigureAwait(false);
+                    TableName = table,
+                    Item = new Dictionary<string, AttributeValue>
+                    {
+                        ["pk"] = new AttributeValue { S = "item-1" },
+                        ["payload"] = new AttributeValue { S = "real-azure-wi" },
+                    },
+                }).ConfigureAwait(false);
 
-            var got = await wi.GetItemAsync(new GetItemRequest
+                var got = await wi.GetItemAsync(new GetItemRequest
+                {
+                    TableName = table,
+                    Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
+                    ConsistentRead = true,
+                }).ConfigureAwait(false);
+
+                Assert.True(got.IsItemSet);
+                Assert.Equal("real-azure-wi", got.Item["payload"].S);
+
+                await wi.DeleteItemAsync(new DeleteItemRequest
+                {
+                    TableName = table,
+                    Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
+                }).ConfigureAwait(false);
+
+                var afterDelete = await wi.GetItemAsync(new GetItemRequest
+                {
+                    TableName = table,
+                    Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
+                    ConsistentRead = true,
+                }).ConfigureAwait(false);
+
+                Assert.False(afterDelete.IsItemSet);
+            }
+            catch (Exception ex)
             {
-                TableName = table,
-                Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
-                ConsistentRead = true,
-            }).ConfigureAwait(false);
-
-            Assert.True(got.IsItemSet);
-            Assert.Equal("real-azure-wi", got.Item["payload"].S);
-
-            await wi.DeleteItemAsync(new DeleteItemRequest
-            {
-                TableName = table,
-                Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
-            }).ConfigureAwait(false);
-
-            var afterDelete = await wi.GetItemAsync(new GetItemRequest
-            {
-                TableName = table,
-                Key = new Dictionary<string, AttributeValue> { ["pk"] = new AttributeValue { S = "item-1" } },
-                ConsistentRead = true,
-            }).ConfigureAwait(false);
-
-            Assert.False(afterDelete.IsItemSet);
+                // Surface the proxy's own console output (which now logs the Entra
+                // token-endpoint status via CosmosClient — see DynamoDbLog.
+                // TokenAcquisitionFailed) in the xUnit failure message. Without this,
+                // a transient Entra 401 collapses to a generic DynamoDB
+                // AccessDeniedException/"Forbidden" with no trace of the underlying
+                // cause, and integration-real-azure.yml's transient-401 retry (issue
+                // #922) — which greps the test-run log for the literal "Entra ID
+                // token request failed with HTTP 401." — never fires for this test.
+                throw new InvalidOperationException(
+                    "Workload-Identity item data path failed. Proxy output tail:\n" +
+                    OutputTail(_fx.ProxyOutput, 8_000),
+                    ex);
+            }
         }
         finally
         {
@@ -149,4 +167,7 @@ public sealed class DynamoDbRealAzureWorkloadIdentityTests
             await Task.Delay(500).ConfigureAwait(false);
         }
     }
+
+    private static string OutputTail(string output, int maxChars) =>
+        output.Length <= maxChars ? output : output[^maxChars..];
 }

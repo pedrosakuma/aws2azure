@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:1e75c106b20f845b8b5dd7d0c9c015cf233b3e9741d69cc0bb60deb4b1b2f387",
+  "manifest_revision": "sha256:86ed0d1c7fab6aeefba840ce6f847db1b68337bed561d17f417d1f8e9475440e",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-08-27T00:19:31Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:96a32009affb378f7437e29deaac7197f0301595a4276b7ccd46612226619cbb",
+    "canonical_inputs_revision": "sha256:d4e6f8313fe8cbfbf890f35975cf509801ad2a1961207796eaa8bc7444610367",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:5b7ad5cb4fcb8905fb3fd86090714355471fc447ab528d6718abd21f6a2ebc55"
@@ -709,6 +709,20 @@
       "provenance": "generated",
       "service": "secretsmanager",
       "revision": "sha256:ea9b7240d0b2033cd88f8c08da4160b831a44ac2359ba1b5274e3e97e5e66ba7",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "design-gap:secretsmanager:hierarchical--slash-containing--secret-names-require-key-vault-name-translation:reference",
+      "canonical_id": "design-gap:secretsmanager:hierarchical--slash-containing--secret-names-require-key-vault-name-translation",
+      "path": "docs/site/design-gaps/secretsmanager/hierarchical--slash-containing--secret-names-require-key-vault-name-translation.md",
+      "type": "design-gap-reference",
+      "scope": "service-design-gap",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "secretsmanager",
+      "revision": "sha256:f07919c2c66c2e332e3e4e4238fe3dd44d96e6a73ea4ce0531c8c51fb82c700f",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1388,7 +1402,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:280932d2b07a670b1c709f7d3db8b0264216ebb7a1bf841b27540e6cc1dc41dc",
+      "revision": "sha256:891ff57fb4b64bd43889133f76dd5673f77943b5d3bfab3e92edfa4e630823cc",
       "freshness": {
         "mode": "current"
       }
@@ -1496,7 +1510,7 @@
       "scope": "perf",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:0e1aa5c0a82d1050da490e40dc1082538bbde086db952178f39c35407779d017",
+      "revision": "sha256:f6b4ca45522380993b36e5397604ca6f9b5ea13c935e0e2cc4e56346aeaf98b3",
       "freshness": {
         "mode": "current"
       }
@@ -1544,7 +1558,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:74a7a50d56ee6ec7497f5f21497c80b203aca58b5d0bb1fba4e3f7a8befcb839",
+      "revision": "sha256:1290034f3d3aefaf821e0a47143170e471dc8f473332ccfac482d65f243c6b6e",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1568,7 +1582,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:65a772e4eec8fc81ba86ed3ac7ba6993b7d9495839e39162373a4f9b2d844363",
+      "revision": "sha256:520d303a021135b398bd3b7506dd31bc3706f4716f18f66b38e49b0bc28fe3b9",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1580,7 +1594,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:012ee3684e706e4f69bbb8c713d938864f8ba469458f0c9d5ed83341a2b12f3d",
+      "revision": "sha256:68ec2985bc4daa5dec38dc0e64a5ec0a6bf8180128cba664172908e91b14ce4b",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1604,7 +1618,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:fd42cb9f8a698c419827b439087176e81f520d517fd042111ebeac4726b0f0c9",
+      "revision": "sha256:44aca865e19bb7f1426a95a8aa6a97d95b7fb8eb69fa82a91142f22b0035641f",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1676,7 +1690,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:d7316e3dda9e84e7bf7c7f84d33f37cf4b81956a23a1a9ed69f402cfff4c39ab",
+      "revision": "sha256:7963bda113a0e74c193d6816c1fae2c99f3c5e022a4828d9353da0a6f028c5d0",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5021,7 +5035,7 @@
       "provenance": "generated",
       "service": "secretsmanager",
       "operation": "CreateSecret",
-      "revision": "sha256:0c22ab8279fd9a6fc0546bdf9beceeb9bf0f86070997ef48d39270524456a638",
+      "revision": "sha256:14de7cab45f32c62162dc0ce4c591229b3f7701709daed991e8483f19101429b",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5037,7 +5051,7 @@
       "provenance": "source",
       "service": "secretsmanager",
       "operation": "CreateSecret",
-      "revision": "sha256:aa2403889f66f945d804f85db7622dfc5927c38f2ab45402d6946c60ba476c35",
+      "revision": "sha256:7187f4f3a00f89adcb3b65a39f556cdb6ef7f92f9be3699ffcfa855fd8296633",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5149,7 +5163,7 @@
       "provenance": "generated",
       "service": "secretsmanager",
       "operation": "ListSecrets",
-      "revision": "sha256:f9d4727c263e68b9d57603a4c40cb935f402b64f201a495e29c4678788522dc7",
+      "revision": "sha256:49590c89c2c22584256aaeb008a0b005fd88d09ee2b851ace6230471bacf79fe",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5165,7 +5179,7 @@
       "provenance": "source",
       "service": "secretsmanager",
       "operation": "ListSecrets",
-      "revision": "sha256:cb1de0db5de18b8863c54c974a0a2ece76721d4bb9e59be913a2a9e797d29f7d",
+      "revision": "sha256:7044b863c287d2906d446e5a4b9c65df49ef2d521a2fc0d3469878bfa7fc6992",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5621,7 +5635,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:6cb8d4ad95c75b50c475c38e287b7412d865dfe26a567380f830d5b2cd7752f5",
+      "revision": "sha256:14d8e5bdbb4dca9ebb0a46ec25264167d8f5a54d9af9d4622a1c79ce57031544",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -5637,7 +5651,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "Publish",
-      "revision": "sha256:86854c7636b2441e2f741d1ff7de503ba1f8cf6afc7b64a896c158fc0342556c",
+      "revision": "sha256:6fac830847194e4e45a1df3ddb37f6430d53eb2818069d75b296a46105052836",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -5685,7 +5699,7 @@
       "provenance": "generated",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:463c06fe08b19e721325b75e0d444c2e037fa2fc58ab9d0316bcfbc2c9571f57",
+      "revision": "sha256:9e93888bb0507f2a0a9fd9c558f0ca0778f68747f9a8f189977c0d98ccefdb0d",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-22"
@@ -5701,7 +5715,7 @@
       "provenance": "source",
       "service": "sns",
       "operation": "SetSubscriptionAttributes",
-      "revision": "sha256:dba7b79967c34bec0291edaf2eeca645cf59da5f7c4e92ffe4b47a00140f0978",
+      "revision": "sha256:242109dabeb758df69d5ee430b45e76b7d71e9f40ec211cdc0556549c2a41299",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-22"
@@ -6061,7 +6075,7 @@
       "provenance": "generated",
       "service": "sqs",
       "operation": "GetQueueUrl",
-      "revision": "sha256:ecf494a0e6f350bae0a091fce19da449069e2e7c2a0cdac205f88e6e7b507ab3",
+      "revision": "sha256:2fc59f4a6679b1f4dd95f3ad1120c2d97c067023f703c7b65c09a52e58e3d487",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-20"
@@ -6077,7 +6091,7 @@
       "provenance": "source",
       "service": "sqs",
       "operation": "GetQueueUrl",
-      "revision": "sha256:cc1721e20a1a1cfa2da042e5ca23f6c3df71d9c052abda356994b5a3e86b667f",
+      "revision": "sha256:a81277103f672c9eac1f47a4093af59657445c0e24a66c9368d496867cb9f2eb",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-20"
@@ -6430,7 +6444,7 @@
       "scope": "performance-and-footprint",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:8a070369a4f6b7871a09eaf401dab04b4f6bb12d70c2d3064c31b3bd5ab5bc30",
+      "revision": "sha256:95d295c6eae04a0598dff1d0a57bcda3d275fec50a1fa5e162cdce169af38e83",
       "freshness": {
         "mode": "current"
       }
@@ -6880,7 +6894,7 @@
       "authority": "normative-input",
       "provenance": "source",
       "profile": "secretsmanager-basic-lifecycle",
-      "revision": "sha256:ec64f8ab49df25d749c0494b25e6dd018701bc19ff9e4b77b682dee0f5a31dc9",
+      "revision": "sha256:101f4c5276eee6a71d5d3d394518f92e36bf4cee9061e1e3000051087ed81af7",
       "freshness": {
         "mode": "versioned",
         "version": "1"
@@ -7313,7 +7327,7 @@
       "authority": "normative-capability",
       "provenance": "source",
       "service": "secretsmanager",
-      "revision": "sha256:93722ec5bbce4dd3a5161af5497feb0b774d526d27c2f037a509f64dddd76b3e",
+      "revision": "sha256:e262323afe9c2de19e4ee31809068fa9838d5d60a0909d4cbbf0919f659714b5",
       "freshness": {
         "mode": "current"
       }
@@ -7327,7 +7341,7 @@
       "authority": "normative-capability",
       "provenance": "generated",
       "service": "secretsmanager",
-      "revision": "sha256:0dcfabc84a1e93c4b57aee4c081a6ffdad4b22242720a3adaac151ca7283860b",
+      "revision": "sha256:c53eca54258b7ff2b0975fdac3f489c55fbf1e9053a84f9ea79e22dde30498de",
       "freshness": {
         "mode": "derived-current"
       }
@@ -7395,7 +7409,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:ba4f489afc1cfbd0be83b483c4a91210f84127775cda0c9fddcf1188d316f62b",
+      "revision": "sha256:2ac0ec50b1e4412da58bc383f8749484963ad5248eceb2e8f7e3d34867dd3a89",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7409,7 +7423,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:0d1cf467aecb82eb677d2027da0bfd4a8ce4bee8a094731c5176a37f8c49c33d",
+      "revision": "sha256:7663dcc3eb23da42ce6f15c0dbbdf28f944ad2c607e12e99cd3bced5d1929187",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7423,7 +7437,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:9b97938ef5e95e82265ed3d22a8f6a9628a266f1077260d6b0be0f4e67813393",
+      "revision": "sha256:31e9aa3513693b3cac6fb34ea0a91fd8458ac3bcd5b76e711572e62c74ebd789",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"

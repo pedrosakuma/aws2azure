@@ -47,7 +47,9 @@ internal static class ListSecretsHandler
                 var id = item.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String ? idElement.GetString() ?? string.Empty : string.Empty;
                 var name = item.TryGetProperty("name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
                     ? nameElement.GetString() ?? string.Empty
-                    : KeyVaultSecretClient.GetSecretNameFromId(id);
+                    : KeyVaultSecretClient.TryGetRawTag(item, KeyVaultSecretClient.AwsSecretNameTag, out var rawName)
+                        ? rawName
+                        : KeyVaultSecretClient.GetSecretNameFromId(id);
                 var description = KeyVaultSecretClient.GetDescription(item);
                 var tags = KeyVaultSecretClient.GetTags(item);
                 var versionIdsToStages = KeyVaultSecretClient.TryGetVersionId(id, out var versionId) && !string.IsNullOrWhiteSpace(versionId)
