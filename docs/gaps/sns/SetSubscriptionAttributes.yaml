@@ -9,7 +9,7 @@ verified_real_azure:
 sub_features:
 - name: UserMetadata attribute updates
   status: implemented
-  notes: Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description, persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON, and upserts the default Service Bus subscription rule so the supported filter subset is enforced natively.
+  notes: Performs a GET → merge → conditional PUT cycle against the Service Bus subscription description, persists FilterPolicy, FilterPolicyScope, and RawMessageDelivery inside UserMetadata as compact JSON, and upserts the default Service Bus subscription rule so the supported filter subset is enforced natively. Real Azure confirmed the reserved `$Default` rule requires a namespace-scoped SAS audience (matching Azure's own administration client) rather than a path-scoped SAS signature; signing the namespace root resolves the historical 401 on SetSubscriptionAttributes/Subscribe rule writes tracked in #800.
 - name: Service Bus rule translation for supported filter policies
   status: partial
   disposition: feasible_backlog
@@ -30,7 +30,6 @@ behavior_differences:
 - Updates whose translated Service Bus SQL expression would exceed the 1024-character Service Bus rule limit are rejected with InvalidParameter.
 - Unknown AWS attribute names return InvalidParameter.
 - Only Azure Service Bus subscription descriptions are updated; Azure Event Grid event-subscription properties are explicitly outside this profile.
-- 'Real Azure has been observed (see #691 and the #800 re-investigation on 2026-08-27) to reject the very first write to the reserved `$Default` subscription rule immediately after `Subscribe` in one specific conformance scenario. Historical evidence captured the proxy-surfaced SNS `AuthorizationError` with an empty Microsoft-HTTPAPI response body; the 2026-08-27 reinvestigation added proxy-side management logs and showed the raw failing backend call is `PutSubscriptionRuleAsync` against `.../subscriptions/{id}/rules/$Default?api-version=2021-05`, which returned HTTP 401 through bounded authorization retries before aws2azure translated it back to the SNS 403 `AuthorizationError`. This is distinct from the repo''s separate OIDC/Entra token-acquisition 401 flake: Azure login and namespace provisioning had already succeeded, and the failure occurred on the Service Bus Topics management request itself. Root cause is still unconfirmed after investigating retry timing, interleaved warm-up reads, auth path, call ordering, and request shaping, so the affected conformance test (`SnsRealAzureConformanceTests.cs`) still skips rather than fails when this specific quirk reproduces.'
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
