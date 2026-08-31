@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:86ed0d1c7fab6aeefba840ce6f847db1b68337bed561d17f417d1f8e9475440e",
+  "manifest_revision": "sha256:1b8f427e852e350ee292e5bd7c9aadcebb105d1c718cff44659b697bcdca0d09",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -39,7 +39,7 @@
     "canonical_inputs_revision": "sha256:d4e6f8313fe8cbfbf890f35975cf509801ad2a1961207796eaa8bc7444610367",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
-    "evaluator_implementation_revision": "sha256:5b7ad5cb4fcb8905fb3fd86090714355471fc447ab528d6718abd21f6a2ebc55"
+    "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1"
   },
   "authority_precedence": [
     {
@@ -7409,7 +7409,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:2ac0ec50b1e4412da58bc383f8749484963ad5248eceb2e8f7e3d34867dd3a89",
+      "revision": "sha256:28f5ae18e8cc32e60419fa99fae284c42cf64cfdaf981ec450ed806eccead685",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7423,7 +7423,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:7663dcc3eb23da42ce6f15c0dbbdf28f944ad2c607e12e99cd3bced5d1929187",
+      "revision": "sha256:3bee4ee277d8b6e3287fa978f81e47e1e21813bf0bbfe9af9bb636ca0cd3b124",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
@@ -7437,7 +7437,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:31e9aa3513693b3cac6fb34ea0a91fd8458ac3bcd5b76e711572e62c74ebd789",
+      "revision": "sha256:4592daf28c8e34ab412b7e7c4e37f64ea7c0716c4a56ed1ff4138b4cfbad41f8",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-08-27T00:19:31Z"
