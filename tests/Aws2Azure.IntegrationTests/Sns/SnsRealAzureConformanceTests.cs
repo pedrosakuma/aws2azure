@@ -129,31 +129,16 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             subscriptionArn = SnsQueryApiClient.ReadSubscriptionArn(subscribe);
             var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
 
-            // The very first write to the reserved $Default subscription rule immediately
-            // after Subscribe has been observed to return an empty-body authorization-denied
-            // response on real Azure in this specific test scenario, even though the identical
-            // request normally succeeds elsewhere. Root cause is unconfirmed after extensive
-            // investigation (see #691 and docs/gaps/sns/SetSubscriptionAttributes.yaml for the
-            // full evidence trail) — it has been shown to be non-transient (immune to bounded
-            // in-process retry and to a 60-second/6-attempt exponential backoff), so this skips
-            // the test rather than failing the build on a documented, unresolved Azure quirk.
             var setFilterResponse = await SendAsync(client, "SetSubscriptionAttributes",
             [
                 new("SubscriptionArn", subscriptionArn),
                 new("AttributeName", "FilterPolicy"),
                 new("AttributeValue", "{\"tenant\":[\"blue\"]}"),
             ]).ConfigureAwait(false);
-            var directRuleProbe = setFilterResponse.StatusCode == HttpStatusCode.OK
-                ? null
-                : await CollectDefaultRuleProbeSummaryAsync(topicName, subscriptionName).ConfigureAwait(false);
-            Skip.If(
-                setFilterResponse.StatusCode != HttpStatusCode.OK,
-                $"Known unresolved real-Azure quirk (#691): SetSubscriptionAttributes[FilterPolicy] on a "
-                    + $"fresh subscription's $Default rule did not succeed. "
-                    + $"{SnsQueryApiClient.FormatDiagnosticSummary(setFilterResponse)}. "
-                    + $"DefaultRuleProbe={directRuleProbe ?? "<not-run>"}. "
-                    + $"ProxyLogTail={FormatProxyLogTail(fixture.ProxyOutput)}. "
-                    + "See docs/gaps/sns/SetSubscriptionAttributes.yaml for the evidence trail.");
+            SnsServiceBusTestSupport.AssertStatus(
+                setFilterResponse,
+                HttpStatusCode.OK,
+                "SetSubscriptionAttributes[FilterPolicy]");
             var setRaw = await SendAsync(client, "SetSubscriptionAttributes",
             [
                 new("SubscriptionArn", subscriptionArn),
@@ -780,48 +765,6 @@ public sealed class SnsRealAzureConformanceTests(RealAzureProxyFixture fixture)
             .Select(static line => line.Length > 240 ? line[..240] + "…" : line)
             .ToArray();
         return lines.Length == 0 ? "<empty>" : string.Join(" || ", lines);
-    }
-
-    private async Task<string> CollectDefaultRuleProbeSummaryAsync(string topicName, string subscriptionName)
-    {
-        var connectionString = fixture.CreateServiceBusConnectionString();
-        var metadata = new SnsSubscriptionMetadata
-        {
-            FilterPolicyJson = "{\"tenant\":[\"blue\"]}",
-            FilterPolicyScope = SnsSubscriptionMetadata.MessageAttributesScope,
-        };
-        Assert.True(
-            SnsSubscriptionFilterSupport.TryBuildRuleDescription(metadata, out var defaultRuleDescription, out var error),
-            error);
-
-        var defaultRuleGet = await SnsRealAzureManagementRestProbe.GetSubscriptionRuleAsync(
-            connectionString,
-            topicName,
-            subscriptionName,
-            SnsSubscriptionFilterSupport.DefaultRuleName).ConfigureAwait(false);
-        var defaultRulePut = await SnsRealAzureManagementRestProbe.PutSubscriptionRuleAsync(
-            connectionString,
-            topicName,
-            subscriptionName,
-            defaultRuleDescription).ConfigureAwait(false);
-        var probeRuleName = "aws2azure-probe";
-        var probeRulePut = await SnsRealAzureManagementRestProbe.PutSubscriptionRuleAsync(
-            connectionString,
-            topicName,
-            subscriptionName,
-            defaultRuleDescription with { RuleName = probeRuleName }).ConfigureAwait(false);
-        if (probeRulePut.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created or HttpStatusCode.Conflict)
-        {
-            _ = await SnsRealAzureManagementRestProbe.DeleteSubscriptionRuleAsync(
-                connectionString,
-                topicName,
-                subscriptionName,
-                probeRuleName).ConfigureAwait(false);
-        }
-
-        return $"GET[$Default]={defaultRuleGet.FormatDiagnosticSummary()} | "
-            + $"PUT[$Default]={defaultRulePut.FormatDiagnosticSummary()} | "
-            + $"PUT[{probeRuleName}]={probeRulePut.FormatDiagnosticSummary()}";
     }
 
     private static async Task RunBatchesBestEffortAsync<T>(
