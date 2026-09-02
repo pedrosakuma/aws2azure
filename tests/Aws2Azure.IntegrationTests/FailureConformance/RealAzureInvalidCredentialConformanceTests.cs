@@ -62,29 +62,28 @@ public sealed class RealAzureInvalidCredentialConformanceTests(RealAzureProxyFix
     }
 
     /// <summary>
-    /// Unlike the sibling S3/SQS/Kinesis cases in this class, a bad Cosmos DB
-    /// master key does <b>not</b> surface as a clean, non-retryable
-    /// AccessDeniedException here. Confirmed by a real-Azure repro (issue
-    /// #838, 2026-08-21, ephemeral serverless Cosmos DB account, Strong
-    /// consistency): Cosmos DB's Gateway answers a syntactically valid but
-    /// cryptographically wrong master-key <c>Authorization</c> header on
-    /// <c>GET /dbs/{db}/colls</c> (the ListTables backend call) with a plain
-    /// HTTP <b>500</b> (<c>{"code":"InternalServerError","message":"Unknown
-    /// server error occurred when processing this request."}</c>, no
+    /// Historically (issue #838, 2026-08-21, ephemeral serverless Cosmos DB
+    /// account, Strong consistency) Cosmos DB's Gateway answered a
+    /// syntactically valid but cryptographically wrong master-key
+    /// <c>Authorization</c> header on <c>GET /dbs/{db}/colls</c> (the
+    /// ListTables backend call) with a plain HTTP 500
+    /// (<c>{"code":"InternalServerError", ...}</c>, no
     /// <c>x-ms-substatus</c>) instead of the 401/403 the REST API reference
-    /// implies. <see cref="CosmosOpsShared.WriteCosmosErrorAsync"/> faithfully
-    /// relays that as DynamoDB's <c>InternalServerError</c>/500 — the same
-    /// faithful-passthrough behavior that maps a genuine transient Cosmos
-    /// outage. There is no header/body signal in Cosmos's response that
-    /// distinguishes "bad key" from "real transient error" here, so the proxy
-    /// cannot special-case this into a clean AccessDeniedException without
-    /// guessing from the English message text, which would misclassify
-    /// genuine transient 500s. See docs/gaps/dynamodb/ListTables.yaml
-    /// behavior_differences for the recorded divergence from real AWS
-    /// DynamoDB's non-retryable AccessDeniedException for invalid credentials.
+    /// implies, which <see cref="CosmosOpsShared.WriteCosmosErrorAsync"/>
+    /// faithfully relayed as DynamoDB's InternalServerError/500. Re-confirmed
+    /// against real Azure on 2026-09-02 (run
+    /// https://github.com/pedrosakuma/aws2azure/actions/runs/33638504498)
+    /// that Cosmos DB's Gateway now answers a bad master key with the 401/403
+    /// the REST API reference always implied it should, which
+    /// <c>CosmosOpsShared.MapCosmosStatus</c> already mapped to a clean,
+    /// non-retryable DynamoDB <c>AccessDeniedException</c> (HTTP 400, the
+    /// JSON-protocol convention for AccessDeniedException — see the sibling
+    /// S3/SQS/Kinesis cases for the REST-XML/Query 403 convention instead).
+    /// See docs/gaps/dynamodb/ListTables.yaml behavior_differences (removed)
+    /// for the retired divergence record.
     /// </summary>
     [SkippableFact]
-    public async Task DynamoDb_invalid_primary_key_surfaces_as_retryable_internal_server_error()
+    public async Task DynamoDb_invalid_primary_key_returns_native_non_retryable_error()
     {
         Skip.IfNot(
             fixture.CosmosConfigured || fixture.CosmosWorkloadIdentityConfigured,
@@ -99,8 +98,8 @@ public sealed class RealAzureInvalidCredentialConformanceTests(RealAzureProxyFix
         using var rawResponse = await rawClient.SendAsync(rawRequest);
         await AssertCanonicalErrorAsync(
             rawResponse,
-            HttpStatusCode.InternalServerError,
-            "InternalServerError",
+            HttpStatusCode.BadRequest,
+            "AccessDeniedException",
             CanonicalResponse.BodyKindJsonError);
 
         var counter = new CountingSdkHttpClientFactory();
@@ -119,13 +118,11 @@ public sealed class RealAzureInvalidCredentialConformanceTests(RealAzureProxyFix
 
         var exception = await Assert.ThrowsAnyAsync<AmazonServiceException>(
             () => sdk.ListTablesAsync(new ListTablesRequest(), timeout.Token));
-        // The AWS SDK treats InternalServerError/500 as retryable, so with
-        // MaxErrorRetry=1 it makes exactly one retry (2 total backend calls)
-        // before surfacing the exception — unlike the sibling non-retryable
-        // assertions, this is intentionally NOT counter.RequestCount == 1.
-        Assert.Equal(HttpStatusCode.InternalServerError, exception.StatusCode);
-        Assert.Equal("InternalServerError", exception.ErrorCode);
-        Assert.Equal(2, counter.RequestCount);
+        AssertNonRetryableSdkError(
+            exception,
+            counter,
+            HttpStatusCode.BadRequest,
+            "AccessDeniedException");
     }
 
     [SkippableFact]
