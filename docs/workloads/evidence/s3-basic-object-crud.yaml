@@ -15,9 +15,9 @@ profile:
     - ListObjectsV2
     - PutObject
 candidate:
-  git_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
-  artifact_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-  config_digest: sha256:21a5b9a10b797e0e80c903a1a829607f8895aa1577679a1e903dcb3e2308bd8a
+  git_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+  artifact_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+  config_digest: sha256:d5766991b8b1680cab205b0a13f1af71c1729a40bde72068683f3911a2f332b9
   qualification_mode: sealed
   runtime:
     schema_version: 1
@@ -31,56 +31,56 @@ candidate:
       promotion_eligible: false
     source:
       repository: pedrosakuma/aws2azure
-      sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       ref: refs/heads/main
     runtime:
-      aggregate_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-      executable_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
-      manifest_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
+      aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+      executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
     producer:
       workflow: .github/workflows/sealed-runtime.yml
       event_name: workflow_dispatch
-      run_id: 32974743613
+      run_id: 33538183163
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613/attempts/1
-      run_started_at: 2026-08-26T13:31:50.0000000+00:00
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      run_started_at: 2026-09-01T17:30:34.0000000+00:00
     artifact:
-      id: 9609058674
-      name: aws2azure-sealed-linux-x64-52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1-run-32974743613-attempt-1
-      upload_digest: sha256:3d5159325f6d0bf233e8a9f518165f808695e0d597b106ff864db760abddd5ed
-      created_at: 2026-08-26T13:33:49.0000000+00:00
-      expires_at: 2026-11-24T13:31:51.0000000+00:00
+      id: 9812563103
+      name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
+      upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
+      created_at: 2026-09-01T17:32:42.0000000+00:00
+      expires_at: 2026-11-30T17:30:36.0000000+00:00
     attestation:
       predicate_type: https://slsa.dev/provenance/v1
       repository: pedrosakuma/aws2azure
       signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613/attempts/1
-      bundle_digest: sha256:6cab184dab6c4887996727daa7338c3e152806a5a62e0aa70f48942d84754fc5
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      bundle_digest: sha256:dfc06a503aa88518c2854d3a109d107b7b5af54ebad3fcd2389c62c40ab0f5ad
       executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
+      executable_subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
       manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
+      manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
 provenance:
-  run_id: 32980168547
-  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32980168547
+  run_id: 33547034844
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33547034844
   run_attempt: 1
-  generated_at_utc: 2026-08-26T14:26:35.9955186+00:00
-  window_start_utc: 2026-08-26T13:58:17.4699528+00:00
-  window_end_utc: 2026-08-26T14:23:43.6182069+00:00
+  generated_at_utc: 2026-09-01T19:01:47.5034126+00:00
+  window_start_utc: 2026-09-01T17:37:49.4251176+00:00
+  window_end_utc: 2026-09-01T18:09:16.0084640+00:00
   region: eastus2
   backend_description: Ephemeral Azure Blob StorageV2 Standard_LRS
   correctness_run:
-    run_id: 32975057320
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32975057320
+    run_id: 33538561756
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538561756
     run_attempt: 1
-    window_start_utc: 2026-08-26T13:40:16.1664677+00:00
-    window_end_utc: 2026-08-26T13:40:16.1664678+00:00
-    git_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
-    artifact_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-    config_digest: sha256:21a5b9a10b797e0e80c903a1a829607f8895aa1577679a1e903dcb3e2308bd8a
+    window_start_utc: 2026-09-01T17:40:25.8636967+00:00
+    window_end_utc: 2026-09-01T17:40:25.8636968+00:00
+    git_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+    artifact_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+    config_digest: sha256:d5766991b8b1680cab205b0a13f1af71c1729a40bde72068683f3911a2f332b9
     evidence_artifact:
       schema_version: 1
       profile_id: s3-basic-object-crud
@@ -88,27 +88,27 @@ provenance:
       workflow_path: .github/workflows/integration-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 32975057320
+      run_id: 33538561756
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32975057320
-      head_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538561756
+      head_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       head_ref: refs/heads/main
       artifact:
-        id: 9609303449
+        id: 9812859299
         name: real-azure-conformance
-        upload_digest: sha256:052c530fc202d0e7f472b4f8f75ee86b80ae442c9d333cad835a9432cab983b4
-        created_at: 2026-08-26T13:40:18.0000000+00:00
-        expires_at: 2026-11-24T13:35:02.0000000+00:00
+        upload_digest: sha256:b832ad32f3daa8a8d4d811f5fa57cd6ccc4aa406b47f069d14f2fb8a2efe1e9d
+        created_at: 2026-09-01T17:40:27.0000000+00:00
+        expires_at: 2026-11-30T17:34:24.0000000+00:00
     reaffirmed: false
   source_runs:
-  - run_id: 32977096868
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32977096868
+  - run_id: 33538613911
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538613911
     run_attempt: 1
-    window_start_utc: 2026-08-26T13:58:17.4699528+00:00
-    window_end_utc: 2026-08-26T14:03:47.5666686+00:00
-    git_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
-    artifact_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-    config_digest: sha256:21a5b9a10b797e0e80c903a1a829607f8895aa1577679a1e903dcb3e2308bd8a
+    window_start_utc: 2026-09-01T17:37:49.4251176+00:00
+    window_end_utc: 2026-09-01T17:44:47.5263848+00:00
+    git_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+    artifact_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+    config_digest: sha256:d5766991b8b1680cab205b0a13f1af71c1729a40bde72068683f3911a2f332b9
     evidence_artifact:
       schema_version: 1
       profile_id: s3-basic-object-crud
@@ -116,26 +116,26 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 32977096868
+      run_id: 33538613911
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32977096868
-      head_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538613911
+      head_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       head_ref: refs/heads/main
       artifact:
-        id: 9610220849
+        id: 9813021819
         name: real-azure-workload-load-s3-basic-object-crud
-        upload_digest: sha256:7438be165afbd2a479d933c3f82ee2b207fb35730d5760a86585f04a2f46c4d5
-        created_at: 2026-08-26T14:03:48.0000000+00:00
-        expires_at: 2026-11-24T13:55:17.0000000+00:00
+        upload_digest: sha256:dee0d2ad456c7db68be14f182414b942003cdc62b7498a8d8b60fd2e9c721833
+        created_at: 2026-09-01T17:44:48.0000000+00:00
+        expires_at: 2026-11-30T17:34:58.0000000+00:00
     reaffirmed: false
-  - run_id: 32978061001
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32978061001
+  - run_id: 33538733571
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538733571
     run_attempt: 1
-    window_start_utc: 2026-08-26T14:07:52.9041541+00:00
-    window_end_utc: 2026-08-26T14:13:24.2916561+00:00
-    git_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
-    artifact_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-    config_digest: sha256:21a5b9a10b797e0e80c903a1a829607f8895aa1577679a1e903dcb3e2308bd8a
+    window_start_utc: 2026-09-01T17:47:57.0163763+00:00
+    window_end_utc: 2026-09-01T17:53:24.2595123+00:00
+    git_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+    artifact_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+    config_digest: sha256:d5766991b8b1680cab205b0a13f1af71c1729a40bde72068683f3911a2f332b9
     evidence_artifact:
       schema_version: 1
       profile_id: s3-basic-object-crud
@@ -143,26 +143,26 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 32978061001
+      run_id: 33538733571
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32978061001
-      head_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538733571
+      head_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       head_ref: refs/heads/main
       artifact:
-        id: 9610599068
+        id: 9813343161
         name: real-azure-workload-load-s3-basic-object-crud
-        upload_digest: sha256:1b103177c0491e567e1fcef3f8edb74d204135b96b7e7aab8e1ee5d68c860ac6
-        created_at: 2026-08-26T14:13:25.0000000+00:00
-        expires_at: 2026-11-24T14:04:57.0000000+00:00
+        upload_digest: sha256:e344c3da2278b22188cc1bdeaa80b1cdf4b1d68383053e20808571030affa543
+        created_at: 2026-09-01T17:53:25.0000000+00:00
+        expires_at: 2026-11-30T17:36:11.0000000+00:00
     reaffirmed: false
-  - run_id: 32979066133
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32979066133
+  - run_id: 33541058843
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33541058843
     run_attempt: 1
-    window_start_utc: 2026-08-26T14:18:13.8862816+00:00
-    window_end_utc: 2026-08-26T14:23:43.6182069+00:00
-    git_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
-    artifact_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-    config_digest: sha256:21a5b9a10b797e0e80c903a1a829607f8895aa1577679a1e903dcb3e2308bd8a
+    window_start_utc: 2026-09-01T18:03:43.6422891+00:00
+    window_end_utc: 2026-09-01T18:09:16.0084640+00:00
+    git_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+    artifact_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+    config_digest: sha256:d5766991b8b1680cab205b0a13f1af71c1729a40bde72068683f3911a2f332b9
     evidence_artifact:
       schema_version: 1
       profile_id: s3-basic-object-crud
@@ -170,17 +170,17 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 32979066133
+      run_id: 33541058843
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32979066133
-      head_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33541058843
+      head_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       head_ref: refs/heads/main
       artifact:
-        id: 9611023031
+        id: 9813929815
         name: real-azure-workload-load-s3-basic-object-crud
-        upload_digest: sha256:92507f91f78f1a47c0fa0413749400d7728d0721d809405c3f8ac324bdc5e4f9
-        created_at: 2026-08-26T14:23:45.0000000+00:00
-        expires_at: 2026-11-24T14:14:40.0000000+00:00
+        upload_digest: sha256:0a57368f98c0e16faa965b79cb11969eeb2d8867b808a8d67a2e3e5ae83da43f
+        created_at: 2026-09-01T18:09:17.0000000+00:00
+        expires_at: 2026-11-30T18:00:09.0000000+00:00
     reaffirmed: false
 rules:
   max_artifact_age_hours: 72
@@ -197,211 +197,211 @@ signals:
   disposition: blocking
   metric: throughput_per_sec
   min_value: 30
-  measured_value: 50.650002307034065
-  samples: 165006
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 39.307305889861375
+  samples: 225045
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: crud-iterations-per-sec
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 16.883334102344687
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 13.102435296620458
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: aws-operations-per-sec
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 152.0032456569393
-  samples: 495066
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 117.97511202755061
+  samples: 675183
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 57.9299
-  samples: 165006
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 70.0414
+  samples: 225045
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 74.1603
-  samples: 165006
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 77.7653
+  samples: 225045
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-create-bucket-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 0.02661936791855686
+  measured_value: 0.0204431807076612
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-create-bucket-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 1263.7148
+  measured_value: 1259.1819
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-create-bucket-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 1263.7148
+  measured_value: 1259.1819
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-put-object-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 16.883334102344687
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 13.102435296620458
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-put-object-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 66.2517
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 96.8877
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-put-object-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 102.6857
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 138.1495
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-head-object-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 33.766668204689374
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 26.204870593240916
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-head-object-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 54.9458
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 67.7071
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-head-object-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 66.1868
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 71.6598
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-list-objects-v2-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 16.883334102344687
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 13.102435296620458
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-list-objects-v2-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 56.0501
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 68.4038
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-list-objects-v2-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 67.9912
-  samples: 55002
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 72.2869
+  samples: 75015
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-object-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 33.766668204689374
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 26.204870593240916
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-object-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 59.5493
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 71.6535
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-object-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 72.2959
-  samples: 110004
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  measured_value: 80.2763
+  samples: 150030
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-bucket-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 0.02661936791855686
+  measured_value: 0.0204431807076612
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-bucket-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 168.1056
+  measured_value: 208.0164
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-delete-bucket-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 168.1056
+  measured_value: 208.0164
   samples: 24
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: representative-load-unauthenticated-connectivity-header-p95
   scenario_id: representative-load
   source: network_noise
   disposition: report_only
   metric: p95_ms
-  measured_value: 251.7743
+  measured_value: 333.8605
   samples: 72
-  captured_at_utc: 2026-08-26T14:23:15.9814971+00:00
+  captured_at_utc: 2026-09-01T18:08:46.4988221+00:00
 - id: representative-load-throttle-rate
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throttle_rate
   measured_value: 0
-  samples: 165006
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  samples: 225045
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 scenarios:
 - id: representative-load
   service: s3
   operation: GetObject
   evidence_source: real_azure
-  completions: 165006
+  completions: 225045
   failures: 0
   skipped: 0
-  duration_seconds: 901.0946168
-  captured_at_utc: 2026-08-26T14:23:15.2192635+00:00
+  duration_seconds: 992.2024231999999
+  captured_at_utc: 2026-09-01T18:08:45.4501921+00:00
 - id: throttling
   service: s3
   operation: GetObject
@@ -409,8 +409,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 2.6045803
-  captured_at_utc: 2026-08-26T14:23:16.8250978+00:00
+  duration_seconds: 1.2746594999999998
+  captured_at_utc: 2026-09-01T18:08:46.8525121+00:00
 - id: timeout
   service: s3
   operation: GetObject
@@ -418,8 +418,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 1.2247719
-  captured_at_utc: 2026-08-26T14:23:17.1686050+00:00
+  duration_seconds: 2.7359311
+  captured_at_utc: 2026-09-01T18:08:47.8499496+00:00
 - id: service-unavailable
   service: s3
   operation: GetObject
@@ -427,8 +427,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 1.7696755
-  captured_at_utc: 2026-08-26T14:23:17.8399379+00:00
+  duration_seconds: 1.747567
+  captured_at_utc: 2026-09-01T18:08:48.4407420+00:00
 - id: cancellation
   service: s3
   operation: GetObject
@@ -436,8 +436,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 0.0309116
-  captured_at_utc: 2026-08-26T14:23:17.8520462+00:00
+  duration_seconds: 0.0314483
+  captured_at_utc: 2026-09-01T18:08:48.4522919+00:00
 - id: restart
   service: s3
   operation: PutObject
@@ -445,8 +445,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 4.570282
-  captured_at_utc: 2026-08-26T14:23:19.3383574+00:00
+  duration_seconds: 3.5194387000000003
+  captured_at_utc: 2026-09-01T18:08:50.3516051+00:00
 - id: retry-exhaustion
   service: s3
   operation: PutObject
@@ -454,8 +454,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 5.575859299999999
-  captured_at_utc: 2026-08-26T14:23:20.5798780+00:00
+  duration_seconds: 4.2012096
+  captured_at_utc: 2026-09-01T18:08:52.2223466+00:00
 - id: rollback
   service: s3
   operation: GetObject
@@ -463,13 +463,13 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 70.6375084
-  captured_at_utc: 2026-08-26T14:23:43.6169126+00:00
+  duration_seconds: 68.8178375
+  captured_at_utc: 2026-09-01T18:09:16.0073470+00:00
 rollback_proofs:
 - scenario_id: rollback
   service: s3
   operation: GetObject
-  evidence_run_id: 32977096868
+  evidence_run_id: 33538613911
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -481,6 +481,51 @@ rollback_proofs:
     eligibility:
       rollback_baseline_eligible: false
       promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+      executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 33538183163
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      run_started_at: 2026-09-01T17:30:34.0000000+00:00
+    artifact:
+      id: 9812563103
+      name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
+      upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
+      created_at: 2026-09-01T17:32:42.0000000+00:00
+      expires_at: 2026-11-30T17:30:36.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      bundle_digest: sha256:dfc06a503aa88518c2854d3a109d107b7b5af54ebad3fcd2389c62c40ab0f5ad
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: s3-basic-object-crud
+      version: 1
+    status: approved
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: true
+    ledger_record_digest: sha256:fccbe1927820a35859268aa576782c52b0a7daa6ab6a75cbe6d928d5af042c26
     source:
       repository: pedrosakuma/aws2azure
       sha: d5d810fff5b261bd10aa2c74965102f6183577ee
@@ -515,73 +560,28 @@ rollback_proofs:
       executable_subject_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
-  prior:
-    schema_version: 1
-    role: prior
-    profile:
-      id: s3-basic-object-crud
-      version: 1
-    status: approved
-    eligibility:
-      rollback_baseline_eligible: true
-      promotion_eligible: true
-    ledger_record_digest: sha256:f64970fd4df25a5d1805517dfc2c40ff512609f8d7083dbb9d7049e30cb1bc78
-    source:
-      repository: pedrosakuma/aws2azure
-      sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      ref: refs/heads/main
-    runtime:
-      aggregate_digest: sha256:cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c
-      executable_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-    producer:
-      workflow: .github/workflows/sealed-runtime.yml
-      event_name: workflow_dispatch
-      run_id: 29911054433
-      run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      run_started_at: 2026-07-22T10:13:00.0000000+00:00
-    artifact:
-      id: 8525928121
-      name: aws2azure-sealed-linux-x64-cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c-run-29911054433-attempt-1
-      upload_digest: sha256:d900a68947c3e4da4c9a3521cb2462c6cadd51e44773031e8b0a4b251fcef566
-      created_at: 2026-07-22T10:15:09.0000000+00:00
-      expires_at: 2026-10-20T10:13:02.0000000+00:00
-    attestation:
-      predicate_type: https://slsa.dev/provenance/v1
-      repository: pedrosakuma/aws2azure
-      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      bundle_digest: sha256:1c3b4b69223a0eefb92e01e0ab52710758dea3eddd4a1e0a63747715575e65e5
-      executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-  candidate_config_digest: sha256:68c654b4148b7ac1b23cc38c09ad19bcdbabfced5274b05cc066b8c8d2925fc2
-  prior_config_digest: sha256:68c654b4148b7ac1b23cc38c09ad19bcdbabfced5274b05cc066b8c8d2925fc2
-  candidate_backend_identity_digest: sha256:c569f6a0c5ca25c22065868a35988948d355256f00b6410d29a07809693a03f7
-  prior_backend_identity_digest: sha256:c569f6a0c5ca25c22065868a35988948d355256f00b6410d29a07809693a03f7
+  candidate_config_digest: sha256:988777b8e6c0f1fc9d0b829c2e27c005cafe88d3c4d0eeb96c7da3f97e6f3092
+  prior_config_digest: sha256:988777b8e6c0f1fc9d0b829c2e27c005cafe88d3c4d0eeb96c7da3f97e6f3092
+  candidate_backend_identity_digest: sha256:820460a36feefe5f055692b2b0439478f2e70bdd5dfbf1827168825ee3aa23f5
+  prior_backend_identity_digest: sha256:820460a36feefe5f055692b2b0439478f2e70bdd5dfbf1827168825ee3aa23f5
   candidate_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
   prior_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
-  canary_digest: sha256:40621cb6a443941e661f325803738d884591fe5b2bdb9b2289d8cc3dc3c25016
+  canary_digest: sha256:fa2283b365167cdcd8e7667a2d1ee87e35af274b14278b4c96965d667c02802f
   cleanup_semantics: delete_object_delete_bucket_verify_no_such_bucket
-  started_at_utc: 2026-08-26T14:03:24.5979623+00:00
-  candidate_create_completed_at_utc: 2026-08-26T14:03:24.8464265+00:00
-  candidate_read_completed_at_utc: 2026-08-26T14:03:24.8961859+00:00
-  candidate_stopped_at_utc: 2026-08-26T14:03:24.9179417+00:00
-  prior_started_at_utc: 2026-08-26T14:03:25.4226185+00:00
-  prior_read_completed_at_utc: 2026-08-26T14:03:25.8630513+00:00
-  cleanup_requested_at_utc: 2026-08-26T14:03:25.8631899+00:00
-  cleanup_verified_at_utc: 2026-08-26T14:03:47.0400601+00:00
-  candidate_restored_at_utc: 2026-08-26T14:03:47.5659044+00:00
-  completed_at_utc: 2026-08-26T14:03:47.5659049+00:00
+  started_at_utc: 2026-09-01T17:44:24.9344598+00:00
+  candidate_create_completed_at_utc: 2026-09-01T17:44:24.9940112+00:00
+  candidate_read_completed_at_utc: 2026-09-01T17:44:25.0050974+00:00
+  candidate_stopped_at_utc: 2026-09-01T17:44:25.0385774+00:00
+  prior_started_at_utc: 2026-09-01T17:44:25.5432211+00:00
+  prior_read_completed_at_utc: 2026-09-01T17:44:25.7341737+00:00
+  cleanup_requested_at_utc: 2026-09-01T17:44:25.7343937+00:00
+  cleanup_verified_at_utc: 2026-09-01T17:44:46.9928383+00:00
+  candidate_restored_at_utc: 2026-09-01T17:44:47.5253912+00:00
+  completed_at_utc: 2026-09-01T17:44:47.5253917+00:00
 - scenario_id: rollback
   service: s3
   operation: GetObject
-  evidence_run_id: 32978061001
+  evidence_run_id: 33538733571
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -593,6 +593,51 @@ rollback_proofs:
     eligibility:
       rollback_baseline_eligible: false
       promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+      executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 33538183163
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      run_started_at: 2026-09-01T17:30:34.0000000+00:00
+    artifact:
+      id: 9812563103
+      name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
+      upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
+      created_at: 2026-09-01T17:32:42.0000000+00:00
+      expires_at: 2026-11-30T17:30:36.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      bundle_digest: sha256:dfc06a503aa88518c2854d3a109d107b7b5af54ebad3fcd2389c62c40ab0f5ad
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: s3-basic-object-crud
+      version: 1
+    status: approved
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: true
+    ledger_record_digest: sha256:fccbe1927820a35859268aa576782c52b0a7daa6ab6a75cbe6d928d5af042c26
     source:
       repository: pedrosakuma/aws2azure
       sha: d5d810fff5b261bd10aa2c74965102f6183577ee
@@ -627,73 +672,28 @@ rollback_proofs:
       executable_subject_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
-  prior:
-    schema_version: 1
-    role: prior
-    profile:
-      id: s3-basic-object-crud
-      version: 1
-    status: approved
-    eligibility:
-      rollback_baseline_eligible: true
-      promotion_eligible: true
-    ledger_record_digest: sha256:f64970fd4df25a5d1805517dfc2c40ff512609f8d7083dbb9d7049e30cb1bc78
-    source:
-      repository: pedrosakuma/aws2azure
-      sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      ref: refs/heads/main
-    runtime:
-      aggregate_digest: sha256:cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c
-      executable_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-    producer:
-      workflow: .github/workflows/sealed-runtime.yml
-      event_name: workflow_dispatch
-      run_id: 29911054433
-      run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      run_started_at: 2026-07-22T10:13:00.0000000+00:00
-    artifact:
-      id: 8525928121
-      name: aws2azure-sealed-linux-x64-cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c-run-29911054433-attempt-1
-      upload_digest: sha256:d900a68947c3e4da4c9a3521cb2462c6cadd51e44773031e8b0a4b251fcef566
-      created_at: 2026-07-22T10:15:09.0000000+00:00
-      expires_at: 2026-10-20T10:13:02.0000000+00:00
-    attestation:
-      predicate_type: https://slsa.dev/provenance/v1
-      repository: pedrosakuma/aws2azure
-      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      bundle_digest: sha256:1c3b4b69223a0eefb92e01e0ab52710758dea3eddd4a1e0a63747715575e65e5
-      executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-  candidate_config_digest: sha256:06a4e189f4e1d0e8ded66cf814e5e88475ac485a204a8d5c95af9c290a9afdbc
-  prior_config_digest: sha256:06a4e189f4e1d0e8ded66cf814e5e88475ac485a204a8d5c95af9c290a9afdbc
-  candidate_backend_identity_digest: sha256:8a8941637f721704fffbb4adf81671dd9631e706a6722986fc838041f0d3294f
-  prior_backend_identity_digest: sha256:8a8941637f721704fffbb4adf81671dd9631e706a6722986fc838041f0d3294f
+  candidate_config_digest: sha256:c1905bd36e71c1be75c83dc0a286dced685db7a71bd3340fcc199c96b24aa681
+  prior_config_digest: sha256:c1905bd36e71c1be75c83dc0a286dced685db7a71bd3340fcc199c96b24aa681
+  candidate_backend_identity_digest: sha256:24449e9cec66d3d96f955c3b39ad20d128b0b73b3ba7b0c61d893e14762f8375
+  prior_backend_identity_digest: sha256:24449e9cec66d3d96f955c3b39ad20d128b0b73b3ba7b0c61d893e14762f8375
   candidate_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
   prior_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
-  canary_digest: sha256:e06ae26f9ac1ca16385d79dec811f6092d5ea3d00f35735b429fe0426903babc
+  canary_digest: sha256:599b8527bfa9e3650850cdf36d7b579b9f899fd46465a1d684320561572da1ce
   cleanup_semantics: delete_object_delete_bucket_verify_no_such_bucket
-  started_at_utc: 2026-08-26T14:12:59.6560808+00:00
-  candidate_create_completed_at_utc: 2026-08-26T14:12:59.6828974+00:00
-  candidate_read_completed_at_utc: 2026-08-26T14:12:59.6880651+00:00
-  candidate_stopped_at_utc: 2026-08-26T14:12:59.7287896+00:00
-  prior_started_at_utc: 2026-08-26T14:13:00.2338343+00:00
-  prior_read_completed_at_utc: 2026-08-26T14:13:02.6248192+00:00
-  cleanup_requested_at_utc: 2026-08-26T14:13:02.6250749+00:00
-  cleanup_verified_at_utc: 2026-08-26T14:13:23.7499008+00:00
-  candidate_restored_at_utc: 2026-08-26T14:13:24.2905654+00:00
-  completed_at_utc: 2026-08-26T14:13:24.2905658+00:00
+  started_at_utc: 2026-09-01T17:53:01.8147491+00:00
+  candidate_create_completed_at_utc: 2026-09-01T17:53:01.8473135+00:00
+  candidate_read_completed_at_utc: 2026-09-01T17:53:01.8526590+00:00
+  candidate_stopped_at_utc: 2026-09-01T17:53:01.8937066+00:00
+  prior_started_at_utc: 2026-09-01T17:53:02.3993970+00:00
+  prior_read_completed_at_utc: 2026-09-01T17:53:02.5869244+00:00
+  cleanup_requested_at_utc: 2026-09-01T17:53:02.5872094+00:00
+  cleanup_verified_at_utc: 2026-09-01T17:53:23.7173353+00:00
+  candidate_restored_at_utc: 2026-09-01T17:53:24.2586166+00:00
+  completed_at_utc: 2026-09-01T17:53:24.2586172+00:00
 - scenario_id: rollback
   service: s3
   operation: GetObject
-  evidence_run_id: 32979066133
+  evidence_run_id: 33541058843
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -705,6 +705,51 @@ rollback_proofs:
     eligibility:
       rollback_baseline_eligible: false
       promotion_eligible: false
+    source:
+      repository: pedrosakuma/aws2azure
+      sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      ref: refs/heads/main
+    runtime:
+      aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+      executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+    producer:
+      workflow: .github/workflows/sealed-runtime.yml
+      event_name: workflow_dispatch
+      run_id: 33538183163
+      run_attempt: 1
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      run_started_at: 2026-09-01T17:30:34.0000000+00:00
+    artifact:
+      id: 9812563103
+      name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
+      upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
+      created_at: 2026-09-01T17:32:42.0000000+00:00
+      expires_at: 2026-11-30T17:30:36.0000000+00:00
+    attestation:
+      predicate_type: https://slsa.dev/provenance/v1
+      repository: pedrosakuma/aws2azure
+      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
+      source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+      source_ref: refs/heads/main
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      bundle_digest: sha256:dfc06a503aa88518c2854d3a109d107b7b5af54ebad3fcd2389c62c40ab0f5ad
+      executable_subject_name: Aws2Azure.Proxy
+      executable_subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_subject_name: sealed-runtime-manifest.json
+      manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+  prior:
+    schema_version: 1
+    role: prior
+    profile:
+      id: s3-basic-object-crud
+      version: 1
+    status: approved
+    eligibility:
+      rollback_baseline_eligible: true
+      promotion_eligible: true
+    ledger_record_digest: sha256:fccbe1927820a35859268aa576782c52b0a7daa6ab6a75cbe6d928d5af042c26
     source:
       repository: pedrosakuma/aws2azure
       sha: d5d810fff5b261bd10aa2c74965102f6183577ee
@@ -739,67 +784,22 @@ rollback_proofs:
       executable_subject_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
-  prior:
-    schema_version: 1
-    role: prior
-    profile:
-      id: s3-basic-object-crud
-      version: 1
-    status: approved
-    eligibility:
-      rollback_baseline_eligible: true
-      promotion_eligible: true
-    ledger_record_digest: sha256:f64970fd4df25a5d1805517dfc2c40ff512609f8d7083dbb9d7049e30cb1bc78
-    source:
-      repository: pedrosakuma/aws2azure
-      sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      ref: refs/heads/main
-    runtime:
-      aggregate_digest: sha256:cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c
-      executable_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-    producer:
-      workflow: .github/workflows/sealed-runtime.yml
-      event_name: workflow_dispatch
-      run_id: 29911054433
-      run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      run_started_at: 2026-07-22T10:13:00.0000000+00:00
-    artifact:
-      id: 8525928121
-      name: aws2azure-sealed-linux-x64-cb3c8707517506ac3f548d1e1b82bf7630ea8b9a7911cc5b120a8e22a5ccea5c-run-29911054433-attempt-1
-      upload_digest: sha256:d900a68947c3e4da4c9a3521cb2462c6cadd51e44773031e8b0a4b251fcef566
-      created_at: 2026-07-22T10:15:09.0000000+00:00
-      expires_at: 2026-10-20T10:13:02.0000000+00:00
-    attestation:
-      predicate_type: https://slsa.dev/provenance/v1
-      repository: pedrosakuma/aws2azure
-      signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: cd0cfe387523390a8ace0028be3043b009f43f79
-      source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29911054433/attempts/1
-      bundle_digest: sha256:1c3b4b69223a0eefb92e01e0ab52710758dea3eddd4a1e0a63747715575e65e5
-      executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:25282796e5b4622608e6360477c32f88b31f91eebbfd7247986188d2f7f98d39
-      manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:750ca433a80e64649b49acaffde6c6d275983948cebc47ecb87594c2afe4b3ff
-  candidate_config_digest: sha256:aeecf97d8edf8f8725fe1af30e502e5f7005a2c955e4b21322a8eb46752b9392
-  prior_config_digest: sha256:aeecf97d8edf8f8725fe1af30e502e5f7005a2c955e4b21322a8eb46752b9392
-  candidate_backend_identity_digest: sha256:3011dba3140f86a12b8c41221709e2e5ef03c79a03c1c012a2634a4fb7f22e84
-  prior_backend_identity_digest: sha256:3011dba3140f86a12b8c41221709e2e5ef03c79a03c1c012a2634a4fb7f22e84
+  candidate_config_digest: sha256:a1627751bb1acc0564064ab56c11a5d583d8f4a6837afae1b006516be592e96f
+  prior_config_digest: sha256:a1627751bb1acc0564064ab56c11a5d583d8f4a6837afae1b006516be592e96f
+  candidate_backend_identity_digest: sha256:69801f2d97cf904b52e0ec22be82558f2c253ca1a6add1a74dc9da934ea809f0
+  prior_backend_identity_digest: sha256:69801f2d97cf904b52e0ec22be82558f2c253ca1a6add1a74dc9da934ea809f0
   candidate_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
   prior_aws_binding_digest: sha256:cb14bcc74fa816f0fb98c7d398a81c799bc718c99e504bcacb220136231ae059
-  canary_digest: sha256:7f50bdc83be654b5680a3e8354bed0024ea85e66e18472e486513b8e11cde972
+  canary_digest: sha256:de50b7c7708aaaa8158baabd0c915f7b87d0b7be3b46a26e20408a7c698c7b6f
   cleanup_semantics: delete_object_delete_bucket_verify_no_such_bucket
-  started_at_utc: 2026-08-26T14:23:20.5818330+00:00
-  candidate_create_completed_at_utc: 2026-08-26T14:23:20.8679879+00:00
-  candidate_read_completed_at_utc: 2026-08-26T14:23:20.9250797+00:00
-  candidate_stopped_at_utc: 2026-08-26T14:23:20.9630210+00:00
-  prior_started_at_utc: 2026-08-26T14:23:21.4673355+00:00
-  prior_read_completed_at_utc: 2026-08-26T14:23:21.7785548+00:00
-  cleanup_requested_at_utc: 2026-08-26T14:23:21.7787893+00:00
-  cleanup_verified_at_utc: 2026-08-26T14:23:43.0789276+00:00
-  candidate_restored_at_utc: 2026-08-26T14:23:43.6169122+00:00
-  completed_at_utc: 2026-08-26T14:23:43.6169126+00:00
+  started_at_utc: 2026-09-01T18:08:52.2243108+00:00
+  candidate_create_completed_at_utc: 2026-09-01T18:08:52.5725827+00:00
+  candidate_read_completed_at_utc: 2026-09-01T18:08:52.6424004+00:00
+  candidate_stopped_at_utc: 2026-09-01T18:08:52.6838544+00:00
+  prior_started_at_utc: 2026-09-01T18:08:53.1899812+00:00
+  prior_read_completed_at_utc: 2026-09-01T18:08:53.6957620+00:00
+  cleanup_requested_at_utc: 2026-09-01T18:08:53.6960129+00:00
+  cleanup_verified_at_utc: 2026-09-01T18:09:15.4693011+00:00
+  candidate_restored_at_utc: 2026-09-01T18:09:16.0073466+00:00
+  completed_at_utc: 2026-09-01T18:09:16.0073470+00:00
 findings: []

@@ -64,20 +64,20 @@ candidate:
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
 provenance:
-  run_id: 33026233966
-  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33026233966
+  run_id: 33719027643
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33719027643
   run_attempt: 1
-  generated_at_utc: 2026-08-27T00:16:22.9544178+00:00
-  window_start_utc: 2026-08-26T23:10:17.7478468+00:00
-  window_end_utc: 2026-08-27T00:00:04.4793772+00:00
+  generated_at_utc: 2026-09-03T05:29:56.9962646+00:00
+  window_start_utc: 2026-09-03T03:46:16.4665331+00:00
+  window_end_utc: 2026-09-03T04:39:54.3510660+00:00
   region: eastus2
   backend_description: Ephemeral Azure Cosmos DB serverless SQL API, Strong consistency
   correctness_run:
-    run_id: 33020812878
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020812878
+    run_id: 33717426845
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33717426845
     run_attempt: 1
-    window_start_utc: 2026-08-26T22:52:46.6291228+00:00
-    window_end_utc: 2026-08-26T22:52:46.6291229+00:00
+    window_start_utc: 2026-09-03T05:10:35.3998089+00:00
+    window_end_utc: 2026-09-03T05:10:35.3998090+00:00
     git_sha: e3984773699f4133ff9073a5ef5f374671b181c9
     artifact_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
     config_digest: sha256:88598fb50b9bf384aaa7138a3777ba0181d59abd1ea614555ecc7b194bbc45ff
@@ -88,24 +88,24 @@ provenance:
       workflow_path: .github/workflows/integration-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 33020812878
+      run_id: 33717426845
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020812878
-      head_sha: e3984773699f4133ff9073a5ef5f374671b181c9
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33717426845
+      head_sha: 21be233080b75f67ed700ddc1c1a7d9f12e1fe3b
       head_ref: refs/heads/main
       artifact:
-        id: 9626563899
+        id: 9879118195
         name: real-azure-conformance
-        upload_digest: sha256:57a2b99c99a068a1ec56bd07d490070e692d05a2bbf1f1d45f018c1f2cd8c8d0
-        created_at: 2026-08-26T22:52:48.0000000+00:00
-        expires_at: 2026-11-24T22:47:29.0000000+00:00
-    reaffirmed: false
+        upload_digest: sha256:1b43789357472440bf27aa31332ec7065895daaac9c081951e71a5284c1a70c4
+        created_at: 2026-09-03T05:10:37.0000000+00:00
+        expires_at: 2026-12-02T05:05:17.0000000+00:00
+    reaffirmed: true
   source_runs:
-  - run_id: 33021996795
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33021996795
+  - run_id: 33712274547
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33712274547
     run_attempt: 1
-    window_start_utc: 2026-08-26T23:10:17.7478468+00:00
-    window_end_utc: 2026-08-26T23:15:35.2336325+00:00
+    window_start_utc: 2026-09-03T03:46:16.4665331+00:00
+    window_end_utc: 2026-09-03T03:51:29.3036015+00:00
     git_sha: e3984773699f4133ff9073a5ef5f374671b181c9
     artifact_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
     config_digest: sha256:88598fb50b9bf384aaa7138a3777ba0181d59abd1ea614555ecc7b194bbc45ff
@@ -116,23 +116,23 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 33021996795
+      run_id: 33712274547
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33021996795
-      head_sha: e3984773699f4133ff9073a5ef5f374671b181c9
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33712274547
+      head_sha: 21be233080b75f67ed700ddc1c1a7d9f12e1fe3b
       head_ref: refs/heads/main
       artifact:
-        id: 9627119628
+        id: 9877498882
         name: real-azure-workload-load-dynamodb-basic-crud
-        upload_digest: sha256:fcb337763506c5863775de58153f8e026ab0c270e1fec856e8ec36ce6b189b99
-        created_at: 2026-08-26T23:15:36.0000000+00:00
-        expires_at: 2026-11-24T23:05:24.0000000+00:00
-    reaffirmed: false
-  - run_id: 33023441567
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33023441567
+        upload_digest: sha256:43a5a8afc730c2c1e766e72d769a6a018bb6a8061be29a16803da3fab18f56da
+        created_at: 2026-09-03T03:51:30.0000000+00:00
+        expires_at: 2026-12-02T03:41:36.0000000+00:00
+    reaffirmed: true
+  - run_id: 33713815459
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33713815459
     run_attempt: 1
-    window_start_utc: 2026-08-26T23:32:43.7903527+00:00
-    window_end_utc: 2026-08-26T23:37:59.5085873+00:00
+    window_start_utc: 2026-09-03T04:10:32.4153990+00:00
+    window_end_utc: 2026-09-03T04:15:43.7754796+00:00
     git_sha: e3984773699f4133ff9073a5ef5f374671b181c9
     artifact_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
     config_digest: sha256:88598fb50b9bf384aaa7138a3777ba0181d59abd1ea614555ecc7b194bbc45ff
@@ -143,23 +143,23 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 33023441567
+      run_id: 33713815459
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33023441567
-      head_sha: e3984773699f4133ff9073a5ef5f374671b181c9
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33713815459
+      head_sha: 21be233080b75f67ed700ddc1c1a7d9f12e1fe3b
       head_ref: refs/heads/main
       artifact:
-        id: 9627676079
+        id: 9877980757
         name: real-azure-workload-load-dynamodb-basic-crud
-        upload_digest: sha256:c971020e68d304766c0e02bfd83ebd9c3852f77b9f563bd618ceaeed71a3ce9d
-        created_at: 2026-08-26T23:38:01.0000000+00:00
-        expires_at: 2026-11-24T23:27:54.0000000+00:00
-    reaffirmed: false
-  - run_id: 33024739691
-    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33024739691
+        upload_digest: sha256:3b77645d04c7470d8b312f878eb86115907e8e01f8dc59e720de7aedffe9f97a
+        created_at: 2026-09-03T04:15:44.0000000+00:00
+        expires_at: 2026-12-02T04:06:23.0000000+00:00
+    reaffirmed: true
+  - run_id: 33715263734
+    run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33715263734
     run_attempt: 1
-    window_start_utc: 2026-08-26T23:54:53.5254429+00:00
-    window_end_utc: 2026-08-27T00:00:04.4793772+00:00
+    window_start_utc: 2026-09-03T04:34:43.7553884+00:00
+    window_end_utc: 2026-09-03T04:39:54.3510660+00:00
     git_sha: e3984773699f4133ff9073a5ef5f374671b181c9
     artifact_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
     config_digest: sha256:88598fb50b9bf384aaa7138a3777ba0181d59abd1ea614555ecc7b194bbc45ff
@@ -170,18 +170,18 @@ provenance:
       workflow_path: .github/workflows/workload-load-real-azure.yml
       event_name: workflow_dispatch
       conclusion: success
-      run_id: 33024739691
+      run_id: 33715263734
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33024739691
-      head_sha: e3984773699f4133ff9073a5ef5f374671b181c9
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33715263734
+      head_sha: 21be233080b75f67ed700ddc1c1a7d9f12e1fe3b
       head_ref: refs/heads/main
       artifact:
-        id: 9628137372
+        id: 9878478271
         name: real-azure-workload-load-dynamodb-basic-crud
-        upload_digest: sha256:c599f2a861d84d21d4b5f0d45a5244a12f7c4bf2f6b86e8c13b9806f2f14310c
-        created_at: 2026-08-27T00:00:05.0000000+00:00
-        expires_at: 2026-11-24T23:50:25.0000000+00:00
-    reaffirmed: false
+        upload_digest: sha256:be93a76cabced19cea5fd4f566d181c298a052af1aef9bdf1e18be6c6d77982a
+        created_at: 2026-09-03T04:39:55.0000000+00:00
+        expires_at: 2026-12-02T04:30:08.0000000+00:00
+    reaffirmed: true
 rules:
   max_artifact_age_hours: 72
   min_samples_per_scenario: 300
@@ -197,211 +197,211 @@ signals:
   disposition: blocking
   metric: throughput_per_sec
   min_value: 17
-  measured_value: 20.21335172163735
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 102.83909919006047
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 159.1556
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 36.5786
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 190.192
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 53.5666
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: crud-iterations-per-sec
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 10.106675860818674
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 51.41954959503023
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: aws-operations-per-sec
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 60.719713693864314
-  samples: 192144
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 308.5969766243059
+  samples: 329478
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-create-table-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 0.026539309333635974
+  measured_value: 0.026545006010988862
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-create-table-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 3094.5585
+  measured_value: 2061.8071
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-create-table-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 3094.5585
+  measured_value: 2061.8071
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-describe-table-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 0.026539309333635974
+  measured_value: 0.026545006010988862
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-describe-table-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 126.6813
+  measured_value: 76.3337
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-describe-table-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 126.6813
+  measured_value: 76.3337
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-put-item-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 10.106675860818674
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 51.41954959503023
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-put-item-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 74.5722
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 13.8608
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-put-item-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 79.1915
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 16.7033
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-update-item-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 10.106675860818674
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 51.41954959503023
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-update-item-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 236.106
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 51.2101
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-update-item-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 476.9949
-  samples: 32012
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 109.1515
+  samples: 54901
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-item-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 20.21335172163735
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 102.83909919006047
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-item-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 91.6243
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 15.6214
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-item-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 238.9576
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  measured_value: 29.6788
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-table-throughput
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throughput_per_sec
-  measured_value: 0.026539309333635974
+  measured_value: 0.026545006010988862
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-table-p95
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p95_ms
-  measured_value: 1043.4933
+  measured_value: 1301.5663
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-delete-table-p99
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: p99_ms
-  measured_value: 1043.4933
+  measured_value: 1301.5663
   samples: 24
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: representative-load-unauthenticated-connectivity-header-p95
   scenario_id: representative-load
   source: network_noise
   disposition: report_only
   metric: p95_ms
-  measured_value: 335.4717
+  measured_value: 87.1246
   samples: 72
-  captured_at_utc: 2026-08-26T23:59:54.7943308+00:00
+  captured_at_utc: 2026-09-03T04:39:45.3392568+00:00
 - id: representative-load-throttle-rate
   scenario_id: representative-load
   source: backend_capacity
   disposition: report_only
   metric: throttle_rate
   measured_value: 0
-  samples: 64024
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  samples: 109802
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 scenarios:
 - id: representative-load
   service: dynamodb
   operation: GetItem
   evidence_source: real_azure
-  completions: 64024
+  completions: 109802
   failures: 0
   skipped: 0
-  duration_seconds: 903.8283627000001
-  captured_at_utc: 2026-08-26T23:59:54.7301517+00:00
+  duration_seconds: 903.8430636999999
+  captured_at_utc: 2026-09-03T04:39:45.2611710+00:00
 - id: conditional-write-concurrency
   service: dynamodb
   operation: PutItem
@@ -409,8 +409,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 4.6366087
-  captured_at_utc: 2026-08-26T23:59:55.9568240+00:00
+  duration_seconds: 3.9748582
+  captured_at_utc: 2026-09-03T04:39:46.6041431+00:00
 - id: throttling
   service: dynamodb
   operation: GetItem
@@ -418,8 +418,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 2.3669981
-  captured_at_utc: 2026-08-26T23:59:57.7548917+00:00
+  duration_seconds: 1.2762007
+  captured_at_utc: 2026-09-03T04:39:48.1221612+00:00
 - id: timeout
   service: dynamodb
   operation: GetItem
@@ -427,8 +427,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 1.9919498999999998
-  captured_at_utc: 2026-08-26T23:59:58.2841157+00:00
+  duration_seconds: 1.4590437
+  captured_at_utc: 2026-09-03T04:39:48.3465865+00:00
 - id: service-unavailable
   service: dynamodb
   operation: GetItem
@@ -436,8 +436,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 1.3638383
-  captured_at_utc: 2026-08-26T23:59:59.2365545+00:00
+  duration_seconds: 2.1683901
+  captured_at_utc: 2026-09-03T04:39:49.2324179+00:00
 - id: read-after-write
   service: dynamodb
   operation: GetItem
@@ -445,8 +445,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 3.6256078
-  captured_at_utc: 2026-08-26T23:59:56.7359379+00:00
+  duration_seconds: 2.9906924999999998
+  captured_at_utc: 2026-09-03T04:39:47.5144474+00:00
 - id: restart
   service: dynamodb
   operation: PutItem
@@ -454,8 +454,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 7.0526406999999995
-  captured_at_utc: 2026-08-27T00:00:00.8520526+00:00
+  duration_seconds: 5.4564775999999995
+  captured_at_utc: 2026-09-03T04:39:51.0001414+00:00
 - id: retry-exhaustion
   service: dynamodb
   operation: PutItem
@@ -463,8 +463,8 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 4.7407038
-  captured_at_utc: 2026-08-27T00:00:01.9349308+00:00
+  duration_seconds: 4.6066632
+  captured_at_utc: 2026-09-03T04:39:51.8667383+00:00
 - id: rollback
   service: dynamodb
   operation: GetItem
@@ -472,13 +472,13 @@ scenarios:
   completions: 3
   failures: 0
   skipped: 0
-  duration_seconds: 9.844422
-  captured_at_utc: 2026-08-27T00:00:04.4783217+00:00
+  duration_seconds: 7.8683163
+  captured_at_utc: 2026-09-03T04:39:54.3500312+00:00
 rollback_proofs:
 - scenario_id: rollback
   service: dynamodb
   operation: GetItem
-  evidence_run_id: 33021996795
+  evidence_run_id: 33712274547
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -569,28 +569,28 @@ rollback_proofs:
       executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  candidate_config_digest: sha256:e18b5e6b00554b2efc4098c9e0cf44be97f28c39b37e2e8a648daa9d8c211fd8
-  prior_config_digest: sha256:e18b5e6b00554b2efc4098c9e0cf44be97f28c39b37e2e8a648daa9d8c211fd8
-  candidate_backend_identity_digest: sha256:6b122bb9bbb42d338b96235e00dceb0a8195249751ccd23d93bd76afcb6b0d08
-  prior_backend_identity_digest: sha256:6b122bb9bbb42d338b96235e00dceb0a8195249751ccd23d93bd76afcb6b0d08
+  candidate_config_digest: sha256:b7da066622224469d1fe6a8f77f97f6d7efd39ab125261036fc575300f0c1f4f
+  prior_config_digest: sha256:b7da066622224469d1fe6a8f77f97f6d7efd39ab125261036fc575300f0c1f4f
+  candidate_backend_identity_digest: sha256:f4120bbab55844c0bfe792308ac53d14da83f06f5f53f77c4e636bbfedf83bbc
+  prior_backend_identity_digest: sha256:f4120bbab55844c0bfe792308ac53d14da83f06f5f53f77c4e636bbfedf83bbc
   candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
   prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
-  canary_digest: sha256:5cf0db3079b804a58a7013bff5601cc5e99ef1918cb9fc9c0c2aafe5b23d181c
+  canary_digest: sha256:b6be9a02930e86d232bfafec9e9a8940c9ce9b9e68e6deb3105f11b5e1f1b426
   cleanup_semantics: delete_table_verify_resource_not_found_exception
-  started_at_utc: 2026-08-26T23:15:31.2474427+00:00
-  candidate_create_completed_at_utc: 2026-08-26T23:15:32.1995272+00:00
-  candidate_read_completed_at_utc: 2026-08-26T23:15:32.2911042+00:00
-  candidate_stopped_at_utc: 2026-08-26T23:15:32.3283164+00:00
-  prior_started_at_utc: 2026-08-26T23:15:32.8331058+00:00
-  prior_read_completed_at_utc: 2026-08-26T23:15:34.2420317+00:00
-  cleanup_requested_at_utc: 2026-08-26T23:15:34.2422584+00:00
-  cleanup_verified_at_utc: 2026-08-26T23:15:34.6923315+00:00
-  candidate_restored_at_utc: 2026-08-26T23:15:35.2325504+00:00
-  completed_at_utc: 2026-08-26T23:15:35.2325507+00:00
+  started_at_utc: 2026-09-03T03:51:26.7272467+00:00
+  candidate_create_completed_at_utc: 2026-09-03T03:51:27.4071277+00:00
+  candidate_read_completed_at_utc: 2026-09-03T03:51:27.4370248+00:00
+  candidate_stopped_at_utc: 2026-09-03T03:51:27.4719409+00:00
+  prior_started_at_utc: 2026-09-03T03:51:27.9762392+00:00
+  prior_read_completed_at_utc: 2026-09-03T03:51:28.3725978+00:00
+  cleanup_requested_at_utc: 2026-09-03T03:51:28.3728174+00:00
+  cleanup_verified_at_utc: 2026-09-03T03:51:28.7609290+00:00
+  candidate_restored_at_utc: 2026-09-03T03:51:29.3024732+00:00
+  completed_at_utc: 2026-09-03T03:51:29.3024735+00:00
 - scenario_id: rollback
   service: dynamodb
   operation: GetItem
-  evidence_run_id: 33023441567
+  evidence_run_id: 33713815459
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -681,28 +681,28 @@ rollback_proofs:
       executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  candidate_config_digest: sha256:9f867d3e37330b4caa1529e0c3a95b8f7ac79e37e49dcf606fcdf9ad857d06de
-  prior_config_digest: sha256:9f867d3e37330b4caa1529e0c3a95b8f7ac79e37e49dcf606fcdf9ad857d06de
-  candidate_backend_identity_digest: sha256:505aefb40dbe6b50c02415a1dd7fa29b10b95820b3a7e3f2f195f5313ad11eb7
-  prior_backend_identity_digest: sha256:505aefb40dbe6b50c02415a1dd7fa29b10b95820b3a7e3f2f195f5313ad11eb7
+  candidate_config_digest: sha256:3082b39ece45d7dc3bd88d77f503f7f53fcafdc4c641e00edd35fac4344a8a4b
+  prior_config_digest: sha256:3082b39ece45d7dc3bd88d77f503f7f53fcafdc4c641e00edd35fac4344a8a4b
+  candidate_backend_identity_digest: sha256:e18687300b27f2c386e71af583e22a10e168890863833b244ce2331f3bb59824
+  prior_backend_identity_digest: sha256:e18687300b27f2c386e71af583e22a10e168890863833b244ce2331f3bb59824
   candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
   prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
-  canary_digest: sha256:fa91bd246b4a968e83542c2e893bd1c41cbe289a3652236cc4210dbfc188ebad
+  canary_digest: sha256:008c3a578e76bbcca43fe242546eb287299fc33941739b1ba2986edf73c4c3a4
   cleanup_semantics: delete_table_verify_resource_not_found_exception
-  started_at_utc: 2026-08-26T23:37:56.1897059+00:00
-  candidate_create_completed_at_utc: 2026-08-26T23:37:57.1955485+00:00
-  candidate_read_completed_at_utc: 2026-08-26T23:37:57.2874044+00:00
-  candidate_stopped_at_utc: 2026-08-26T23:37:57.3216035+00:00
-  prior_started_at_utc: 2026-08-26T23:37:57.8257522+00:00
-  prior_read_completed_at_utc: 2026-08-26T23:37:58.4180296+00:00
-  cleanup_requested_at_utc: 2026-08-26T23:37:58.4181723+00:00
-  cleanup_verified_at_utc: 2026-08-26T23:37:58.9685045+00:00
-  candidate_restored_at_utc: 2026-08-26T23:37:59.5073081+00:00
-  completed_at_utc: 2026-08-26T23:37:59.5073084+00:00
+  started_at_utc: 2026-09-03T04:15:40.9631389+00:00
+  candidate_create_completed_at_utc: 2026-09-03T04:15:41.6473746+00:00
+  candidate_read_completed_at_utc: 2026-09-03T04:15:41.6772789+00:00
+  candidate_stopped_at_utc: 2026-09-03T04:15:41.7113908+00:00
+  prior_started_at_utc: 2026-09-03T04:15:42.2164098+00:00
+  prior_read_completed_at_utc: 2026-09-03T04:15:42.8694587+00:00
+  cleanup_requested_at_utc: 2026-09-03T04:15:42.8697205+00:00
+  cleanup_verified_at_utc: 2026-09-03T04:15:43.2420437+00:00
+  candidate_restored_at_utc: 2026-09-03T04:15:43.7746922+00:00
+  completed_at_utc: 2026-09-03T04:15:43.7746925+00:00
 - scenario_id: rollback
   service: dynamodb
   operation: GetItem
-  evidence_run_id: 33024739691
+  evidence_run_id: 33715263734
   evidence_run_attempt: 1
   candidate:
     schema_version: 1
@@ -793,22 +793,22 @@ rollback_proofs:
       executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  candidate_config_digest: sha256:cac3c7ebc9abef9166281ca30d5b1e944025a33bc6168ea0f7b7221bfcdc70a0
-  prior_config_digest: sha256:cac3c7ebc9abef9166281ca30d5b1e944025a33bc6168ea0f7b7221bfcdc70a0
-  candidate_backend_identity_digest: sha256:b2dfed3e0dababfea7d2aa149e78f64f01789a183d7433f5ccdaeb566fca9f60
-  prior_backend_identity_digest: sha256:b2dfed3e0dababfea7d2aa149e78f64f01789a183d7433f5ccdaeb566fca9f60
+  candidate_config_digest: sha256:b50f1496b37f0513bc4c65062958ac54b133da1dda351993eb4a5f8b3965d030
+  prior_config_digest: sha256:b50f1496b37f0513bc4c65062958ac54b133da1dda351993eb4a5f8b3965d030
+  candidate_backend_identity_digest: sha256:4fac54e43313d36f65f4cd6520771282384bc234145e0a03f3bba61232d4ab9d
+  prior_backend_identity_digest: sha256:4fac54e43313d36f65f4cd6520771282384bc234145e0a03f3bba61232d4ab9d
   candidate_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
   prior_aws_binding_digest: sha256:0f093e88dfaedbec8a8dc54716090396c7228a356ab73c299d03f5929786f870
-  canary_digest: sha256:ec384b1a23b6056c270b981f6a608cf62b1e925bb6f2ff40f3c81b534b39cdee
+  canary_digest: sha256:247f1e017e37e42a4e3de9660320ac975b0baf844fa178218b4a8a233a6d14c8
   cleanup_semantics: delete_table_verify_resource_not_found_exception
-  started_at_utc: 2026-08-27T00:00:01.9366118+00:00
-  candidate_create_completed_at_utc: 2026-08-27T00:00:02.6415344+00:00
-  candidate_read_completed_at_utc: 2026-08-27T00:00:02.6655571+00:00
-  candidate_stopped_at_utc: 2026-08-27T00:00:02.7070549+00:00
-  prior_started_at_utc: 2026-08-27T00:00:03.2120483+00:00
-  prior_read_completed_at_utc: 2026-08-27T00:00:03.5603368+00:00
-  cleanup_requested_at_utc: 2026-08-27T00:00:03.5606126+00:00
-  cleanup_verified_at_utc: 2026-08-27T00:00:03.9373470+00:00
-  candidate_restored_at_utc: 2026-08-27T00:00:04.4783214+00:00
-  completed_at_utc: 2026-08-27T00:00:04.4783217+00:00
+  started_at_utc: 2026-09-03T04:39:51.8684978+00:00
+  candidate_create_completed_at_utc: 2026-09-03T04:39:52.5319556+00:00
+  candidate_read_completed_at_utc: 2026-09-03T04:39:52.5567590+00:00
+  candidate_stopped_at_utc: 2026-09-03T04:39:52.5936537+00:00
+  prior_started_at_utc: 2026-09-03T04:39:53.0987106+00:00
+  prior_read_completed_at_utc: 2026-09-03T04:39:53.3876558+00:00
+  cleanup_requested_at_utc: 2026-09-03T04:39:53.3879306+00:00
+  cleanup_verified_at_utc: 2026-09-03T04:39:53.8049047+00:00
+  candidate_restored_at_utc: 2026-09-03T04:39:54.3500308+00:00
+  completed_at_utc: 2026-09-03T04:39:54.3500312+00:00
 findings: []
