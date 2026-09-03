@@ -38,7 +38,7 @@ attestation:
   manifest_subject_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
 qualification:
   artifact: docs/workloads/evidence/dynamodb-basic-crud.yaml
-  digest: sha256:40b20eb5ad9068e57df10a779cfe63f753541627739df66cff708b6925f578d0
+  digest: sha256:d26277fad1f2f5d46231890f7995c4200cb80aef8ad1bc3c9a867694d177e9d6
   verdict: qualified
   candidate_runtime_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
   rollback_target_runtime_digest: sha256:12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2
@@ -87,14 +87,15 @@ qualification:
       executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33026233966
-  qualified_at: '2026-08-27T00:16:22.9544178+00:00'
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33719027643
+  qualified_at: '2026-09-03T05:29:56.9962646+00:00'
 approval:
-  reason: Real-Azure qualification run 33026233966 promoted the approved DynamoDB
-    basic CRUD runtime to the exact sealed candidate from run 33020647541. Correctness
-    run 33020812878 and production-shaped load runs 33021996795, 33023441567, and
-    33024739691 (attempt 1) passed with zero blocking findings, including rollback
-    to the previously approved runtime.
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33026233966
-  reviewed_at: '2026-08-27T00:19:15Z'
+  reason: Real-Azure qualification run 33719027643 reaffirmed the already-approved
+    DynamoDB basic CRUD runtime (unchanged candidate e3984773699f4133ff9073a5ef5f374671b181c9)
+    at v1.1.0's GA-clock refresh. Correctness run 33717426845 and production-shaped
+    load runs 33712274547, 33713815459, and 33715263734 (attempt 1) passed with
+    zero blocking findings, renewing evidence freshness without a new sealed
+    candidate.
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33719027643
+  reviewed_at: '2026-09-03T05:30:01Z'
   reviewed_by: pedrosakuma

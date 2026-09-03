@@ -38,7 +38,7 @@ attestation:
   manifest_subject_digest: 'sha256:0b7b533aa598652923dfa9937e056b894030c564a775536dfb0250e1c54fae3e'
 qualification:
   artifact: docs/workloads/evidence/sqs-standard-messaging.yaml
-  digest: 'sha256:7c8ce8e0f2da006724a97e42ece21c1d72903f4963b11fea5a665d7e7c4ba030'
+  digest: 'sha256:0f5f43cf37c776b438edf9e8bb7ac933ba2e0b1505b25c5a46d2b843ce0c60f4'
   verdict: qualified
   candidate_runtime_digest: 'sha256:392e168d101621f41cdfaf411b48112e59ace89dcc3d97e320e8cb22954d9839'
   rollback_target_runtime_digest: 'sha256:e298eb1f20615ef56c4ea709b3c09a14fa75c496df2a57a72c1ef0b1b24a8464'
@@ -87,10 +87,15 @@ qualification:
       executable_subject_digest: 'sha256:326f7d71b6465080d5b21e2fb90a707b79f5f2033f841cb3f635cd546c61a627'
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: 'sha256:ffd3c570e7a3e7de0e927cac2918fec4fcdbd14c2d1cf4c27ad1ec32ce852d76'
-  review_url: 'https://github.com/pedrosakuma/aws2azure/actions/runs/33010389889'
-  qualified_at: '2026-08-26T20:26:55.3769678+00:00'
+  review_url: 'https://github.com/pedrosakuma/aws2azure/actions/runs/33723976579'
+  qualified_at: '2026-09-03T06:37:08.1252169+00:00'
 approval:
-  reason: Real-Azure qualification run 33010389889 promoted the approved SQS runtime to the exact sealed candidate from run 33005409074. Correctness run 33005624512 and production-shaped load runs 33007366147, 33007411671, and 33007389101 (attempt 2) passed with zero blocking findings, including rollback to the previously approved runtime.
-  review_url: 'https://github.com/pedrosakuma/aws2azure/actions/runs/33010389889'
-  reviewed_at: '2026-08-26T20:27:56Z'
+  reason: Real-Azure qualification run 33723976579 reaffirmed the already-approved
+    SQS runtime (unchanged candidate 81155ec3ded9dfb0fa8eb058b1dd860346f031dd) at
+    v1.1.0's GA-clock refresh. Correctness run 33719130906 and production-shaped
+    load runs 33720680669, 33721899781, and 33722914059 (attempt 1) passed with
+    zero blocking findings, renewing evidence freshness without a new sealed
+    candidate.
+  review_url: 'https://github.com/pedrosakuma/aws2azure/actions/runs/33723976579'
+  reviewed_at: '2026-09-03T06:37:12Z'
   reviewed_by: pedrosakuma
