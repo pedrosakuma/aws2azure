@@ -164,7 +164,11 @@ public sealed class DeterministicHttpFailureConformanceTests
                 {
                     SecretId = "retry-exhaustion",
                 }).ConfigureAwait(false);
-            });
+            },
+            // GetSecretValue without an explicit VersionId always fires the mandatory version list and
+            // a speculative unversioned "current" GET concurrently (see #984), so each client-visible
+            // attempt reaches the backend twice regardless of outcome.
+            backendRequestsPerAttempt: 2);
     }
 
     private static AmazonSQSClient CreateSqsClient(
@@ -290,14 +294,15 @@ public sealed class DeterministicHttpFailureConformanceTests
 
     private static async Task AssertRetryExhaustionAsync(
         string service,
-        Func<DeterministicFailureHarness, Task> operation)
+        Func<DeterministicFailureHarness, Task> operation,
+        int backendRequestsPerAttempt = 1)
     {
         using var harness = DeterministicFailureHarness.Create(service);
         harness.Backend.PlanStatus(HttpStatusCode.ServiceUnavailable);
 
         await Assert.ThrowsAnyAsync<AmazonServiceException>(() => operation(harness));
 
-        Assert.Equal(3, harness.Backend.BackendRequestCount);
+        Assert.Equal(3 * backendRequestsPerAttempt, harness.Backend.BackendRequestCount);
     }
 
     private sealed record FailureCase(

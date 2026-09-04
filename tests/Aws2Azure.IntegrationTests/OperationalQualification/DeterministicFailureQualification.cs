@@ -317,7 +317,10 @@ internal static class DeterministicFailureQualification
                 SecretId = "deterministic-failure",
             }));
         AssertSdkError(exception, failure);
-        AssertSdkRetriedOnce(harness);
+        // GetSecretValue without an explicit VersionId always fires the mandatory version list and a
+        // speculative unversioned "current" GET concurrently (see #984), so each client-visible attempt
+        // reaches the backend twice regardless of outcome.
+        AssertSdkRetriedOnce(harness, backendRequestsPerAttempt: 2);
         Assert.InRange(harness.Backend.TokenRequestCount, 0, 1);
     }
 
@@ -549,10 +552,11 @@ internal static class DeterministicFailureQualification
         Assert.Equal(failure.ExpectedCode, exception.ErrorCode);
     }
 
-    private static void AssertSdkRetriedOnce(DeterministicFailureHarness harness)
+    private static void AssertSdkRetriedOnce(DeterministicFailureHarness harness, int backendRequestsPerAttempt = 1)
     {
-        // One raw wire assertion, then the SDK's initial attempt plus one retry.
-        Assert.Equal(3, harness.Backend.BackendRequestCount);
+        // One raw wire assertion, then the SDK's initial attempt plus one retry: 3 client-visible
+        // attempts, each reaching the backend `backendRequestsPerAttempt` times.
+        Assert.Equal(3 * backendRequestsPerAttempt, harness.Backend.BackendRequestCount);
     }
 
     private sealed record FailureCase(
