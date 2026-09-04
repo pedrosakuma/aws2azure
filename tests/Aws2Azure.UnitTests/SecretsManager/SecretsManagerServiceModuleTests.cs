@@ -190,6 +190,14 @@ public sealed class SecretsManagerServiceModuleTests
                 });
             }
 
+            if (string.Equals(request.RequestUri.AbsolutePath, "/secrets/demo", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":\"current-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/current123\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000100},\"tags\":{\"aws2azure-version-stages\":\"AWSCURRENT\"}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"value\":\"pending-secret\",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/pending123\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000},\"tags\":{\"aws2azure-version-stages\":\"AWSPENDING\"}}", Encoding.UTF8, "application/json"),
@@ -245,10 +253,80 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo/current?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
+        Assert.Contains(requestedUris, uri => uri.Contains($"/secrets/demo?api-version={KeyVaultSecretClient.ApiVersion}", StringComparison.Ordinal));
         var body = await ReadBodyAsync(context);
         using var document = JsonDocument.Parse(body);
         Assert.Equal("current-secret", document.RootElement.GetProperty("SecretString").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_falls_back_to_versioned_get_when_current_changes_during_speculative_fetch()
+    {
+        // Models the race window the #984 optimization must stay safe against: a concurrent
+        // PutSecretValue/UpdateSecretVersionStage promotes a new "current" version to Key Vault in
+        // between the speculative unversioned GET snapshotting the (now-stale) old current and the
+        // authoritative version list resolving the request. The handler must detect the mismatch and
+        // fall back to a version-specific GET rather than trusting the stale speculative snapshot.
+        var initial = new SecretVersionState(
+            "v1",
+            "value-v1",
+            1_710_000_000,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["aws2azure-version-stages"] = "AWSCURRENT" });
+        var keyVault = new InMemoryKeyVaultHandler(initial);
+        keyVault.OnUnversionedGetSnapshotted = () => keyVault.InjectConcurrentPromote("v2", "value-v2", 1_710_000_200);
+
+        using var http = new AzureHttpClient(keyVault, ownsHandler: false);
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        // The authoritative version list (resolved after the concurrent promote) must win: the
+        // response reflects "v2", never the stale "v1" snapshot the speculative fetch captured.
+        Assert.Equal("v2", document.RootElement.GetProperty("VersionId").GetString());
+        Assert.Equal("value-v2", document.RootElement.GetProperty("SecretString").GetString());
+    }
+
+    [Fact]
+    public async Task HandleAsync_GetSecretValue_falls_back_to_versioned_get_when_tags_change_on_same_version_during_speculative_fetch()
+    {
+        // Models a subtler race than a VersionId change: SecretVersionCoordinator.PublishVersionAsync
+        // PATCHes staging-label tags onto an *already-created* version across separate round trips,
+        // so the same VersionId can carry different tags at the instant the speculative unversioned
+        // GET snapshots it vs. when the authoritative version list resolves moments later. Matching on
+        // VersionId alone would let a stale VersionStages snapshot leak into the response (or spuriously
+        // reject a valid VersionStage match); the handler must also compare tags and fall back to a
+        // version-specific GET when they disagree.
+        var initial = new SecretVersionState(
+            "v1",
+            "value-v1",
+            1_710_000_000,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["aws2azure-version-stages"] = "AWSCURRENT" });
+        var keyVault = new InMemoryKeyVaultHandler(initial);
+        keyVault.OnUnversionedGetSnapshotted = () => keyVault.InjectConcurrentRetag("v1", "BLUE");
+
+        using var http = new AzureHttpClient(keyVault, ownsHandler: false);
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"BLUE\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        // Same VersionId as the stale speculative snapshot, but the response must reflect the
+        // authoritative (post-retag) tags, not the stale ones the speculative fetch captured.
+        Assert.Equal("v1", document.RootElement.GetProperty("VersionId").GetString());
+        var stages = new List<string>();
+        foreach (var stage in document.RootElement.GetProperty("VersionStages").EnumerateArray())
+        {
+            stages.Add(stage.GetString()!);
+        }
+
+        Assert.Contains("BLUE", stages);
     }
 
     [Fact]
@@ -2202,6 +2280,82 @@ public sealed class SecretsManagerServiceModuleTests
         public string? LastPutUri { get; private set; }
         public string? LastPutBody { get; private set; }
 
+        /// <summary>
+        /// Fires exactly once, synchronously, immediately after the unversioned "current secret" GET
+        /// snapshots its response but before that response is returned to the caller. Used to model a
+        /// concurrent write landing in the race window between the speculative unversioned fetch and the
+        /// authoritative version list, without relying on real thread-timing.
+        /// </summary>
+        public Action? OnUnversionedGetSnapshotted { get; set; }
+
+        /// <summary>
+        /// Simulates a concurrent PutSecretValue/UpdateSecretVersionStage promoting <paramref name="versionId"/>
+        /// to AWSCURRENT, demoting whatever version previously held that stage.
+        /// </summary>
+        public void InjectConcurrentPromote(string versionId, string value, long created)
+        {
+            foreach (var version in _versions)
+            {
+                if (!version.Tags.TryGetValue("aws2azure-version-stages", out var stages))
+                {
+                    continue;
+                }
+
+                var remaining = stages
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(stage => !string.Equals(stage, "AWSCURRENT", StringComparison.Ordinal))
+                    .ToArray();
+                if (remaining.Length > 0)
+                {
+                    version.Tags["aws2azure-version-stages"] = string.Join('\n', remaining);
+                }
+                else
+                {
+                    version.Tags.Remove("aws2azure-version-stages");
+                }
+            }
+
+            _versions.Add(new SecretVersionState(
+                versionId,
+                value,
+                created,
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["aws2azure-version-stages"] = "AWSCURRENT" }));
+        }
+
+        /// <summary>
+        /// Simulates a concurrent UpdateSecretVersionStage/PutSecretValue tag PATCH landing on an
+        /// *existing* version (no new version created, no VersionId change) — e.g.
+        /// SecretVersionCoordinator.PublishVersionAsync patching staging-label tags onto an
+        /// already-created version across separate round trips.
+        /// </summary>
+        public void InjectConcurrentRetag(string versionId, string additionalStage)
+        {
+            var version = _versions.Find(candidate => string.Equals(candidate.VersionId, versionId, StringComparison.Ordinal));
+            if (version is null)
+            {
+                return;
+            }
+
+            if (version.Tags.TryGetValue("aws2azure-version-stages", out var stages))
+            {
+                var alreadyPresent = false;
+                foreach (var stage in stages.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (string.Equals(stage, additionalStage, StringComparison.Ordinal))
+                    {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+
+                version.Tags["aws2azure-version-stages"] = alreadyPresent ? stages : $"{stages}\n{additionalStage}";
+            }
+            else
+            {
+                version.Tags["aws2azure-version-stages"] = additionalStage;
+            }
+        }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token", StringComparison.Ordinal))
@@ -2213,7 +2367,11 @@ public sealed class SecretsManagerServiceModuleTests
             if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
             {
                 var current = ResolveCurrentVersion();
-                return JsonResponse(BuildCurrentSecretJson(current));
+                var json = BuildCurrentSecretJson(current);
+                var hook = OnUnversionedGetSnapshotted;
+                OnUnversionedGetSnapshotted = null;
+                hook?.Invoke();
+                return JsonResponse(json);
             }
 
             if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo/versions", StringComparison.Ordinal))
@@ -2330,9 +2488,11 @@ public sealed class SecretsManagerServiceModuleTests
         private string BuildCurrentSecretJson(SecretVersionState version)
         {
             var builder = new StringBuilder();
-            builder.Append("{\"id\":\"https://example.vault.azure.net/secrets/demo/");
+            builder.Append("{\"value\":");
+            builder.Append(JsonSerializer.Serialize(version.Value));
+            builder.Append(",\"id\":\"https://example.vault.azure.net/secrets/demo/versions/");
             builder.Append(version.VersionId);
-            builder.Append("\",\"attributes\":{\"created\":1710000000},\"tags\":");
+            builder.Append("\",\"contentType\":\"text/plain\",\"attributes\":{\"created\":1710000000},\"tags\":");
             builder.Append(JsonSerializer.Serialize(version.Tags));
             builder.Append('}');
             return builder.ToString();
