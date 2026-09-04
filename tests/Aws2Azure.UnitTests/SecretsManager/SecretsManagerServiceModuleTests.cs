@@ -291,6 +291,45 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_GetSecretValue_falls_back_to_versioned_get_when_tags_change_on_same_version_during_speculative_fetch()
+    {
+        // Models a subtler race than a VersionId change: SecretVersionCoordinator.PublishVersionAsync
+        // PATCHes staging-label tags onto an *already-created* version across separate round trips,
+        // so the same VersionId can carry different tags at the instant the speculative unversioned
+        // GET snapshots it vs. when the authoritative version list resolves moments later. Matching on
+        // VersionId alone would let a stale VersionStages snapshot leak into the response (or spuriously
+        // reject a valid VersionStage match); the handler must also compare tags and fall back to a
+        // version-specific GET when they disagree.
+        var initial = new SecretVersionState(
+            "v1",
+            "value-v1",
+            1_710_000_000,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["aws2azure-version-stages"] = "AWSCURRENT" });
+        var keyVault = new InMemoryKeyVaultHandler(initial);
+        keyVault.OnUnversionedGetSnapshotted = () => keyVault.InjectConcurrentRetag("v1", "BLUE");
+
+        using var http = new AzureHttpClient(keyVault, ownsHandler: false);
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.GetSecretValue", "{\"SecretId\":\"demo\",\"VersionStage\":\"BLUE\"}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var body = await ReadBodyAsync(context);
+        using var document = JsonDocument.Parse(body);
+        // Same VersionId as the stale speculative snapshot, but the response must reflect the
+        // authoritative (post-retag) tags, not the stale ones the speculative fetch captured.
+        Assert.Equal("v1", document.RootElement.GetProperty("VersionId").GetString());
+        var stages = new List<string>();
+        foreach (var stage in document.RootElement.GetProperty("VersionStages").EnumerateArray())
+        {
+            stages.Add(stage.GetString()!);
+        }
+
+        Assert.Contains("BLUE", stages);
+    }
+
+    [Fact]
     public void GetTags_strips_reserved_internal_tags_from_aws_tag_array()
     {
         using var document = JsonDocument.Parse("{\"Tags\":[{\"Key\":\"env\",\"Value\":\"dev\"},{\"Key\":\"aws2azure-client-request-token\",\"Value\":\"spoofed\"}]}");
@@ -2281,6 +2320,40 @@ public sealed class SecretsManagerServiceModuleTests
                 value,
                 created,
                 new Dictionary<string, string>(StringComparer.Ordinal) { ["aws2azure-version-stages"] = "AWSCURRENT" }));
+        }
+
+        /// <summary>
+        /// Simulates a concurrent UpdateSecretVersionStage/PutSecretValue tag PATCH landing on an
+        /// *existing* version (no new version created, no VersionId change) — e.g.
+        /// SecretVersionCoordinator.PublishVersionAsync patching staging-label tags onto an
+        /// already-created version across separate round trips.
+        /// </summary>
+        public void InjectConcurrentRetag(string versionId, string additionalStage)
+        {
+            var version = _versions.Find(candidate => string.Equals(candidate.VersionId, versionId, StringComparison.Ordinal));
+            if (version is null)
+            {
+                return;
+            }
+
+            if (version.Tags.TryGetValue("aws2azure-version-stages", out var stages))
+            {
+                var alreadyPresent = false;
+                foreach (var stage in stages.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (string.Equals(stage, additionalStage, StringComparison.Ordinal))
+                    {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+
+                version.Tags["aws2azure-version-stages"] = alreadyPresent ? stages : $"{stages}\n{additionalStage}";
+            }
+            else
+            {
+                version.Tags["aws2azure-version-stages"] = additionalStage;
+            }
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
