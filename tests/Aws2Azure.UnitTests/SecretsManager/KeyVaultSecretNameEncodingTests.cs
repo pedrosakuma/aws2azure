@@ -200,6 +200,17 @@ public sealed class KeyVaultSecretNameEncodingTests
                 });
             }
 
+            if (string.Equals(request.RequestUri!.AbsolutePath, "/secrets/" + encodedName, StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $"{{\"value\":\"super-secret\",\"id\":\"https://example.vault.azure.net/secrets/{encodedName}/versions/abc123\",\"contentType\":\"text/plain\",\"attributes\":{{\"created\":1710000000}},\"tags\":{{\"aws2azure-version-stages\":\"AWSCURRENT\",\"aws2azure-secret-name\":\"{rawName}\"}}}}",
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
             Assert.Equal("/secrets/" + encodedName + "/abc123", request.RequestUri!.AbsolutePath);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
