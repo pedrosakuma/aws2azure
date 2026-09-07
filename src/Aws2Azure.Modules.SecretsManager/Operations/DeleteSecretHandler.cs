@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.SecretsManager.Operations;
 
@@ -9,8 +10,34 @@ internal static class DeleteSecretHandler
 {
     private static readonly TimeSpan PurgeRetryTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxPurgeRetryDelay = TimeSpan.FromSeconds(1);
+    private static int _pendingBackgroundPurges;
 
-    public static async Task HandleAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
+    /// <summary>
+    /// Count of background purge continuations currently in flight. Test-only observability
+    /// hook (mirrors <c>SecretVersionCoordinator.ActiveLockCount</c>) so unit tests can
+    /// deterministically await a deferred purge's background continuation instead of racing it.
+    /// </summary>
+    internal static int PendingBackgroundPurgeCount => Volatile.Read(ref _pendingBackgroundPurges);
+
+    /// <summary>
+    /// Test-only helper that polls <see cref="PendingBackgroundPurgeCount"/> until it drains to
+    /// zero, or throws if <paramref name="timeout"/> elapses first.
+    /// </summary>
+    internal static async Task WaitForBackgroundPurgesAsync(TimeSpan timeout)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (PendingBackgroundPurgeCount > 0)
+        {
+            if (stopwatch.Elapsed >= timeout)
+            {
+                throw new TimeoutException("Background DeleteSecret purge continuation did not complete within the expected timeout.");
+            }
+
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+    }
+
+    public static async Task HandleAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, ILogger? logger, CancellationToken cancellationToken)
     {
         var name = KeyVaultSecretClient.NormalizeSecretName(SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty);
         int? recoveryWindowInDays = null;
@@ -96,18 +123,47 @@ internal static class DeleteSecretHandler
 
         if (forceDeleteWithoutRecovery)
         {
-            var purgeResult = await PurgeDeletedSecretAsync(
-                context,
+            var initialRecoveryLevel = deletedSecretDocument is null ? null : TryReadRecoveryLevel(deletedSecretDocument.RootElement);
+            var allowNotFoundSuccess = !response.IsSuccessStatusCode;
+            var stopwatch = Stopwatch.StartNew();
+
+            // Real AWS Secrets Manager documents ForceDeleteWithoutRecovery as
+            // asynchronous: it makes the secret immediately inaccessible and purges
+            // it via a background process, without blocking DeleteSecret's response
+            // on physical removal (see API_DeleteSecret.html). Key Vault's own
+            // soft-delete -> purgeable transition can take several seconds, so
+            // mirror that contract: attempt the purge exactly once synchronously
+            // (to surface deterministic failures like missing purge permission or
+            // a purge-protected vault immediately), then hand off any "still
+            // converging" case to a background continuation instead of blocking
+            // the caller on Key Vault's own backend latency.
+            var (outcome, cachedConflictState) = await RunPurgeAttemptsAsync(
+                new HttpContextPurgeOutcomeSink(context),
                 client,
                 token,
                 name,
-                initialRecoveryLevel: deletedSecretDocument is null ? null : TryReadRecoveryLevel(deletedSecretDocument.RootElement),
-                allowNotFoundSuccess: !response.IsSuccessStatusCode,
+                initialRecoveryLevel,
+                allowNotFoundSuccess,
+                stopwatch,
+                startAttempt: 0,
+                stopAfterFirstAttempt: true,
+                cachedConflictState: null,
                 cancellationToken).ConfigureAwait(false);
-            if (!purgeResult)
+
+            if (outcome == PurgeLoopOutcome.Failed)
             {
                 deletedSecretDocument?.Dispose();
                 return;
+            }
+
+            if (outcome == PurgeLoopOutcome.Deferred)
+            {
+                if (logger is not null)
+                {
+                    SecretsManagerLog.BackgroundPurgeDeferred(logger, name);
+                }
+
+                SchedulePurgeContinuation(client, token, name, initialRecoveryLevel, allowNotFoundSuccess, stopwatch, cachedConflictState, logger);
             }
         }
 
@@ -127,24 +183,104 @@ internal static class DeleteSecretHandler
         deletedSecretDocument?.Dispose();
     }
 
+    /// <summary>
+    /// Fires the remaining purge-retry attempts on a detached background task, decoupled
+    /// from the (already-completed) request's <see cref="HttpContext"/> and cancellation
+    /// token. This is best-effort: outcomes are logged, never surfaced to the caller, which
+    /// matches real AWS Secrets Manager not reporting asynchronous purge failures either.
+    /// </summary>
+    private static void SchedulePurgeContinuation(
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        string? initialRecoveryLevel,
+        bool allowNotFoundSuccess,
+        Stopwatch stopwatch,
+        DeletedSecretState? cachedConflictState,
+        ILogger? logger)
+    {
+        // Incremented synchronously (before scheduling) so callers observing
+        // PendingBackgroundPurgeCount right after HandleAsync returns see it deterministically,
+        // without racing the background task's own startup.
+        Interlocked.Increment(ref _pendingBackgroundPurges);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // The synchronous attempt (attempt 0) returned "still converging" without
+                // taking its backoff delay, so take it here before resuming at attempt 1.
+                await Task.Delay(ComputeRetryDelay(0), CancellationToken.None).ConfigureAwait(false);
+                var sink = new BackgroundPurgeOutcomeSink(logger, name);
+                var (outcome, _) = await RunPurgeAttemptsAsync(
+                    sink,
+                    client,
+                    token,
+                    name,
+                    initialRecoveryLevel,
+                    allowNotFoundSuccess,
+                    stopwatch,
+                    startAttempt: 1,
+                    stopAfterFirstAttempt: false,
+                    cachedConflictState,
+                    CancellationToken.None).ConfigureAwait(false);
+
+                if (outcome == PurgeLoopOutcome.Purged && logger is not null)
+                {
+                    SecretsManagerLog.BackgroundPurgeSucceeded(logger, name);
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+            {
+                if (logger is not null)
+                {
+                    SecretsManagerLog.BackgroundPurgeUnhandledException(logger, name, ex);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _pendingBackgroundPurges);
+            }
+        });
+    }
+
     private static DateTimeOffset? TryReadUnixTime(JsonElement root, string propertyName)
         => root.TryGetProperty(propertyName, out var property)
             && property.ValueKind == JsonValueKind.Number
             ? DateTimeOffset.FromUnixTimeSeconds(property.GetInt64())
             : null;
 
-    private static async Task<bool> PurgeDeletedSecretAsync(
-        HttpContext context,
+    private enum PurgeLoopOutcome
+    {
+        Purged,
+        Failed,
+        Deferred,
+    }
+
+    private static TimeSpan ComputeRetryDelay(int attempt)
+        => TimeSpan.FromMilliseconds(Math.Min(50 << Math.Min(attempt, 4), (int)MaxPurgeRetryDelay.TotalMilliseconds));
+
+    /// <summary>
+    /// Runs one or more purge attempts against Key Vault's deleted-secret purge endpoint.
+    /// When <paramref name="stopAfterFirstAttempt"/> is true, only a single physical attempt
+    /// is made: deterministic outcomes (purged, permission denied, non-purgeable vault, other
+    /// backend error) are returned as terminal, but a "still converging" result is returned as
+    /// <see cref="PurgeLoopOutcome.Deferred"/> instead of looping, so the caller can resume it
+    /// on a background continuation without blocking the HTTP response.
+    /// </summary>
+    private static async Task<(PurgeLoopOutcome Outcome, DeletedSecretState? CachedConflictState)> RunPurgeAttemptsAsync(
+        PurgeOutcomeSink sink,
         KeyVaultSecretClient client,
         string token,
         string name,
         string? initialRecoveryLevel,
         bool allowNotFoundSuccess,
+        Stopwatch stopwatch,
+        int startAttempt,
+        bool stopAfterFirstAttempt,
+        DeletedSecretState? cachedConflictState,
         CancellationToken cancellationToken)
     {
-        var attempt = 0;
-        var stopwatch = Stopwatch.StartNew();
-        DeletedSecretState? cachedConflictState = null;
+        var attempt = startAttempt;
         while (true)
         {
             using var purgeRequest = new HttpRequestMessage(HttpMethod.Delete, client.BuildVaultUri(KeyVaultSecretClient.BuildDeletedSecretPath(name)));
@@ -152,25 +288,25 @@ internal static class DeleteSecretHandler
             using var purgeResponse = await client.SendAsync(purgeRequest, cancellationToken).ConfigureAwait(false);
             if (purgeResponse.IsSuccessStatusCode)
             {
-                return true;
+                return (PurgeLoopOutcome.Purged, cachedConflictState);
             }
             if (purgeResponse.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Conflict)
             {
                 if (allowNotFoundSuccess
                     && purgeResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
-                    return true;
+                    return (PurgeLoopOutcome.Purged, cachedConflictState);
                 }
 
                 if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict
                     && IsKnownNonPurgeable(initialRecoveryLevel))
                 {
-                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                        context,
+                    await sink.WriteAwsErrorAsync(
                         StatusCodes.Status400BadRequest,
                         "InvalidRequestException",
-                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).").ConfigureAwait(false);
-                    return false;
+                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).",
+                        cancellationToken).ConfigureAwait(false);
+                    return (PurgeLoopOutcome.Failed, cachedConflictState);
                 }
 
                 DeletedSecretState deletedSecretState;
@@ -185,7 +321,7 @@ internal static class DeleteSecretHandler
                 }
                 else
                 {
-                    deletedSecretState = await GetDeletedSecretStateAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+                    deletedSecretState = await GetDeletedSecretStateAsync(sink, client, token, name, cancellationToken).ConfigureAwait(false);
                     if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict)
                     {
                         cachedConflictState = deletedSecretState;
@@ -194,62 +330,70 @@ internal static class DeleteSecretHandler
 
                 if (deletedSecretState.IsNonPurgeable)
                 {
-                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                        context,
+                    await sink.WriteAwsErrorAsync(
                         StatusCodes.Status400BadRequest,
                         "InvalidRequestException",
-                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).").ConfigureAwait(false);
-                    return false;
+                        "ForceDeleteWithoutRecovery could not be honored because the target Key Vault still enforces soft-delete retention (for example, purge protection is enabled).",
+                        cancellationToken).ConfigureAwait(false);
+                    return (PurgeLoopOutcome.Failed, cachedConflictState);
                 }
 
                 if (!deletedSecretState.ContinueRetrying)
                 {
-                    return deletedSecretState.TreatAsSuccess;
+                    // TreatAsSuccess is always false today (no DeletedSecretState sets it),
+                    // and the only way to reach here with ContinueRetrying=false and
+                    // IsNonPurgeable=false is DeletedSecretState.Fail, whose error was
+                    // already written by GetDeletedSecretStateAsync.
+                    return (deletedSecretState.TreatAsSuccess ? PurgeLoopOutcome.Purged : PurgeLoopOutcome.Failed, cachedConflictState);
                 }
 
                 if (purgeResponse.StatusCode == System.Net.HttpStatusCode.NotFound
                     && deletedSecretState.IsMissing)
                 {
-                    return true;
+                    return (PurgeLoopOutcome.Purged, cachedConflictState);
+                }
+
+                if (stopAfterFirstAttempt)
+                {
+                    return (PurgeLoopOutcome.Deferred, cachedConflictState);
                 }
 
                 if (stopwatch.Elapsed >= PurgeRetryTimeout)
                 {
-                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                        context,
+                    await sink.WriteAwsErrorAsync(
                         StatusCodes.Status503ServiceUnavailable,
                         "InternalServiceError",
-                        "Deleted Key Vault secret did not become purgeable before the bounded retry window expired.").ConfigureAwait(false);
-                    return false;
+                        "Deleted Key Vault secret did not become purgeable before the bounded retry window expired.",
+                        cancellationToken).ConfigureAwait(false);
+                    return (PurgeLoopOutcome.Failed, cachedConflictState);
                 }
 
-                var delay = TimeSpan.FromMilliseconds(Math.Min(50 << Math.Min(attempt, 4), (int)MaxPurgeRetryDelay.TotalMilliseconds));
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(ComputeRetryDelay(attempt), cancellationToken).ConfigureAwait(false);
                 attempt++;
                 continue;
             }
 
             if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
-                await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                    context,
+                await sink.WriteAwsErrorAsync(
                     StatusCodes.Status403Forbidden,
                     "AccessDeniedException",
-                    "ForceDeleteWithoutRecovery requires Key Vault purge permission on the target vault.").ConfigureAwait(false);
-                return false;
+                    "ForceDeleteWithoutRecovery requires Key Vault purge permission on the target vault.",
+                    cancellationToken).ConfigureAwait(false);
+                return (PurgeLoopOutcome.Failed, cachedConflictState);
             }
 
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                context,
+            await sink.WriteAwsErrorAsync(
                 SecretsManagerOperationSupport.MapStatusCode(purgeResponse.StatusCode),
                 SecretsManagerOperationSupport.MapErrorCode(purgeResponse.StatusCode),
-                "Key Vault request failed.").ConfigureAwait(false);
-            return false;
+                "Key Vault request failed.",
+                cancellationToken).ConfigureAwait(false);
+            return (PurgeLoopOutcome.Failed, cachedConflictState);
         }
     }
 
     private static async Task<DeletedSecretState> GetDeletedSecretStateAsync(
-        HttpContext context,
+        PurgeOutcomeSink sink,
         KeyVaultSecretClient client,
         string token,
         string name,
@@ -270,11 +414,11 @@ internal static class DeleteSecretHandler
 
         if (!getResponse.IsSuccessStatusCode)
         {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                context,
+            await sink.WriteAwsErrorAsync(
                 SecretsManagerOperationSupport.MapStatusCode(getResponse.StatusCode),
                 SecretsManagerOperationSupport.MapErrorCode(getResponse.StatusCode),
-                "Key Vault request failed.").ConfigureAwait(false);
+                "Key Vault request failed.",
+                cancellationToken).ConfigureAwait(false);
             return DeletedSecretState.Fail;
         }
 
@@ -324,5 +468,35 @@ internal static class DeleteSecretHandler
         public static DeletedSecretState Missing => new(true, false, true, false);
         public static DeletedSecretState Unknown => new(true, false, false, false);
         public static DeletedSecretState Fail => new(false, false, false, false);
+    }
+
+    /// <summary>
+    /// Abstracts "how to report a purge-attempt failure" so the shared retry logic in
+    /// <see cref="RunPurgeAttemptsAsync"/> can be reused both for the single synchronous
+    /// attempt (which writes an AWS error straight to the still-open response) and for the
+    /// background continuation (whose HttpContext is long gone; failures are only logged).
+    /// </summary>
+    private abstract class PurgeOutcomeSink
+    {
+        public abstract Task WriteAwsErrorAsync(int statusCode, string errorCode, string message, CancellationToken cancellationToken);
+    }
+
+    private sealed class HttpContextPurgeOutcomeSink(HttpContext context) : PurgeOutcomeSink
+    {
+        public override Task WriteAwsErrorAsync(int statusCode, string errorCode, string message, CancellationToken cancellationToken)
+            => SecretsManagerOperationSupport.WriteAwsErrorAsync(context, statusCode, errorCode, message);
+    }
+
+    private sealed class BackgroundPurgeOutcomeSink(ILogger? logger, string name) : PurgeOutcomeSink
+    {
+        public override Task WriteAwsErrorAsync(int statusCode, string errorCode, string message, CancellationToken cancellationToken)
+        {
+            if (logger is not null)
+            {
+                SecretsManagerLog.BackgroundPurgeFailed(logger, name, statusCode, errorCode, message);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 }

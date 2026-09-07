@@ -308,7 +308,8 @@ builder.Services.AddSingleton<ServiceModuleRegistry>(sp =>
         azureHttpClient,
         credentialResolver,
         CapabilityRegistry.SecretsManager,
-        tokenProvider));
+        tokenProvider,
+        sp.GetRequiredService<ILogger<SecretsManagerServiceModule>>()));
 #endif
     return new ServiceModuleRegistry(modules.ToArray(), sigV4Validator, sp.GetRequiredService<ProxyMetrics>());
 });
