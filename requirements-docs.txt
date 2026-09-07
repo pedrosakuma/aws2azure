@@ -1,3 +1,3 @@
 # Documentation-only dependencies. They are not referenced by shipping projects.
 mkdocs==1.6.1
-mkdocs-material==9.6.18
+mkdocs-material==9.7.7
