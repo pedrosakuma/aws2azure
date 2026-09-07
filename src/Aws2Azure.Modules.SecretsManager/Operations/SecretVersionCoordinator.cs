@@ -311,7 +311,7 @@ internal static class SecretVersionCoordinator
                 ? FindPredecessor(versions, winner.VersionId)
                 : null;
 
-            var losersUpdated = true;
+            var loserUpdateTasks = new List<Task<StageUpdateResult>>();
             foreach (var version in versions)
             {
                 if (string.Equals(version.VersionId, winner.VersionId, StringComparison.Ordinal))
@@ -333,18 +333,32 @@ internal static class SecretVersionCoordinator
                     }
                 }
 
-                var update = await UpdateStagesFreshAsync(
-                    context,
+                // Loser demotions carry no ordering dependency on one another, so they are
+                // dispatched concurrently. The winner's promotion is deliberately kept
+                // sequential-after (below) so a version is never observed holding a stage
+                // (e.g. AWSCURRENT) concurrently with the version it is replacing.
+                loserUpdateTasks.Add(UpdateStagesFreshAsync(
                     client,
                     token,
                     name,
                     version.VersionId,
                     desiredStages,
                     finalizePublication: false,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken));
+            }
+
+            var loserUpdates = loserUpdateTasks.Count > 0
+                ? await Task.WhenAll(loserUpdateTasks).ConfigureAwait(false)
+                : [];
+
+            var losersUpdated = true;
+            StageUpdateResult? fatalLoserUpdate = null;
+            foreach (var update in loserUpdates)
+            {
                 if (update.Fatal)
                 {
-                    return null;
+                    fatalLoserUpdate ??= update;
+                    continue;
                 }
 
                 if (!update.Success)
@@ -354,10 +368,15 @@ internal static class SecretVersionCoordinator
                 }
             }
 
+            if (fatalLoserUpdate is { } fatal)
+            {
+                await WriteBackendErrorAsync(context, fatal.StatusCode!.Value).ConfigureAwait(false);
+                return null;
+            }
+
             if (losersUpdated)
             {
                 var publication = await UpdateStagesFreshAsync(
-                    context,
                     client,
                     token,
                     name,
@@ -367,6 +386,7 @@ internal static class SecretVersionCoordinator
                     cancellationToken).ConfigureAwait(false);
                 if (publication.Fatal)
                 {
+                    await WriteBackendErrorAsync(context, publication.StatusCode!.Value).ConfigureAwait(false);
                     return null;
                 }
 
@@ -495,7 +515,6 @@ internal static class SecretVersionCoordinator
     }
 
     private static async Task<StageUpdateResult> UpdateStagesFreshAsync(
-        HttpContext context,
         KeyVaultSecretClient client,
         string token,
         string name,
@@ -509,7 +528,7 @@ internal static class SecretVersionCoordinator
         using var getResponse = await client.SendAsync(getRequest, cancellationToken).ConfigureAwait(false);
         if (!getResponse.IsSuccessStatusCode)
         {
-            return await ClassifyUpdateFailureAsync(context, getResponse.StatusCode).ConfigureAwait(false);
+            return ClassifyUpdateFailure(getResponse.StatusCode);
         }
 
         using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(getResponse.Content, cancellationToken).ConfigureAwait(false);
@@ -540,10 +559,10 @@ internal static class SecretVersionCoordinator
         using var patchResponse = await client.SendAsync(patchRequest, cancellationToken).ConfigureAwait(false);
         return patchResponse.IsSuccessStatusCode
             ? StageUpdateResult.Succeeded
-            : await ClassifyUpdateFailureAsync(context, patchResponse.StatusCode).ConfigureAwait(false);
+            : ClassifyUpdateFailure(patchResponse.StatusCode);
     }
 
-    private static async Task<StageUpdateResult> ClassifyUpdateFailureAsync(HttpContext context, HttpStatusCode statusCode)
+    private static StageUpdateResult ClassifyUpdateFailure(HttpStatusCode statusCode)
     {
         if (statusCode is HttpStatusCode.NotFound
             or HttpStatusCode.Conflict
@@ -554,7 +573,6 @@ internal static class SecretVersionCoordinator
             return new StageUpdateResult(false, false, statusCode);
         }
 
-        await WriteBackendErrorAsync(context, statusCode).ConfigureAwait(false);
         return new StageUpdateResult(false, true, statusCode);
     }
 

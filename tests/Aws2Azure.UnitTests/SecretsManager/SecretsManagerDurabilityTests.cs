@@ -253,6 +253,35 @@ public sealed class SecretsManagerDurabilityTests
     }
 
     [Fact]
+    public async Task Concurrent_fatal_loser_updates_write_backend_error_exactly_once()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("loser-a", "v1", 100, Tags(stages: "AWSCURRENT")),
+            new FakeVersion("loser-b", "v1", 90, Tags(stages: "AWSPREVIOUS")))
+        {
+            FatalPatchStatusByVersionId = new Dictionary<string, HttpStatusCode>(StringComparer.Ordinal)
+            {
+                ["loser-a"] = HttpStatusCode.Forbidden,
+                ["loser-b"] = HttpStatusCode.BadRequest,
+            },
+        };
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        // Both pre-existing versions become losers of the new PutSecretValue winner and are
+        // demoted concurrently; both fail fatally (non-retryable statuses). Exactly one backend
+        // error must be written for the response, matching the first loser in original list
+        // order ("loser-a" -> 403 Forbidden), never a doubled/corrupted write.
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        using var response = JsonDocument.Parse(await ReadBodyAsync(context));
+        Assert.Equal("AccessDeniedException", response.RootElement.GetProperty("__type").GetString());
+    }
+
+    [Fact]
     public async Task Published_winner_continues_repair_when_concurrent_writer_reintroduces_current()
     {
         using var backend = new DeterministicKeyVaultHandler(
@@ -408,6 +437,7 @@ public sealed class SecretsManagerDurabilityTests
         public int NewVersionVisibilityDelay { get; init; }
         public string? FailNextPatchVersionId { get; init; }
         public (string VersionId, string Key, string Value)? InterfereOnNextVersionGet { get; init; }
+        public IReadOnlyDictionary<string, HttpStatusCode>? FatalPatchStatusByVersionId { get; init; }
         public bool IgnorePatches { get; init; }
         public HttpStatusCode? AlwaysPatchStatus { get; init; }
         public string? InjectDuplicateCurrentAfterFirstPublication { get; init; }
@@ -519,6 +549,12 @@ public sealed class SecretsManagerDurabilityTests
                         if (AlwaysPatchStatus is { } patchStatus)
                         {
                             return Json("{}", patchStatus);
+                        }
+
+                        if (FatalPatchStatusByVersionId is { } fatalStatuses
+                            && fatalStatuses.TryGetValue(versionId, out var fatalStatus))
+                        {
+                            return Json("{}", fatalStatus);
                         }
 
                         if (!_patchFailureConsumed
