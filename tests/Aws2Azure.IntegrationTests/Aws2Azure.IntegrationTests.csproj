@@ -11,7 +11,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.103.5" />
-    <PackageReference Include="AWSSDK.Kinesis" Version="4.0.101.1" />
+    <PackageReference Include="AWSSDK.Kinesis" Version="4.0.103" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.102.4" />
     <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.100.11" />
     <PackageReference Include="AWSSDK.SecretsManager" Version="4.0.100.11" />
