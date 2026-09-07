@@ -7,6 +7,7 @@ using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
 using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.SecretsManager;
+using Aws2Azure.Modules.SecretsManager.Operations;
 using Aws2Azure.Modules.SecretsManager.WireProtocol;
 using Microsoft.AspNetCore.Http;
 
@@ -1149,6 +1150,60 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_defers_purge_convergence_to_background()
+    {
+        // Regression test for #993: real AWS Secrets Manager's ForceDeleteWithoutRecovery
+        // returns as soon as the secret is made inaccessible and purges it via an asynchronous
+        // background process (does not block the caller on physical deletion). Assert the
+        // response is written after exactly one purge attempt when that attempt is still
+        // converging, and that the remaining attempts only happen on a background continuation.
+        var purgeAttempts = 0;
+        var purgeAttemptsAtResponseTime = -1;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Delete)
+            {
+                purgeAttempts++;
+                return Task.FromResult(new HttpResponseMessage(purgeAttempts <= 3 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
+            });
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+        purgeAttemptsAtResponseTime = purgeAttempts;
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(1, purgeAttemptsAtResponseTime);
+        Assert.True(DeleteSecretHandler.PendingBackgroundPurgeCount > 0);
+
+        await DeleteSecretHandler.WaitForBackgroundPurgesAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(4, purgeAttempts);
+    }
+
+    [Fact]
     public async Task HandleAsync_DeleteSecret_force_delete_retries_until_deleted_secret_becomes_purgeable()
     {
         var purgeAttempts = 0;
@@ -1187,7 +1242,11 @@ public sealed class SecretsManagerServiceModuleTests
 
         await module.HandleAsync(context);
 
+        // Real AWS Secrets Manager returns as soon as the secret is inaccessible and purges it
+        // asynchronously (see #993); only the first purge attempt runs before the response is
+        // written, and the remaining retries continue on a background continuation.
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        await DeleteSecretHandler.WaitForBackgroundPurgesAsync(TimeSpan.FromSeconds(5));
         Assert.True(purgeAttempts > 8);
     }
 
@@ -1241,6 +1300,7 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        await DeleteSecretHandler.WaitForBackgroundPurgesAsync(TimeSpan.FromSeconds(5));
         Assert.True(purgeAttempts > 8);
         // Only the first Conflict classifies recoveryLevel; subsequent retries reuse it.
         Assert.Equal(1, deletedSecretGetCount);
@@ -1430,6 +1490,7 @@ public sealed class SecretsManagerServiceModuleTests
         await module.HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        await DeleteSecretHandler.WaitForBackgroundPurgesAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, purgeAttempts);
     }
 

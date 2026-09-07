@@ -9,6 +9,7 @@ using Aws2Azure.Core.Modules;
 using Aws2Azure.Modules.SecretsManager.Operations;
 using Aws2Azure.Modules.SecretsManager.WireProtocol;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.SecretsManager;
 
@@ -22,6 +23,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
     private readonly AzureHttpClient _http;
     private readonly ICredentialResolver _credentials;
     private readonly EntraIdTokenProvider _tokenProvider;
+    private readonly ILogger<SecretsManagerServiceModule>? _logger;
     private readonly ConcurrentDictionary<string, KeyVaultSecretClient> _clients = new(StringComparer.Ordinal);
 
     private const int DefaultRequestBufferBytes = 256;
@@ -32,7 +34,8 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         AzureHttpClient http,
         ICredentialResolver credentials,
         CapabilityMatrix capabilities,
-        EntraIdTokenProvider? tokenProvider = null)
+        EntraIdTokenProvider? tokenProvider = null,
+        ILogger<SecretsManagerServiceModule>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(credentials);
@@ -40,6 +43,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
         _http = http;
         _credentials = credentials;
         _tokenProvider = tokenProvider ?? new EntraIdTokenProvider(http);
+        _logger = logger;
         Capabilities = capabilities;
     }
 
@@ -129,7 +133,7 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                     await PutSecretValueHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
                 case SecretsManagerOperation.DeleteSecret:
-                    await DeleteSecretHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
+                    await DeleteSecretHandler.HandleAsync(context, client, document, _logger, context.RequestAborted).ConfigureAwait(false);
                     return;
                 case SecretsManagerOperation.ListSecrets:
                     await ListSecretsHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
