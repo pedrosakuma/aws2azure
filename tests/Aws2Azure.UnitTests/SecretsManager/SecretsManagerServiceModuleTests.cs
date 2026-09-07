@@ -1192,6 +1192,61 @@ public sealed class SecretsManagerServiceModuleTests
     }
 
     [Fact]
+    public async Task HandleAsync_DeleteSecret_force_delete_reuses_cached_recovery_level_across_conflict_retries()
+    {
+        // Regression test for #991: repeated Conflict responses from the purge endpoint used to
+        // trigger a redundant GET /deletedsecrets/{name} on every backoff cycle to re-classify
+        // recoveryLevel, even though that metadata is immutable for the lifetime of the poll.
+        var purgeAttempts = 0;
+        var deletedSecretGetCount = 0;
+        using var http = new AzureHttpClient(new ScriptedHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("oauth2/v2.0/token"))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600,\"token_type\":\"Bearer\"}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/secrets/demo")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Delete)
+            {
+                purgeAttempts++;
+                return Task.FromResult(new HttpResponseMessage(purgeAttempts <= 8 ? HttpStatusCode.Conflict : HttpStatusCode.NoContent));
+            }
+
+            if (request.RequestUri.AbsolutePath == "/deletedsecrets/demo" && request.Method == HttpMethod.Get)
+            {
+                deletedSecretGetCount++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"deletedDate\":1710000000,\"scheduledPurgeDate\":1710604800,\"attributes\":{\"recoveryLevel\":\"Recoverable+Purgeable\"}}", Encoding.UTF8, "application/json"),
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }), ownsHandler: false);
+
+        var module = CreateModule(http);
+        var context = CreateContext("SecretsManager.DeleteSecret", "{\"SecretId\":\"demo\",\"ForceDeleteWithoutRecovery\":true}");
+
+        await module.HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.True(purgeAttempts > 8);
+        // Only the first Conflict classifies recoveryLevel; subsequent retries reuse it.
+        Assert.Equal(1, deletedSecretGetCount);
+    }
+
+    [Fact]
     public async Task HandleAsync_DeleteSecret_force_delete_succeeds_when_secret_is_already_missing()
     {
         var requestUris = new List<string>();

@@ -144,6 +144,7 @@ internal static class DeleteSecretHandler
     {
         var attempt = 0;
         var stopwatch = Stopwatch.StartNew();
+        DeletedSecretState? cachedConflictState = null;
         while (true)
         {
             using var purgeRequest = new HttpRequestMessage(HttpMethod.Delete, client.BuildVaultUri(KeyVaultSecretClient.BuildDeletedSecretPath(name)));
@@ -172,7 +173,25 @@ internal static class DeleteSecretHandler
                     return false;
                 }
 
-                var deletedSecretState = await GetDeletedSecretStateAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+                DeletedSecretState deletedSecretState;
+                if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict
+                    && cachedConflictState is { IsNonPurgeable: false, IsMissing: false, ContinueRetrying: true } cached)
+                {
+                    // recoveryLevel is immutable Key Vault metadata, so once a Conflict response has
+                    // been classified as "still converging to purgeable", repeated Conflicts just mean
+                    // the purge hasn't landed on the backend yet. Reuse that classification instead of
+                    // re-fetching the same static state every backoff cycle.
+                    deletedSecretState = cached;
+                }
+                else
+                {
+                    deletedSecretState = await GetDeletedSecretStateAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+                    if (purgeResponse.StatusCode == System.Net.HttpStatusCode.Conflict)
+                    {
+                        cachedConflictState = deletedSecretState;
+                    }
+                }
+
                 if (deletedSecretState.IsNonPurgeable)
                 {
                     await SecretsManagerOperationSupport.WriteAwsErrorAsync(
