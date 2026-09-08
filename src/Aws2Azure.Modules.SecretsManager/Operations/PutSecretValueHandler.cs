@@ -84,7 +84,6 @@ internal static class PutSecretValueHandler
         IReadOnlyDictionary<string, string> currentUserTags,
         CancellationToken cancellationToken)
     {
-        List<SecretVersionCoordinator.SecretVersionMetadata>? preCreateVersions = null;
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
         {
             var existing = await SecretVersionCoordinator.ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
@@ -113,7 +112,6 @@ internal static class PutSecretValueHandler
                     versionStages,
                     defaultStageTransition: !versionStagesSpecified,
                     winnerMetadataHint: null,
-                    preloadedVersions: null,
                     cancellationToken).ConfigureAwait(false);
                 return replayed is null
                     ? null
@@ -122,8 +120,6 @@ internal static class PutSecretValueHandler
                         DateTimeOffset.FromUnixTimeSeconds(tokenResolution.Version.Created),
                         replayed.Value.VersionStages);
             }
-
-            preCreateVersions = existing;
         }
 
         var internalTags = KeyVaultSecretClient.BuildInternalTags(
@@ -172,7 +168,6 @@ internal static class PutSecretValueHandler
             versionStages,
             defaultStageTransition: !versionStagesSpecified,
             winnerMetadataHint: createdVersion,
-            preloadedVersions: preCreateVersions,
             cancellationToken).ConfigureAwait(false);
         return published is null
             ? null

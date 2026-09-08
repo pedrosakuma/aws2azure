@@ -235,7 +235,6 @@ internal static class SecretVersionCoordinator
         IReadOnlyList<string> requestedStages,
         bool defaultStageTransition,
         SecretVersionMetadata? winnerMetadataHint,
-        IReadOnlyList<SecretVersionMetadata>? preloadedVersions,
         CancellationToken cancellationToken)
     {
         HttpStatusCode? lastFailure = null;
@@ -244,27 +243,10 @@ internal static class SecretVersionCoordinator
         var reconciliationDefaultTransition = false;
         for (var attempt = 0; attempt < MaxConvergenceAttempts; attempt++)
         {
-            List<SecretVersionMetadata>? versions;
-            if (attempt == 0 && winnerMetadataHint is not null && preloadedVersions is not null)
+            var versions = await ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+            if (versions is null)
             {
-                versions = new List<SecretVersionMetadata>(preloadedVersions.Count + 1);
-                foreach (var version in preloadedVersions)
-                {
-                    if (!string.Equals(version.VersionId, winnerMetadataHint.VersionId, StringComparison.Ordinal))
-                    {
-                        versions.Add(version);
-                    }
-                }
-
-                versions.Add(winnerMetadataHint);
-            }
-            else
-            {
-                versions = await ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
-                if (versions is null)
-                {
-                    return null;
-                }
+                return null;
             }
 
             SecretVersionMetadata? winner;

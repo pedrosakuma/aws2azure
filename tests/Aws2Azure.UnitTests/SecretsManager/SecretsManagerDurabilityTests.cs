@@ -38,7 +38,7 @@ public sealed class SecretsManagerDurabilityTests
     }
 
     [Fact]
-    public async Task Common_put_path_reuses_current_secret_read_and_skips_relisting_new_winner_before_publish()
+    public async Task Common_put_path_reuses_current_secret_read_and_skips_winner_version_get()
     {
         using var backend = new DeterministicKeyVaultHandler(
             new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")));
@@ -51,8 +51,33 @@ public sealed class SecretsManagerDurabilityTests
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.Equal(1, backend.CurrentSecretGetCount);
-        Assert.Equal(2, backend.ListRequestCount);
+        Assert.Equal(3, backend.ListRequestCount);
         Assert.Equal(1, backend.VersionGetCount);
+        await AssertNoActiveLocksAsync();
+    }
+
+    [Fact]
+    public async Task Tokenized_put_relists_after_create_before_publishing_winner()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")))
+        {
+            InjectCompetingCurrentAfterPut = true,
+        };
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\",\"ClientRequestToken\":\"race-token\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.False(backend.ObservedConflictingWinnerPublication);
+        var versions = backend.Snapshot();
+        var current = Assert.Single(Holders(versions, "AWSCURRENT"));
+        Assert.Equal("v0001", current.VersionId);
+        var previous = Assert.Single(Holders(versions, "AWSPREVIOUS"));
+        Assert.Equal("racer-current", previous.VersionId);
         await AssertNoActiveLocksAsync();
     }
 
@@ -468,6 +493,8 @@ public sealed class SecretsManagerDurabilityTests
         private bool _patchFailureConsumed;
         private bool _interferenceConsumed;
         private bool _duplicateCurrentInjected;
+        private bool _competingCurrentInjected;
+        private bool _observedConflictingWinnerPublication;
 
         public int PageSize { get; init; } = int.MaxValue;
         public int NewVersionVisibilityDelay { get; init; }
@@ -477,10 +504,12 @@ public sealed class SecretsManagerDurabilityTests
         public bool IgnorePatches { get; init; }
         public HttpStatusCode? AlwaysPatchStatus { get; init; }
         public string? InjectDuplicateCurrentAfterFirstPublication { get; init; }
+        public bool InjectCompetingCurrentAfterPut { get; init; }
         public int PutCount { get; private set; }
         public int ListRequestCount => Volatile.Read(ref _listRequestCount);
         public int CurrentSecretGetCount => Volatile.Read(ref _currentSecretGetCount);
         public int VersionGetCount => Volatile.Read(ref _versionGetCount);
+        public bool ObservedConflictingWinnerPublication => Volatile.Read(ref _observedConflictingWinnerPublication);
 
         public IReadOnlyList<FakeVersion> Snapshot()
         {
@@ -541,6 +570,16 @@ public sealed class SecretsManagerDurabilityTests
                         tags,
                         _listRequestCount + NewVersionVisibilityDelay + 1);
                     _versions.Add(version);
+                    if (InjectCompetingCurrentAfterPut && !_competingCurrentInjected)
+                    {
+                        _versions.Add(new FakeVersion(
+                            "racer-current",
+                            "racer",
+                            201,
+                            Tags(stages: "AWSCURRENT"),
+                            _listRequestCount + 1));
+                        _competingCurrentInjected = true;
+                    }
                     return Json(SerializeVersion(version, includeValue: false));
                 }
             }
@@ -610,7 +649,38 @@ public sealed class SecretsManagerDurabilityTests
                         }
 
                         version.Tags.Clear();
-                        foreach (var tag in ReadTags(document.RootElement))
+                        var updatedTags = ReadTags(document.RootElement);
+                        if (updatedTags.TryGetValue(KeyVaultSecretClient.PublicationStateTag, out var updatedPublicationState)
+                            && string.Equals(updatedPublicationState, "published", StringComparison.Ordinal)
+                            && updatedTags.TryGetValue(KeyVaultSecretClient.VersionStagesTag, out var encodedStages))
+                        {
+                            var publishedStages = KeyVaultSecretClient.DecodeStoredVersionStages(encodedStages);
+                            foreach (var other in _versions)
+                            {
+                                if (ReferenceEquals(other, version)
+                                    || !other.Tags.TryGetValue(KeyVaultSecretClient.VersionStagesTag, out var otherEncodedStages))
+                                {
+                                    continue;
+                                }
+
+                                var otherStages = KeyVaultSecretClient.DecodeStoredVersionStages(otherEncodedStages);
+                                foreach (var stage in publishedStages)
+                                {
+                                    if (otherStages.Contains(stage, StringComparer.Ordinal))
+                                    {
+                                        Volatile.Write(ref _observedConflictingWinnerPublication, true);
+                                        break;
+                                    }
+                                }
+
+                                if (ObservedConflictingWinnerPublication)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        foreach (var tag in updatedTags)
                         {
                             version.Tags[tag.Key] = tag.Value;
                         }
