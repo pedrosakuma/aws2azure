@@ -24,22 +24,50 @@ internal static class PutSecretValueHandler
         var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
-
-        var currentSecret = await SecretsManagerOperationSupport.ReadCurrentSecretLookupAsync(
-            context,
-            client,
-            token,
-            name,
-            cancellationToken).ConfigureAwait(false);
-        if (currentSecret is null)
+        IReadOnlyDictionary<string, string> currentUserTags;
+        IReadOnlyList<SecretVersionCoordinator.SecretVersionMetadata>? existingVersions = null;
+        if (!string.IsNullOrWhiteSpace(clientRequestToken))
         {
-            return;
+            var inventory = await SecretVersionCoordinator.ReadInventoryAsync(
+                context,
+                client,
+                token,
+                name,
+                cancellationToken).ConfigureAwait(false);
+            if (inventory is null)
+            {
+                return;
+            }
+
+            if (!inventory.Value.Exists)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
+                return;
+            }
+
+            existingVersions = inventory.Value.Versions;
+            currentUserTags = SecretVersionCoordinator.GetCurrentUserTags(existingVersions);
         }
-
-        if (!currentSecret.Value.Exists)
+        else
         {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
-            return;
+            var currentSecret = await SecretsManagerOperationSupport.ReadCurrentSecretLookupAsync(
+                context,
+                client,
+                token,
+                name,
+                cancellationToken).ConfigureAwait(false);
+            if (currentSecret is null)
+            {
+                return;
+            }
+
+            if (!currentSecret.Value.Exists)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
+                return;
+            }
+
+            currentUserTags = currentSecret.Value.UserTags;
         }
 
         var written = await CreateVersionAsync(
@@ -54,7 +82,8 @@ internal static class PutSecretValueHandler
             payloadSha256,
             versionStages,
             versionStagesSpecified,
-            currentSecret.Value.UserTags,
+            currentUserTags,
+            existingVersions,
             cancellationToken).ConfigureAwait(false);
         if (written is null)
         {
@@ -82,11 +111,17 @@ internal static class PutSecretValueHandler
         IReadOnlyList<string> versionStages,
         bool versionStagesSpecified,
         IReadOnlyDictionary<string, string> currentUserTags,
+        IReadOnlyList<SecretVersionCoordinator.SecretVersionMetadata>? existingVersions,
         CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(clientRequestToken))
         {
-            var existing = await SecretVersionCoordinator.ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+            var existing = existingVersions;
+            if (existing is null)
+            {
+                existing = await SecretVersionCoordinator.ListVersionsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
+            }
+
             if (existing is null)
             {
                 return null;

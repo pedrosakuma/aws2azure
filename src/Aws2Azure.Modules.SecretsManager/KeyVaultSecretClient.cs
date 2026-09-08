@@ -310,6 +310,25 @@ internal sealed class KeyVaultSecretClient
         return result;
     }
 
+    public static IReadOnlyDictionary<string, string> GetUserTags(IReadOnlyDictionary<string, string> tags)
+    {
+        if (tags.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var tag in tags)
+        {
+            if (!IsInternalTag(tag.Key))
+            {
+                result[tag.Key] = tag.Value;
+            }
+        }
+
+        return result;
+    }
+
     public static string[] ReadVersionStages(JsonDocument document)
     {
         if (!document.RootElement.TryGetProperty("VersionStages", out var stagesElement))

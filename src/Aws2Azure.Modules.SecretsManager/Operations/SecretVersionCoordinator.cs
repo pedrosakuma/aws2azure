@@ -49,6 +49,63 @@ internal static class SecretVersionCoordinator
         string name,
         CancellationToken cancellationToken)
     {
+        var result = await ListVersionsCoreAsync(client, token, name, cancellationToken).ConfigureAwait(false);
+        if (result.StatusCode is { } statusCode)
+        {
+            await WriteBackendErrorAsync(context, statusCode).ConfigureAwait(false);
+            return null;
+        }
+
+        return result.Versions!;
+    }
+
+    public static async Task<SecretInventoryLookup?> ReadInventoryAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        var result = await ListVersionsCoreAsync(client, token, name, cancellationToken).ConfigureAwait(false);
+        if (result.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new SecretInventoryLookup(false, []);
+        }
+
+        if (result.StatusCode is { } statusCode)
+        {
+            await WriteBackendErrorAsync(context, statusCode).ConfigureAwait(false);
+            return null;
+        }
+
+        return new SecretInventoryLookup(true, result.Versions!);
+    }
+
+    public static IReadOnlyDictionary<string, string> GetCurrentUserTags(IReadOnlyList<SecretVersionMetadata> versions)
+    {
+        var current = ResolveStage(versions, "AWSCURRENT").Version;
+        if (current is null)
+        {
+            foreach (var version in versions)
+            {
+                if (current is null || CompareNewest(version, current) < 0)
+                {
+                    current = version;
+                }
+            }
+        }
+
+        return current is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : KeyVaultSecretClient.GetUserTags(current.Tags);
+    }
+
+    private static async Task<VersionListResult> ListVersionsCoreAsync(
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        CancellationToken cancellationToken)
+    {
         var result = new List<SecretVersionMetadata>();
         var nextToken = string.Empty;
         do
@@ -58,14 +115,12 @@ internal static class SecretVersionCoordinator
             {
                 requestUri += "&$skiptoken=" + Uri.EscapeDataString(nextToken);
             }
-
             using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                await WriteBackendErrorAsync(context, response.StatusCode).ConfigureAwait(false);
-                return null;
+                return new VersionListResult(response.StatusCode, null);
             }
 
             using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
@@ -83,7 +138,7 @@ internal static class SecretVersionCoordinator
         }
         while (!string.IsNullOrWhiteSpace(nextToken));
 
-        return result;
+        return new VersionListResult(null, result);
     }
 
     public static StageResolution ResolveStage(IReadOnlyList<SecretVersionMetadata> versions, string stage)
@@ -843,7 +898,9 @@ internal static class SecretVersionCoordinator
 
     internal readonly record struct StageResolution(SecretVersionMetadata? Version, bool Conflict);
     internal readonly record struct TokenResolution(SecretVersionMetadata? Version, bool Conflict);
+    internal readonly record struct SecretInventoryLookup(bool Exists, IReadOnlyList<SecretVersionMetadata> Versions);
     internal readonly record struct PublishedVersionResult(string VersionId, IReadOnlyList<string> VersionStages);
+    private readonly record struct VersionListResult(HttpStatusCode? StatusCode, List<SecretVersionMetadata>? Versions);
     private readonly record struct StageUpdateResult(bool Success, bool Fatal, HttpStatusCode? StatusCode)
     {
         public static StageUpdateResult Succeeded => new(true, false, null);
