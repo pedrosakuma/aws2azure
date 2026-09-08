@@ -38,7 +38,7 @@ public sealed class SecretsManagerDurabilityTests
     }
 
     [Fact]
-    public async Task Common_put_path_reuses_current_secret_read_and_skips_winner_version_get()
+    public async Task Tokenized_put_path_reuses_precreate_inventory_and_skips_current_secret_read()
     {
         using var backend = new DeterministicKeyVaultHandler(
             new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")));
@@ -50,7 +50,26 @@ public sealed class SecretsManagerDurabilityTests
         await CreateModule(http).HandleAsync(context);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(1, backend.CurrentSecretGetCount);
+        Assert.Equal(0, backend.CurrentSecretGetCount);
+        Assert.Equal(3, backend.ListRequestCount);
+        Assert.Equal(1, backend.VersionGetCount);
+        await AssertNoActiveLocksAsync();
+    }
+
+    [Fact]
+    public async Task Tokenized_update_path_reuses_precreate_inventory_and_skips_current_secret_read()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")));
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.UpdateSecret",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\",\"Description\":\"next\",\"ClientRequestToken\":\"common-token\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(0, backend.CurrentSecretGetCount);
         Assert.Equal(3, backend.ListRequestCount);
         Assert.Equal(1, backend.VersionGetCount);
         await AssertNoActiveLocksAsync();
