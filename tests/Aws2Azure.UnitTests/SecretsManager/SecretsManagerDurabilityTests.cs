@@ -34,7 +34,26 @@ public sealed class SecretsManagerDurabilityTests
             version.Tags.TryGetValue(KeyVaultSecretClient.ClientRequestTokenTag, out var token)
             && token == "shared-token"
             && version.Tags[KeyVaultSecretClient.PayloadSha256Tag] == hash);
-        Assert.Equal(0, SecretVersionCoordinator.ActiveLockCount);
+        await AssertNoActiveLocksAsync();
+    }
+
+    [Fact]
+    public async Task Common_put_path_reuses_current_secret_read_and_skips_relisting_new_winner_before_publish()
+    {
+        using var backend = new DeterministicKeyVaultHandler(
+            new FakeVersion("base", "v1", 100, Tags(stages: "AWSCURRENT")));
+        using var http = new AzureHttpClient(backend, ownsHandler: false);
+        var context = CreateContext(
+            "SecretsManager.PutSecretValue",
+            "{\"SecretId\":\"demo\",\"SecretString\":\"v2\",\"ClientRequestToken\":\"common-token\"}");
+
+        await CreateModule(http).HandleAsync(context);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(1, backend.CurrentSecretGetCount);
+        Assert.Equal(2, backend.ListRequestCount);
+        Assert.Equal(1, backend.VersionGetCount);
+        await AssertNoActiveLocksAsync();
     }
 
     [Fact]
@@ -423,12 +442,29 @@ public sealed class SecretsManagerDurabilityTests
         return await reader.ReadToEndAsync();
     }
 
+    private static async Task AssertNoActiveLocksAsync()
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            if (SecretVersionCoordinator.ActiveLockCount == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+
+        Assert.Equal(0, SecretVersionCoordinator.ActiveLockCount);
+    }
+
     private sealed class DeterministicKeyVaultHandler(params FakeVersion[] initialVersions) : HttpMessageHandler
     {
         private readonly object _sync = new();
         private readonly List<FakeVersion> _versions = initialVersions.Select(version => version.Copy()).ToList();
         private int _nextVersion;
         private int _listRequestCount;
+        private int _currentSecretGetCount;
+        private int _versionGetCount;
         private bool _patchFailureConsumed;
         private bool _interferenceConsumed;
         private bool _duplicateCurrentInjected;
@@ -443,6 +479,8 @@ public sealed class SecretsManagerDurabilityTests
         public string? InjectDuplicateCurrentAfterFirstPublication { get; init; }
         public int PutCount { get; private set; }
         public int ListRequestCount => Volatile.Read(ref _listRequestCount);
+        public int CurrentSecretGetCount => Volatile.Read(ref _currentSecretGetCount);
+        public int VersionGetCount => Volatile.Read(ref _versionGetCount);
 
         public IReadOnlyList<FakeVersion> Snapshot()
         {
@@ -462,6 +500,7 @@ public sealed class SecretsManagerDurabilityTests
             var path = request.RequestUri.AbsolutePath;
             if (request.Method == HttpMethod.Get && string.Equals(path, "/secrets/demo", StringComparison.Ordinal))
             {
+                Interlocked.Increment(ref _currentSecretGetCount);
                 lock (_sync)
                 {
                     if (_versions.Count == 0)
@@ -511,6 +550,7 @@ public sealed class SecretsManagerDurabilityTests
                 var versionId = Uri.UnescapeDataString(path["/secrets/demo/".Length..]);
                 if (request.Method == HttpMethod.Get)
                 {
+                    Interlocked.Increment(ref _versionGetCount);
                     lock (_sync)
                     {
                         var version = Find(versionId);

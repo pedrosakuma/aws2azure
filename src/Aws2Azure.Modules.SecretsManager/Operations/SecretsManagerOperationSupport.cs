@@ -126,6 +126,32 @@ internal static class SecretsManagerOperationSupport
         return true;
     }
 
+    public static async Task<CurrentSecretLookup?> ReadCurrentSecretLookupAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        string token,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new CurrentSecretLookup(false, new Dictionary<string, string>(StringComparer.Ordinal));
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            await WriteAwsErrorAsync(context, MapStatusCode(response.StatusCode), MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
+            return null;
+        }
+
+        using var document = await ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        return new CurrentSecretLookup(true, KeyVaultSecretClient.GetTags(document.RootElement));
+    }
+
     public static SecretsManagerTag[] ToTagArray(IReadOnlyDictionary<string, string> tags)
     {
         if (tags.Count == 0)
@@ -202,5 +228,6 @@ internal static class SecretsManagerOperationSupport
         }
     }
 
+    public readonly record struct CurrentSecretLookup(bool Exists, IReadOnlyDictionary<string, string> UserTags);
     private sealed record KeyVaultError(string? Code, string? Message);
 }
