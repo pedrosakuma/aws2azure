@@ -234,6 +234,7 @@ internal static class SecretVersionCoordinator
         string payloadSha256,
         IReadOnlyList<string> requestedStages,
         bool defaultStageTransition,
+        SecretVersionMetadata? winnerMetadataHint,
         CancellationToken cancellationToken)
     {
         HttpStatusCode? lastFailure = null;
@@ -344,6 +345,7 @@ internal static class SecretVersionCoordinator
                     version.VersionId,
                     desiredStages,
                     finalizePublication: false,
+                    versionHint: null,
                     cancellationToken));
             }
 
@@ -383,6 +385,11 @@ internal static class SecretVersionCoordinator
                     winner.VersionId,
                     effectiveStages,
                     finalizePublication: pendingPublication,
+                    versionHint: attempt == 0
+                        && winnerMetadataHint is not null
+                        && string.Equals(winnerMetadataHint.VersionId, winner.VersionId, StringComparison.Ordinal)
+                            ? winnerMetadataHint
+                            : null,
                     cancellationToken).ConfigureAwait(false);
                 if (publication.Fatal)
                 {
@@ -521,26 +528,43 @@ internal static class SecretVersionCoordinator
         string versionId,
         IReadOnlyList<string> stages,
         bool finalizePublication,
+        SecretVersionMetadata? versionHint,
         CancellationToken cancellationToken)
     {
-        using var getRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(name, versionId)));
-        getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var getResponse = await client.SendAsync(getRequest, cancellationToken).ConfigureAwait(false);
-        if (!getResponse.IsSuccessStatusCode)
+        IReadOnlyDictionary<string, string> freshTags;
+        IReadOnlyList<string> currentStages;
+        var alreadyPublished = false;
+        if (versionHint is not null)
         {
-            return ClassifyUpdateFailure(getResponse.StatusCode);
+            freshTags = versionHint.Tags;
+            currentStages = versionHint.VersionStages;
+            alreadyPublished = versionHint.Tags.TryGetValue(
+                    KeyVaultSecretClient.PublicationStateTag,
+                    out var publicationState)
+                && string.Equals(publicationState, "published", StringComparison.Ordinal);
+        }
+        else
+        {
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(name, versionId)));
+            getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var getResponse = await client.SendAsync(getRequest, cancellationToken).ConfigureAwait(false);
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                return ClassifyUpdateFailure(getResponse.StatusCode);
+            }
+
+            using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(getResponse.Content, cancellationToken).ConfigureAwait(false);
+            freshTags = KeyVaultSecretClient.GetRawTags(document.RootElement);
+            currentStages = KeyVaultSecretClient.TryGetRawTag(document.RootElement, KeyVaultSecretClient.VersionStagesTag, out var encodedStages)
+                ? KeyVaultSecretClient.DecodeStoredVersionStages(encodedStages)
+                : ["AWSCURRENT"];
+            alreadyPublished = KeyVaultSecretClient.TryGetRawTag(
+                    document.RootElement,
+                    KeyVaultSecretClient.PublicationStateTag,
+                    out var publicationState)
+                && string.Equals(publicationState, "published", StringComparison.Ordinal);
         }
 
-        using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(getResponse.Content, cancellationToken).ConfigureAwait(false);
-        var freshTags = KeyVaultSecretClient.GetRawTags(document.RootElement);
-        var currentStages = KeyVaultSecretClient.TryGetRawTag(document.RootElement, KeyVaultSecretClient.VersionStagesTag, out var encodedStages)
-            ? KeyVaultSecretClient.DecodeStoredVersionStages(encodedStages)
-            : ["AWSCURRENT"];
-        var alreadyPublished = KeyVaultSecretClient.TryGetRawTag(
-                document.RootElement,
-                KeyVaultSecretClient.PublicationStateTag,
-                out var publicationState)
-            && string.Equals(publicationState, "published", StringComparison.Ordinal);
         if (StagesEqual(currentStages, stages)
             && (!finalizePublication || alreadyPublished))
         {

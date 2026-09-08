@@ -19,24 +19,30 @@ internal static class UpdateSecretHandler
             : KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(secretBinary));
         var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        var hasSecretValue = SecretsManagerOperationSupport.HasSecretValue(secretString, secretBinary);
 
-        var exists = await SecretsManagerOperationSupport.SecretExistsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
-        if (exists is null)
-        {
-            return;
-        }
-
-        if (!exists.Value)
-        {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
-            return;
-        }
-
-        if (!SecretsManagerOperationSupport.HasSecretValue(secretString, secretBinary))
+        if (!hasSecretValue)
         {
             if (string.IsNullOrEmpty(description))
             {
                 throw new ArgumentException("UpdateSecret requires Description, SecretString, or SecretBinary.");
+            }
+
+            var exists = await SecretsManagerOperationSupport.SecretExistsAsync(
+                context,
+                client,
+                token,
+                name,
+                cancellationToken).ConfigureAwait(false);
+            if (exists is null)
+            {
+                return;
+            }
+
+            if (!exists.Value)
+            {
+                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
+                return;
             }
 
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(
@@ -48,15 +54,26 @@ internal static class UpdateSecretHandler
         }
 
         await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
-        var currentUserTags = await PutSecretValueHandler.ReadCurrentUserTagsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
-        if (currentUserTags is null)
+        var currentSecret = await SecretsManagerOperationSupport.ReadCurrentSecretLookupAsync(
+            context,
+            client,
+            token,
+            name,
+            cancellationToken).ConfigureAwait(false);
+        if (currentSecret is null)
         {
+            return;
+        }
+
+        if (!currentSecret.Value.Exists)
+        {
+            await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
             return;
         }
 
         var written = await PutSecretValueHandler.CreateVersionAsync(
             context, client, token, name, secretString, secretBinary, description,
-            clientRequestToken, payloadSha256, ["AWSCURRENT"], versionStagesSpecified: false, currentUserTags, cancellationToken).ConfigureAwait(false);
+            clientRequestToken, payloadSha256, ["AWSCURRENT"], versionStagesSpecified: false, currentSecret.Value.UserTags, cancellationToken).ConfigureAwait(false);
         if (written is null)
         {
             return;

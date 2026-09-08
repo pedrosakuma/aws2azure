@@ -23,23 +23,22 @@ internal static class PutSecretValueHandler
             : KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(secretBinary));
         var payloadSha256 = KeyVaultSecretClient.GetPayloadSha256(storedValue, contentType);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
 
-        var exists = await SecretsManagerOperationSupport.SecretExistsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
-        if (exists is null)
+        var currentSecret = await SecretsManagerOperationSupport.ReadCurrentSecretLookupAsync(
+            context,
+            client,
+            token,
+            name,
+            cancellationToken).ConfigureAwait(false);
+        if (currentSecret is null)
         {
             return;
         }
 
-        if (!exists.Value)
+        if (!currentSecret.Value.Exists)
         {
             await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret '{name}'.").ConfigureAwait(false);
-            return;
-        }
-
-        await using var secretLock = await SecretVersionCoordinator.AcquireLockAsync(name, cancellationToken).ConfigureAwait(false);
-        var currentUserTags = await ReadCurrentUserTagsAsync(context, client, token, name, cancellationToken).ConfigureAwait(false);
-        if (currentUserTags is null)
-        {
             return;
         }
 
@@ -55,7 +54,7 @@ internal static class PutSecretValueHandler
             payloadSha256,
             versionStages,
             versionStagesSpecified,
-            currentUserTags,
+            currentSecret.Value.UserTags,
             cancellationToken).ConfigureAwait(false);
         if (written is null)
         {
@@ -112,6 +111,7 @@ internal static class PutSecretValueHandler
                     payloadSha256,
                     versionStages,
                     defaultStageTransition: !versionStagesSpecified,
+                    winnerMetadataHint: null,
                     cancellationToken).ConfigureAwait(false);
                 return replayed is null
                     ? null
@@ -152,6 +152,11 @@ internal static class PutSecretValueHandler
             : string.Empty;
         var newVersionId = KeyVaultSecretClient.GetVersionId(id);
         var createdDate = KeyVaultSecretClient.GetCreatedDate(secretDocument.RootElement);
+        var createdVersion = new SecretVersionCoordinator.SecretVersionMetadata(
+            newVersionId,
+            new Dictionary<string, string>(mergedTags, StringComparer.Ordinal),
+            createdDate.ToUnixTimeSeconds(),
+            HasStoredStages: true);
         var published = await SecretVersionCoordinator.PublishVersionAsync(
             context,
             client,
@@ -162,34 +167,11 @@ internal static class PutSecretValueHandler
             payloadSha256,
             versionStages,
             defaultStageTransition: !versionStagesSpecified,
+            winnerMetadataHint: createdVersion,
             cancellationToken).ConfigureAwait(false);
         return published is null
             ? null
             : new NewVersionResult(published.Value.VersionId, createdDate, published.Value.VersionStages);
-    }
-
-    internal static async Task<IReadOnlyDictionary<string, string>?> ReadCurrentUserTagsAsync(
-        HttpContext context,
-        KeyVaultSecretClient client,
-        string token,
-        string name,
-        CancellationToken cancellationToken)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(name)));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            await SecretsManagerOperationSupport.WriteAwsErrorAsync(
-                context,
-                SecretsManagerOperationSupport.MapStatusCode(response.StatusCode),
-                SecretsManagerOperationSupport.MapErrorCode(response.StatusCode),
-                "Key Vault request failed.").ConfigureAwait(false);
-            return null;
-        }
-
-        using var document = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
-        return KeyVaultSecretClient.GetTags(document.RootElement);
     }
 
     internal readonly record struct NewVersionResult(
