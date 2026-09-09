@@ -8,7 +8,7 @@
       "adversarial": false,
       "question": "Is the DynamoDB basic table and item CRUD workload profile production-ready today?",
       "expectedAnswer": {
-        "summary": "Yes. The live workload certification verdict for dynamodb-basic-crud is 'ga': the profile still requires the documented accepted partial semantics and design gaps, and it now also carries freshly reaffirmed real-Azure qualification under the shared v1.1.0 GA clock.",
+        "summary": "Yes. The live workload certification verdict for dynamodb-basic-crud is 'ga': the profile still requires the documented accepted partial semantics and design gaps, and the current live certification now marks it production-ready.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/project-maturity.md"
@@ -316,7 +316,7 @@
       "adversarial": false,
       "question": "What is the current certification status of SQS standard messaging?",
       "expectedAnswer": {
-        "summary": "GA. The live workload certification for sqs-standard-messaging is currently ga because its committed qualified real-Azure workload artifact was freshly reaffirmed under the shared v1.1.0 GA clock.",
+        "summary": "GA. The live workload certification for sqs-standard-messaging is currently ga.",
         "canonicalSources": [
           "docs/site/workload-ga.json"
         ],
@@ -918,7 +918,7 @@
       "adversarial": true,
       "question": "Can DeleteItem be considered production-qualified for dynamodb-basic-crud based only on passing emulator tests?",
       "expectedAnswer": {
-        "summary": "No. Emulator-only evidence is still insufficient by itself; DeleteItem is currently production-qualified because the profile now also carries freshly reaffirmed real-Azure workload qualification and a GA live workload certification.",
+        "summary": "No. Emulator-only evidence is still insufficient by itself; DeleteItem is currently production-qualified because the profile has a GA live workload certification and the DeleteItem gap doc records the supporting real-Azure seal.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/gaps/dynamodb/DeleteItem.yaml"
