@@ -155,7 +155,8 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
                 clientId,
                 Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")!,
                 SealedRuntimeRole.Candidate,
-                port: null)
+                port: null,
+                useStableConfig: false)
                 .ConfigureAwait(false);
             Configured = true;
         }
@@ -191,9 +192,18 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             clientId,
             federatedTokenFile,
             SealedRuntimeRole.Candidate,
-            port: null).ConfigureAwait(false);
+            port: null,
+            useStableConfig: false).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Starts an additional, concurrently-running runtime instance representing the
+    /// isolated "stable" RC-observation cohort. Unlike <see cref="StartRuntimeAsync"/>
+    /// (which restarts the default instance in place, e.g. for restoration/rollback
+    /// verification against the same backend it was already using), this always talks
+    /// to the isolated stable-cohort backend when one has been provisioned, so the
+    /// candidate and stable cohorts never share backend throughput.
+    /// </summary>
     public async Task<ProxyInstance> StartAdditionalRuntimeAsync(
         SealedRuntimeRole role)
     {
@@ -205,14 +215,16 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             RequiredEnvironment("AZURE_CLIENT_ID"),
             RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
             role,
-            port: null).ConfigureAwait(false);
+            port: null,
+            useStableConfig: role == SealedRuntimeRole.Prior).ConfigureAwait(false);
     }
 
     private async Task<ProxyInstance> StartProxyInstanceCoreAsync(
         string clientId,
         string federatedTokenFile,
         SealedRuntimeRole runtimeRole,
-        int? port)
+        int? port,
+        bool useStableConfig)
     {
         if (_configFile is null)
         {
@@ -221,7 +233,7 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(federatedTokenFile);
 
-        var configFile = runtimeRole == SealedRuntimeRole.Prior && _stableConfigFile is not null
+        var configFile = useStableConfig && _stableConfigFile is not null
             ? _stableConfigFile
             : _configFile;
         var selectedPort = port ?? GetFreePort();
@@ -298,7 +310,8 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             clientId,
             tokenFile,
             SealedRuntimeRole.Candidate,
-            port).ConfigureAwait(false);
+            port,
+            useStableConfig: false).ConfigureAwait(false);
         _defaultInstance = replacement;
     }
 
@@ -312,6 +325,12 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         await StopProxyInstanceAsync(current).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Restarts the default proxy instance in place (same backend it was already
+    /// using), e.g. for restart/rollback restoration verification. Never switches to
+    /// the isolated stable-cohort backend — that backend is exclusively used by the
+    /// concurrent stable-cohort instance started via <see cref="StartAdditionalRuntimeAsync"/>.
+    /// </summary>
     public async Task StartRuntimeAsync(SealedRuntimeRole role)
     {
         if (_defaultInstance is not null
@@ -331,7 +350,8 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             _switchClientId,
             _switchFederatedTokenFile,
             role,
-            _switchPort).ConfigureAwait(false);
+            _switchPort,
+            useStableConfig: false).ConfigureAwait(false);
     }
 
     public async Task DisposeAsync()
