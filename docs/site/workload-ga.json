@@ -5,7 +5,7 @@
     "profile_version": 1,
     "name": "DynamoDB basic table and item CRUD",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "evidence_expires_at_utc": "2026-09-06T03:51:29.3036015+00:00",
     "findings": [
       {
@@ -57,19 +57,79 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027dynamodb_basic_crud\u0027."
       },
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "dynamodb-basic-crud",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027conditional-write-concurrency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027read-after-write\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/dynamodb-basic-crud.yaml",
+        "message": "docs/workloads/evidence/dynamodb-basic-crud.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -170,12 +230,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -360,12 +420,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -472,12 +532,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -602,12 +662,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -668,7 +728,7 @@
     "name": "S3 basic object CRUD",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-04T17:40:25.8636968+00:00",
+    "evidence_expires_at_utc": "2026-09-12T00:55:47.0013796+00:00",
     "findings": [
       {
         "code": "profile_ga",
@@ -678,12 +738,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -744,7 +804,7 @@
     "name": "Secrets Manager basic lifecycle",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-06T06:43:25.8081138+00:00",
+    "evidence_expires_at_utc": "2026-09-12T01:14:56.6293125+00:00",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -784,12 +844,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -908,12 +968,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -1032,12 +1092,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -1174,12 +1234,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -1310,12 +1370,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -1410,12 +1470,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
@@ -1475,7 +1535,7 @@
     "profile_version": 1,
     "name": "SQS standard messaging",
     "minimum_proxy_version": "0.1.0",
-    "verdict": "ga",
+    "verdict": "candidate",
     "evidence_expires_at_utc": "2026-09-06T05:38:50.9528064+00:00",
     "findings": [
       {
@@ -1485,19 +1545,79 @@
         "message": "The profile explicitly accepts this documented design gap for requirement \u0027sqs_standard_messaging\u0027."
       },
       {
-        "code": "profile_ga",
-        "disposition": "report_only",
-        "subject": "sqs-standard-messaging",
-        "message": "Compatibility, real-Azure seals, and operational qualification gates are satisfied."
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[0] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[1] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.source_runs[2] is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: provenance.correctness_run is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: signal \u0027representative-load-throughput\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: qualified real-Azure artifact is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027representative-load\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027redelivery\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027concurrency\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027restart\u0027 measurement is stale"
+      },
+      {
+        "code": "qualification_evidence_invalid",
+        "disposition": "blocking",
+        "subject": "docs/workloads/evidence/sqs-standard-messaging.yaml",
+        "message": "docs/workloads/evidence/sqs-standard-messaging.yaml: scenario \u0027rollback\u0027 measurement is stale"
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-03T11:00:00Z",
+      "evaluated_as_of_utc": "2026-09-09T02:54:50Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:8fdb589dd8de331e2bca407f802483a4249fcf1a21a5c9a2a09fdf19329dcb50",
+        "canonical_inputs_revision": "sha256:8378c78b4919cb7d9c96adee4e2948789550771358c674ec118e8b423a6fa119",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:25d90ef3e4d97c520472a8e0f006e016486fe8f5840fe8263b55133a906ce1b1",
