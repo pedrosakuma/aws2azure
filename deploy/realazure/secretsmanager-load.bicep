@@ -1,7 +1,18 @@
 param location string = resourceGroup().location
 param bootstrapPrincipalId string
 
+// RC observation runs a candidate cohort and a stable/prior cohort
+// concurrently. A single shared Key Vault's per-vault rate limit is split
+// between both cohorts, which structurally caps each cohort's measured
+// throughput well below the isolated-runtime qualification floor (see #1003).
+// deployStableVault provisions a second, fully isolated vault for the
+// stable/prior cohort so each cohort observes its own vault's real capacity.
+// Callers that only ever run a single cohort (qualification, workload-load)
+// leave this false and get the original single-vault topology unchanged.
+param deployStableVault bool = false
+
 var keyVaultName = 'a2a-kvl-${uniqueString(resourceGroup().id)}'
+var stableKeyVaultName = 'a2a-kvs-${uniqueString(resourceGroup().id)}'
 var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
@@ -32,6 +43,37 @@ resource bootstrapKeyVaultSecretsOfficer 'Microsoft.Authorization/roleAssignment
   }
 }
 
+resource stableKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' = if (deployStableVault) {
+  name: stableKeyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource bootstrapStableKeyVaultSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployStableVault) {
+  name: guid(stableKeyVault.id, bootstrapPrincipalId, keyVaultSecretsOfficerRoleId)
+  scope: stableKeyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsOfficerRoleId)
+    principalId: bootstrapPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
 output keyVaultId string = keyVault.id
+output stableKeyVaultName string = deployStableVault ? stableKeyVault!.name : ''
+output stableKeyVaultUri string = deployStableVault ? stableKeyVault!.properties.vaultUri : ''
+output stableKeyVaultId string = deployStableVault ? stableKeyVault!.id : ''
