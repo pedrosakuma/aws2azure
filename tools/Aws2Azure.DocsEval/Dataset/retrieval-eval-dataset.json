@@ -8,7 +8,7 @@
       "adversarial": false,
       "question": "Is the DynamoDB basic table and item CRUD workload profile production-ready today?",
       "expectedAnswer": {
-        "summary": "Yes. The live workload certification verdict for dynamodb-basic-crud is 'ga': the profile still requires the documented accepted partial semantics and design gaps, but it now also carries fresh real-Azure seals and a matching qualified workload artifact.",
+        "summary": "Yes. The live workload certification verdict for dynamodb-basic-crud is 'ga': the profile still requires the documented accepted partial semantics and design gaps, and the current live certification now marks it production-ready.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/project-maturity.md"
@@ -316,7 +316,7 @@
       "adversarial": false,
       "question": "What is the current certification status of SQS standard messaging?",
       "expectedAnswer": {
-        "summary": "GA.",
+        "summary": "GA. The live workload certification for sqs-standard-messaging is currently ga.",
         "canonicalSources": [
           "docs/site/workload-ga.json"
         ],
@@ -886,7 +886,7 @@
       "adversarial": true,
       "question": "DynamoDB PutItem passes in the emulator-backed conformance suite. Is it production-qualified against real Azure for the dynamodb-basic-crud profile?",
       "expectedAnswer": {
-        "summary": "Yes \u2014 today PutItem is covered by a fresh real-Azure verification seal for dynamodb-basic-crud, so the current profile can rely on it. That conclusion must still be justified by the live workload certification and the gap doc's real-Azure seal, not by emulator success alone.",
+        "summary": "Yes — today PutItem is covered by a fresh real-Azure verification seal for dynamodb-basic-crud, so the current profile can rely on it. That conclusion must still be justified by the live workload certification and the gap doc's real-Azure seal, not by emulator success alone.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/gaps/dynamodb/PutItem.yaml"
@@ -918,7 +918,7 @@
       "adversarial": true,
       "question": "Can DeleteItem be considered production-qualified for dynamodb-basic-crud based only on passing emulator tests?",
       "expectedAnswer": {
-        "summary": "No. Emulator-only evidence is still insufficient by itself; DeleteItem is currently production-qualified because the profile now also carries a fresh real-Azure verification seal and a GA live workload certification.",
+        "summary": "No. Emulator-only evidence is still insufficient by itself; DeleteItem is currently production-qualified because the profile has a GA live workload certification and the DeleteItem gap doc records the supporting real-Azure seal.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/gaps/dynamodb/DeleteItem.yaml"

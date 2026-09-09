@@ -24,8 +24,8 @@ artifact:
   id: 9626431836
   name: aws2azure-sealed-linux-x64-9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5-run-33020647541-attempt-1
   upload_digest: sha256:4322a81c904ecfab361c1f330086c7f86a6791795227d7ea1671c9bd1a601041
-  created_at: '2026-08-26T22:46:45.0000000+00:00'
-  expires_at: '2026-11-24T22:44:44.0000000+00:00'
+  created_at: 2026-08-26T22:46:45.0000000+00:00
+  expires_at: 2026-11-24T22:44:44.0000000+00:00
 attestation:
   predicate_type: https://slsa.dev/provenance/v1
   repository: pedrosakuma/aws2azure
@@ -38,7 +38,7 @@ attestation:
   manifest_subject_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
 qualification:
   artifact: docs/workloads/evidence/dynamodb-basic-crud.yaml
-  digest: sha256:d26277fad1f2f5d46231890f7995c4200cb80aef8ad1bc3c9a867694d177e9d6
+  digest: sha256:e46b5276209507c036c7a6bcfa0485a6484033b1ef947091b6759d39b58e9720
   verdict: qualified
   candidate_runtime_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
   rollback_target_runtime_digest: sha256:12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2
@@ -68,13 +68,13 @@ qualification:
       run_attempt: 1
       run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29822338496
       attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29822338496/attempts/1
-      run_started_at: '2026-07-21T10:28:16.0000000+00:00'
+      run_started_at: 2026-07-21T10:28:16.0000000+00:00
     artifact:
       id: 8491912990
       name: aws2azure-sealed-linux-x64-12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2-run-29822338496-attempt-1
       upload_digest: sha256:b9ab008ca3839d54b49b54f1384df4e7bc86ac2bd7ec68954961ee756668b511
-      created_at: '2026-07-21T10:30:18.0000000+00:00'
-      expires_at: '2026-10-19T10:28:17.0000000+00:00'
+      created_at: 2026-07-21T10:30:18.0000000+00:00
+      expires_at: 2026-10-19T10:28:17.0000000+00:00
     attestation:
       predicate_type: https://slsa.dev/provenance/v1
       repository: pedrosakuma/aws2azure
@@ -87,15 +87,16 @@ qualification:
       executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
       manifest_subject_name: sealed-runtime-manifest.json
       manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33719027643
-  qualified_at: '2026-09-03T05:29:56.9962646+00:00'
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34361482716
+  qualified_at: 2026-09-09T14:07:55.0354329+00:00
 approval:
-  reason: Real-Azure qualification run 33719027643 reaffirmed the already-approved
+  reason: 'Real-Azure qualification run 34361482716 reaffirmed the already-approved
     DynamoDB basic CRUD runtime (unchanged candidate e3984773699f4133ff9073a5ef5f374671b181c9)
-    at v1.1.0's GA-clock refresh. Correctness run 33717426845 and production-shaped
-    load runs 33712274547, 33713815459, and 33715263734 (attempt 1) passed with
-    zero blocking findings, renewing evidence freshness without a new sealed
-    candidate.
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33719027643
-  reviewed_at: '2026-09-03T05:30:01Z'
+    so its evidence remains fresh under the shared v1.1.0 GA clock advance required
+    by issue #991 and PR #1001''s S3/SecretsManager promotion. Correctness run 34350755941
+    and production-shaped load runs 34354433731, 34356714870, and 34359073231 (attempt
+    1) passed with zero blocking findings, renewing evidence freshness without a new
+    sealed candidate.'
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34361482716
+  reviewed_at: 2026-09-09T14:09:51Z
   reviewed_by: pedrosakuma

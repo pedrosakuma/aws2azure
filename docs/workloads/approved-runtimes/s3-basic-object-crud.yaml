@@ -12,36 +12,36 @@ runtime:
     architecture: x64
     rid: linux-x64
   source_repository: pedrosakuma/aws2azure
-  source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
-  aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
-  executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+  source_sha: 1b6e22db0c5357e26509c2dcc36a8c8196c071d1
+  aggregate_digest: sha256:542bd3ba88b4b30a2b28756630ea01f9ce9a416ef292076ffcd845eda00a74ec
+  executable_digest: sha256:bd70604d08c16c197ce28903fd9b7fc882bc2e19ffd046fc22ee5fcf4855a0fb
 producer:
   workflow: .github/workflows/sealed-runtime.yml
-  run_id: 33538183163
+  run_id: 34296436246
   run_attempt: 1
-  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34296436246
 artifact:
-  id: 9812563103
-  name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
-  upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
-  created_at: 2026-09-01T17:32:42Z
-  expires_at: 2026-11-30T17:30:36Z
+  id: 10083342238
+  name: aws2azure-sealed-linux-x64-542bd3ba88b4b30a2b28756630ea01f9ce9a416ef292076ffcd845eda00a74ec-run-34296436246-attempt-1
+  upload_digest: sha256:96901caf98521abe43f91977ea54575062a65d69cfef08c799a288e414a62e9c
+  created_at: 2026-09-09T00:48:44.0000000+00:00
+  expires_at: 2026-12-08T00:46:37.0000000+00:00
 attestation:
   predicate_type: https://slsa.dev/provenance/v1
   repository: pedrosakuma/aws2azure
   signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-  source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
+  source_sha: 1b6e22db0c5357e26509c2dcc36a8c8196c071d1
   source_ref: refs/heads/main
   subject_name: Aws2Azure.Proxy
-  subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+  subject_digest: sha256:bd70604d08c16c197ce28903fd9b7fc882bc2e19ffd046fc22ee5fcf4855a0fb
   manifest_subject_name: sealed-runtime-manifest.json
-  manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+  manifest_subject_digest: sha256:2b5dc98ca00ba82fdf7d0dbd9bc24d1b0784d904b113198a2c36cb11358dd52b
 qualification:
   artifact: docs/workloads/evidence/s3-basic-object-crud.yaml
-  digest: sha256:d5de08a1b068e84051ffb7eac9ef3d820e29603569e2bdda1011906a3fa3cb05
+  digest: sha256:734cee9acd96f03b533588960b16e357ec91725a00b500ee333d371e086473f8
   verdict: qualified
-  candidate_runtime_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
-  rollback_target_runtime_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
+  candidate_runtime_digest: sha256:542bd3ba88b4b30a2b28756630ea01f9ce9a416ef292076ffcd845eda00a74ec
+  rollback_target_runtime_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
   rollback_target:
     schema_version: 1
     role: prior
@@ -52,50 +52,51 @@ qualification:
     eligibility:
       rollback_baseline_eligible: true
       promotion_eligible: true
-    ledger_record_digest: sha256:fccbe1927820a35859268aa576782c52b0a7daa6ab6a75cbe6d928d5af042c26
+    ledger_record_digest: sha256:41bbd9ea741bf41730ac3f5a27f8b3191d36362fcbd8c87713a251b1a520bc47
     source:
       repository: pedrosakuma/aws2azure
-      sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       ref: refs/heads/main
     runtime:
-      aggregate_digest: sha256:52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1
-      executable_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
-      manifest_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
+      aggregate_digest: sha256:6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8
+      executable_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
+      manifest_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
     producer:
       workflow: .github/workflows/sealed-runtime.yml
       event_name: workflow_dispatch
-      run_id: 32974743613
+      run_id: 33538183163
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613/attempts/1
-      run_started_at: 2026-08-26T13:31:50Z
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      run_started_at: 2026-09-01T17:30:34.0000000+00:00
     artifact:
-      id: 9609058674
-      name: aws2azure-sealed-linux-x64-52fd004c9c561001f0fc182609334e4d133dd01e468b09e4c7671fdc271e26a1-run-32974743613-attempt-1
-      upload_digest: sha256:3d5159325f6d0bf233e8a9f518165f808695e0d597b106ff864db760abddd5ed
-      created_at: 2026-08-26T13:33:49Z
-      expires_at: 2026-11-24T13:31:51Z
+      id: 9812563103
+      name: aws2azure-sealed-linux-x64-6dce0b8aa6eb621c8feee1f0e805ab98e8930a39707b3bc384b193aa69852ec8-run-33538183163-attempt-1
+      upload_digest: sha256:83820dcb8d210fc286692b282729c5fab28af3d6f8a86505a141ef2878c195f1
+      created_at: 2026-09-01T17:32:42.0000000+00:00
+      expires_at: 2026-11-30T17:30:36.0000000+00:00
     attestation:
       predicate_type: https://slsa.dev/provenance/v1
       repository: pedrosakuma/aws2azure
       signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: d5d810fff5b261bd10aa2c74965102f6183577ee
+      source_sha: 68ddb300ad298d13ee5e392e2388f6d332a96555
       source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/32974743613/attempts/1
-      bundle_digest: sha256:6cab184dab6c4887996727daa7338c3e152806a5a62e0aa70f48942d84754fc5
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33538183163/attempts/1
+      bundle_digest: sha256:dfc06a503aa88518c2854d3a109d107b7b5af54ebad3fcd2389c62c40ab0f5ad
       executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:19b99bac9a111fea28308f70695326a0b78956416cc549dbf714f886d8138b6e
+      executable_subject_digest: sha256:a564ce3cc3801e78b4ac03fdd268d502d0665b731f22fc7e0b9dd330e3ab5193
       manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:4f084531bfdd029a9eab5c579b83ecbce271851dee22ea53605c531123c80356
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33547034844
-  qualified_at: 2026-09-01T19:01:47.5034126+00:00
+      manifest_subject_digest: sha256:87fb4921b8ea5d399ad7e2d0baf504729b63c6547e6e9d9c99ba5d17cd22f997
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34304587927
+  qualified_at: 2026-09-09T02:48:19.8200991+00:00
 approval:
-  reason: >-
-    Real-Azure qualification run 33547034844 promoted the approved S3 runtime
-    to the exact sealed candidate from run 33538183163. Correctness run
-    33538561756 and production-shaped load runs 33538613911, 33538733571,
-    and 33541058843 passed with zero blocking findings, including rollback to
-    the previously approved runtime.
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33547034844
-  reviewed_at: 2026-09-02T13:25:06Z
+  reason: 'Real-Azure qualification run 34304587927 promoted the approved S3 runtime
+    to the exact sealed candidate from run 34296436246. Correctness run 34296637612
+    and production-shaped load runs 34299247192, 34299886137, and 34300502905 (attempt
+    1) passed with zero blocking findings, including rollback to the previously approved
+    runtime. This shared candidate also carries the round-1 fix from PR #998 (issue
+    #997) and round-2 fix from PR #1000 (issue #999) that resolved the Secrets Manager
+    throughput regression tracked in issue #991 at the same sealed SHA.'
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34304587927
+  reviewed_at: 2026-09-09T02:54:50Z
   reviewed_by: pedrosakuma
