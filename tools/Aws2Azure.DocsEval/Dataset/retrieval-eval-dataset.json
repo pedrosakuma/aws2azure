@@ -8,7 +8,7 @@
       "adversarial": false,
       "question": "Is the DynamoDB basic table and item CRUD workload profile production-ready today?",
       "expectedAnswer": {
-        "summary": "No. The live workload certification verdict for dynamodb-basic-crud is currently 'candidate': the accepted partial semantics and design gaps are unchanged, but the previously qualified real-Azure workload artifact is stale at the current shared evaluation clock.",
+        "summary": "Yes. The live workload certification verdict for dynamodb-basic-crud is 'ga': the profile still requires the documented accepted partial semantics and design gaps, and it now also carries freshly reaffirmed real-Azure qualification under the shared v1.1.0 GA clock.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/project-maturity.md"
@@ -16,14 +16,14 @@
         "precedence": "Live workload certification (docs/site/workload-ga.json, rank 1) is authoritative for the current verdict; gap docs (rank 3) explain why."
       },
       "prohibitedConclusions": [
-        "Must not claim dynamodb-basic-crud is GA, conditional, or blocked.",
+        "Must not claim dynamodb-basic-crud is conditional, candidate, or blocked.",
         "Must not ignore docs/site/workload-ga.json when answering the current status."
       ],
       "checks": [
         {
           "type": "profile_verdict",
           "profileId": "dynamodb-basic-crud",
-          "expectedVerdict": "candidate"
+          "expectedVerdict": "ga"
         }
       ]
     },
@@ -316,20 +316,20 @@
       "adversarial": false,
       "question": "What is the current certification status of SQS standard messaging?",
       "expectedAnswer": {
-        "summary": "Candidate. The live workload certification for sqs-standard-messaging is currently candidate because the committed qualified real-Azure workload artifact is stale at the current shared evaluation clock.",
+        "summary": "GA. The live workload certification for sqs-standard-messaging is currently ga because its committed qualified real-Azure workload artifact was freshly reaffirmed under the shared v1.1.0 GA clock.",
         "canonicalSources": [
           "docs/site/workload-ga.json"
         ],
         "precedence": "docs/site/workload-ga.json is the single current verdict source for this profile."
       },
       "prohibitedConclusions": [
-        "Must not claim sqs-standard-messaging is GA, conditional, or blocked."
+        "Must not claim sqs-standard-messaging is candidate, conditional, or blocked."
       ],
       "checks": [
         {
           "type": "profile_verdict",
           "profileId": "sqs-standard-messaging",
-          "expectedVerdict": "candidate"
+          "expectedVerdict": "ga"
         }
       ]
     },
@@ -886,7 +886,7 @@
       "adversarial": true,
       "question": "DynamoDB PutItem passes in the emulator-backed conformance suite. Is it production-qualified against real Azure for the dynamodb-basic-crud profile?",
       "expectedAnswer": {
-        "summary": "No. Emulator-only evidence is still insufficient by itself, and the live workload certification for dynamodb-basic-crud is currently candidate because the profile's committed qualified real-Azure workload artifact is stale at the current shared evaluation clock. The PutItem gap doc's real-Azure seal remains supporting evidence, but it does not by itself restore current profile-level GA.",
+        "summary": "Yes — today PutItem is covered by a fresh real-Azure verification seal for dynamodb-basic-crud, so the current profile can rely on it. That conclusion must still be justified by the live workload certification and the gap doc's real-Azure seal, not by emulator success alone.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/gaps/dynamodb/PutItem.yaml"
@@ -895,13 +895,13 @@
       },
       "prohibitedConclusions": [
         "Must not treat emulator-only conformance passing as proof of production qualification.",
-        "Must not claim the current dynamodb-basic-crud profile is GA without fresh profile-level workload qualification."
+        "Must not deny the fresh real-Azure seal recorded for PutItem in the current gap doc."
       ],
       "checks": [
         {
           "type": "profile_verdict",
           "profileId": "dynamodb-basic-crud",
-          "expectedVerdict": "candidate"
+          "expectedVerdict": "ga"
         },
         {
           "type": "text_contains",
@@ -918,7 +918,7 @@
       "adversarial": true,
       "question": "Can DeleteItem be considered production-qualified for dynamodb-basic-crud based only on passing emulator tests?",
       "expectedAnswer": {
-        "summary": "No. Emulator-only evidence is still insufficient by itself, and DeleteItem is not currently production-qualified for dynamodb-basic-crud because the live workload certification is candidate while the profile's committed qualified real-Azure workload artifact is stale at the current shared evaluation clock.",
+        "summary": "No. Emulator-only evidence is still insufficient by itself; DeleteItem is currently production-qualified because the profile now also carries freshly reaffirmed real-Azure workload qualification and a GA live workload certification.",
         "canonicalSources": [
           "docs/site/workload-ga.json",
           "docs/gaps/dynamodb/DeleteItem.yaml"
@@ -932,7 +932,7 @@
         {
           "type": "profile_verdict",
           "profileId": "dynamodb-basic-crud",
-          "expectedVerdict": "candidate"
+          "expectedVerdict": "ga"
         },
         {
           "type": "text_contains",
