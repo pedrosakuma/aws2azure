@@ -38,6 +38,7 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     private readonly List<ProxyInstance> _instances = [];
     private readonly StringBuilder _completedOutput = new();
     private string? _configFile;
+    private string? _stableConfigFile;
     private string? _privateDirectory;
     private ProxyInstance? _defaultInstance;
     private SealedRuntimeSelection _runtimeSelection = null!;
@@ -64,6 +65,21 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     public string ProxyConfigDigest { get; private set; } = string.Empty;
     public string BackendIdentityDigest { get; private set; } = string.Empty;
     public string AwsBindingDigest { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Config digest for the stable/prior cohort's backend. Equals
+    /// <see cref="ProxyConfigDigest"/> when no isolated stable Key Vault is
+    /// configured (AZURE_KEYVAULT_URL_STABLE unset) — every other real-Azure
+    /// Secrets Manager test suite shares one vault, so this stays a
+    /// backward-compatible no-op for them.
+    /// </summary>
+    public string StableProxyConfigDigest { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Backend identity digest for the stable/prior cohort. See
+    /// <see cref="StableProxyConfigDigest"/> for the single-vault fallback.
+    /// </summary>
+    public string StableBackendIdentityDigest { get; private set; } = string.Empty;
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
     public bool HasDefaultInstance => _defaultInstance is not null;
@@ -103,57 +119,35 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             AppContext.BaseDirectory,
             "secretsmanager-it");
         _configFile = Path.Combine(_privateDirectory, "proxy-config.json");
-        var configBytes = Encoding.UTF8.GetBytes($$"""
-            {
-              "services": {
-                "secretsmanager": { "enabled": true }
-              },
-              "bindings": [
-                {
-                  "aws": {
-                    "accessKeyId": "{{AwsAccessKey}}",
-                    "secretAccessKey": "{{AwsSecret}}"
-                  },
-                  "azure": {
-                    "secretsmanager": {
-                      "kind": "keyVault",
-                      "target": {
-                        "vaultUrl": "{{vaultUrl}}"
-                      },
-                      "auth": {
-                        "mode": "WorkloadIdentity"
-                      }
-                    }
-                  }
-                },
-                {
-                  "aws": {
-                    "accessKeyId": "{{InvalidBackendAwsAccessKey}}",
-                    "secretAccessKey": "{{InvalidBackendAwsSecret}}"
-                  },
-                  "azure": {
-                    "secretsmanager": {
-                      "kind": "keyVault",
-                      "target": {
-                        "vaultUrl": "{{vaultUrl}}"
-                      },
-                      "auth": {
-                        "mode": "clientSecret",
-                        "tenantId": "{{tenantId}}",
-                        "clientId": "{{clientId}}",
-                        "clientSecret": "aws2azure-deterministic-invalid-client-secret"
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-            """);
+        var configBytes = BuildProxyConfigBytes(vaultUrl, tenantId, clientId);
         await SealedRuntimeLauncher.WritePrivateFileAsync(_configFile, configBytes)
             .ConfigureAwait(false);
         ProxyConfigDigest = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(configBytes));
         BackendIdentityDigest = Digest(vaultUrl);
         AwsBindingDigest = Digest(AwsAccessKey + "\n" + AwsSecret);
+
+        // A distinct, fully isolated Key Vault for the stable/prior cohort
+        // avoids splitting one vault's rate limit between two concurrently
+        // running cohorts during RC observation (see #1003). Every other
+        // real-Azure Secrets Manager test suite only ever starts one cohort
+        // and never sets AZURE_KEYVAULT_URL_STABLE, so it keeps sharing the
+        // single candidate vault unchanged.
+        var stableVaultUrl = Environment.GetEnvironmentVariable("AZURE_KEYVAULT_URL_STABLE");
+        if (!string.IsNullOrWhiteSpace(stableVaultUrl))
+        {
+            _stableConfigFile = Path.Combine(_privateDirectory, "proxy-config-stable.json");
+            var stableConfigBytes = BuildProxyConfigBytes(stableVaultUrl, tenantId, clientId);
+            await SealedRuntimeLauncher.WritePrivateFileAsync(_stableConfigFile, stableConfigBytes)
+                .ConfigureAwait(false);
+            StableProxyConfigDigest =
+                "sha256:" + Convert.ToHexStringLower(SHA256.HashData(stableConfigBytes));
+            StableBackendIdentityDigest = Digest(stableVaultUrl);
+        }
+        else
+        {
+            StableProxyConfigDigest = ProxyConfigDigest;
+            StableBackendIdentityDigest = BackendIdentityDigest;
+        }
 
         try
         {
@@ -227,11 +221,14 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
         ArgumentException.ThrowIfNullOrWhiteSpace(federatedTokenFile);
 
+        var configFile = runtimeRole == SealedRuntimeRole.Prior && _stableConfigFile is not null
+            ? _stableConfigFile
+            : _configFile;
         var selectedPort = port ?? GetFreePort();
         var instance = new ProxyInstance(
             StartProxyProcess(
                 selectedPort,
-                _configFile,
+                configFile,
                 clientId,
                 federatedTokenFile,
                 runtimeRole),
@@ -348,6 +345,11 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         {
             try { File.Delete(_configFile); } catch { }
             _configFile = null;
+        }
+        if (_stableConfigFile is not null)
+        {
+            try { File.Delete(_stableConfigFile); } catch { }
+            _stableConfigFile = null;
         }
         if (_privateDirectory is not null)
         {
@@ -475,6 +477,54 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     private static string Digest(ReadOnlySpan<byte> value) =>
         "sha256:" + Convert.ToHexStringLower(
             SHA256.HashData(value));
+
+    private static byte[] BuildProxyConfigBytes(string vaultUrl, string tenantId, string clientId) =>
+        Encoding.UTF8.GetBytes($$"""
+            {
+              "services": {
+                "secretsmanager": { "enabled": true }
+              },
+              "bindings": [
+                {
+                  "aws": {
+                    "accessKeyId": "{{AwsAccessKey}}",
+                    "secretAccessKey": "{{AwsSecret}}"
+                  },
+                  "azure": {
+                    "secretsmanager": {
+                      "kind": "keyVault",
+                      "target": {
+                        "vaultUrl": "{{vaultUrl}}"
+                      },
+                      "auth": {
+                        "mode": "WorkloadIdentity"
+                      }
+                    }
+                  }
+                },
+                {
+                  "aws": {
+                    "accessKeyId": "{{InvalidBackendAwsAccessKey}}",
+                    "secretAccessKey": "{{InvalidBackendAwsSecret}}"
+                  },
+                  "azure": {
+                    "secretsmanager": {
+                      "kind": "keyVault",
+                      "target": {
+                        "vaultUrl": "{{vaultUrl}}"
+                      },
+                      "auth": {
+                        "mode": "clientSecret",
+                        "tenantId": "{{tenantId}}",
+                        "clientId": "{{clientId}}",
+                        "clientSecret": "aws2azure-deterministic-invalid-client-secret"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+            """);
 
     public sealed class ProxyInstance
     {
