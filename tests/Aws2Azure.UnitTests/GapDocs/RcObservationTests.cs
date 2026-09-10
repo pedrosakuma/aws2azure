@@ -69,7 +69,7 @@ public sealed class RcObservationTests
     }
 
     [Fact]
-    public void Azure_backend_region_config_and_binding_drift_are_rejected()
+    public void Azure_backend_region_and_candidate_cohort_config_drift_are_rejected()
     {
         var (evidence, context) = ValidEvidence();
         evidence = evidence with
@@ -78,7 +78,7 @@ public sealed class RcObservationTests
             Cohorts =
             [
                 evidence.Cohorts[0] with { ConfigDigest = Digest('9') },
-                evidence.Cohorts[1] with { BackendIdentityDigest = Digest('8') },
+                evidence.Cohorts[1] with { Region = "eastus" },
             ],
         };
         (evidence, context) = Reseal(evidence, context);
@@ -89,7 +89,54 @@ public sealed class RcObservationTests
             "Azure backend, region, configuration, or AWS binding drift",
             StringComparison.Ordinal));
         Assert.Contains(errors, error => error.Contains(
-            "backend, region, config, or binding drift",
+            "backend identity or config drift",
+            StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains(
+            "backend, region, or binding drift",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Stable_cohort_may_use_an_isolated_backend_identity_and_config()
+    {
+        var (evidence, context) = ValidEvidence();
+        evidence = evidence with
+        {
+            Cohorts =
+            [
+                evidence.Cohorts[0],
+                evidence.Cohorts[1] with
+                {
+                    BackendIdentityDigest = Digest('8'),
+                    ConfigDigest = Digest('9'),
+                },
+            ],
+        };
+        (evidence, context) = Reseal(evidence, context);
+
+        var errors = RcObservationValidator.Validate(evidence, context, Now);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Stable_cohort_malformed_backend_identity_or_config_digest_is_rejected()
+    {
+        var (evidence, context) = ValidEvidence();
+        evidence = evidence with
+        {
+            Cohorts =
+            [
+                evidence.Cohorts[0],
+                evidence.Cohorts[1] with { BackendIdentityDigest = "not-a-digest" },
+            ],
+        };
+        (evidence, context) = Reseal(evidence, context);
+
+        var errors = RcObservationValidator.Validate(evidence, context, Now);
+
+        Assert.Contains(errors, error => error.Contains(
+            "malformed backend identity or config digest",
             StringComparison.Ordinal));
     }
 
