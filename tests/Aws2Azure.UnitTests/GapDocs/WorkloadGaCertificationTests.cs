@@ -260,7 +260,7 @@ public sealed class WorkloadGaCertificationTests
             root.GetProperty("profile_id").GetString());
         Assert.Equal("ga", root.GetProperty("verdict").GetString());
         Assert.Equal(
-            "2026-09-12T22:21:43.4011541+00:00",
+            "2026-09-13T14:29:08.0572876+00:00",
             root.GetProperty("evidence_expires_at_utc").GetString());
 
         var legacy = JsonSerializer.Deserialize<LegacyWorkloadGaReport>(first);
@@ -438,12 +438,12 @@ public sealed class WorkloadGaCertificationTests
     {
         Assert.Empty(WorkloadGaEvaluationContractValidator.Validate(
             EvaluationContract,
-            UtcInstant(2026, 9, 10, 0, 5, 11),
+            UtcInstant(2026, 9, 10, 16, 48, 19),
             WorkloadGaEvaluationMetadataBuilder.ComputeCanonicalInputRevision(RepoRoot),
             WorkloadGaEvaluationMetadataBuilder.ComputeEvaluatorImplementationRevision(
                 RepoRoot)));
         Assert.Equal(
-            UtcInstant(2026, 9, 10, 0, 5, 11),
+            UtcInstant(2026, 9, 10, 16, 48, 19),
             WorkloadGaEvaluationMetadataBuilder.ParseEvaluatedAsOfUtc(EvaluationContract));
     }
 
