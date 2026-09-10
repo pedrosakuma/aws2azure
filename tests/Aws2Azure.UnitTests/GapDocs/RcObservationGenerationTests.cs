@@ -46,8 +46,30 @@ public sealed class RcObservationGenerationTests
 
         var result = Generate(data);
 
-        Assert.Equal(4.5, result.Evidence.Metrics.Single(m =>
-            m.Id == "representative-load-throughput").Threshold);
+        var resolved = result.Evidence.Metrics.Single(m =>
+            m.Id == "representative-load-throughput");
+        Assert.Equal(4.5, resolved.Threshold);
+        Assert.Equal("greater_than_or_equal", resolved.Comparison);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void Generator_rejects_non_finite_or_non_positive_override_value(double overrideValue)
+    {
+        var data = CreateData();
+        var metric = data.Policy.Metrics.Single(m =>
+            m.Id == "representative-load-throughput");
+        metric.ObservationThresholdOverride = overrideValue;
+        metric.ObservationThresholdJustification =
+            "Concurrent dual-cohort single-runner CPU contention; see #1007.";
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("invalid override threshold", exception.Message);
     }
 
     [Fact]

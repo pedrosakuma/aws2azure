@@ -943,6 +943,12 @@ public static class RcObservationGenerator
                                 $"RC observation metric '{metric.Id}' overrides its qualification " +
                                 "threshold without a reviewed justification.");
                         }
+                        if (!double.IsFinite(overrideValue) || overrideValue <= 0)
+                        {
+                            throw new InvalidDataException(
+                                $"RC observation metric '{metric.Id}' has an invalid override threshold " +
+                                "(must be a finite, positive value).");
+                        }
                         threshold = overrideValue;
                     }
                     else if (metric.ObservationThresholdJustification is not null)
