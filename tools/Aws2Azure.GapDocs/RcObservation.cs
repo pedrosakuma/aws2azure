@@ -1608,11 +1608,25 @@ public static partial class RcObservationValidator
         }
         if (cohort.BackendKind != context.AzureBackendKind
             || cohort.Region != context.AzureRegion
-            || cohort.BackendIdentityDigest != context.AzureBackendIdentityDigest
-            || cohort.ConfigDigest != context.ConfigDigest
             || cohort.AwsBindingDigest != context.AwsBindingDigest)
         {
-            err($"cohort '{cohort.Id}' contains backend, region, config, or binding drift");
+            err($"cohort '{cohort.Id}' contains backend, region, or binding drift");
+        }
+        // The candidate cohort always runs against the profile's attested primary
+        // backend, so its identity/config digests must match the shared context
+        // exactly. The stable cohort may be isolated onto its own backend
+        // instance (e.g. a dedicated Key Vault) to avoid cross-cohort
+        // interference; it is legitimate for its digests to diverge from the
+        // candidate's as long as they are well-formed sha256 digests.
+        if (cohort.Role == "candidate"
+            && (cohort.BackendIdentityDigest != context.AzureBackendIdentityDigest
+                || cohort.ConfigDigest != context.ConfigDigest))
+        {
+            err($"cohort '{cohort.Id}' contains backend identity or config drift");
+        }
+        if (!IsDigest(cohort.BackendIdentityDigest) || !IsDigest(cohort.ConfigDigest))
+        {
+            err($"cohort '{cohort.Id}' has a malformed backend identity or config digest");
         }
         var expectedUntil = cohort.Role == "candidate"
                             && evidence.Decision.Verdict == "rollback"
