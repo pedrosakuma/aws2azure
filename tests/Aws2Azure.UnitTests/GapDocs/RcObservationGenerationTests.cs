@@ -35,6 +35,61 @@ public sealed class RcObservationGenerationTests
     }
 
     [Fact]
+    public void Generator_applies_reviewed_observation_threshold_override()
+    {
+        var data = CreateData();
+        var metric = data.Policy.Metrics.Single(m =>
+            m.Id == "representative-load-throughput");
+        metric.ObservationThresholdOverride = 4.5;
+        metric.ObservationThresholdJustification =
+            "Concurrent dual-cohort single-runner CPU contention; see #1007.";
+
+        var result = Generate(data);
+
+        Assert.Equal(4.5, result.Evidence.Metrics.Single(m =>
+            m.Id == "representative-load-throughput").Threshold);
+    }
+
+    [Fact]
+    public void Generator_rejects_override_without_reviewed_justification()
+    {
+        var data = CreateData();
+        var metric = data.Policy.Metrics.Single(m =>
+            m.Id == "representative-load-throughput");
+        metric.ObservationThresholdOverride = 4.5;
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("without a reviewed justification", exception.Message);
+    }
+
+    [Fact]
+    public void Generator_rejects_justification_without_override()
+    {
+        var data = CreateData();
+        var metric = data.Policy.Metrics.Single(m =>
+            m.Id == "representative-load-throughput");
+        metric.ObservationThresholdJustification = "Not applicable without an override.";
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("justification without an override threshold", exception.Message);
+    }
+
+    [Fact]
+    public void Generator_rejects_failure_rate_override_attempt()
+    {
+        var data = CreateData();
+        var metric = data.Policy.Metrics.Single(m => m.Id == "operation-failure-rate");
+        metric.ObservationThresholdOverride = 0.01;
+        metric.ObservationThresholdJustification = "Not supported for this metric.";
+
+        var exception = Assert.Throws<InvalidDataException>(() => Generate(data));
+
+        Assert.Contains("does not support a threshold override", exception.Message);
+    }
+
+    [Fact]
     public void Generator_rejects_diagnostics_that_do_not_match_aggregate_samples()
     {
         var data = CreateData();

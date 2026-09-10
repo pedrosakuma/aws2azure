@@ -38,6 +38,16 @@ public sealed class RcObservationPolicyMetric
     public string Unit { get; set; } = string.Empty;
     public string ThresholdSource { get; set; } = string.Empty;
     public string ThresholdReference { get; set; } = string.Empty;
+
+    // Optional, explicit deviation from the resolved qualification-signal
+    // threshold. Qualification measures one cohort in isolation; observation
+    // runs the candidate and stable cohorts concurrently on a single shared
+    // runner, which is a structurally different (lower) throughput ceiling
+    // for CPU/TLS-heavy backends. Both fields must be set together, and the
+    // justification is required so any deviation is reviewed and traceable
+    // (never a silent threshold relaxation) -- see #1007.
+    public double? ObservationThresholdOverride { get; set; }
+    public string? ObservationThresholdJustification { get; set; }
 }
 
 public static class RcObservationPolicyLoader
@@ -908,32 +918,51 @@ public static class RcObservationGenerator
                             $"RC observation metric '{metric.Id}' does not resolve one blocking qualification signal.");
                     }
                     var signal = signals[0];
+                    string comparison;
+                    double threshold;
                     if (signal.MinValue is double min && signal.MaxValue is null)
                     {
-                        resolved.Add(new ResolvedMetric(
-                            metric.Id,
-                            metric.Unit,
-                            "greater_than_or_equal",
-                            min));
+                        comparison = "greater_than_or_equal";
+                        threshold = min;
                     }
                     else if (signal.MaxValue is double max && signal.MinValue is null)
                     {
-                        resolved.Add(new ResolvedMetric(
-                            metric.Id,
-                            metric.Unit,
-                            "less_than_or_equal",
-                            max));
+                        comparison = "less_than_or_equal";
+                        threshold = max;
                     }
                     else
                     {
                         throw new InvalidDataException(
                             $"RC observation metric '{metric.Id}' has an ambiguous qualification threshold.");
                     }
+                    if (metric.ObservationThresholdOverride is double overrideValue)
+                    {
+                        if (string.IsNullOrWhiteSpace(metric.ObservationThresholdJustification))
+                        {
+                            throw new InvalidDataException(
+                                $"RC observation metric '{metric.Id}' overrides its qualification " +
+                                "threshold without a reviewed justification.");
+                        }
+                        threshold = overrideValue;
+                    }
+                    else if (metric.ObservationThresholdJustification is not null)
+                    {
+                        throw new InvalidDataException(
+                            $"RC observation metric '{metric.Id}' has a justification without an " +
+                            "override threshold.");
+                    }
+                    resolved.Add(new ResolvedMetric(metric.Id, metric.Unit, comparison, threshold));
                     break;
                 }
                 case "qualification_rule"
                     when metric.ThresholdReference == "max_failure_rate"
                          && metric.Unit == "ratio":
+                    if (metric.ObservationThresholdOverride is not null
+                        || metric.ObservationThresholdJustification is not null)
+                    {
+                        throw new InvalidDataException(
+                            $"RC observation metric '{metric.Id}' does not support a threshold override.");
+                    }
                     resolved.Add(new ResolvedMetric(
                         metric.Id,
                         metric.Unit,
