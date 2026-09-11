@@ -413,10 +413,24 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Equal(
-            2,
+            4,
             CountOccurrences(
                 Workflow,
                 "if [[ \"$upload_digest\" =~ ^[0-9a-f]{64}$ ]]; then"));
+        Assert.Contains("observe-cohort:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("assemble-observation:", Workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "OBSERVATION_SYNC_AT_UTC:",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "real-azure-rc-observation-cohort-${{ matrix.profile }}-${{ matrix.cohort }}-run-",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            ".github/scripts/merge-rc-observation-cohorts.py",
+            Workflow,
+            StringComparison.Ordinal);
         Assert.Contains(
             "manifest_observation:",
             Workflow,

@@ -118,6 +118,13 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         _privateDirectory = SealedRuntimeLauncher.CreatePrivateDirectory(
             AppContext.BaseDirectory,
             "secretsmanager-it");
+        var stableOnlyObservation = string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_RC_OBSERVATION_COHORT_ROLE"),
+            "stable",
+            StringComparison.Ordinal);
+        var initialRuntimeRole = stableOnlyObservation
+            ? SealedRuntimeRole.Prior
+            : SealedRuntimeRole.Candidate;
         _configFile = Path.Combine(_privateDirectory, "proxy-config.json");
         var configBytes = BuildProxyConfigBytes(vaultUrl, tenantId, clientId);
         await SealedRuntimeLauncher.WritePrivateFileAsync(_configFile, configBytes)
@@ -154,9 +161,9 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             _defaultInstance = await StartProxyInstanceCoreAsync(
                 clientId,
                 Environment.GetEnvironmentVariable("AZURE_FEDERATED_TOKEN_FILE")!,
-                SealedRuntimeRole.Candidate,
+                initialRuntimeRole,
                 port: null,
-                useStableConfig: false)
+                useStableConfig: stableOnlyObservation)
                 .ConfigureAwait(false);
             Configured = true;
         }

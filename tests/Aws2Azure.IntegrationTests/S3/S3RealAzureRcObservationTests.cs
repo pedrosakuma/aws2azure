@@ -41,9 +41,13 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
     [SkippableFact]
     public async Task Candidate_and_stable_cohorts_capture_object_crud_and_exact_prior_restore()
     {
-        Skip.If(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
-            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH")),
-            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH is not set.");
+        var fullCapturePath = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH");
+        var cohortCapturePath = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH");
+        Skip.If(string.IsNullOrWhiteSpace(fullCapturePath)
+                && string.IsNullOrWhiteSpace(cohortCapturePath),
+            "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH or AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH is not set.");
         Skip.IfNot(fixture.BlobConfigured,
             "Real Azure Blob Storage is not configured.");
         Assert.True(fixture.SealedRollbackConfigured,
@@ -53,6 +57,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
         var candidateConcurrency =
             RcObservationCaptureWriter.ReadConcurrency("candidate");
         var stableConcurrency = RcObservationCaptureWriter.ReadConcurrency("stable");
+        var observationCohortRole = RcObservationCaptureWriter.ReadObservationCohortRole();
         var operationMixIdentity = RcObservationCaptureWriter.OperationMixIdentity(
             "s3-basic-object-crud",
             LifecycleOperationSchedule);
@@ -60,6 +65,17 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
             RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY"),
             operationMixIdentity);
         var duration = TimeSpan.FromMinutes(minutes);
+        if (observationCohortRole is not null)
+        {
+            await RunSingleCohortObservationAsync(
+                observationCohortRole,
+                candidateConcurrency,
+                stableConcurrency,
+                operationMixIdentity,
+                duration).ConfigureAwait(false);
+            return;
+        }
+
         using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(15));
         var candidateTracker = new RealAzureWorkloadLoadTracker("s3", Operations);
         var stableTracker = new RealAzureWorkloadLoadTracker("s3", Operations);
@@ -277,6 +293,206 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
             }
         }
     }
+
+    private async Task RunSingleCohortObservationAsync(
+                string role,
+                int candidateConcurrency,
+                int stableConcurrency,
+                string operationMixIdentity,
+                TimeSpan duration)
+            {
+                using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(15));
+                var tracker = new RealAzureWorkloadLoadTracker("s3", Operations);
+                using var client = fixture.CreateS3Client();
+                var canaryBucket = "a2a-rc-canary-" + Guid.NewGuid().ToString("N")[..24];
+                const string canaryKey = "state.txt";
+                var canaryValue = "rc-observation-" + Guid.NewGuid().ToString("N");
+                var canaryExists = false;
+
+                try
+                {
+                    if (role == "candidate")
+                    {
+                        await client.PutBucketAsync(
+                            new PutBucketRequest { BucketName = canaryBucket },
+                            timeout.Token).ConfigureAwait(false);
+                        await client.PutObjectAsync(
+                            new PutObjectRequest
+                            {
+                                BucketName = canaryBucket,
+                                Key = canaryKey,
+                                ContentBody = canaryValue,
+                                ContentType = "text/plain",
+                            },
+                            timeout.Token).ConfigureAwait(false);
+                        canaryExists = true;
+                        await AssertValueAsync(
+                            client,
+                            canaryBucket,
+                            canaryKey,
+                            canaryValue,
+                            timeout.Token).ConfigureAwait(false);
+                    }
+
+                    var startedAt = await RcObservationCaptureWriter
+                        .WaitForSynchronizedObservationStartAsync(timeout.Token)
+                        .ConfigureAwait(false);
+                    var stopwatch = Stopwatch.StartNew();
+                    var concurrency = role == "candidate"
+                        ? candidateConcurrency
+                        : stableConcurrency;
+                    var startedRuntime = role == "candidate"
+                        ? fixture.CandidateRuntimeIdentity
+                        : fixture.PriorRuntimeIdentity;
+                    var workers = new List<Task>(concurrency);
+                    for (var worker = 0; worker < concurrency; worker++)
+                    {
+                        workers.Add(RunWorkerAsync(
+                            client,
+                            tracker,
+                            role,
+                            worker,
+                            duration,
+                            stopwatch,
+                            timeout.Token));
+                    }
+                    await Task.WhenAll(workers).ConfigureAwait(false);
+
+                    stopwatch.Stop();
+                    var measurementEndedAt = DateTimeOffset.UtcNow;
+                    RcObservationCaptureRestoration? restoration = null;
+                    var observationEndedAt = measurementEndedAt;
+                    if (role == "candidate")
+                    {
+                        var restorationStartedAt = DateTimeOffset.UtcNow;
+                        await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                        await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
+                        using var restoredClient = fixture.CreateS3Client();
+                        await AssertValueAsync(
+                            restoredClient,
+                            canaryBucket,
+                            canaryKey,
+                            canaryValue,
+                            timeout.Token).ConfigureAwait(false);
+                        await restoredClient.DeleteObjectAsync(
+                            new DeleteObjectRequest
+                            {
+                                BucketName = canaryBucket,
+                                Key = canaryKey,
+                            },
+                            timeout.Token).ConfigureAwait(false);
+                        await restoredClient.DeleteBucketAsync(
+                            new DeleteBucketRequest { BucketName = canaryBucket },
+                            timeout.Token).ConfigureAwait(false);
+                        await AssertBucketAbsentAsync(
+                            restoredClient,
+                            canaryBucket,
+                            timeout.Token).ConfigureAwait(false);
+                        canaryExists = false;
+                        observationEndedAt = DateTimeOffset.UtcNow;
+                        restoration = new RcObservationCaptureRestoration
+                        {
+                            Verified = true,
+                            RuntimeIdentityDigest = fixture.PriorRuntimeIdentityDigest,
+                            RuntimeDigest = fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                            BackendIdentityDigest = fixture.BackendIdentityDigest,
+                            ConfigDigest = fixture.ProxyConfigDigest,
+                            AwsBindingDigest = fixture.AwsBindingDigest,
+                            StartedAtUtc = restorationStartedAt,
+                            VerifiedAtUtc = observationEndedAt,
+                        };
+                    }
+
+                    var getObject = tracker.Snapshot("GetObject");
+                    var totalAttempts = RcObservationCaptureWriter.TotalAttempts(tracker);
+                    await RcObservationCaptureWriter.PublishCohortAsync(
+                        new RcObservationCohortCapture
+                        {
+                            Profile = new RcObservationCaptureProfile
+                            {
+                                Id = "s3-basic-object-crud",
+                                Version = 1,
+                            },
+                            Azure = new RcObservationCaptureAzure
+                            {
+                                BackendKind = "blob",
+                                Region = RequiredEnvironment("AZURE_LOCATION"),
+                                BackendIdentityDigest = fixture.BackendIdentityDigest,
+                                ConfigDigest = fixture.ProxyConfigDigest,
+                                AwsBindingDigest = fixture.AwsBindingDigest,
+                            },
+                            Observation = new RcObservationCaptureWindow
+                            {
+                                StartedAtUtc = startedAt,
+                                MeasurementEndedAtUtc = measurementEndedAt,
+                                EndedAtUtc = observationEndedAt,
+                                RequestedWindowMinutes = (int)duration.TotalMinutes,
+                            },
+                            LoadShape = new RcObservationCaptureLoadShape
+                            {
+                                CandidateConcurrency = candidateConcurrency,
+                                StableConcurrency = stableConcurrency,
+                                OperationMixIdentity = operationMixIdentity,
+                            },
+                            Cohort = Cohort(
+                                role,
+                                role == "candidate"
+                                    ? fixture.CandidateRuntimeIdentityDigest
+                                    : fixture.PriorRuntimeIdentityDigest,
+                                startedRuntime.Runtime.AggregateDigest,
+                                startedAt,
+                                observationEndedAt,
+                                concurrency,
+                                fixture.BackendIdentityDigest,
+                                fixture.ProxyConfigDigest,
+                                fixture.AwsBindingDigest,
+                                fixture.S3ServiceUrl,
+                                tracker),
+                            Metrics =
+                            [
+                                new RcObservationCohortMetric
+                                {
+                                    Id = "representative-load-throughput",
+                                    Unit = "throughput_per_sec",
+                                    Value = getObject.Completions / stopwatch.Elapsed.TotalSeconds,
+                                    Samples = getObject.Completions + getObject.Failures,
+                                    CapturedAtUtc = measurementEndedAt,
+                                },
+                                new RcObservationCohortMetric
+                                {
+                                    Id = "operation-failure-rate",
+                                    Unit = "ratio",
+                                    Value = RcObservationCaptureWriter.FailureRate(tracker),
+                                    Samples = totalAttempts,
+                                    CapturedAtUtc = measurementEndedAt,
+                                },
+                            ],
+                            Restoration = restoration,
+                        }).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (canaryExists)
+                    {
+                        try
+                        {
+                            using var cleanup = fixture.CreateS3Client(maxErrorRetry: 0);
+                            await cleanup.DeleteObjectAsync(new DeleteObjectRequest
+                            {
+                                BucketName = canaryBucket,
+                                Key = canaryKey,
+                            }, CancellationToken.None).ConfigureAwait(false);
+                            await cleanup.DeleteBucketAsync(new DeleteBucketRequest
+                            {
+                                BucketName = canaryBucket,
+                            }, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
 
     private static RcObservationCaptureCohort Cohort(
         string role,

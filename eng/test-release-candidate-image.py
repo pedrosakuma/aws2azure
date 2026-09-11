@@ -1010,7 +1010,10 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         marker = "      - name: Validate RC and select profiles\n"
         start = workflow.index(marker)
         run_start = workflow.index("        run: |\n", start) + len("        run: |\n")
-        next_step = workflow.index("\n  observe:", run_start)
+        next_job = re.search(r"^  [A-Za-z0-9_-]+:\n", workflow[run_start:], re.MULTILINE)
+        if next_job is None:
+            raise AssertionError("could not locate the next top-level observation job")
+        next_step = run_start + next_job.start()
         script = "\n".join(
             line[10:] if line.startswith("          ") else line
             for line in workflow[run_start:next_step].splitlines()
@@ -1100,9 +1103,15 @@ esac
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        output_lines = output.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(output_lines), 2)
+        self.assertRegex(
+            output_lines[0],
+            r"^observation_sync_at_utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+        )
         self.assertEqual(
-            output.read_text(encoding="utf-8"),
-            'profiles=["s3-basic-object-crud","secretsmanager-basic-lifecycle"]\n',
+            output_lines[1],
+            'profiles=["s3-basic-object-crud","secretsmanager-basic-lifecycle"]',
         )
 
         ahead = ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA)

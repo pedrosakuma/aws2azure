@@ -43,12 +43,15 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
     {
         var observationCapturePath = Environment.GetEnvironmentVariable(
             "AWS2AZURE_RC_OBSERVATION_CAPTURE_PATH");
+        var cohortCapturePath = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH");
         var calibrationReportPath = Environment.GetEnvironmentVariable(
             "AWS2AZURE_RC_CALIBRATION_REPORT_PATH");
         var calibrationMode = !string.IsNullOrWhiteSpace(calibrationReportPath);
         Skip.If(string.IsNullOrWhiteSpace(observationCapturePath)
+                && string.IsNullOrWhiteSpace(cohortCapturePath)
                 && string.IsNullOrWhiteSpace(calibrationReportPath),
-            "RC observation capture or calibration report path is not set.");
+            "RC observation capture, cohort capture, or calibration report path is not set.");
         Skip.IfNot(fixture.Configured,
             fixture.SkipReason ?? "Real Azure Key Vault is not configured.");
         Assert.True(fixture.SealedRollbackConfigured,
@@ -63,6 +66,9 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         var stableConcurrency = calibrationMode
             ? RcObservationCaptureWriter.ReadCalibrationConcurrency("stable")
             : RcObservationCaptureWriter.ReadConcurrency("stable");
+        var observationCohortRole = calibrationMode
+            ? null
+            : RcObservationCaptureWriter.ReadObservationCohortRole();
         var operationMixIdentity = RcObservationCaptureWriter.OperationMixIdentity(
             "secretsmanager-basic-lifecycle",
             LifecycleOperationSchedule);
@@ -73,6 +79,17 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 operationMixIdentity);
         }
         var duration = TimeSpan.FromMinutes(minutes);
+        if (observationCohortRole is not null)
+        {
+            await RunSingleCohortObservationAsync(
+                observationCohortRole,
+                candidateConcurrency,
+                stableConcurrency,
+                operationMixIdentity,
+                duration).ConfigureAwait(false);
+            return;
+        }
+
         using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(20));
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         var refreshTask = RefreshAssertionLoopAsync(
@@ -390,6 +407,228 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
             }
         }
     }
+
+    private async Task RunSingleCohortObservationAsync(
+            string role,
+            int candidateConcurrency,
+            int stableConcurrency,
+            string operationMixIdentity,
+            TimeSpan duration)
+        {
+            using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(20));
+            using var refresh = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+            var refreshTask = RefreshAssertionLoopAsync(
+                RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+                refresh.Token);
+            var tracker = new RealAzureWorkloadLoadTracker("secretsmanager", Operations);
+            using var client = fixture.CreateSecretsManagerClient();
+            var canaryName = "a2a-rc-canary-" + Guid.NewGuid().ToString("N");
+            var canaryValue = "rc-observation-" + Guid.NewGuid().ToString("N");
+            var canaryExists = false;
+            var restoredPrior = false;
+
+            try
+            {
+                if (role == "candidate")
+                {
+                    await client.CreateSecretAsync(
+                        new CreateSecretRequest
+                        {
+                            Name = canaryName,
+                            SecretString = canaryValue,
+                            Description = "aws2azure RC observation restoration canary",
+                        },
+                        timeout.Token).ConfigureAwait(false);
+                    canaryExists = true;
+                    await AssertValueAsync(
+                        client,
+                        canaryName,
+                        canaryValue,
+                        timeout.Token).ConfigureAwait(false);
+                }
+
+                var startedAt = await RcObservationCaptureWriter
+                    .WaitForSynchronizedObservationStartAsync(timeout.Token)
+                    .ConfigureAwait(false);
+                var stopwatch = Stopwatch.StartNew();
+                var concurrency = role == "candidate"
+                    ? candidateConcurrency
+                    : stableConcurrency;
+                var workers = new List<Task>(concurrency);
+                for (var worker = 0; worker < concurrency; worker++)
+                {
+                    workers.Add(RunWorkerAsync(
+                        client,
+                        tracker,
+                        role,
+                        worker,
+                        duration,
+                        stopwatch,
+                        timeout.Token));
+                }
+                await Task.WhenAll(workers).ConfigureAwait(false);
+                stopwatch.Stop();
+                var measurementEndedAt = DateTimeOffset.UtcNow;
+
+                RcObservationCaptureRestoration? restoration = null;
+                var observationEndedAt = measurementEndedAt;
+                if (role == "candidate")
+                {
+                    await SecretsManagerCredentialRotationQualification.RefreshGitHubOidcTokenAsync(
+                        RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+                        timeout.Token).ConfigureAwait(false);
+                    var restorationStartedAt = DateTimeOffset.UtcNow;
+                    await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                    await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
+                    using var restoredClient = fixture.CreateSecretsManagerClient();
+                    await AssertValueAsync(
+                        restoredClient,
+                        canaryName,
+                        canaryValue,
+                        timeout.Token).ConfigureAwait(false);
+                    await restoredClient.DeleteSecretAsync(
+                        new DeleteSecretRequest
+                        {
+                            SecretId = canaryName,
+                            ForceDeleteWithoutRecovery = true,
+                        },
+                        timeout.Token).ConfigureAwait(false);
+                    await AssertAbsentAsync(restoredClient, canaryName, timeout.Token)
+                        .ConfigureAwait(false);
+                    canaryExists = false;
+                    observationEndedAt = DateTimeOffset.UtcNow;
+                    restoredPrior = true;
+                    restoration = Restoration(
+                        fixture,
+                        restorationStartedAt,
+                        observationEndedAt);
+                }
+
+                var getSecretValue = tracker.Snapshot("GetSecretValue");
+                var totalAttempts = RcObservationCaptureWriter.TotalAttempts(tracker);
+                var stableCohort = role == "stable";
+                await RcObservationCaptureWriter.PublishCohortAsync(
+                    new RcObservationCohortCapture
+                    {
+                        Profile = new RcObservationCaptureProfile
+                        {
+                            Id = "secretsmanager-basic-lifecycle",
+                            Version = 1,
+                        },
+                        Azure = new RcObservationCaptureAzure
+                        {
+                            BackendKind = "keyVault",
+                            Region = RequiredEnvironment("AZURE_LOCATION"),
+                            BackendIdentityDigest = stableCohort
+                                ? fixture.StableBackendIdentityDigest
+                                : fixture.BackendIdentityDigest,
+                            ConfigDigest = stableCohort
+                                ? fixture.StableProxyConfigDigest
+                                : fixture.ProxyConfigDigest,
+                            AwsBindingDigest = fixture.AwsBindingDigest,
+                        },
+                        Observation = new RcObservationCaptureWindow
+                        {
+                            StartedAtUtc = startedAt,
+                            MeasurementEndedAtUtc = measurementEndedAt,
+                            EndedAtUtc = observationEndedAt,
+                            RequestedWindowMinutes = (int)duration.TotalMinutes,
+                        },
+                        LoadShape = new RcObservationCaptureLoadShape
+                        {
+                            CandidateConcurrency = candidateConcurrency,
+                            StableConcurrency = stableConcurrency,
+                            OperationMixIdentity = operationMixIdentity,
+                        },
+                        Cohort = Cohort(
+                            role,
+                            role == "candidate"
+                                ? fixture.CandidateRuntimeIdentityDigest
+                                : fixture.PriorRuntimeIdentityDigest,
+                            role == "candidate"
+                                ? fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest
+                                : fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                            startedAt,
+                            observationEndedAt,
+                            concurrency,
+                            stableCohort
+                                ? fixture.StableBackendIdentityDigest
+                                : fixture.BackendIdentityDigest,
+                            stableCohort
+                                ? fixture.StableProxyConfigDigest
+                                : fixture.ProxyConfigDigest,
+                            fixture.AwsBindingDigest,
+                            fixture.ProxyServiceUrl,
+                            tracker),
+                        Metrics =
+                        [
+                            new RcObservationCohortMetric
+                            {
+                                Id = "representative-load-throughput",
+                                Unit = "throughput_per_sec",
+                                Value =
+                                    getSecretValue.Completions / stopwatch.Elapsed.TotalSeconds,
+                                Samples =
+                                    getSecretValue.Completions + getSecretValue.Failures,
+                                CapturedAtUtc = measurementEndedAt,
+                            },
+                            new RcObservationCohortMetric
+                            {
+                                Id = "operation-failure-rate",
+                                Unit = "ratio",
+                                Value = RcObservationCaptureWriter.FailureRate(tracker),
+                                Samples = totalAttempts,
+                                CapturedAtUtc = measurementEndedAt,
+                            },
+                        ],
+                        Restoration = restoration,
+                    }).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (!restoredPrior && role == "candidate"
+                    && fixture.Configured && fixture.SealedRollbackConfigured)
+                {
+                    try
+                    {
+                        await SecretsManagerCredentialRotationQualification
+                            .RefreshGitHubOidcTokenAsync(
+                                RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
+                                CancellationToken.None).ConfigureAwait(false);
+                        await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                        await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior)
+                            .ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+                refresh.Cancel();
+                try
+                {
+                    await refreshTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                if (canaryExists)
+                {
+                    try
+                    {
+                        using var cleanup =
+                            fixture.CreateSecretsManagerClient(maxErrorRetry: 0);
+                        await cleanup.DeleteSecretAsync(new DeleteSecretRequest
+                        {
+                            SecretId = canaryName,
+                            ForceDeleteWithoutRecovery = true,
+                        }, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
 
     private static RcObservationCaptureCohort Cohort(
         string role,

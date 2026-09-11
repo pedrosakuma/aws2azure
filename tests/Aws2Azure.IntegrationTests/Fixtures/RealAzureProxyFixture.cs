@@ -315,13 +315,19 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
         EventHubsBackendIdentityDigest = Digest(
             (_ehNamespace ?? string.Empty) + "\n" + EventHubStream);
         AwsBindingDigest = Digest(AwsAccessKey + "\n" + AwsSecret);
+        var initialRuntimeRole = string.Equals(
+            Environment.GetEnvironmentVariable("AWS2AZURE_RC_OBSERVATION_COHORT_ROLE"),
+            "stable",
+            StringComparison.Ordinal)
+            ? SealedRuntimeRole.Prior
+            : SealedRuntimeRole.Candidate;
 
         try
         {
             _proxyProcess = StartProxyProcess(
                 _proxyPort,
                 _configFile,
-                SealedRuntimeRole.Candidate);
+                initialRuntimeRole);
             await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
             ProxyStarted = true;
         }
