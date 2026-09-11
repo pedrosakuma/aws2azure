@@ -1,0 +1,83 @@
+{
+  "archive": {
+    "artifact": {
+      "id": 10166482723,
+      "name": "aws2azure-rc-archives-v1.1.0-rc.8-5f37d0f035d05943652fdd4c011d63e4a4af9bb62ac8bb34ef65994e83fccb00-run-34512460967-attempt-1",
+      "upload_digest": "sha256:90761e86e260ce5ea7838e32336981a26cf442a918a1d7bc6183f7aaf2986370"
+    },
+    "content_digest": "sha256:5f37d0f035d05943652fdd4c011d63e4a4af9bb62ac8bb34ef65994e83fccb00",
+    "producer": {
+      "run_attempt": 1,
+      "run_id": 34512460967,
+      "source_sha": "0aff62bcdf729fa5d4a7c905cf7f176c940d8002",
+      "workflow_path": ".github/workflows/release-candidate.yml"
+    }
+  },
+  "candidate": {
+    "identifier": "v1.1.0-rc.8",
+    "identity_digest": "sha256:60a349b6fa6e84f64ead61bbeab007e10a42a5055167ea066d0ded41b593733e",
+    "source_sha": "952c333fa24106103f3a3349fe9c9c53be6ba5aa"
+  },
+  "ghcr": {
+    "artifact": {
+      "id": 10166606013,
+      "name": "aws2azure-rc-ghcr-v1.1.0-rc.8-f8ec26867598194ff359a0809a82b7f44b8c273209bcf6f42253432b7ea78654-run-34513000823-attempt-1",
+      "upload_digest": "sha256:5d46ae1ef4007f9d5ebd3ca46be12060e7c27ecf26496355694f70fa2083d895"
+    },
+    "content_digest": "sha256:f8ec26867598194ff359a0809a82b7f44b8c273209bcf6f42253432b7ea78654",
+    "index_digest": "sha256:a0b9341ff7c739846b99d70d44308c46cfdbc814aeaf2f56450c6be0789c30ac",
+    "producer": {
+      "run_attempt": 1,
+      "run_id": 34513000823,
+      "source_sha": "0aff62bcdf729fa5d4a7c905cf7f176c940d8002",
+      "workflow_path": ".github/workflows/release-candidate-image.yml"
+    }
+  },
+  "observations": [
+    {
+      "evidence_artifact": {
+        "id": 10177118814,
+        "name": "real-azure-rc-observation-s3-basic-object-crud-run-34535138138-attempt-1",
+        "upload_digest": "sha256:122ca83b33728dc58ca6ab4280ecccdb03e7153b28941503f308cdb9f174b3ae"
+      },
+      "evidence_digest": "sha256:1c1376452dd636a724bcef661fbbd437562164143db1dc208ec230ddbb7bc8d6",
+      "producer": {
+        "run_attempt": 1,
+        "run_id": 34535138138,
+        "source_sha": "ae1bf0e3f12ea9dfe9a32c34cd2497aa5224e06a",
+        "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+      },
+      "profile": "s3-basic-object-crud",
+      "selection_artifact": {
+        "id": 10177119138,
+        "name": "real-azure-rc-observation-selection-s3-basic-object-crud-run-34535138138-attempt-1",
+        "upload_digest": "sha256:70a64ebab4714920849078cca47d42293bce2153cf69e97edebdc20e2f719733"
+      }
+    },
+    {
+      "evidence_artifact": {
+        "id": 10177025190,
+        "name": "real-azure-rc-observation-secretsmanager-basic-lifecycle-run-34535138138-attempt-1",
+        "upload_digest": "sha256:ffc8bbecc2386ef0c72e1a4d02dffa9366e5d175dd88a9e65e4f18f3a2ad1bce"
+      },
+      "evidence_digest": "sha256:f1c08200e4b37ff06a6faec3d0f576b60e638b334d6384dcbba5d929211bc979",
+      "producer": {
+        "run_attempt": 1,
+        "run_id": 34535138138,
+        "source_sha": "ae1bf0e3f12ea9dfe9a32c34cd2497aa5224e06a",
+        "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+      },
+      "profile": "secretsmanager-basic-lifecycle",
+      "selection_artifact": {
+        "id": 10177025703,
+        "name": "real-azure-rc-observation-selection-secretsmanager-basic-lifecycle-run-34535138138-attempt-1",
+        "upload_digest": "sha256:d4955c2cbb4d033722d52416fc30a45f98f7e815a7583781decedf8136bfcbc2"
+      }
+    }
+  ],
+  "readiness_plan": "docs/releases/v1.1.0-readiness.json",
+  "release_notes": "docs/releases/v1.1.0.md",
+  "repository": "pedrosakuma/aws2azure",
+  "schema_version": 1,
+  "stable_tag": "v1.1.0"
+}
