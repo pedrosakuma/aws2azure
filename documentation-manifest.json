@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:06f3ea93492bcf3b6380fb5632657c3459e8585db7915a2cdacadbfbe237a09e",
+  "manifest_revision": "sha256:c7dc26b687abf24d5041838f651e4a0e679ce0d496a1225260d79a0fe9aa0ad3",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -7232,6 +7232,45 @@
       "freshness": {
         "mode": "immutable",
         "version": "v1.0.0"
+      }
+    },
+    {
+      "id": "release:v1.1.0:notes",
+      "path": "docs/releases/v1.1.0.md",
+      "type": "release-notes",
+      "scope": "release",
+      "authority": "historical",
+      "provenance": "source",
+      "revision": "sha256:773eb50bc3e6c06c3be21e90fc361413ee348cebe0a1d9140ef0e93eec02cb61",
+      "freshness": {
+        "mode": "immutable",
+        "version": "v1.1.0"
+      }
+    },
+    {
+      "id": "release:v1.1.0:promotion",
+      "path": "docs/releases/v1.1.0-promotion.json",
+      "type": "release-evidence",
+      "scope": "release",
+      "authority": "historical",
+      "provenance": "source",
+      "revision": "sha256:fc1049641e6c18501bcf7b131a5659b1eb9393896f79262190b2fe5545da7c91",
+      "freshness": {
+        "mode": "immutable",
+        "version": "v1.1.0"
+      }
+    },
+    {
+      "id": "release:v1.1.0:readiness",
+      "path": "docs/releases/v1.1.0-readiness.json",
+      "type": "release-evidence",
+      "scope": "release",
+      "authority": "historical",
+      "provenance": "source",
+      "revision": "sha256:a3aab08c59c8cde760ca1a1b4336351420e0c01badda34a1ec49dc65e41d8fad",
+      "freshness": {
+        "mode": "immutable",
+        "version": "v1.1.0"
       }
     },
     {
