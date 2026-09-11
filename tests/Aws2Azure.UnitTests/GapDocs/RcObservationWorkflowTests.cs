@@ -413,18 +413,24 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Equal(
-            4,
+            6,
             CountOccurrences(
                 Workflow,
                 "if [[ \"$upload_digest\" =~ ^[0-9a-f]{64}$ ]]; then"));
-        Assert.Contains("observe-cohort:", Workflow, StringComparison.Ordinal);
-        Assert.Contains("assemble-observation:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("observe-s3-cohort:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("observe-secretsmanager-cohort:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("assemble-s3-observation:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("assemble-secretsmanager-observation:", Workflow, StringComparison.Ordinal);
         Assert.Contains(
             "OBSERVATION_SYNC_AT_UTC:",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "real-azure-rc-observation-cohort-${{ matrix.profile }}-${{ matrix.cohort }}-run-",
+            "real-azure-rc-observation-cohort-s3-basic-object-crud-${{ matrix.cohort }}-run-",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-run-",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -441,7 +447,12 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "real-azure-rc-observation-capture-${{ matrix.profile }}-run-" +
+            "real-azure-rc-observation-capture-s3-basic-object-crud-run-" +
+            "${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+            Workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "real-azure-rc-observation-capture-secretsmanager-basic-lifecycle-run-" +
             "${{ github.run_id }}-attempt-${{ github.run_attempt }}",
             Workflow,
             StringComparison.Ordinal);

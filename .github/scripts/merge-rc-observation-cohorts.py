@@ -27,6 +27,10 @@ if candidate.get('restoration') is None:
     raise SystemExit('candidate cohort is missing restoration evidence')
 if stable.get('restoration') is not None:
     raise SystemExit('stable cohort must not publish restoration evidence')
+if stable['cohort']['runtime_identity_digest'] != candidate['restoration']['runtime_identity_digest']:
+    raise SystemExit('stable prior runtime identity does not match candidate restoration runtime identity')
+if stable['cohort']['runtime_digest'] != candidate['restoration']['runtime_digest']:
+    raise SystemExit('stable prior runtime digest does not match candidate restoration runtime digest')
 
 candidate_metrics = {metric['id']: metric for metric in candidate['metrics']}
 stable_metrics = {metric['id']: metric for metric in stable['metrics']}
