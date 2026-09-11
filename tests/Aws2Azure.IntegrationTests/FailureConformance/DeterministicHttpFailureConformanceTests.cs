@@ -122,8 +122,10 @@ public sealed class DeterministicHttpFailureConformanceTests
             }));
         AssertSdkError(exception, failure);
         // RawClient + AWS SDK each trigger a token-endpoint exchange, and a token 401
-        // now gets one bounded retry before surfacing as the same terminal 403.
-        Assert.Equal(4, harness.Backend.TokenRequestCount);
+        // now gets 3 bounded, exponentially-backed-off retries (4 total attempts)
+        // before surfacing as the same terminal 403 (see EntraIdTokenEndpointRetry,
+        // widened per issue #922).
+        Assert.Equal(8, harness.Backend.TokenRequestCount);
         Assert.Equal(0, harness.Backend.BackendRequestCount);
     }
 

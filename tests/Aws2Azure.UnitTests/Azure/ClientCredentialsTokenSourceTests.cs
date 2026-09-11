@@ -79,14 +79,64 @@ public sealed class ClientCredentialsTokenSourceTests
         {
             Content = new StringContent("{\"error\":\"second\"}", Encoding.UTF8, "application/json")
         });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent("{\"error\":\"third\"}", Encoding.UTF8, "application/json")
+        });
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent("{\"error\":\"fourth\"}", Encoding.UTF8, "application/json")
+        });
 
         var ex = await Assert.ThrowsAsync<EntraIdTokenException>(() =>
             source.GetTokenAsync("https://storage.azure.com/.default").AsTask());
 
         Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, ex.BackendStatus);
-        Assert.Equal(2, handler.CallCount);
-        Assert.Equal(1, delayCalls);
+        Assert.Equal(4, handler.CallCount);
+        Assert.Equal(3, delayCalls);
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_RetriesUseExponentialBackoffCappedAtMax()
+    {
+        var observedDelays = new List<TimeSpan>();
+        var handler = new ScriptedHandler();
+        var http = new AzureHttpClient(handler, ownsHandler: true);
+        var source = new ClientCredentialsTokenSource(
+            http,
+            "tenant",
+            "client-id",
+            "secret",
+            authority: new Uri("https://login.test/"),
+            clock: null,
+            delayAsync: (delay, _) =>
+            {
+                observedDelays.Add(delay);
+                return ValueTask.CompletedTask;
+            });
+
+        for (var i = 0; i < 3; i++)
+        {
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"transient\"}", Encoding.UTF8, "application/json")
+            });
+        }
+        handler.Enqueue(MakeToken("access-token", expiresIn: 3600));
+
+        var token = await source.GetTokenAsync("https://storage.azure.com/.default");
+
+        Assert.Equal("access-token", token);
+        Assert.Equal(
+            new[]
+            {
+                TimeSpan.FromMilliseconds(750),
+                TimeSpan.FromMilliseconds(1500),
+                TimeSpan.FromMilliseconds(3000),
+            },
+            observedDelays);
+        Assert.Equal(EntraIdTokenEndpointRetry.MaxUnauthorizedRetryDelay, observedDelays[^1]);
     }
 
     [Fact]
