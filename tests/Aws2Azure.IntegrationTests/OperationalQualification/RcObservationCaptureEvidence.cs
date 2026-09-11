@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -104,6 +105,27 @@ internal sealed class RcObservationCaptureRestoration
     public DateTimeOffset VerifiedAtUtc { get; set; }
 }
 
+internal sealed class RcObservationCohortCapture
+{
+    public int SchemaVersion { get; set; } = 1;
+    public RcObservationCaptureProfile Profile { get; set; } = new();
+    public RcObservationCaptureAzure Azure { get; set; } = new();
+    public RcObservationCaptureWindow Observation { get; set; } = new();
+    public RcObservationCaptureLoadShape LoadShape { get; set; } = new();
+    public RcObservationCaptureCohort Cohort { get; set; } = new();
+    public List<RcObservationCohortMetric> Metrics { get; set; } = [];
+    public RcObservationCaptureRestoration? Restoration { get; set; }
+}
+
+internal sealed class RcObservationCohortMetric
+{
+    public string Id { get; set; } = string.Empty;
+    public string Unit { get; set; } = string.Empty;
+    public double Value { get; set; }
+    public long Samples { get; set; }
+    public DateTimeOffset CapturedAtUtc { get; set; }
+}
+
 internal sealed class RcCalibrationReport
 {
     public int SchemaVersion { get; set; } = 1;
@@ -163,6 +185,62 @@ internal sealed class RcCalibrationCohort
 
 internal static class RcObservationCaptureWriter
 {
+    public static string? ReadObservationCohortRole()
+    {
+        var value = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_COHORT_ROLE");
+        return value switch
+        {
+            null or "" => null,
+            "candidate" or "stable" => value,
+            _ => throw new InvalidDataException(
+                "AWS2AZURE_RC_OBSERVATION_COHORT_ROLE must be candidate or stable."),
+        };
+    }
+
+    public static DateTimeOffset? ReadSynchronizedObservationStartUtc()
+    {
+        var value = Environment.GetEnvironmentVariable(
+            "AWS2AZURE_RC_OBSERVATION_SYNC_AT_UTC");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(
+                   value,
+                   CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                   out var parsed)
+            ? parsed
+            : throw new InvalidDataException(
+                "AWS2AZURE_RC_OBSERVATION_SYNC_AT_UTC must be an exact UTC timestamp.");
+    }
+
+    public static async Task<DateTimeOffset> WaitForSynchronizedObservationStartAsync(
+        CancellationToken cancellationToken)
+    {
+        var synchronized = ReadSynchronizedObservationStartUtc();
+        if (synchronized is null)
+        {
+            return DateTimeOffset.UtcNow;
+        }
+
+        var wait = synchronized.Value - DateTimeOffset.UtcNow;
+        if (wait < TimeSpan.FromSeconds(-1))
+        {
+            throw new InvalidDataException(
+                "The synchronized RC observation start time was missed by this runner.");
+        }
+
+        if (wait > TimeSpan.Zero)
+        {
+            await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+        }
+
+        return synchronized.Value;
+    }
+
     public static int ReadWindowMinutes()
     {
         var value = Environment.GetEnvironmentVariable(
@@ -259,6 +337,49 @@ internal static class RcObservationCaptureWriter
                     evidence,
                     RcObservationCaptureJsonContext.Default
                         .RcObservationCaptureEvidence)).ConfigureAwait(false);
+            File.Move(pending, fullPath, true);
+        }
+        finally
+        {
+            File.Delete(pending);
+        }
+    }
+
+    public static async Task PublishCohortAsync(RcObservationCohortCapture capture)
+    {
+        if (capture.SchemaVersion != 1
+            || capture.Metrics.Count == 0
+            || capture.LoadShape.CandidateConcurrency <= 0
+            || capture.LoadShape.StableConcurrency <= 0
+            || string.IsNullOrWhiteSpace(capture.LoadShape.OperationMixIdentity)
+            || string.IsNullOrWhiteSpace(capture.Cohort.Role)
+            || capture.Cohort.OperationDiagnostics.Count == 0
+            || capture.Metrics.Any(metric =>
+                string.IsNullOrWhiteSpace(metric.Id)
+                || string.IsNullOrWhiteSpace(metric.Unit)
+                || !double.IsFinite(metric.Value)
+                || metric.Samples <= 0))
+        {
+            throw new InvalidDataException(
+                "RC observation cohort capture must be complete and attributable.");
+        }
+
+        var configured = RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH");
+        var fullPath = Path.IsPathRooted(configured)
+            ? configured
+            : Path.GetFullPath(Path.Combine(FindRepoRoot(), configured));
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        var pending = fullPath + ".pending";
+        File.Delete(pending);
+        try
+        {
+            await File.WriteAllTextAsync(
+                    pending,
+                    JsonSerializer.Serialize(
+                        capture,
+                        RcObservationCaptureJsonContext.Default
+                            .RcObservationCohortCapture))
+                .ConfigureAwait(false);
             File.Move(pending, fullPath, true);
         }
         finally
@@ -374,6 +495,7 @@ internal static class RcObservationCaptureWriter
 }
 
 [JsonSerializable(typeof(RcObservationCaptureEvidence))]
+[JsonSerializable(typeof(RcObservationCohortCapture))]
 [JsonSerializable(typeof(RcCalibrationReport))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 internal sealed partial class RcObservationCaptureJsonContext : JsonSerializerContext;

@@ -125,6 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       profiles: ${{ steps.profiles.outputs.profiles }}
+      observation_sync_at_utc: ${{ steps.profiles.outputs.observation_sync_at_utc }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
@@ -257,6 +258,15 @@ jobs:
             echo "::error::azure_location is not a valid Azure region identifier."
             exit 1
           fi
+          if [ "$MODE" = observation ]; then
+            # Give both cohort jobs time to resolve immutable inputs, provision
+            # isolated Azure backends, and reach a shared barrier before the
+            # reviewed observation window begins.
+            sync_at="$(date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+          else
+            sync_at=''
+          fi
+          echo "observation_sync_at_utc=$sync_at" >> "$GITHUB_OUTPUT"
           if [ "$MODE" = secretsmanager-calibration ]; then
             profiles='["secretsmanager-basic-lifecycle"]'
           else
@@ -275,7 +285,8 @@ jobs:
           fi
           echo "profiles=$profiles" >> "$GITHUB_OUTPUT"
 
-  observe:
+  observe-calibration:
+    if: ${{ inputs.mode == 'secretsmanager-calibration' }}
     needs: select
     strategy:
       fail-fast: false
@@ -1460,6 +1471,848 @@ jobs:
           fi
           if [ "${{ steps.observe.outcome }}" != success ] ||
              [ "${{ steps.capture_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outcome }}" != success ] ||
+             [ "${{ steps.strict_validate.outcome }}" != success ] ||
+             [ "${{ steps.evidence_upload.outcome }}" != success ] ||
+             [ "${{ steps.receipt_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outputs.verdict }}" != pass ]; then
+            echo "::error::RC observation did not produce a complete trigger-free pass. Any fired trigger has already forced and verified exact-prior restoration; do not suppress it."
+            exit 1
+          fi
+
+  observe-s3-cohort:
+    if: ${{ inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 's3-basic-object-crud') }}
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        cohort:
+          - candidate
+          - stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    concurrency:
+      group: rc-observation-real-azure-${{ inputs.mode }}-s3-basic-object-crud-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
+      cancel-in-progress: false
+    env:
+      PROFILE: s3-basic-object-crud
+      COHORT: ${{ matrix.cohort }}
+      MODE: ${{ inputs.mode }}
+      RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+      CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+      ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
+      ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
+      ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
+      ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
+      ARCHIVE_ARTIFACT_NAME: ${{ inputs.archive_artifact_name }}
+      ARCHIVE_ARTIFACT_DIGEST: ${{ inputs.archive_artifact_digest }}
+      ARCHIVE_CONTENT_DIGEST: ${{ inputs.archive_content_digest }}
+      GHCR_WORKFLOW_SOURCE_SHA: ${{ inputs.ghcr_workflow_source_sha }}
+      GHCR_RUN_ID: ${{ inputs.ghcr_run_id }}
+      GHCR_RUN_ATTEMPT: ${{ inputs.ghcr_run_attempt }}
+      GHCR_ARTIFACT_ID: ${{ inputs.ghcr_artifact_id }}
+      GHCR_ARTIFACT_NAME: ${{ inputs.ghcr_artifact_name }}
+      GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
+      GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
+      WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      AZURE_LOCATION: ${{ inputs.azure_location }}
+      RG_NAME: aws2azure-rc-observe-s3-basic-object-crud-${{ matrix.cohort }}-${{ github.run_id }}-${{ github.run_attempt }}
+      PRIVATE_ROOT: artifacts/rc-observation-private/s3-basic-object-crud/${{ matrix.cohort }}
+      CAPTURE_ROOT: artifacts/rc-observation-capture/s3-basic-object-crud/${{ matrix.cohort }}
+      OUTPUT_ROOT: artifacts/rc-observation/s3-basic-object-crud/${{ matrix.cohort }}
+      OBSERVATION_SYNC_AT_UTC: ${{ needs.select.outputs.observation_sync_at_utc }}
+      COHORT_CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-cohort-s3-basic-object-crud-${{ matrix.cohort }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean protected-main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Observation workflow checkout is not exact protected main."
+            exit 1
+          fi
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Build harness and strict evidence tooling
+        run: dotnet build -c Release --nologo --verbosity minimal
+
+      - name: Validate repository contracts
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
+
+      - name: Azure login (OIDC)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve exact inputs and run isolated cohort
+        id: observe
+        shell: bash
+        run: bash .github/scripts/rc-observation-run-cohort.sh
+
+      - name: Upload immutable cohort capture
+        id: cohort_upload
+        if: always() && steps.observe.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.COHORT_CAPTURE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/s3-basic-object-crud/${{ matrix.cohort }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize RC observation cohort
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-Azure RC observation cohort"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Workload: \`S3 basic object CRUD\`"
+            echo "- Cohort: \`$COHORT\`"
+            echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
+            echo "- Candidate source: \`$CANDIDATE_SOURCE_SHA\`"
+            echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
+            echo "- Shared observation barrier: \`${OBSERVATION_SYNC_AT_UTC}\`"
+            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Region: \`$AZURE_LOCATION\`"
+            echo "- Resource group: \`$RG_NAME\`"
+            echo "- Cohort artifact: \`${COHORT_CAPTURE_ARTIFACT_NAME}\`"
+            echo "- Separate runner isolation: \`yes\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove runtime bytes and projected credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PRIVATE_ROOT"
+          find tests/Aws2Azure.IntegrationTests/bin             -type d             \( -name 'real-azure-it-*' -o -name 'secretsmanager-it-*' \)             -prune -exec rm -rf -- {} +
+
+      - name: Refresh Azure login for cleanup (OIDC)
+        if: always()
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deallocate ephemeral Azure resources
+        if: always()
+        shell: bash
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+
+      - name: Enforce successful cohort capture
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.observe.outcome }}" != success ] ||
+             [ "${{ steps.cohort_upload.outcome }}" != success ]; then
+            echo "::error::RC observation cohort did not produce a complete immutable capture."
+            exit 1
+          fi
+
+  observe-secretsmanager-cohort:
+    if: ${{ inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 'secretsmanager-basic-lifecycle') }}
+    needs: select
+    strategy:
+      fail-fast: false
+      matrix:
+        cohort:
+          - candidate
+          - stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    concurrency:
+      group: rc-observation-real-azure-${{ inputs.mode }}-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
+      cancel-in-progress: false
+    env:
+      PROFILE: secretsmanager-basic-lifecycle
+      COHORT: ${{ matrix.cohort }}
+      MODE: ${{ inputs.mode }}
+      RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+      CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+      ARCHIVE_WORKFLOW_SOURCE_SHA: ${{ inputs.archive_workflow_source_sha }}
+      ARCHIVE_RUN_ID: ${{ inputs.archive_run_id }}
+      ARCHIVE_RUN_ATTEMPT: ${{ inputs.archive_run_attempt }}
+      ARCHIVE_ARTIFACT_ID: ${{ inputs.archive_artifact_id }}
+      ARCHIVE_ARTIFACT_NAME: ${{ inputs.archive_artifact_name }}
+      ARCHIVE_ARTIFACT_DIGEST: ${{ inputs.archive_artifact_digest }}
+      ARCHIVE_CONTENT_DIGEST: ${{ inputs.archive_content_digest }}
+      GHCR_WORKFLOW_SOURCE_SHA: ${{ inputs.ghcr_workflow_source_sha }}
+      GHCR_RUN_ID: ${{ inputs.ghcr_run_id }}
+      GHCR_RUN_ATTEMPT: ${{ inputs.ghcr_run_attempt }}
+      GHCR_ARTIFACT_ID: ${{ inputs.ghcr_artifact_id }}
+      GHCR_ARTIFACT_NAME: ${{ inputs.ghcr_artifact_name }}
+      GHCR_ARTIFACT_DIGEST: ${{ inputs.ghcr_artifact_digest }}
+      GHCR_CONTENT_DIGEST: ${{ inputs.ghcr_content_digest }}
+      WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      AZURE_LOCATION: ${{ inputs.azure_location }}
+      RG_NAME: aws2azure-rc-observe-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-${{ github.run_id }}-${{ github.run_attempt }}
+      PRIVATE_ROOT: artifacts/rc-observation-private/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
+      CAPTURE_ROOT: artifacts/rc-observation-capture/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
+      OUTPUT_ROOT: artifacts/rc-observation/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
+      OBSERVATION_SYNC_AT_UTC: ${{ needs.select.outputs.observation_sync_at_utc }}
+      COHORT_CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean protected-main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Observation workflow checkout is not exact protected main."
+            exit 1
+          fi
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Build harness and strict evidence tooling
+        run: dotnet build -c Release --nologo --verbosity minimal
+
+      - name: Validate repository contracts
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
+
+      - name: Azure login (OIDC)
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve exact inputs and run isolated cohort
+        id: observe
+        shell: bash
+        run: bash .github/scripts/rc-observation-run-cohort.sh
+
+      - name: Upload immutable cohort capture
+        id: cohort_upload
+        if: always() && steps.observe.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.COHORT_CAPTURE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize RC observation cohort
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-Azure RC observation cohort"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Workload: \`SecretsManager basic lifecycle\`"
+            echo "- Cohort: \`$COHORT\`"
+            echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
+            echo "- Candidate source: \`$CANDIDATE_SOURCE_SHA\`"
+            echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
+            echo "- Shared observation barrier: \`${OBSERVATION_SYNC_AT_UTC}\`"
+            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Region: \`$AZURE_LOCATION\`"
+            echo "- Resource group: \`$RG_NAME\`"
+            echo "- Cohort artifact: \`${COHORT_CAPTURE_ARTIFACT_NAME}\`"
+            echo "- Separate runner isolation: \`yes\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove runtime bytes and projected credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PRIVATE_ROOT"
+          find tests/Aws2Azure.IntegrationTests/bin             -type d             \( -name 'real-azure-it-*' -o -name 'secretsmanager-it-*' \)             -prune -exec rm -rf -- {} +
+
+      - name: Refresh Azure login for cleanup (OIDC)
+        if: always()
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deallocate ephemeral Azure resources
+        if: always()
+        shell: bash
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+
+      - name: Enforce successful cohort capture
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.observe.outcome }}" != success ] ||
+             [ "${{ steps.cohort_upload.outcome }}" != success ]; then
+            echo "::error::RC observation cohort did not produce a complete immutable capture."
+            exit 1
+          fi
+
+
+  assemble-s3-observation:
+    if: ${{ always() && inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 's3-basic-object-crud') }}
+    needs:
+      - select
+      - observe-s3-cohort
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: rc-observation-real-azure-assemble-s3-basic-object-crud-${{ inputs.release_candidate_id }}
+      cancel-in-progress: false
+    env:
+      PROFILE: s3-basic-object-crud
+      RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+      WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      CAPTURE_ROOT: artifacts/rc-observation-capture/s3-basic-object-crud
+      OUTPUT_ROOT: artifacts/rc-observation/s3-basic-object-crud
+      PRIVATE_ROOT: artifacts/rc-observation-private/s3-basic-object-crud/assemble
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-capture-s3-basic-object-crud-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      EVIDENCE_ARTIFACT_NAME: real-azure-rc-observation-s3-basic-object-crud-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      SELECTION_ARTIFACT_NAME: real-azure-rc-observation-selection-s3-basic-object-crud-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      CANDIDATE_COHORT_ARTIFACT_NAME: real-azure-rc-observation-cohort-s3-basic-object-crud-candidate-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      STABLE_COHORT_ARTIFACT_NAME: real-azure-rc-observation-cohort-s3-basic-object-crud-stable-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean protected-main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Observation workflow checkout is not exact protected main."
+            exit 1
+          fi
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Build harness and strict evidence tooling
+        run: dotnet build -c Release --nologo --verbosity minimal
+
+      - name: Validate repository contracts
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
+
+      - name: Download candidate cohort capture
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ env.CANDIDATE_COHORT_ARTIFACT_NAME }}
+          path: ${{ env.PRIVATE_ROOT }}/candidate
+
+      - name: Download stable cohort capture
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ env.STABLE_COHORT_ARTIFACT_NAME }}
+          path: ${{ env.PRIVATE_ROOT }}/stable
+
+      - name: Combine cohort captures into one exact observation capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CAPTURE_ROOT" "$OUTPUT_ROOT"
+          python3 .github/scripts/merge-rc-observation-cohorts.py             "$PRIVATE_ROOT/candidate"             "$PRIVATE_ROOT/stable"             "$CAPTURE_ROOT"
+          jq -e             --arg profile "$PROFILE"             '
+              .schema_version == 1 and
+              .profile.id == $profile and
+              .profile.version == 1 and
+              (.cohorts | length) == 2 and
+              (.metrics | length) == 2 and
+              .restoration.verified == true
+            ' "$CAPTURE_ROOT/capture.json" >/dev/null
+
+      - name: Upload immutable raw capture and selected identities
+        id: capture_upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.CAPTURE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/s3-basic-object-crud/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Bind the exact capture upload identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="${{ steps.capture_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.capture_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Capture upload did not return an exact artifact identity."
+            exit 1
+          fi
+          jq -S -n             --argjson schema_version 1             --arg profile "$PROFILE"             --arg repository "$GITHUB_REPOSITORY"             --arg workflow ".github/workflows/rc-observation-real-azure.yml"             --arg event_name "$GITHUB_EVENT_NAME"             --argjson run_id "$GITHUB_RUN_ID"             --argjson run_attempt "$GITHUB_RUN_ATTEMPT"             --arg run_url "$RUN_URL"             --arg attempt_url "$RUN_URL/attempts/$GITHUB_RUN_ATTEMPT"             --arg source_sha "$GITHUB_SHA"             --arg source_ref "$GITHUB_REF"             --argjson artifact_id "$artifact_id"             --arg artifact_name "$CAPTURE_ARTIFACT_NAME"             --arg upload_digest "$upload_digest"             '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              repository: $repository,
+              workflow_path: $workflow,
+              event_name: $event_name,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              run_url: $run_url,
+              attempt_url: $attempt_url,
+              source_sha: $source_sha,
+              source_ref: $source_ref,
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              }
+            }' > "$CAPTURE_ROOT/capture-artifact-selection.json"
+
+      - name: Generate immutable profile observation YAML
+        id: generate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          dotnet exec "$gap_docs" generate-rc-observation             --capture "$CAPTURE_ROOT/capture.json"             --capture-selection "$CAPTURE_ROOT/capture-artifact-selection.json"             --archive-selection "$CAPTURE_ROOT/archive-input-selection.json"             --ghcr-selection "$CAPTURE_ROOT/ghcr-input-selection.json"             --identity-selection "$CAPTURE_ROOT/canonical-identity-selection.json"             --approved-runtime "$CAPTURE_ROOT/current-approved-runtime.json"             --candidate "$CAPTURE_ROOT/candidate-runtime.json"             --prior "$CAPTURE_ROOT/prior-runtime.json"             --workload "docs/workloads/$PROFILE.yaml"             --qualification-policy "docs/workloads/qualification/$PROFILE.yaml"             --observation-policy "docs/workloads/observation/$PROFILE.yaml"             --release-candidate-id "$RELEASE_CANDIDATE_ID"             --owner "$GITHUB_ACTOR"             --output "$OUTPUT_ROOT/observation.yaml"             --binding-output "$OUTPUT_ROOT/binding.json"
+          digest="$(sed -n 's/^evidence_digest: "\(sha256:[0-9a-f]\{64\}\)"$/\1/p'             "$OUTPUT_ROOT/observation.yaml")"
+          verdict="$(sed -n 's/^  verdict: "\(pass\|rollback\)"$/\1/p'             "$OUTPUT_ROOT/observation.yaml")"
+          if [ -z "$digest" ] || [ -z "$verdict" ]; then
+            echo "::error::Generated observation lacks a strict digest or verdict."
+            exit 1
+          fi
+          {
+            echo "evidence_digest=$digest"
+            echo "verdict=$verdict"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Strictly validate generated evidence against its trusted digest
+        id: strict_validate
+        if: always() && steps.generate.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-rc-observation
+          --evidence "${{ env.OUTPUT_ROOT }}/observation.yaml"
+          --binding "${{ env.OUTPUT_ROOT }}/binding.json"
+          --expected-evidence-digest "${{ steps.generate.outputs.evidence_digest }}"
+
+      - name: Upload immutable RC observation evidence
+        id: evidence_upload
+        if: always() && steps.strict_validate.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/s3-basic-object-crud/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record exact evidence upload identity
+        if: always() && steps.evidence_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_ROOT/upload-identity"
+          artifact_id="${{ steps.evidence_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.evidence_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Evidence upload did not return an exact artifact identity."
+            exit 1
+          fi
+          rc_identity_digest="$(
+            jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json"
+          )"
+          manifest_identifier="github-actions:$GITHUB_REPOSITORY:run-$GITHUB_RUN_ID:attempt-$GITHUB_RUN_ATTEMPT:artifact-$artifact_id:$upload_digest"
+          jq -S -n             --argjson schema_version 1             --arg profile "$PROFILE"             --arg rc "$RELEASE_CANDIDATE_ID"             --arg rc_identity_digest "$rc_identity_digest"             --arg evidence_digest "${{ steps.generate.outputs.evidence_digest }}"             --arg verdict "${{ steps.generate.outputs.verdict }}"             --arg repository "$GITHUB_REPOSITORY"             --arg workflow ".github/workflows/rc-observation-real-azure.yml"             --argjson run_id "$GITHUB_RUN_ID"             --argjson run_attempt "$GITHUB_RUN_ATTEMPT"             --arg run_url "$RUN_URL"             --arg source_sha "$GITHUB_SHA"             --arg source_ref "$GITHUB_REF"             --argjson artifact_id "$artifact_id"             --arg artifact_name "$EVIDENCE_ARTIFACT_NAME"             --arg upload_digest "$upload_digest"             --arg manifest_identifier "$manifest_identifier"             --slurpfile archive "$CAPTURE_ROOT/archive-input-selection.json"             --slurpfile ghcr "$CAPTURE_ROOT/ghcr-input-selection.json"             '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              release_candidate_id: $rc,
+              release_candidate_identity_digest: $rc_identity_digest,
+              evidence_digest: $evidence_digest,
+              verdict: $verdict,
+              producer: {
+                repository: $repository,
+                workflow_path: $workflow,
+                run_id: $run_id,
+                run_attempt: $run_attempt,
+                run_url: $run_url,
+                source_sha: $source_sha,
+                source_ref: $source_ref
+              },
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              },
+              archive_inputs: {
+                content_digest: $archive[0].content_digest,
+                producer: $archive[0].producer,
+                artifact: $archive[0].artifact
+              },
+              ghcr_inputs: {
+                content_digest: $ghcr[0].content_digest,
+                producer: $ghcr[0].producer,
+                artifact: $ghcr[0].artifact,
+                index_digest: $ghcr[0].index_digest
+              },
+              manifest_observation: {
+                profile: {
+                  id: $profile,
+                  version: 1
+                },
+                identifier: $manifest_identifier,
+                digest: $evidence_digest,
+                verdict: $verdict
+              }
+            }' > "$OUTPUT_ROOT/upload-identity/observation-upload-identity.json"
+
+      - name: Upload evidence selection receipt
+        id: receipt_upload
+        if: always() && steps.evidence_upload.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.SELECTION_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/s3-basic-object-crud/upload-identity/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize RC observation
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-Azure RC observation"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Workload: \`S3 basic object CRUD\`"
+            echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
+            echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
+            echo "- Combined candidate/stable cohort artifacts: \`${CANDIDATE_COHORT_ARTIFACT_NAME}\`, \`${STABLE_COHORT_ARTIFACT_NAME}\`"
+            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Verdict: \`${{ steps.generate.outputs.verdict || 'not-produced' }}\`"
+            echo "- Evidence digest: \`${{ steps.generate.outputs.evidence_digest || 'not-produced' }}\`"
+            echo "- Capture artifact: \`${CAPTURE_ARTIFACT_NAME}\`"
+            echo "- Exact-prior restoration drill: required and verified by candidate cohort before evidence generation"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove downloaded cohort artifacts
+        if: always()
+        shell: bash
+        run: rm -rf "$PRIVATE_ROOT"
+
+      - name: Enforce successful trigger-free observation
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.capture_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outcome }}" != success ] ||
+             [ "${{ steps.strict_validate.outcome }}" != success ] ||
+             [ "${{ steps.evidence_upload.outcome }}" != success ] ||
+             [ "${{ steps.receipt_upload.outcome }}" != success ] ||
+             [ "${{ steps.generate.outputs.verdict }}" != pass ]; then
+            echo "::error::RC observation did not produce a complete trigger-free pass. Any fired trigger has already forced and verified exact-prior restoration; do not suppress it."
+            exit 1
+          fi
+
+
+  assemble-secretsmanager-observation:
+    if: ${{ always() && inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 'secretsmanager-basic-lifecycle') }}
+    needs:
+      - select
+      - observe-secretsmanager-cohort
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: rc-observation-real-azure-assemble-secretsmanager-basic-lifecycle-${{ inputs.release_candidate_id }}
+      cancel-in-progress: false
+    env:
+      PROFILE: secretsmanager-basic-lifecycle
+      RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+      WINDOW_MINUTES: ${{ inputs.observation_window_minutes }}
+      CAPTURE_ROOT: artifacts/rc-observation-capture/secretsmanager-basic-lifecycle
+      OUTPUT_ROOT: artifacts/rc-observation/secretsmanager-basic-lifecycle
+      PRIVATE_ROOT: artifacts/rc-observation-private/secretsmanager-basic-lifecycle/assemble
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-capture-secretsmanager-basic-lifecycle-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      EVIDENCE_ARTIFACT_NAME: real-azure-rc-observation-secretsmanager-basic-lifecycle-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      SELECTION_ARTIFACT_NAME: real-azure-rc-observation-selection-secretsmanager-basic-lifecycle-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      CANDIDATE_COHORT_ARTIFACT_NAME: real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-candidate-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+      STABLE_COHORT_ARTIFACT_NAME: real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-stable-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact clean protected-main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] ||
+             [ "$GITHUB_REF" != refs/heads/main ] ||
+             [ -n "$(git status --short)" ]; then
+            echo "::error::Observation workflow checkout is not exact protected main."
+            exit 1
+          fi
+      - uses: ./.github/actions/dotnet-setup
+
+      - name: Build harness and strict evidence tooling
+        run: dotnet build -c Release --nologo --verbosity minimal
+
+      - name: Validate repository contracts
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          --validate
+
+      - name: Download candidate cohort capture
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ env.CANDIDATE_COHORT_ARTIFACT_NAME }}
+          path: ${{ env.PRIVATE_ROOT }}/candidate
+
+      - name: Download stable cohort capture
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ env.STABLE_COHORT_ARTIFACT_NAME }}
+          path: ${{ env.PRIVATE_ROOT }}/stable
+
+      - name: Combine cohort captures into one exact observation capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CAPTURE_ROOT" "$OUTPUT_ROOT"
+          python3 .github/scripts/merge-rc-observation-cohorts.py             "$PRIVATE_ROOT/candidate"             "$PRIVATE_ROOT/stable"             "$CAPTURE_ROOT"
+          jq -e             --arg profile "$PROFILE"             '
+              .schema_version == 1 and
+              .profile.id == $profile and
+              .profile.version == 1 and
+              (.cohorts | length) == 2 and
+              (.metrics | length) == 2 and
+              .restoration.verified == true
+            ' "$CAPTURE_ROOT/capture.json" >/dev/null
+
+      - name: Upload immutable raw capture and selected identities
+        id: capture_upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.CAPTURE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation-capture/secretsmanager-basic-lifecycle/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Bind the exact capture upload identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="${{ steps.capture_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.capture_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Capture upload did not return an exact artifact identity."
+            exit 1
+          fi
+          jq -S -n             --argjson schema_version 1             --arg profile "$PROFILE"             --arg repository "$GITHUB_REPOSITORY"             --arg workflow ".github/workflows/rc-observation-real-azure.yml"             --arg event_name "$GITHUB_EVENT_NAME"             --argjson run_id "$GITHUB_RUN_ID"             --argjson run_attempt "$GITHUB_RUN_ATTEMPT"             --arg run_url "$RUN_URL"             --arg attempt_url "$RUN_URL/attempts/$GITHUB_RUN_ATTEMPT"             --arg source_sha "$GITHUB_SHA"             --arg source_ref "$GITHUB_REF"             --argjson artifact_id "$artifact_id"             --arg artifact_name "$CAPTURE_ARTIFACT_NAME"             --arg upload_digest "$upload_digest"             '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              repository: $repository,
+              workflow_path: $workflow,
+              event_name: $event_name,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              run_url: $run_url,
+              attempt_url: $attempt_url,
+              source_sha: $source_sha,
+              source_ref: $source_ref,
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              }
+            }' > "$CAPTURE_ROOT/capture-artifact-selection.json"
+
+      - name: Generate immutable profile observation YAML
+        id: generate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          gap_docs="tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll"
+          dotnet exec "$gap_docs" generate-rc-observation             --capture "$CAPTURE_ROOT/capture.json"             --capture-selection "$CAPTURE_ROOT/capture-artifact-selection.json"             --archive-selection "$CAPTURE_ROOT/archive-input-selection.json"             --ghcr-selection "$CAPTURE_ROOT/ghcr-input-selection.json"             --identity-selection "$CAPTURE_ROOT/canonical-identity-selection.json"             --approved-runtime "$CAPTURE_ROOT/current-approved-runtime.json"             --candidate "$CAPTURE_ROOT/candidate-runtime.json"             --prior "$CAPTURE_ROOT/prior-runtime.json"             --workload "docs/workloads/$PROFILE.yaml"             --qualification-policy "docs/workloads/qualification/$PROFILE.yaml"             --observation-policy "docs/workloads/observation/$PROFILE.yaml"             --release-candidate-id "$RELEASE_CANDIDATE_ID"             --owner "$GITHUB_ACTOR"             --output "$OUTPUT_ROOT/observation.yaml"             --binding-output "$OUTPUT_ROOT/binding.json"
+          digest="$(sed -n 's/^evidence_digest: "\(sha256:[0-9a-f]\{64\}\)"$/\1/p'             "$OUTPUT_ROOT/observation.yaml")"
+          verdict="$(sed -n 's/^  verdict: "\(pass\|rollback\)"$/\1/p'             "$OUTPUT_ROOT/observation.yaml")"
+          if [ -z "$digest" ] || [ -z "$verdict" ]; then
+            echo "::error::Generated observation lacks a strict digest or verdict."
+            exit 1
+          fi
+          {
+            echo "evidence_digest=$digest"
+            echo "verdict=$verdict"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Strictly validate generated evidence against its trusted digest
+        id: strict_validate
+        if: always() && steps.generate.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          dotnet exec
+          tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          validate-rc-observation
+          --evidence "${{ env.OUTPUT_ROOT }}/observation.yaml"
+          --binding "${{ env.OUTPUT_ROOT }}/binding.json"
+          --expected-evidence-digest "${{ steps.generate.outputs.evidence_digest }}"
+
+      - name: Upload immutable RC observation evidence
+        id: evidence_upload
+        if: always() && steps.strict_validate.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/secretsmanager-basic-lifecycle/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Record exact evidence upload identity
+        if: always() && steps.evidence_upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTPUT_ROOT/upload-identity"
+          artifact_id="${{ steps.evidence_upload.outputs.artifact-id }}"
+          upload_digest="${{ steps.evidence_upload.outputs.artifact-digest }}"
+          if [[ "$upload_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            upload_digest="sha256:$upload_digest"
+          fi
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ ]] ||
+             [[ ! "$upload_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Evidence upload did not return an exact artifact identity."
+            exit 1
+          fi
+          rc_identity_digest="$(
+            jq -er '.identity_digest' "$CAPTURE_ROOT/canonical-identity-selection.json"
+          )"
+          manifest_identifier="github-actions:$GITHUB_REPOSITORY:run-$GITHUB_RUN_ID:attempt-$GITHUB_RUN_ATTEMPT:artifact-$artifact_id:$upload_digest"
+          jq -S -n             --argjson schema_version 1             --arg profile "$PROFILE"             --arg rc "$RELEASE_CANDIDATE_ID"             --arg rc_identity_digest "$rc_identity_digest"             --arg evidence_digest "${{ steps.generate.outputs.evidence_digest }}"             --arg verdict "${{ steps.generate.outputs.verdict }}"             --arg repository "$GITHUB_REPOSITORY"             --arg workflow ".github/workflows/rc-observation-real-azure.yml"             --argjson run_id "$GITHUB_RUN_ID"             --argjson run_attempt "$GITHUB_RUN_ATTEMPT"             --arg run_url "$RUN_URL"             --arg source_sha "$GITHUB_SHA"             --arg source_ref "$GITHUB_REF"             --argjson artifact_id "$artifact_id"             --arg artifact_name "$EVIDENCE_ARTIFACT_NAME"             --arg upload_digest "$upload_digest"             --arg manifest_identifier "$manifest_identifier"             --slurpfile archive "$CAPTURE_ROOT/archive-input-selection.json"             --slurpfile ghcr "$CAPTURE_ROOT/ghcr-input-selection.json"             '{
+              schema_version: $schema_version,
+              profile_id: $profile,
+              release_candidate_id: $rc,
+              release_candidate_identity_digest: $rc_identity_digest,
+              evidence_digest: $evidence_digest,
+              verdict: $verdict,
+              producer: {
+                repository: $repository,
+                workflow_path: $workflow,
+                run_id: $run_id,
+                run_attempt: $run_attempt,
+                run_url: $run_url,
+                source_sha: $source_sha,
+                source_ref: $source_ref
+              },
+              artifact: {
+                id: $artifact_id,
+                name: $artifact_name,
+                upload_digest: $upload_digest
+              },
+              archive_inputs: {
+                content_digest: $archive[0].content_digest,
+                producer: $archive[0].producer,
+                artifact: $archive[0].artifact
+              },
+              ghcr_inputs: {
+                content_digest: $ghcr[0].content_digest,
+                producer: $ghcr[0].producer,
+                artifact: $ghcr[0].artifact,
+                index_digest: $ghcr[0].index_digest
+              },
+              manifest_observation: {
+                profile: {
+                  id: $profile,
+                  version: 1
+                },
+                identifier: $manifest_identifier,
+                digest: $evidence_digest,
+                verdict: $verdict
+              }
+            }' > "$OUTPUT_ROOT/upload-identity/observation-upload-identity.json"
+
+      - name: Upload evidence selection receipt
+        id: receipt_upload
+        if: always() && steps.evidence_upload.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.SELECTION_ARTIFACT_NAME }}
+          path: artifacts/rc-observation/secretsmanager-basic-lifecycle/upload-identity/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize RC observation
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Real-Azure RC observation"
+            echo
+            echo "- Profile: \`$PROFILE\`"
+            echo "- Workload: \`SecretsManager basic lifecycle\`"
+            echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
+            echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
+            echo "- Combined candidate/stable cohort artifacts: \`${CANDIDATE_COHORT_ARTIFACT_NAME}\`, \`${STABLE_COHORT_ARTIFACT_NAME}\`"
+            echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
+            echo "- Verdict: \`${{ steps.generate.outputs.verdict || 'not-produced' }}\`"
+            echo "- Evidence digest: \`${{ steps.generate.outputs.evidence_digest || 'not-produced' }}\`"
+            echo "- Capture artifact: \`${CAPTURE_ARTIFACT_NAME}\`"
+            echo "- Exact-prior restoration drill: required and verified by candidate cohort before evidence generation"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove downloaded cohort artifacts
+        if: always()
+        shell: bash
+        run: rm -rf "$PRIVATE_ROOT"
+
+      - name: Enforce successful trigger-free observation
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.capture_upload.outcome }}" != success ] ||
              [ "${{ steps.generate.outcome }}" != success ] ||
              [ "${{ steps.strict_validate.outcome }}" != success ] ||
              [ "${{ steps.evidence_upload.outcome }}" != success ] ||
