@@ -136,6 +136,7 @@ nav:
           - Stored-procedure parameter encoding: perf/cosmos-sproc-params-encode.md
       - Versioning policy: versioning-and-compatibility.md
       - Release notes:
+          - v1.1.0: releases/v1.1.0.md
           - v1.0.0: releases/v1.0.0.md
   - Operation reference:
       - Reference overview: site/index.md
