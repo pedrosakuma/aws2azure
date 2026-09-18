@@ -1490,7 +1490,8 @@ jobs:
           - candidate
           - stable
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    # Worst case: up to 45 min pre-window sync wait + up to 180 min policy-max window + 20 min teardown buffer (see rc-observation-run-cohort.sh).
+    timeout-minutes: 300
     concurrency:
       group: rc-observation-real-azure-${{ inputs.mode }}-s3-basic-object-crud-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
       cancel-in-progress: false
@@ -1639,7 +1640,8 @@ jobs:
           - candidate
           - stable
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    # Worst case: up to 45 min pre-window sync wait + up to 180 min policy-max window + 20 min teardown buffer (see rc-observation-run-cohort.sh).
+    timeout-minutes: 300
     concurrency:
       group: rc-observation-real-azure-${{ inputs.mode }}-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
       cancel-in-progress: false

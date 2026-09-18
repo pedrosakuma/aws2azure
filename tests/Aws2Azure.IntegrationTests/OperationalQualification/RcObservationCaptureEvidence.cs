@@ -185,6 +185,11 @@ internal sealed class RcCalibrationCohort
 
 internal static class RcObservationCaptureWriter
 {
+    // Must match the shell-side max_wait_seconds cap in
+    // .github/scripts/rc-observation-run-cohort.sh: the outer process timeout
+    // refuses to reserve Azure resources for a barrier further away than this.
+    public static readonly TimeSpan MaxSynchronizedObservationWait = TimeSpan.FromMinutes(45);
+
     public static string? ReadObservationCohortRole()
     {
         var value = Environment.GetEnvironmentVariable(
@@ -227,7 +232,10 @@ internal static class RcObservationCaptureWriter
         }
 
         var wait = synchronized.Value - DateTimeOffset.UtcNow;
-        if (wait < TimeSpan.FromSeconds(-1))
+        // Matches the shell-side missed-barrier tolerance in
+        // rc-observation-run-cohort.sh so a few seconds of scheduling jitter
+        // does not fail one cohort while the other is still within budget.
+        if (wait < TimeSpan.FromSeconds(-60))
         {
             throw new InvalidDataException(
                 "The synchronized RC observation start time was missed by this runner.");

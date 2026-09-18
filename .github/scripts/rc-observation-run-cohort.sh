@@ -428,7 +428,42 @@ append_env AWS2AZURE_RC_OBSERVATION_SYNC_AT_UTC "$OBSERVATION_SYNC_AT_UTC"
 append_env AWS2AZURE_RC_OBSERVATION_COHORT_ROLE "$COHORT"
 
 cohort_capture="$CAPTURE_ROOT/cohort-capture.json"
-test_timeout=$((WINDOW_MINUTES * 60 + 1200))
+
+# The dotnet test process itself waits (via Task.Delay) until
+# OBSERVATION_SYNC_AT_UTC before starting the measurement window, so that both
+# separately-scheduled cohort jobs begin their concurrent windows together.
+# That wait happens *inside* the process the outer `timeout` wraps, so the
+# outer deadline must include it explicitly; a flat post-window buffer alone
+# undercounts it and kills the process before the window can complete (see
+# #1016). Compute the actual remaining wait from wall-clock time right before
+# invoking dotnet test, rather than assuming it is zero or a fixed guess.
+now_epoch="$(date -u +%s)"
+if [ -n "$OBSERVATION_SYNC_AT_UTC" ]; then
+  sync_epoch="$(date -u -d "$OBSERVATION_SYNC_AT_UTC" +%s)"
+  wait_seconds=$((sync_epoch - now_epoch))
+else
+  wait_seconds=0
+fi
+if [ "$wait_seconds" -lt -60 ]; then
+  echo "::error::Shared observation barrier ($OBSERVATION_SYNC_AT_UTC) was already missed by this cohort; refusing to start an unsynchronized window."
+  exit 1
+fi
+if [ "$wait_seconds" -lt 0 ]; then
+  wait_seconds=0
+fi
+# Refuse to idle-reserve billed Azure resources against a barrier that is
+# implausibly far away; this bounds worst-case cost/time if the shared value
+# is ever miscomputed upstream.
+max_wait_seconds=$((45 * 60))
+if [ "$wait_seconds" -gt "$max_wait_seconds" ]; then
+  echo "::error::Shared observation barrier is more than 45 minutes away; refusing to reserve Azure resources idly."
+  exit 1
+fi
+# Covers process shutdown, evidence-file capture, and artifact upload after
+# the measurement window closes. The pre-window synchronization wait is
+# accounted for separately above.
+teardown_buffer_seconds=1200
+test_timeout=$((wait_seconds + WINDOW_MINUTES * 60 + teardown_buffer_seconds))
 AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH="$cohort_capture" \
 AWS2AZURE_RC_OBSERVATION_COHORT_ROLE="$COHORT" \
 AWS2AZURE_RC_OBSERVATION_SYNC_AT_UTC="$OBSERVATION_SYNC_AT_UTC" \

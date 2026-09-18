@@ -415,7 +415,14 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
             string operationMixIdentity,
             TimeSpan duration)
         {
-            using var timeout = new CancellationTokenSource(duration + TimeSpan.FromMinutes(20));
+            // Bounded to cover only pre-window setup and the synchronized
+            // barrier wait; reset below (via CancelAfter) once the wait
+            // resolves so the measurement window gets its own full
+            // duration + teardown budget regardless of how long the wait
+            // took.
+            using var timeout = new CancellationTokenSource(
+                RcObservationCaptureWriter.MaxSynchronizedObservationWait
+                    + TimeSpan.FromMinutes(1));
             using var refresh = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
             var refreshTask = RefreshAssertionLoopAsync(
                 RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
@@ -450,6 +457,9 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 var startedAt = await RcObservationCaptureWriter
                     .WaitForSynchronizedObservationStartAsync(timeout.Token)
                     .ConfigureAwait(false);
+                // The wait above no longer counts against the measurement
+                // window's own deadline: give it a fresh budget now.
+                timeout.CancelAfter(duration + TimeSpan.FromMinutes(20));
                 var stopwatch = Stopwatch.StartNew();
                 var concurrency = role == "candidate"
                     ? candidateConcurrency
