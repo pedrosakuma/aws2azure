@@ -130,6 +130,12 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
 
             var startedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
+            candidateTracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                Operations, stopwatch, startedAt, duration, candidateConcurrency, "candidate",
+                fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest);
+            stableTracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                Operations, stopwatch, startedAt, duration, stableConcurrency, "stable",
+                fixture.PriorRuntimeIdentity.Runtime.AggregateDigest);
             var workers = new List<Task>(candidateConcurrency + stableConcurrency);
             for (var worker = 0; worker < candidateConcurrency; worker++)
             {
@@ -153,9 +159,21 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                     stopwatch,
                     timeout.Token));
             }
-            await Task.WhenAll(workers).ConfigureAwait(false);
-            stopwatch.Stop();
-            var measurementEndedAt = DateTimeOffset.UtcNow;
+            var workersCompleted = false;
+            DateTimeOffset measurementEndedAt;
+            try
+            {
+                await Task.WhenAll(workers).ConfigureAwait(false);
+                workersCompleted = true;
+            }
+            finally
+            {
+                stopwatch.Stop();
+                measurementEndedAt = DateTimeOffset.UtcNow;
+                var timingPath = calibrationMode ? calibrationReportPath! : observationCapturePath!;
+                await candidateTracker.TimingDiagnostics.PublishAsync(timingPath, workersCompleted).ConfigureAwait(false);
+                await stableTracker.TimingDiagnostics.PublishAsync(timingPath, workersCompleted).ConfigureAwait(false);
+            }
 
             await SecretsManagerCredentialRotationQualification.RefreshGitHubOidcTokenAsync(
                 RequiredEnvironment("AZURE_FEDERATED_TOKEN_FILE"),
@@ -460,10 +478,17 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 // The wait above no longer counts against the measurement
                 // window's own deadline: give it a fresh budget now.
                 timeout.CancelAfter(duration + TimeSpan.FromMinutes(20));
+                var actualStartedAt = DateTimeOffset.UtcNow;
                 var stopwatch = Stopwatch.StartNew();
                 var concurrency = role == "candidate"
                     ? candidateConcurrency
                     : stableConcurrency;
+                tracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                    Operations, stopwatch, actualStartedAt, duration, concurrency, role,
+                    role == "candidate"
+                        ? fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest
+                        : fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                    scheduledStartUtc: startedAt);
                 var workers = new List<Task>(concurrency);
                 for (var worker = 0; worker < concurrency; worker++)
                 {
@@ -476,9 +501,21 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         stopwatch,
                         timeout.Token));
                 }
-                await Task.WhenAll(workers).ConfigureAwait(false);
-                stopwatch.Stop();
-                var measurementEndedAt = DateTimeOffset.UtcNow;
+                var workersCompleted = false;
+                DateTimeOffset measurementEndedAt;
+                try
+                {
+                    await Task.WhenAll(workers).ConfigureAwait(false);
+                    workersCompleted = true;
+                }
+                finally
+                {
+                    stopwatch.Stop();
+                    measurementEndedAt = DateTimeOffset.UtcNow;
+                    await tracker.TimingDiagnostics.PublishAsync(
+                        RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH"),
+                        workersCompleted).ConfigureAwait(false);
+                }
 
                 RcObservationCaptureRestoration? restoration = null;
                 var observationEndedAt = measurementEndedAt;
@@ -829,11 +866,14 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                 {
                     try
                     {
-                        await client.DeleteSecretAsync(new DeleteSecretRequest
-                        {
-                            SecretId = name,
-                            ForceDeleteWithoutRecovery = true,
-                        }, CancellationToken.None).ConfigureAwait(false);
+                        await tracker.TimingDiagnostics!.MeasureCleanupAsync(
+                            "DeleteSecret",
+                            () => client.DeleteSecretAsync(new DeleteSecretRequest
+                            {
+                                SecretId = name,
+                                ForceDeleteWithoutRecovery = true,
+                            }, CancellationToken.None),
+                            IsThrottle).ConfigureAwait(false);
                     }
                     catch
                     {

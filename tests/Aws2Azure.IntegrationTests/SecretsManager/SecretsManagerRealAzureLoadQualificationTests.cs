@@ -50,6 +50,10 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
         var networkBefore = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var loadStartedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
+        tracker.TimingDiagnostics = new OperationTimingDiagnostics(
+            Operations, stopwatch, loadStartedAt, requestedDuration, concurrency, "candidate",
+            fixture.SealedCandidateConfigured
+                ? fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest : string.Empty);
         using var client = fixture.CreateSecretsManagerClient();
         using var timeout = new CancellationTokenSource(requestedDuration + TimeSpan.FromMinutes(30));
 
@@ -63,9 +67,19 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 stopwatch,
                 timeout.Token))
             .ToArray();
-        await Task.WhenAll(workers).ConfigureAwait(false);
-        stopwatch.Stop();
-        var loadEnd = DateTimeOffset.UtcNow;
+        var workersCompleted = false;
+        DateTimeOffset loadEnd;
+        try
+        {
+            await Task.WhenAll(workers).ConfigureAwait(false);
+            workersCompleted = true;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            loadEnd = DateTimeOffset.UtcNow;
+            await tracker.TimingDiagnostics.PublishAsync(fullOutputPath, workersCompleted).ConfigureAwait(false);
+        }
         var networkAfter = await ProbeNetworkAsync(networkTarget, 12).ConfigureAwait(false);
         var loadWindowEnd = DateTimeOffset.UtcNow;
         var throttling = await VerifyScenarioAsync(
@@ -413,11 +427,14 @@ public sealed class SecretsManagerRealAzureLoadQualificationTests(
                 {
                     try
                     {
-                        await client.DeleteSecretAsync(new DeleteSecretRequest
-                        {
-                            SecretId = name,
-                            ForceDeleteWithoutRecovery = true,
-                        }, CancellationToken.None).ConfigureAwait(false);
+                        await tracker.TimingDiagnostics!.MeasureCleanupAsync(
+                            "DeleteSecret",
+                            () => client.DeleteSecretAsync(new DeleteSecretRequest
+                            {
+                                SecretId = name,
+                                ForceDeleteWithoutRecovery = true,
+                            }, CancellationToken.None),
+                            IsThrottle).ConfigureAwait(false);
                     }
                     catch
                     {
