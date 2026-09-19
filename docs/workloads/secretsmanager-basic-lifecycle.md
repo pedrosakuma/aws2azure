@@ -131,6 +131,8 @@ These are client-action diagnostics, **not proxy CPU or downstream HTTP traces**
 Per-action Key Vault fan-out, proxy CPU time, server queue time and network time
 cannot be inferred from them. Adding that attribution to sealed runtimes would
 require separately scoped, opt-in shipping instrumentation and validation.
-This first delivery adds no shipping instrumentation or dependencies. Isolated
-seven-operation capacity sweeps, controlled comparisons/readiness improvements,
-and evidence-calibrated gates remain subsequent deliveries.
+This first delivery adds no shipping instrumentation or dependencies.
+[Delivery 2's isolated seven-operation capacity harness](../perf/secretsmanager-isolated-capacity.md)
+is opt-in, finite-budget and report-only; it has offline validation, not an
+asserted live-Azure capacity result. Controlled comparisons/readiness
+improvements and evidence-calibrated gates remain subsequent deliveries.

@@ -92,7 +92,7 @@ public sealed partial class KnownPerfScenariosTests
         "azure-sdk.EventHubs.SendAsync (256 B, c=1)",
         "kinesis.GetRecords (256 B records)",
         "azure-sdk.EventHubs.ReceiveBatchAsync (256 B records)",
-    };
+    }.Concat(SecretsManager.SecretsCapacityPlan.Scenarios.Select(s => s.Name)).ToArray();
 
     [Fact]
     public void Every_known_scenario_has_a_reference_entry()
