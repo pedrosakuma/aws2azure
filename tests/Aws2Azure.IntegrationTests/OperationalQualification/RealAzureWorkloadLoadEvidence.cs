@@ -152,6 +152,8 @@ internal static class RealAzureWorkloadLoad
 
 internal sealed class RealAzureWorkloadLoadTracker
 {
+    public OperationTimingDiagnostics? TimingDiagnostics { get; set; }
+
     private readonly string _service;
     private readonly IReadOnlyDictionary<string, OperationTracker> _operations;
 
@@ -167,6 +169,7 @@ internal sealed class RealAzureWorkloadLoadTracker
     public void RecordSuccess(string operation, double elapsedMilliseconds)
     {
         _operations[operation].RecordSuccess(elapsedMilliseconds);
+        TimingDiagnostics?.Record(operation, elapsedMilliseconds, failed: false);
     }
 
     public void RecordFailure(
@@ -181,6 +184,7 @@ internal sealed class RealAzureWorkloadLoadTracker
             throttled,
             exception,
             windowOffset);
+        TimingDiagnostics?.Record(operation, elapsedMilliseconds, failed: true, throttled, exception);
     }
 
     public List<RealAzureWorkloadLoadOperationMeasurement> Snapshot()
