@@ -64,6 +64,7 @@ public class ItemDocumentBodyTests
 
         Assert.Equal((byte)'{', body.Memory.Span[0]);
         Assert.Equal(TextDocument(id, pk, item), body.Memory.ToArray());
+        Assert.Equal(TextDocument(id, pk, item), ItemHandlers.BuildItemDocumentBytes(id, pk, item, binary: false));
     }
 
     [Theory]

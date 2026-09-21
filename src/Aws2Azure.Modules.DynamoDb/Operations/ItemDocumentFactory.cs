@@ -36,6 +36,7 @@ internal static partial class ItemHandlers
     /// set (#336), else JSON text. Used by <c>BatchWriteItem</c>, where each
     /// unit's standalone document body is built upfront and held live across
     /// parallel sends, so a GC-managed array is the leak-safe representation.
+    /// Temporary encoder storage is returned before the owned array escapes.
     /// </summary>
     internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)
     {
@@ -46,9 +47,9 @@ internal static partial class ItemHandlers
             return writer.WrittenMemory.ToArray();
         }
 
-        var bw = new System.Buffers.ArrayBufferWriter<byte>(1024);
+        using var bw = new PooledByteBufferWriter(1024);
         InferredAttributeStorage.WriteCosmosDocument(bw, id, pk, item, ttlSeconds, orderKeys);
-        return bw.WrittenSpan.ToArray();
+        return bw.WrittenMemory.ToArray();
     }
 
     /// <summary>
