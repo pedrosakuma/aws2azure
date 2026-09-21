@@ -60,6 +60,8 @@ public sealed class BatchWriteExperimentRelayTests
         Assert.Equal(0, writes.GetProperty("activeAtSnapshot").GetInt32());
         Assert.Equal(1, report.RootElement.GetProperty("writeRestAttempts").GetInt32());
         Assert.Equal(status >= 400 ? 1 : 0, report.RootElement.GetProperty("nonSuccessResponses").GetInt32());
+        relay.End(out var incompleteOrFaulted);
+        Assert.False(incompleteOrFaulted);
         Assert.True(content.Disposed);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => handler.Request!.Content!.ReadAsByteArrayAsync());
         AssertSafe(report);
@@ -80,6 +82,8 @@ public sealed class BatchWriteExperimentRelayTests
         Assert.Equal(1, writes.GetProperty("faultsByPhaseAndType").GetProperty("dispatch:HttpRequestException").GetInt32());
         Assert.Equal(0, report.RootElement.GetProperty("writeRestAttempts").GetInt32());
         Assert.Equal(0, writes.GetProperty("activeAtSnapshot").GetInt32());
+        relay.End(out var incompleteOrFaulted);
+        Assert.True(incompleteOrFaulted);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => handler.Request!.Content!.ReadAsByteArrayAsync());
         AssertSafe(report);
     }
@@ -119,6 +123,8 @@ public sealed class BatchWriteExperimentRelayTests
         Assert.Equal(1, writes.GetProperty("cancelled").GetInt32());
         Assert.Equal(0, writes.GetProperty("clientDisconnects").GetInt32());
         Assert.Equal(0, writes.GetProperty("activeAtSnapshot").GetInt32());
+        relay.End(out var incompleteOrFaulted);
+        Assert.True(incompleteOrFaulted);
     }
 
     [Fact]
