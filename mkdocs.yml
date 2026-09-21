@@ -130,6 +130,7 @@ nav:
           - SecretsManager isolated capacity: perf/secretsmanager-isolated-capacity.md
           - BatchWriteItem isolated diagnostic: perf/batch-write-experiment.md
           - BatchWriteItem representative campaign: perf/batch-write-campaign.md
+          - BatchWriteItem concurrency investigation: perf/batch-write-concurrency.md
           - Latest performance baseline: perf/baseline-latest.md
           - Latest footprint baseline: perf/footprint-latest.md
           - CosmosBinary decode investigation: perf/cosmos-binary-decode.md

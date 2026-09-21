@@ -15,9 +15,9 @@ on:
         description: 'Candidate source revision (empty uses harness HEAD; equal pins give explicit A/A repetitions)'
         required: false
       runtime_slots:
-        description: 'Execute both slots, or just one for a single authorized diagnostic reproduction'
+        description: 'both, one slot, or balanced main/candidate/candidate/main (at most four cells)'
         type: choice
-        options: [both, main, candidate]
+        options: [both, main, candidate, balanced]
         default: both
       purpose:
         description: 'Label observations without changing success/failure handling'
@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
-          case "$RUNTIME_SLOTS" in both|main|candidate) ;; *) exit 1 ;; esac
+          case "$RUNTIME_SLOTS" in both|main|candidate|balanced) ;; *) exit 1 ;; esac
           if [[ "$RUNTIME_SLOTS" != candidate ]]; then
             bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
           fi
@@ -95,12 +95,24 @@ jobs:
             exit 1
           fi
           slots=(main candidate)
-          if [[ "$RUNTIME_SLOTS" != both ]]; then slots=("$RUNTIME_SLOTS"); fi
+          case "$RUNTIME_SLOTS" in
+            main|candidate) slots=("$RUNTIME_SLOTS") ;;
+            balanced)
+              if (( ${#cells[@]} > 4 )); then
+                echo "::error::Balanced order permits at most four cells (sixteen windows)."
+                exit 1
+              fi
+              slots=(main candidate candidate main)
+              ;;
+          esac
           failed=0
+          block=0
           for runtime in "${slots[@]}"; do
+            block=$((block + 1))
+            export AWS2AZURE_BATCH_BLOCK="$block"
             export AWS2AZURE_BATCH_RUNTIME="$GITHUB_WORKSPACE/artifacts/batch-runtimes/$runtime"
             for cell in "${cells[@]}"; do
-              label="$runtime-${cell//:/-}"
+              label="$block-$runtime-${cell//:/-}"
               ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-$label.txt"
               docker ps --no-trunc > "$AWS2AZURE_BATCH_OUTPUT/containers-$label.txt"
               cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-before-$label.txt"

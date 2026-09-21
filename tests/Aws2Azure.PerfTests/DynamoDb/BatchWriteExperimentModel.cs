@@ -13,6 +13,13 @@ internal sealed record BatchWriteExperimentPlan(int BatchSize, int Concurrency, 
     public static readonly TimeSpan DispatchDuration = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(30);
 
+    public static int? ParseExecutionBlock(string? value)
+    {
+        if (value is null) return null;
+        if (int.TryParse(value, out var block) && block is >= 1 and <= 4) return block;
+        throw new ArgumentException("Execution block must be 1 through 4.");
+    }
+
     public static BatchWriteExperimentPlan Parse(string? selection)
     {
         var parts = selection?.Split(':');
