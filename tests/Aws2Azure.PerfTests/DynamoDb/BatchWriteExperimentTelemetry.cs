@@ -57,6 +57,89 @@ internal sealed record BatchWriteProcessSample(
         };
 }
 
+internal sealed class BatchWriteResourceWindow : IAsyncDisposable
+{
+    internal const int MaxSamples = 160;
+    private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(250);
+    private readonly List<Sample> _samples = new(MaxSamples);
+    private readonly CancellationTokenSource _stop = new();
+    private readonly int _proxyPid;
+    private readonly long _started = Stopwatch.GetTimestamp();
+    private Task? _sampling;
+    private int _dropped, _captureFailures;
+
+    internal sealed record Sample(double ElapsedSeconds, BatchWriteProcessSample Proxy, BatchWriteProcessSample Driver);
+
+    public BatchWriteResourceWindow(int proxyPid) => _proxyPid = proxyPid;
+
+    public void Start()
+    {
+        if (_sampling is not null) throw new InvalidOperationException("Resource window already started.");
+        _sampling = RunAsync();
+    }
+
+    internal void Add(Sample sample)
+    {
+        if (_samples.Count == MaxSamples) { _dropped++; return; }
+        if (sample.ElapsedSeconds < 0 || !double.IsFinite(sample.ElapsedSeconds)
+            || (_samples.Count > 0 && sample.ElapsedSeconds <= _samples[^1].ElapsedSeconds))
+            throw new ArgumentException("Samples must have increasing monotonic timestamps.");
+        _samples.Add(sample);
+    }
+
+    private void Capture()
+    {
+        try
+        {
+            Add(new(Stopwatch.GetElapsedTime(_started).TotalSeconds,
+                BatchWriteProcessSample.Capture(_proxyPid),
+                BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true)));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException)
+        {
+            _captureFailures++;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        using var timer = new PeriodicTimer(Interval);
+        try
+        {
+            Capture();
+            while (_samples.Count < MaxSamples
+                && Stopwatch.GetElapsedTime(_started) < BatchWriteExperimentPlan.DispatchDuration + BatchWriteExperimentPlan.DrainTimeout
+                && await timer.WaitForNextTickAsync(_stop.Token))
+                Capture();
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+
+    public async Task StopAsync()
+    {
+        await _stop.CancelAsync();
+        if (_sampling is not null) await _sampling;
+        Capture();
+    }
+
+    public object Snapshot() => new
+    {
+        intervalMilliseconds = Interval.TotalMilliseconds, maxSamples = MaxSamples,
+        sampleCount = _samples.Count, droppedSamples = _dropped, captureFailures = _captureFailures,
+        maxObservedProxyWorkingSetBytes = _samples.Count == 0 ? (long?)null : _samples.Max(x => x.Proxy.WorkingSetBytes),
+        maxObservedDriverWorkingSetBytes = _samples.Count == 0 ? (long?)null : _samples.Max(x => x.Driver.WorkingSetBytes),
+        samples = _samples.ToArray(),
+        scope = "250ms best-effort process samples during dispatch/drain, bounded to 160 and 35 seconds. Sampled maxima are lower bounds, not true peaks. CPU is cumulative process CPU; timestamps are monotonic elapsed seconds. Driver includes sampling/relay/SDK/xUnit. No backend CPU or allocation attribution.",
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        await _stop.CancelAsync();
+        if (_sampling is not null) await _sampling;
+        _stop.Dispose();
+    }
+}
+
 internal static class BatchWriteStageTelemetry
 {
     public static readonly string[] Stages =

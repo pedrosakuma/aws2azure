@@ -10,8 +10,10 @@ qualification verdicts. It is not a sustained-capacity benchmark.
 Use the `batch-write-experiment` GitHub Actions workflow. It runs cells
 serially on one fresh hosted runner, with a new disposable Cosmos emulator,
 database and proxy per cell. It provisions **no Azure resources**.
-The workflow accepts one to four space-separated cells, each run against
-both a source-pinned baseline and candidate (two to eight serial windows):
+The workflow accepts one to sixteen space-separated staged cells, each run
+against both a source-pinned baseline and candidate (two to 32 serial windows).
+The default remains a small proxy/direct pair; the larger bound is for the
+[representative campaign](batch-write-campaign.md), not the full grid:
 
 ```text
 25:8:put:distinct:proxy 25:8:put:distinct:direct
@@ -72,6 +74,10 @@ runner; host isolation remains an explicit operational prerequisite.
 counts partial successes even when the batch ultimately fails. Both rates
 use the same measurement-through-drain denominator. Unprocessed item
 occurrences are counted separately from terminal batch failures.
+`initialRequests` and `resubmissionRequests` count submission-loop entries,
+including requests that throw without an acknowledgement; `submissions`
+counts validated responses. Their difference is `requestsWithoutAcknowledgement`,
+not proof that the backend failed to apply those writes.
 Batch latency includes SDK serialization, proxy work, retries and backoff.
 `itemAcknowledgementLatencyMs` records **caller-visible acknowledgement**:
 time from entering the initial submission loop to the response confirming
@@ -145,13 +151,22 @@ Resource fields likewise have explicit scopes:
   This is not a pure direct-client CPU measurement.
 - `proxyAllocatedBytes` / `proxyGen2Collections`: existing proxy runtime
   gauges differenced across two scrapes. Scrapes themselves add overhead.
-- Working sets are endpoints. `lifetimePeakWorkingSetBytes` is an OS
+- Before/after working sets are endpoints. `LifetimePeakWorkingSetBytes` is an OS
   process-lifetime high-water mark, **not** the measurement-window peak.
+- `resourcesDuringWindow` records proxy/driver process samples every 250ms
+  through dispatch and drain, with at most 160 retained samples and a 35-second
+  sampling deadline. CPU is cumulative process CPU alongside monotonic elapsed
+  timestamps; consecutive differences permit interval core-equivalent rates,
+  not per-operation CPU attribution. The final sample may follow the last
+  response slightly. Reported working-set maxima are **observed sampled
+  maxima**, lower bounds that can miss spikes between samples. Captures run
+  in the driver; their overhead is included, and failed/dropped captures are
+  reported. The OS lifetime high-water mark remains separate.
 - Workflow artifacts include host CPU topology, Docker information,
   process/container snapshots and Linux CPU/memory/IO pressure endpoints.
   They describe the runner, not an assertion of backend saturation.
 
-Backend CPU/allocation, window peak memory, sampled CPU stacks, and separate
+Backend CPU/allocation, true window peak memory, sampled CPU stacks, and separate
 transport retry/backoff timings remain unavailable. The relay still observes
 REST attempts/RU/429s and repeated item attempts; the driver measures its own
 resubmission backoff. Zero terminal failures does not imply zero retries.
@@ -166,7 +181,8 @@ dependencies, native/runtime libraries and configuration. The harness verifies
 the exact file inventory and hashes before launching that executable directly.
 It never labels current-source `dotnet run` as a historical revision.
 
-The workflow resolves `baseline` (default `origin/main`) and candidate HEAD
+The workflow resolves `baseline` (default `origin/main`) and `candidate`
+(default harness HEAD)
 once, publishes both with the same installed SDK, and records build SDK info.
 One committed harness drives both runtimes. `harnessSource` is separate from
 `runtimeIdentity.Commit`; the direct route always uses that harness's
@@ -175,8 +191,11 @@ the production encoder later therefore requires checking reference equivalence.
 Self-contained runtime libraries are included in hashes; OS libraries/kernel
 are runner dependencies, not claimed as sealed application files.
 
-The emulator tag is resolved to a repository digest once, reused across all
-cells and recorded alongside the actual container image ID. Main runs before
+The `image` input is a pinned emulator repository digest, reused across all
+cells and recorded alongside the actual container image ID. Equal baseline
+and candidate pins are allowed for explicit A/A repetitions; `runtimeSlot`
+distinguishes those slots without inventing different source identities.
+Main runs before
 candidate; default cells are the paired 25:8 puts through proxy/direct. These
 short serial observations remain susceptible to order/emulator variation.
 For an order-effect investigation, explicitly dispatch with the two source
@@ -196,11 +215,9 @@ provided bounded emulator observations, not statistical CPU-bottleneck proof.
 Its small delete/mixed cells exhausted inventory early; they are short-burst
 correctness evidence, not sustained capacity.
 
-This increment provides paired execution and stage/process attribution,
-not closure of all #1024 acceptance. Broader staged matrix evidence, separate
-transport retry/backoff attribution, window resource sampling and a reviewed
-interpretation of the paired campaign remain before selecting a production
-optimization. It changes no batch concurrency, behavior, thresholds or
+The [campaign report](batch-write-campaign.md) reconciles staged matrix and
+window sampling evidence against #1024 and records remaining unavailable
+transport timings explicitly. It changes no batch concurrency, behavior, thresholds or
 qualification authority. Do not compare unrelated historical runs as a
 controlled A/B or claim #519 established an irreducible optimized floor.
 Real-Azure experiments require separate, finite authorization and cleanup.
