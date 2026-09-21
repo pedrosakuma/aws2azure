@@ -7,10 +7,16 @@ on:
         description: 'Up to four size:concurrency:put|delete|mixed:shared|distinct:proxy|direct cells, separated by spaces'
         required: true
         default: '25:8:put:distinct:proxy 25:8:put:distinct:direct'
+      baseline:
+        description: 'Baseline source revision, resolved once before publishing'
+        required: true
+        default: 'origin/main'
   pull_request:
     paths:
       - 'tests/Aws2Azure.PerfTests/DynamoDb/BatchWriteExperiment*.cs'
       - '.github/workflows/batch-write-experiment.yml'
+      - 'eng/publish-batch-runtime.sh'
+      - 'src/Aws2Azure.Modules.DynamoDb/Operations/BatchWrite*.cs'
 
 permissions:
   contents: read
@@ -22,15 +28,27 @@ concurrency:
 jobs:
   diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/dotnet-setup
       - name: Build before measurement
-        run: dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
+        env:
+          BASELINE: ${{ inputs.baseline || 'origin/main' }}
+        run: |
+          set -euo pipefail
+          dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
+          bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
+          bash eng/publish-batch-runtime.sh HEAD artifacts/batch-runtimes/candidate
+          docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+          image="$(docker image inspect --format '{{index .RepoDigests 0}}' mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview)"
+          echo "AWS2AZURE_BATCH_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Record host and run serial cells
         env:
-          SELECTED_CELLS: ${{ inputs.cells || '1:1:delete:shared:proxy 5:2:mixed:distinct:direct 25:8:put:distinct:proxy 25:8:put:distinct:direct' }}
+          SELECTED_CELLS: ${{ inputs.cells || '25:8:put:distinct:proxy 25:8:put:distinct:direct' }}
           AWS2AZURE_BATCH_EXPERIMENT: '1'
           AWS2AZURE_BATCH_EXCLUSIVE_HOST: '1'
           AWS2AZURE_BATCH_OUTPUT: ${{ github.workspace }}/artifacts/batch-write
@@ -46,17 +64,27 @@ jobs:
             echo "::error::Select between one and four cells."
             exit 1
           fi
-          for cell in "${cells[@]}"; do
-            ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-${cell//:/-}.txt"
-            AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
-              -c Release --no-build --nologo \
-              --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'
+          for runtime in main candidate; do
+            export AWS2AZURE_BATCH_RUNTIME="$GITHUB_WORKSPACE/artifacts/batch-runtimes/$runtime"
+            for cell in "${cells[@]}"; do
+              label="$runtime-${cell//:/-}"
+              ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-$label.txt"
+              docker ps --no-trunc > "$AWS2AZURE_BATCH_OUTPUT/containers-$label.txt"
+              cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-before-$label.txt"
+              AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
+                -c Release --no-build --nologo \
+                --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'
+              cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-after-$label.txt"
+            done
           done
       - name: Upload diagnostics, including failures
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: batch-write-diagnostic
-          path: artifacts/batch-write
+          path: |
+            artifacts/batch-write
+            artifacts/batch-runtimes/*/runtime-identity.json
+            artifacts/batch-runtimes/*/build-dotnet-info.txt
           if-no-files-found: warn
           retention-days: 30

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.Model;
@@ -45,11 +44,12 @@ public sealed class BatchWriteExperimentTests
         var reportPath = Path.Combine(output, $"{Guid.NewGuid():N}.json");
         var root = FindRoot();
         var source = await CommandAsync("git", ["rev-parse", "HEAD"], root);
-        var trackedChanges = await CommandAsync("git", ["status", "--porcelain", "--", "src"], root);
-        if (!string.IsNullOrWhiteSpace(trackedChanges))
-            throw new InvalidOperationException("Commit shipping source changes before recording a runtime identity.");
+        var runtimeDirectory = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_RUNTIME")
+            ?? throw new ArgumentException("AWS2AZURE_BATCH_RUNTIME must identify a source-pinned published runtime.");
+        var runtimeIdentity = BatchWriteRuntime.Verify(runtimeDirectory);
 
-        var container = new ContainerBuilder(Image)
+        var image = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_IMAGE") ?? Image;
+        var container = new ContainerBuilder(image)
             .WithPortBinding(8081, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("System is now fully ready to accept requests"))
             .Build();
@@ -63,8 +63,9 @@ public sealed class BatchWriteExperimentTests
         var measurementStarted = false;
         string? failure = null;
         string? imageId = null;
-        string? runtimeDigest = null;
         RuntimeMemorySnapshot? memoryBefore = null, memoryAfter = null;
+        BatchWriteProcessSample? proxyBefore = null, proxyAfter = null, driverBefore = null, driverAfter = null;
+        Dictionary<string, double>? stagesBefore = null, stagesAfter = null;
         object? rest = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
@@ -87,9 +88,8 @@ public sealed class BatchWriteExperimentTests
                   }]
                 }
                 """;
-            await proxy.StartAsync(config, TimeSpan.FromMinutes(2));
-            var runtimePath = Path.Combine(root, "src/Aws2Azure.Proxy/bin/Release/net10.0");
-            runtimeDigest = RuntimeDigest(runtimePath);
+            await proxy.StartAsync(config, TimeSpan.FromMinutes(2),
+                Path.Combine(runtimeDirectory, "app", runtimeIdentity.Executable), batchDiagnostics: true);
             using var aws = new AmazonDynamoDBClient("AKIA-BATCH-EXPERIMENT", "batch-experiment", new AmazonDynamoDBConfig
             {
                 ServiceURL = proxy.ServiceUrlForHost("dynamodb"), AuthenticationRegion = "us-east-1",
@@ -150,6 +150,9 @@ public sealed class BatchWriteExperimentTests
             warmupSeconds = warmup.Elapsed.TotalSeconds;
             using var memory = proxy.CreateMemoryProbe();
             memoryBefore = await memory.SampleAsync(setupDeadline.Token);
+            stagesBefore = await BatchWriteStageTelemetry.ScrapeAsync(proxy.ServiceUrl);
+            proxyBefore = BatchWriteProcessSample.Capture(proxy.ProcessId);
+            driverBefore = BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true);
             relay.Begin();
             measurementStarted = true;
             clock.Start();
@@ -178,6 +181,9 @@ public sealed class BatchWriteExperimentTests
             clock.Stop();
             dispatchSeconds = Math.Min(clock.Elapsed.TotalSeconds, BatchWriteExperimentPlan.DispatchDuration.TotalSeconds);
             rest = relay.End();
+            proxyAfter = BatchWriteProcessSample.Capture(proxy.ProcessId);
+            driverAfter = BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true);
+            stagesAfter = await BatchWriteStageTelemetry.ScrapeAsync(proxy.ServiceUrl);
             memoryAfter = await memory.SampleAsync();
         }
         catch (Exception ex)
@@ -207,8 +213,9 @@ public sealed class BatchWriteExperimentTests
                 await using var file = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 await JsonSerializer.SerializeAsync(file, new
                 {
-                    schemaVersion = 1, reportOnly = true, promotable = false, plan, source,
-                    capturedAtUtc = DateTimeOffset.UtcNow, runtimeDigest, imageTag = Image, imageId,
+                    schemaVersion = 2, reportOnly = true, promotable = false, plan, harnessSource = source,
+                    runtimeIdentity,
+                    capturedAtUtc = DateTimeOffset.UtcNow, imageTag = image, imageId,
                     backend = "exclusive disposable local Cosmos emulator; no Azure capacity claim",
                     host = new { Environment.ProcessorCount, os = Environment.OSVersion.ToString(), runtime = Environment.Version.ToString() },
                     isolation = "Exclusive-host operator acknowledgement plus nonparallel xUnit collection; not proof of absence of external host processes.",
@@ -218,11 +225,18 @@ public sealed class BatchWriteExperimentTests
                     cleanupSeconds, cleanupComplete, failure,
                     measurement = clock.Elapsed.TotalSeconds > 0 ? accounting.Snapshot(clock.Elapsed.TotalSeconds) : null,
                     rest, proxyMemoryBefore = memoryBefore, proxyMemoryAfter = memoryAfter,
+                    proxyProcess = BatchWriteProcessSample.Delta(proxyBefore, proxyAfter),
+                    driverProcess = BatchWriteProcessSample.Delta(driverBefore, driverAfter),
+                    proxyAllocatedBytes = memoryAfter?.AllocatedBytesTotal - memoryBefore?.AllocatedBytesTotal,
+                    proxyGen2Collections = memoryAfter?.Gen2Collections - memoryBefore?.Gen2Collections,
+                    stages = plan.Route == "proxy" ? BatchWriteStageTelemetry.Delta(stagesBefore, stagesAfter) : null,
+                    resourceScope = "Process-wide bracketed deltas: proxy PID; driver PID includes SDK/direct transport, relay, xUnit and diagnostics. No backend attribution. Working sets are endpoints; peak is process-lifetime, not window peak.",
+                    itemLatencyScope = "Caller-visible item acknowledgement from entry to initial submission loop through the response confirming the item. Includes SDK serialization, all earlier submissions and backoff; items acknowledged together share a timestamp. Not backend individual completion time.",
                     unavailable = new[]
                     {
-                        "Internal proxy parsing/serialization duration and semaphore wait are not instrumented; do not infer by subtracting percentiles.",
-                        "Per-item end-to-end completion latency is unavailable; REST attempt latency is not that metric.",
-                        "Proxy CPU, peak memory and backend CPU/RU saturation attribution are unavailable; memory snapshots are endpoints only.",
+                        "Stage times are wall time, not CPU attribution; overlapping item sums are not request latency. Missing baseline stages remain null. No percentile subtraction.",
+                        "Backend CPU/allocation, window peak memory, CPU stacks and causal resource-saturation attribution are unavailable.",
+                        "Internal transport retry/backoff duration is not separately instrumented; repeated REST attempts and caller resubmission backoff are observed.",
                         "Direct REST uses the same Cosmos transport/encoder and per-batch limit 10, not an independent implementation or SDK baseline.",
                     },
                 }, JsonOptions);
@@ -263,18 +277,6 @@ public sealed class BatchWriteExperimentTests
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "aws2azure.slnx")))
             directory = directory.Parent;
         return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
-    }
-
-    private static string RuntimeDigest(string directory)
-    {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var path in Directory.EnumerateFiles(directory).Where(x => x.EndsWith(".dll", StringComparison.Ordinal)
-            || x.EndsWith(".json", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
-        {
-            hash.AppendData(System.Text.Encoding.UTF8.GetBytes(Path.GetFileName(path) + "\n"));
-            hash.AppendData(SHA256.HashData(File.ReadAllBytes(path)));
-        }
-        return "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static async Task<string> CommandAsync(string file, string[] arguments, string directory)
