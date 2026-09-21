@@ -91,6 +91,17 @@ internal sealed class BatchWriteExperimentAccounting
     private readonly List<double> _itemLatencies = new(BatchWriteExperimentPlan.MaxBatches * 25);
     private int _started, _completed, _failed, _items, _submissions, _resubmittedItems, _unprocessed;
     private double _backoffMs;
+    private int _initialRequests, _resubmissionRequests;
+
+    public void Attempt(bool retry)
+    {
+        lock (_gate)
+        {
+            if (_initialRequests + _resubmissionRequests >= BatchWriteExperimentPlan.MaxBatches * BatchWriteExperimentPlan.MaxSubmissions)
+                throw new InvalidOperationException("Submission attempt budget exhausted.");
+            if (retry) _resubmissionRequests++; else _initialRequests++;
+        }
+    }
 
     public void Started()
     {
@@ -148,6 +159,8 @@ internal sealed class BatchWriteExperimentAccounting
             startedBatches = _started, completedBatches = _completed, failedBatches = _failed,
             unresolvedBatches = _started - _completed - _failed,
             acknowledgedItems = _items, submissions = _submissions, resubmittedItems = _resubmittedItems,
+            initialRequests = _initialRequests, resubmissionRequests = _resubmissionRequests,
+            requestsWithoutAcknowledgement = _initialRequests + _resubmissionRequests - _submissions,
             unprocessedItemOccurrences = _unprocessed, cumulativeBackoffMs = _backoffMs,
             settledSeconds = seconds, batchesPerSecond = _completed / seconds,
             acknowledgedItemsPerSecond = _items / seconds,
@@ -175,6 +188,7 @@ internal sealed class BatchWriteExperimentAccounting
         if (allowed.Count != initial.Count) throw new InvalidOperationException("Duplicate inventory keys.");
         for (var attempt = 0; attempt < BatchWriteExperimentPlan.MaxSubmissions; attempt++)
         {
+            accounting.Attempt(attempt != 0);
             var remaining = await submit(pending, ct);
             var returned = remaining.Select(BatchWriteExperimentItem.Identity).ToHashSet(StringComparer.Ordinal);
             if (returned.Count != remaining.Count || !returned.IsSubsetOf(allowed))

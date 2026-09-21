@@ -4,13 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       cells:
-        description: 'Up to four size:concurrency:put|delete|mixed:shared|distinct:proxy|direct cells, separated by spaces'
+        description: 'Up to sixteen staged size:concurrency:put|delete|mixed:shared|distinct:proxy|direct cells, separated by spaces'
         required: true
         default: '25:8:put:distinct:proxy 25:8:put:distinct:direct'
       baseline:
         description: 'Baseline source revision, resolved once before publishing'
         required: true
         default: 'origin/main'
+      candidate:
+        description: 'Candidate source revision (empty uses harness HEAD; equal pins give explicit A/A repetitions)'
+        required: false
+      image:
+        description: 'Pinned Cosmos emulator repository digest'
+        required: true
+        default: 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:2db1f9e74c506bcf6fc347aa937aea1c00fa756061296a5a9efba530ce86ec02'
   pull_request:
     paths:
       - 'tests/Aws2Azure.PerfTests/DynamoDb/BatchWriteExperiment*.cs'
@@ -38,14 +45,19 @@ jobs:
       - name: Build before measurement
         env:
           BASELINE: ${{ inputs.baseline || 'origin/main' }}
+          CANDIDATE: ${{ inputs.candidate || 'HEAD' }}
+          EMULATOR_IMAGE: ${{ inputs.image || 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:2db1f9e74c506bcf6fc347aa937aea1c00fa756061296a5a9efba530ce86ec02' }}
         run: |
           set -euo pipefail
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
           bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
-          bash eng/publish-batch-runtime.sh HEAD artifacts/batch-runtimes/candidate
-          docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
-          image="$(docker image inspect --format '{{index .RepoDigests 0}}' mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview)"
-          echo "AWS2AZURE_BATCH_IMAGE=$image" >> "$GITHUB_ENV"
+          bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate
+          if [[ ! "$EMULATOR_IMAGE" =~ ^mcr[.]microsoft[.]com/cosmosdb/linux/azure-cosmos-emulator@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Select a pinned Cosmos emulator repository digest."
+            exit 1
+          fi
+          docker pull "$EMULATOR_IMAGE"
+          echo "AWS2AZURE_BATCH_IMAGE=$EMULATOR_IMAGE" >> "$GITHUB_ENV"
       - name: Record host and run serial cells
         env:
           SELECTED_CELLS: ${{ inputs.cells || '25:8:put:distinct:proxy 25:8:put:distinct:direct' }}
@@ -60,8 +72,8 @@ jobs:
           lscpu > "$AWS2AZURE_BATCH_OUTPUT/cpu.txt"
           git rev-parse HEAD > "$AWS2AZURE_BATCH_OUTPUT/source.txt"
           read -r -a cells <<< "$SELECTED_CELLS"
-          if (( ${#cells[@]} < 1 || ${#cells[@]} > 4 )); then
-            echo "::error::Select between one and four cells."
+          if (( ${#cells[@]} < 1 || ${#cells[@]} > 16 )); then
+            echo "::error::Select between one and sixteen staged cells."
             exit 1
           fi
           for runtime in main candidate; do
@@ -71,7 +83,7 @@ jobs:
               ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-$label.txt"
               docker ps --no-trunc > "$AWS2AZURE_BATCH_OUTPUT/containers-$label.txt"
               cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-before-$label.txt"
-              AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
+              AWS2AZURE_BATCH_SLOT="$runtime" AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
                 -c Release --no-build --nologo \
                 --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'
               cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-after-$label.txt"

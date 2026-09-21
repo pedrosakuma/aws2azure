@@ -66,6 +66,7 @@ public sealed class BatchWriteExperimentTests
         RuntimeMemorySnapshot? memoryBefore = null, memoryAfter = null;
         BatchWriteProcessSample? proxyBefore = null, proxyAfter = null, driverBefore = null, driverAfter = null;
         Dictionary<string, double>? stagesBefore = null, stagesAfter = null;
+        BatchWriteResourceWindow? resourceWindow = null;
         object? rest = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
@@ -156,6 +157,8 @@ public sealed class BatchWriteExperimentTests
             relay.Begin();
             measurementStarted = true;
             clock.Start();
+            resourceWindow = new(proxy.ProcessId);
+            resourceWindow.Start();
             using var measuredDeadline = new CancellationTokenSource(BatchWriteExperimentPlan.DispatchDuration + BatchWriteExperimentPlan.DrainTimeout);
             var reserved = 0;
             var workers = Enumerable.Range(0, plan.Concurrency).Select(async _ =>
@@ -181,6 +184,7 @@ public sealed class BatchWriteExperimentTests
             clock.Stop();
             dispatchSeconds = Math.Min(clock.Elapsed.TotalSeconds, BatchWriteExperimentPlan.DispatchDuration.TotalSeconds);
             rest = relay.End();
+            await resourceWindow.StopAsync();
             proxyAfter = BatchWriteProcessSample.Capture(proxy.ProcessId);
             driverAfter = BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true);
             stagesAfter = await BatchWriteStageTelemetry.ScrapeAsync(proxy.ServiceUrl);
@@ -196,6 +200,7 @@ public sealed class BatchWriteExperimentTests
             clock.Stop();
             setup.Stop();
             if (measurementStarted && rest is null) rest = relay.End();
+            if (resourceWindow is not null) await resourceWindow.DisposeAsync();
             var cleanup = Stopwatch.StartNew();
             try
             {
@@ -214,6 +219,7 @@ public sealed class BatchWriteExperimentTests
                 await JsonSerializer.SerializeAsync(file, new
                 {
                     schemaVersion = 2, reportOnly = true, promotable = false, plan, harnessSource = source,
+                    runtimeSlot = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_SLOT"),
                     runtimeIdentity,
                     capturedAtUtc = DateTimeOffset.UtcNow, imageTag = image, imageId,
                     backend = "exclusive disposable local Cosmos emulator; no Azure capacity claim",
@@ -227,6 +233,7 @@ public sealed class BatchWriteExperimentTests
                     rest, proxyMemoryBefore = memoryBefore, proxyMemoryAfter = memoryAfter,
                     proxyProcess = BatchWriteProcessSample.Delta(proxyBefore, proxyAfter),
                     driverProcess = BatchWriteProcessSample.Delta(driverBefore, driverAfter),
+                    resourcesDuringWindow = resourceWindow?.Snapshot(),
                     proxyAllocatedBytes = memoryAfter?.AllocatedBytesTotal - memoryBefore?.AllocatedBytesTotal,
                     proxyGen2Collections = memoryAfter?.Gen2Collections - memoryBefore?.Gen2Collections,
                     stages = plan.Route == "proxy" ? BatchWriteStageTelemetry.Delta(stagesBefore, stagesAfter) : null,
@@ -235,7 +242,7 @@ public sealed class BatchWriteExperimentTests
                     unavailable = new[]
                     {
                         "Stage times are wall time, not CPU attribution; overlapping item sums are not request latency. Missing baseline stages remain null. No percentile subtraction.",
-                        "Backend CPU/allocation, window peak memory, CPU stacks and causal resource-saturation attribution are unavailable.",
+                        "Backend CPU/allocation, true window peak memory, CPU stacks and causal resource-saturation attribution are unavailable; periodic process samples can miss peaks.",
                         "Internal transport retry/backoff duration is not separately instrumented; repeated REST attempts and caller resubmission backoff are observed.",
                         "Direct REST uses the same Cosmos transport/encoder and per-batch limit 10, not an independent implementation or SDK baseline.",
                     },

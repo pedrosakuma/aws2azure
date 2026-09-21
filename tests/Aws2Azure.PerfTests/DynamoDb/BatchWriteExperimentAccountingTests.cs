@@ -68,6 +68,9 @@ public sealed class BatchWriteExperimentAccountingTests
         var root = report.RootElement;
         Assert.Equal(5, root.GetProperty("acknowledgedItems").GetInt32());
         Assert.Equal(2, root.GetProperty("submissions").GetInt32());
+        Assert.Equal(1, root.GetProperty("initialRequests").GetInt32());
+        Assert.Equal(1, root.GetProperty("resubmissionRequests").GetInt32());
+        Assert.Equal(0, root.GetProperty("requestsWithoutAcknowledgement").GetInt32());
         Assert.Equal(2, root.GetProperty("resubmittedItems").GetInt32());
         Assert.Equal(2, root.GetProperty("unprocessedItemOccurrences").GetInt32());
         Assert.Equal(2.5, root.GetProperty("acknowledgedItemsPerSecond").GetDouble());
@@ -110,8 +113,12 @@ public sealed class BatchWriteExperimentAccountingTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var items = new List<WriteRequest> { new BatchWriteExperimentItem("p", "i", false).Write() };
+        var accounting = new BatchWriteExperimentAccounting();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BatchWriteExperimentAccounting.DrainAsync(
-            items, (_, ct) => Task.FromCanceled<List<WriteRequest>>(ct), new(), cancellation.Token));
+            items, (_, ct) => Task.FromCanceled<List<WriteRequest>>(ct), accounting, cancellation.Token));
+        using var report = JsonDocument.Parse(JsonSerializer.Serialize(accounting.Snapshot(1)));
+        Assert.Equal(1, report.RootElement.GetProperty("initialRequests").GetInt32());
+        Assert.Equal(1, report.RootElement.GetProperty("requestsWithoutAcknowledgement").GetInt32());
         Assert.Throws<ArgumentOutOfRangeException>(() => new BatchWriteExperimentAccounting().Snapshot(0));
     }
 
@@ -122,6 +129,7 @@ public sealed class BatchWriteExperimentAccountingTests
         Parallel.For(0, 128, _ =>
         {
             accounting.Started();
+            accounting.Attempt(false);
             accounting.Submission(25, 0, false);
             accounting.Settled(1, false);
         });

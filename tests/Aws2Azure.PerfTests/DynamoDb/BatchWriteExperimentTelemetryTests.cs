@@ -6,6 +6,33 @@ namespace Aws2Azure.PerfTests.DynamoDb;
 public sealed class BatchWriteExperimentTelemetryTests
 {
     [Fact]
+    public async Task Resource_samples_are_bounded_ordered_and_report_observed_not_lifetime_peaks()
+    {
+        await using var window = new BatchWriteResourceWindow(Environment.ProcessId);
+        var process = new BatchWriteProcessSample(DateTimeOffset.UnixEpoch, 0, 123, 9999, 1, null, null, null, null);
+        window.Add(new(0, process, process));
+        Assert.Throws<ArgumentException>(() => window.Add(new(0, process, process)));
+        Assert.Throws<ArgumentException>(() => window.Add(new(double.NaN, process, process)));
+        for (var i = 1; i < BatchWriteResourceWindow.MaxSamples; i++)
+            window.Add(new(i * .25, process with { WorkingSetBytes = 456 }, process));
+        window.Add(new(40, process, process));
+        using var report = JsonDocument.Parse(JsonSerializer.Serialize(window.Snapshot()));
+        Assert.Equal(160, report.RootElement.GetProperty("sampleCount").GetInt32());
+        Assert.Equal(1, report.RootElement.GetProperty("droppedSamples").GetInt32());
+        Assert.Equal(456, report.RootElement.GetProperty("maxObservedProxyWorkingSetBytes").GetInt64());
+        Assert.Equal(123, report.RootElement.GetProperty("maxObservedDriverWorkingSetBytes").GetInt64());
+    }
+
+    [Fact]
+    public async Task Empty_resource_window_reports_missing_not_zero()
+    {
+        await using var window = new BatchWriteResourceWindow(Environment.ProcessId);
+        using var report = JsonDocument.Parse(JsonSerializer.Serialize(window.Snapshot()));
+        Assert.Equal(0, report.RootElement.GetProperty("sampleCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, report.RootElement.GetProperty("maxObservedProxyWorkingSetBytes").ValueKind);
+    }
+
+    [Fact]
     public void Stage_deltas_are_counts_and_sums_not_subtracted_percentiles()
     {
         var before = BatchWriteStageTelemetry.Parse("""
