@@ -1,0 +1,62 @@
+name: batch-write-experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      cells:
+        description: 'Up to four size:concurrency:put|delete|mixed:shared|distinct:proxy|direct cells, separated by spaces'
+        required: true
+        default: '25:8:put:distinct:proxy 25:8:put:distinct:direct'
+  pull_request:
+    paths:
+      - 'tests/Aws2Azure.PerfTests/DynamoDb/BatchWriteExperiment*.cs'
+      - '.github/workflows/batch-write-experiment.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: batch-write-experiment-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: ./.github/actions/dotnet-setup
+      - name: Build before measurement
+        run: dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
+      - name: Record host and run serial cells
+        env:
+          SELECTED_CELLS: ${{ inputs.cells || '1:1:delete:shared:proxy 5:2:mixed:distinct:direct 25:8:put:distinct:proxy 25:8:put:distinct:direct' }}
+          AWS2AZURE_BATCH_EXPERIMENT: '1'
+          AWS2AZURE_BATCH_EXCLUSIVE_HOST: '1'
+          AWS2AZURE_BATCH_OUTPUT: ${{ github.workspace }}/artifacts/batch-write
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$AWS2AZURE_BATCH_OUTPUT"
+          docker info > "$AWS2AZURE_BATCH_OUTPUT/docker-info.txt"
+          lscpu > "$AWS2AZURE_BATCH_OUTPUT/cpu.txt"
+          git rev-parse HEAD > "$AWS2AZURE_BATCH_OUTPUT/source.txt"
+          read -r -a cells <<< "$SELECTED_CELLS"
+          if (( ${#cells[@]} < 1 || ${#cells[@]} > 4 )); then
+            echo "::error::Select between one and four cells."
+            exit 1
+          fi
+          for cell in "${cells[@]}"; do
+            ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-${cell//:/-}.txt"
+            AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
+              -c Release --no-build --nologo \
+              --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'
+          done
+      - name: Upload diagnostics, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: batch-write-diagnostic
+          path: artifacts/batch-write
+          if-no-files-found: warn
+          retention-days: 30
