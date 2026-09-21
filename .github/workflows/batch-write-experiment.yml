@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       cells:
-        description: 'Up to sixteen staged size:concurrency:put|delete|mixed:shared|distinct:proxy|direct cells, separated by spaces'
+        description: 'Up to sixteen size:concurrency:put|delete|mixed:shared|distinct:proxy|direct[:256|8192] cells'
         required: true
         default: '25:8:put:distinct:proxy 25:8:put:distinct:direct'
       baseline:
@@ -19,6 +19,15 @@ on:
         type: choice
         options: [both, main, candidate, balanced]
         default: both
+      build_mode:
+        description: 'Same explicit compilation mode for both pinned runtimes'
+        type: choice
+        options: [self-contained-jit, native-aot]
+        default: self-contained-jit
+      observe_idle:
+        description: 'Add one post-window five-second idle resource snapshot, outside decision timing'
+        type: boolean
+        default: false
       purpose:
         description: 'Label observations without changing success/failure handling'
         type: choice
@@ -49,6 +58,7 @@ jobs:
     env:
       RUNTIME_SLOTS: ${{ inputs.runtime_slots || 'both' }}
       AWS2AZURE_BATCH_PURPOSE: ${{ inputs.purpose || 'standard' }}
+      AWS2AZURE_BATCH_OBSERVE_IDLE: ${{ inputs.observe_idle && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
@@ -59,16 +69,17 @@ jobs:
         env:
           BASELINE: ${{ inputs.baseline || 'origin/main' }}
           CANDIDATE: ${{ inputs.candidate || 'HEAD' }}
+          BUILD_MODE: ${{ inputs.build_mode || 'self-contained-jit' }}
           EMULATOR_IMAGE: ${{ inputs.image || 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:2db1f9e74c506bcf6fc347aa937aea1c00fa756061296a5a9efba530ce86ec02' }}
         run: |
           set -euo pipefail
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
           case "$RUNTIME_SLOTS" in both|main|candidate|balanced) ;; *) exit 1 ;; esac
           if [[ "$RUNTIME_SLOTS" != candidate ]]; then
-            bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
+            bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main "$BUILD_MODE"
           fi
           if [[ "$RUNTIME_SLOTS" != main ]]; then
-            bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate
+            bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate "$BUILD_MODE"
           fi
           if [[ ! "$EMULATOR_IMAGE" =~ ^mcr[.]microsoft[.]com/cosmosdb/linux/azure-cosmos-emulator@sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Select a pinned Cosmos emulator repository digest."

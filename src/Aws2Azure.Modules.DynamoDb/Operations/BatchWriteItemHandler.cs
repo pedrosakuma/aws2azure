@@ -57,7 +57,7 @@ internal static class BatchWriteItemHandler
             return;
         }
 
-        var work = new List<WriteWorkUnit>();
+        using var work = new WriteWorkList();
         // De-dup guard across the whole batch — DDB rejects multiple
         // writes targeting the same (table, key) pair in one call.
         var seenKeys = new HashSet<(string Table, string Pk, string Id)>();
@@ -190,23 +190,26 @@ internal static class BatchWriteItemHandler
                             return;
                         }
                     }
-                    // Batch units are built upfront and live across all
-                    // parallel sends, so a GC-managed byte[] (leak-safe on
-                    // every early-return path) is preferred over a pooled
-                    // buffer here. Still removes the string / StringContent
-                    // re-encode the previous BuildItemDocument path incurred.
-                    byte[] doc;
+                    ItemHandlers.ItemDocumentBody doc;
                     using (BatchWriteDiagnostics.Measure("document_encode"))
                     {
                         int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
                             itemEl, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                         var orderKeys = SecondaryIndexOrderKeys.Compute(meta, itemEl);
-                        doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds, orderKeys);
+                        doc = ItemHandlers.ItemDocumentBody.Create(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds, orderKeys);
                     }
                     // Keep only the envelope's byte range for any UnprocessedItems
                     // echo (sliced from the request buffer on demand), not a
                     // retained DOM clone.
-                    work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entryRange));
+                    try
+                    {
+                        work.Add(new WriteWorkUnit(tableName, pk, id, WriteKind.Put, doc, entryRange));
+                    }
+                    catch
+                    {
+                        doc.Dispose();
+                        throw;
+                    }
                 }
                 else
                 {
@@ -259,6 +262,7 @@ internal static class BatchWriteItemHandler
             }
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
+        work.Dispose();
 
         // Always initialise so the JSON field is emitted as `{}` when nothing was
         // throttled — real AWS DynamoDB always includes UnprocessedItems as an object
@@ -323,7 +327,7 @@ internal static class BatchWriteItemHandler
                 };
                 resp = await cosmos.SendAsync(
                     HttpMethod.Post, "docs", collLink, "/" + collLink + "/docs",
-                    unit.Doc!, "application/json", headers, ct).ConfigureAwait(false);
+                    unit.Doc!.Value.Memory, "application/json", headers, ct).ConfigureAwait(false);
             }
             else
             {
@@ -395,7 +399,19 @@ internal static class BatchWriteItemHandler
 
     private sealed record WriteWorkUnit(
         string Table, string Pk, string Id, WriteKind Kind,
-        byte[]? Doc, JsonRange OriginalEntryRange);
+        ItemHandlers.ItemDocumentBody? Doc, JsonRange OriginalEntryRange);
+
+    private sealed class WriteWorkList : List<WriteWorkUnit>, IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            foreach (var unit in this) unit.Doc?.Dispose();
+        }
+    }
 
     private readonly record struct WriteResult(bool Throttled, HardError? HardError);
 

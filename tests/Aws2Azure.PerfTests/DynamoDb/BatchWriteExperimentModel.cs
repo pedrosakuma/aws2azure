@@ -5,7 +5,7 @@ using Aws2Azure.Modules.DynamoDb.Operations;
 
 namespace Aws2Azure.PerfTests.DynamoDb;
 
-internal sealed record BatchWriteExperimentPlan(int BatchSize, int Concurrency, string Kind, string Partitions, string Route)
+internal sealed record BatchWriteExperimentPlan(int BatchSize, int Concurrency, string Kind, string Partitions, string Route, int PayloadBytes = 256)
 {
     public const int MaxBatches = 128;
     public const int WarmupBatches = 4;
@@ -23,14 +23,16 @@ internal sealed record BatchWriteExperimentPlan(int BatchSize, int Concurrency, 
     public static BatchWriteExperimentPlan Parse(string? selection)
     {
         var parts = selection?.Split(':');
-        if (parts is not { Length: 5 }
+        var payloadBytes = 256;
+        if (parts is not { Length: 5 or 6 }
             || !int.TryParse(parts[0], out var size) || size is not (1 or 5 or 10 or 25)
             || !int.TryParse(parts[1], out var concurrency) || concurrency is not (1 or 2 or 5 or 8)
             || parts[2] is not ("put" or "delete" or "mixed")
             || parts[3] is not ("shared" or "distinct")
-            || parts[4] is not ("proxy" or "direct"))
-            throw new ArgumentException("Select size:concurrency:put|delete|mixed:shared|distinct:proxy|direct.");
-        return new(size, concurrency, parts[2], parts[3], parts[4]);
+            || parts[4] is not ("proxy" or "direct")
+            || (parts.Length == 6 && (!int.TryParse(parts[5], out payloadBytes) || payloadBytes is not (256 or 8192))))
+            throw new ArgumentException("Select size:concurrency:put|delete|mixed:shared|distinct:proxy|direct[:256|8192].");
+        return new(size, concurrency, parts[2], parts[3], parts[4], payloadBytes);
     }
 
     public BatchWriteExperimentItem[] Items(int batch)
@@ -42,12 +44,12 @@ internal sealed record BatchWriteExperimentPlan(int BatchSize, int Concurrency, 
             var id = $"b{batch:D3}i{index:D2}";
             var pk = Partitions == "shared" ? "partition" : id;
             var delete = Kind == "delete" || (Kind == "mixed" && index % 2 == 0);
-            return new BatchWriteExperimentItem(pk, id, delete);
+            return new BatchWriteExperimentItem(pk, id, delete, PayloadBytes);
         }).ToArray();
     }
 }
 
-internal sealed record BatchWriteExperimentItem(string Pk, string Id, bool Delete)
+internal sealed record BatchWriteExperimentItem(string Pk, string Id, bool Delete, int PayloadBytes = 256)
 {
     public string CosmosPk => Encode(Pk);
     public string CosmosId => Encode(Id);
@@ -70,7 +72,7 @@ internal sealed record BatchWriteExperimentItem(string Pk, string Id, bool Delet
     {
         if (Delete) return new WriteRequest { DeleteRequest = new DeleteRequest { Key = Key() } };
         var item = Key();
-        item["payload"] = new() { S = new string('x', 256) };
+        item["payload"] = new() { S = new string('x', PayloadBytes) };
         return new WriteRequest { PutRequest = new PutRequest { Item = item } };
     }
 
@@ -78,7 +80,7 @@ internal sealed record BatchWriteExperimentItem(string Pk, string Id, bool Delet
     {
         using var item = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(new
         {
-            pk = new { S = Pk }, sk = new { S = Id }, payload = new { S = new string('x', 256) },
+            pk = new { S = Pk }, sk = new { S = Id }, payload = new { S = new string('x', PayloadBytes) },
         }));
         return ItemHandlers.BuildItemDocumentBytes(CosmosId, CosmosPk, item.RootElement);
     }

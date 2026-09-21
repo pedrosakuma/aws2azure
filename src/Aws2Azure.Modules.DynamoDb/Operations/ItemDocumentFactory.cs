@@ -22,10 +22,8 @@ internal static partial class ItemHandlers
 
     /// <summary>
     /// Builds the Cosmos doc shape as a UTF-8 <see cref="byte"/> array (no
-    /// <see cref="string"/> / <see cref="StringContent"/> re-encode). Used by
-    /// <c>BatchWriteItem</c>, where every unit's body is built upfront and held
-    /// live across parallel sends, so a GC-managed array is the leak-safe
-    /// representation.
+    /// <see cref="string"/> / <see cref="StringContent"/> re-encode). Retained
+    /// for tests and direct diagnostic references requiring an owned array.
     /// </summary>
     internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item)
         => BuildItemDocumentBytes(id, pk, item, binary: false);
@@ -33,9 +31,7 @@ internal static partial class ItemHandlers
     /// <summary>
     /// Builds the Cosmos doc shape as a UTF-8 <see cref="byte"/> array, choosing
     /// the CosmosBinary (<c>0x80</c>) encoding when <paramref name="binary"/> is
-    /// set (#336), else JSON text. Used by <c>BatchWriteItem</c>, where each
-    /// unit's standalone document body is built upfront and held live across
-    /// parallel sends, so a GC-managed array is the leak-safe representation.
+    /// set (#336), else JSON text. The returned array owns its bytes.
     /// Temporary encoder storage is returned before the owned array escapes.
     /// </summary>
     internal static byte[] BuildItemDocumentBytes(string id, string pk, JsonElement item, bool binary, int? ttlSeconds = null, OrderKeyField[]? orderKeys = null)

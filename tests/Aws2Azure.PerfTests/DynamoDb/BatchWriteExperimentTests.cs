@@ -39,6 +39,7 @@ public sealed class BatchWriteExperimentTests
             throw new ArgumentException("A host reserved for this experiment must be acknowledged.");
         var plan = BatchWriteExperimentPlan.Parse(Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_CELL"));
         var executionBlock = BatchWriteExperimentPlan.ParseExecutionBlock(Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_BLOCK"));
+        var observeIdle = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_OBSERVE_IDLE") == "1";
         var output = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_OUTPUT")
             ?? throw new ArgumentException("AWS2AZURE_BATCH_OUTPUT is required.");
         Directory.CreateDirectory(output);
@@ -73,6 +74,7 @@ public sealed class BatchWriteExperimentTests
         var finalSnapshotSeconds = 0.0;
         var incompleteOrFaultedObservation = false;
         object? rest = null;
+        object? postWindowIdle = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
         try
@@ -139,7 +141,8 @@ public sealed class BatchWriteExperimentTests
                 var results = await Task.WhenAll(pending.Select(async request =>
                 {
                     var attributes = request.DeleteRequest?.Key ?? request.PutRequest.Item;
-                    var item = new BatchWriteExperimentItem(attributes["pk"].S, attributes["sk"].S, request.DeleteRequest is not null);
+                    var item = new BatchWriteExperimentItem(attributes["pk"].S, attributes["sk"].S,
+                        request.DeleteRequest is not null, plan.PayloadBytes);
                     await limiter.WaitAsync(ct);
                     try { return await WriteDirectAsync(cosmos, item, ct) ? null : request; }
                     finally { limiter.Release(); }
@@ -215,6 +218,12 @@ public sealed class BatchWriteExperimentTests
                 memoryAfter = final.Memory;
                 snapshotFailures.AddRange(final.Unavailable);
                 finalSnapshotSeconds = snapshotClock.Elapsed.TotalSeconds;
+                if (observeIdle)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5));
+                    var idle = await BatchWriteFinalSnapshots.CaptureAsync(proxy.ProcessId, proxy.ServiceUrl);
+                    postWindowIdle = new { minimumIdleSeconds = 5, idle.Proxy, idle.Memory, idle.Unavailable };
+                }
             }
             if (resourceWindow is not null)
             {
@@ -257,6 +266,7 @@ public sealed class BatchWriteExperimentTests
                     proxyProcess = BatchWriteProcessSample.Delta(proxyBefore, proxyAfter),
                     driverProcess = BatchWriteProcessSample.Delta(driverBefore, driverAfter),
                     resourcesDuringWindow = resourceWindow?.Snapshot(),
+                    postWindowIdle,
                     proxyAllocatedBytes = memoryAfter?.AllocatedBytesTotal - memoryBefore?.AllocatedBytesTotal,
                     proxyGen2Collections = memoryAfter?.Gen2Collections - memoryBefore?.Gen2Collections,
                     stages = plan.Route == "proxy" ? BatchWriteStageTelemetry.Delta(stagesBefore, stagesAfter) : null,
