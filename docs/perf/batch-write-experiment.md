@@ -24,7 +24,11 @@ The five fields are batch size (`1`, `5`, `10`, `25`), external concurrency
 distribution (`shared`, `distinct`) and route (`proxy`, `direct`).
 Mixed cells alternate deletes and puts, starting with a delete; a one-item
 mixed cell is therefore a delete. Each item has a string partition key,
-string sort key and, for puts, a 256-character ASCII payload. Distinct
+string sort key and, for puts, a 256-character ASCII payload by default.
+An optional sixth cell component selects exactly `256` or `8192` ASCII payload
+bytes, for example `25:8:put:distinct:proxy:8192`. The direct reference and
+delete seed writes use the same selected payload. Existing five-part cells and
+the default 192-cell matrix are unchanged. Distinct
 distribution assigns a different partition to every item; shared
 distribution places all items in one partition with distinct sort keys.
 
@@ -156,6 +160,11 @@ both success and worker-failure paths, before process/relay/container shutdown.
 `snapshotFailures` explicitly records unavailable observations with safe
 categories; `relayIdleBeforeSnapshot=false` prevents claiming a drained observer.
 Snapshot work is bracketed diagnostic overhead, not extra measured throughput.
+Workflow `observe_idle=true` (or `AWS2AZURE_BATCH_OBSERVE_IDLE=1`) adds one
+`postWindowIdle` resource snapshot after at least five idle seconds and before
+shutdown. It is outside the measurement's latency, CPU/allocation and sampled
+peak brackets. No GC is forced; RSS/heap observations do not identify exactly
+which arrays remain cached in a shared pool. Absent opt-in, the field is null.
 
 The workflow `runtime_slots` input can select a single pinned slot for one
 authorized diagnostic reproduction. `balanced` runs `main`, `candidate`,
@@ -243,8 +252,12 @@ resubmission backoff. Zero terminal failures does not imply zero retries.
 ## Source-pinned paired execution
 
 `eng/publish-batch-runtime.sh` resolves a revision to a full commit, checks it
-out into a detached project-relative worktree, and publishes a self-contained
-Linux x64 **JIT** apphost (not Native AOT) before measurement. Its manifest
+out into a detached project-relative worktree, and publishes before measurement.
+The default is a self-contained Linux x64 **JIT** apphost, not Native AOT.
+Select the workflow's `build_mode=native-aot`, or pass `native-aot` as the
+publisher's third argument, to publish both pinned slots as Native AOT.
+The new manifest's `BuildMode` records that explicit choice; older manifests
+without the field remain mode-unreported, never inferred as AOT. It also
 records the commit and SHA-256 of every published file: executable, managed
 dependencies, native/runtime libraries and configuration. The harness verifies
 the exact file inventory and hashes before launching that executable directly.
