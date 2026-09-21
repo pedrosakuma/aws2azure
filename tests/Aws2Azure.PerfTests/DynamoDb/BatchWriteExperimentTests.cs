@@ -177,7 +177,7 @@ public sealed class BatchWriteExperimentTests
                 {
                     var line = await profiler.StandardOutput.ReadLineAsync(readyDeadline.Token);
                     if (line is null) throw new InvalidOperationException("Profiler exited before recording.");
-                    if (line.Contains("Recording trace", StringComparison.Ordinal)) break;
+                    if (line.StartsWith("Trace Duration :", StringComparison.Ordinal)) break;
                 }
             }
             using var memory = proxy.CreateMemoryProbe();
