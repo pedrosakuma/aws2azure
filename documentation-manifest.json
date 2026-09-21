@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:1158d41e3ca3f52ce11f032dba860a6579bfa0213407da65e2960883175290b7",
+  "manifest_revision": "sha256:be39679ed890b82471021449a4d6d2484746ca7ad1535f57100b7efa2496a4b7",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1444,13 +1444,25 @@
       }
     },
     {
+      "id": "documentation:docs-perf-batch-write-concurrency",
+      "path": "docs/perf/batch-write-concurrency.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:2af4d0b67fca7519a2c87eb81f750b25fa84b263f19d4db76cc304d2d02933da",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-perf-batch-write-experiment",
       "path": "docs/perf/batch-write-experiment.md",
       "type": "documentation-guide",
       "scope": "perf",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:5cd9e8ae3ee62722f56b43726668d238e7c34de7d665b63e04313b59fc8108ce",
+      "revision": "sha256:ccb18ef0759e37c92d3b7d76936d90be537fba0235c37a1b183c2b7141e5b179",
       "freshness": {
         "mode": "current"
       }

@@ -206,11 +206,15 @@ internal sealed class BatchWriteExperimentRelay : IAsyncDisposable
         }
     }
 
-    public object End()
+    public object End() => End(out _);
+
+    public object End(out bool incompleteOrFaulted)
     {
         lock (_gate)
         {
             _recording = false;
+            incompleteOrFaulted = _dropped != 0 || _writes.Active + _other.Active != 0
+                || _writes.Failed + _other.Failed + _writes.Cancelled + _other.Cancelled != 0;
             return new
             {
                 writeRestAttempts = _attempts, repeatedItemAttempts = _repeated, responses429 = _throttles,

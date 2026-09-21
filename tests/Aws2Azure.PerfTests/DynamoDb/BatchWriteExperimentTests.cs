@@ -38,6 +38,7 @@ public sealed class BatchWriteExperimentTests
         if (Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_EXCLUSIVE_HOST") != "1")
             throw new ArgumentException("A host reserved for this experiment must be acknowledged.");
         var plan = BatchWriteExperimentPlan.Parse(Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_CELL"));
+        var executionBlock = BatchWriteExperimentPlan.ParseExecutionBlock(Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_BLOCK"));
         var output = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_OUTPUT")
             ?? throw new ArgumentException("AWS2AZURE_BATCH_OUTPUT is required.");
         Directory.CreateDirectory(output);
@@ -70,6 +71,7 @@ public sealed class BatchWriteExperimentTests
         var snapshotFailures = new List<string>();
         bool? relayIdleBeforeSnapshot = null;
         var finalSnapshotSeconds = 0.0;
+        var incompleteOrFaultedObservation = false;
         object? rest = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
@@ -204,7 +206,8 @@ public sealed class BatchWriteExperimentTests
                     catch (Exception ex) { snapshotFailures.Add("window:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
                 }
                 relayIdleBeforeSnapshot = await relay.WaitForIdleAsync();
-                rest = relay.End();
+                rest = relay.End(out incompleteOrFaultedObservation);
+                if (incompleteOrFaultedObservation && failure is null) failure = "RelayObservationFailure";
                 var final = await BatchWriteFinalSnapshots.CaptureAsync(proxy.ProcessId, proxy.ServiceUrl);
                 proxyAfter = final.Proxy;
                 driverAfter = final.Driver;
@@ -237,6 +240,7 @@ public sealed class BatchWriteExperimentTests
                 {
                     schemaVersion = 3, reportOnly = true, promotable = false, plan, harnessSource = source,
                     runtimeSlot = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_SLOT"),
+                    executionBlock,
                     campaignPurpose = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_PURPOSE") ?? "standard",
                     runtimeIdentity,
                     capturedAtUtc = DateTimeOffset.UtcNow, imageTag = image, imageId,
@@ -268,6 +272,8 @@ public sealed class BatchWriteExperimentTests
                 }, JsonOptions);
             }
         }
+        if (incompleteOrFaultedObservation)
+            throw new InvalidOperationException("Relay observation was incomplete or faulted; the diagnostic report is not a clean measurement.");
     }
 
     private static async Task<bool> WriteDirectAsync(CosmosClient cosmos, BatchWriteExperimentItem item, CancellationToken ct)

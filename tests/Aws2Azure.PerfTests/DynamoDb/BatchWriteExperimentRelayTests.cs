@@ -196,6 +196,8 @@ public sealed class BatchWriteExperimentRelayTests
         Assert.Equal(2, Writes(report).GetProperty("arrived").GetInt32());
         Assert.Equal(1, Writes(report).GetProperty("repeatedDispatches").GetInt32());
         Assert.Equal(1, report.RootElement.GetProperty("boundaries").GetProperty("droppedArrivals").GetInt32());
+        bounded.End(out var incompleteOrFaulted);
+        Assert.True(incompleteOrFaulted);
         Assert.True(await bounded.WaitForIdleAsync());
     }
 
@@ -226,11 +228,15 @@ public sealed class BatchWriteExperimentRelayTests
         var forwarding = relay.ForwardAsync(Context(), Backend);
         using (var pending = Report(relay))
             Assert.Equal(1, Writes(pending).GetProperty("activeAtSnapshot").GetInt32());
+        relay.End(out var pendingIsIncomplete);
+        Assert.True(pendingIsIncomplete);
         response.SetResult(Response(200, new FaultContent()));
         await forwarding;
         using var complete = Report(relay);
         Assert.Equal(0, Writes(complete).GetProperty("activeAtSnapshot").GetInt32());
         Assert.Equal(1, Writes(complete).GetProperty("bodyCompleted").GetInt32());
+        relay.End(out var completedIsIncomplete);
+        Assert.False(completedIsIncomplete);
     }
 
     [Fact]

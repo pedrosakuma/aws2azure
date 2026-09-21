@@ -6,6 +6,20 @@ namespace Aws2Azure.PerfTests.DynamoDb;
 
 public sealed class BatchWriteExperimentAccountingTests
 {
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("1", 1)]
+    [InlineData("4", 4)]
+    public void Execution_blocks_are_optional_bounded_order_metadata(string? value, int? expected)
+        => Assert.Equal(expected, BatchWriteExperimentPlan.ParseExecutionBlock(value));
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("5")]
+    [InlineData("candidate")]
+    public void Invalid_execution_blocks_fail_before_infrastructure(string value)
+        => Assert.Throws<ArgumentException>(() => BatchWriteExperimentPlan.ParseExecutionBlock(value));
+
     [Fact]
     public void Direct_reference_uses_the_same_encoded_keys_and_document_shape()
     {

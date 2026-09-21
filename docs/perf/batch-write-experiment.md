@@ -158,10 +158,19 @@ categories; `relayIdleBeforeSnapshot=false` prevents claiming a drained observer
 Snapshot work is bracketed diagnostic overhead, not extra measured throughput.
 
 The workflow `runtime_slots` input can select a single pinned slot for one
-authorized diagnostic reproduction. `purpose` distinguishes `standard`,
+authorized diagnostic reproduction. `balanced` runs `main`, `candidate`,
+`candidate`, `main` on one runner using the same two published file sets,
+with at most four selected cells (sixteen windows). Each report records
+`executionBlock` (1–4); host/process snapshots include that block in their
+filenames so repetitions never overwrite each other's evidence. A failing
+block stops subsequent blocks rather than repeating failures until green.
+The [concurrency investigation](batch-write-concurrency.md) uses this order. `purpose` distinguishes `standard`,
 `diagnostic-reproduction` and `staged-continuation` in reports. Each selected
 cell is attempted once, even after an earlier cell fails; the overall workflow
 still fails if any cell failed. This is continuation, not automatic retry.
+Incomplete, dropped, failed or cancelled relay observations also fail the cell
+after preserving its report, even if caller-level requests all succeeded.
+Thus a balanced comparison cannot silently continue after an observer fault.
 
 ## Internal attribution and resource scope
 
