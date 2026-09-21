@@ -87,17 +87,28 @@ public sealed class EmulatorQualificationTests
         Assert.Contains(document.Findings, finding => finding.Code == "untracked_scenario");
     }
 
-    [Fact]
-    public void Generate_excludes_registered_real_azure_only_scenarios()
+    [Theory]
+    [InlineData("dynamodb.TransactGetItems (10 items, single partition)")]
+    [InlineData("secretsmanager.capacity.create-fresh")]
+    [InlineData("secretsmanager.capacity.describe-worker-local")]
+    [InlineData("secretsmanager.capacity.get-current-worker-local")]
+    [InlineData("secretsmanager.capacity.get-version-worker-local")]
+    [InlineData("secretsmanager.capacity.get-current-shared")]
+    [InlineData("secretsmanager.capacity.put-fresh-version")]
+    [InlineData("secretsmanager.capacity.update-fresh-version")]
+    [InlineData("secretsmanager.capacity.list-first-page-32")]
+    [InlineData("secretsmanager.capacity.list-second-page-32")]
+    [InlineData("secretsmanager.capacity.delete-force-fresh")]
+    public void Generate_excludes_registered_real_azure_only_scenarios(string optionalName)
     {
-        const string reference = """
+        var reference = $$"""
             {
               "scenarios": {
                 "proxy.Put": {
                   "minThroughputPerSec": 50,
                   "maxP99Ms": 100
                 },
-                "dynamodb.TransactGetItems (10 items, single partition)": {
+                "{{optionalName}}": {
                   "emulatorRequired": false,
                   "minThroughputPerSec": 0,
                   "maxP99Ms": 0
@@ -139,6 +150,10 @@ public sealed class EmulatorQualificationTests
     [InlineData("thresholds", "dynamodb.TransactGetItems (10 items, single partition)", 1, false)]
     [InlineData("thresholds", "dynamodb.TransactGetItems (10 items, single partition)", -1, false)]
     [InlineData("pairing", "dynamodb.TransactGetItems (10 items, single partition)", 0, true)]
+    [InlineData("not approved", "secretsmanager.capacity.unknown", 0, false)]
+    [InlineData("thresholds", "secretsmanager.capacity.create-fresh", 1, false)]
+    [InlineData("thresholds", "secretsmanager.capacity.create-fresh", -1, false)]
+    [InlineData("pairing", "secretsmanager.capacity.create-fresh", 0, true)]
     public void Generate_rejects_emulator_optional_certification_escape_hatches(
         string expectedMessage,
         string optionalName,

@@ -8,6 +8,8 @@ namespace Aws2Azure.PerfTests;
 /// either <paramref name="duration"/> elapses or <paramref name="maxOps"/>
 /// operations have completed across all workers. Captures per-call latency
 /// in microseconds and aggregates throughput + percentile stats.
+/// The optional maxAttempts budget strictly bounds measured dispatches,
+/// including failures and throttles; it excludes separately requested warmup.
 ///
 /// <para>Failures are counted and re-thrown summary-style — the harness is
 /// not designed to mask broken transport. A handful of trailing failures
@@ -24,8 +26,11 @@ internal static class PerfRunner
         int? maxOps = null,
         ProxyMemoryProbe? memoryProbe = null,
         CancellationToken cancellationToken = default,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        int? maxAttempts = null)
     {
+        if (maxAttempts is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts));
         // Warmup — closed-loop at concurrency 1 (enough to JIT hot paths and
         // open the AMQP/HTTP connection pool, without flooding the backend
         // before the measure window starts). Failures discarded.
@@ -53,6 +58,7 @@ internal static class PerfRunner
         long completed = 0;
         long failures = 0;
         long throttled = 0;
+        long reservedAttempts = 0;
         Exception? firstFailure = null;
         Exception? firstThrottle = null;
 
@@ -104,6 +110,13 @@ internal static class PerfRunner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (maxOps is { } cap && Interlocked.Read(ref completed) >= cap)
+                {
+                    break;
+                }
+                // Unlike maxOps, this is a strict budget, including failures and
+                // throttles; reserve before dispatch so concurrent workers cannot overshoot.
+                if (maxAttempts is { } attemptCap
+                    && Interlocked.Increment(ref reservedAttempts) > attemptCap)
                 {
                     break;
                 }

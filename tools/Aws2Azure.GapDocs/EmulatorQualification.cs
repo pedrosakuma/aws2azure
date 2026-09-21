@@ -23,7 +23,17 @@ public static class EmulatorQualificationGenerator
     private static readonly HashSet<string> EmulatorOptionalScenarios = new(StringComparer.Ordinal)
     {
         "dynamodb.TransactGetItems (10 items, single partition)",
-        "dynamodb.TransactWriteItems (5 puts, single partition)"
+        "dynamodb.TransactWriteItems (5 puts, single partition)",
+        "secretsmanager.capacity.create-fresh",
+        "secretsmanager.capacity.describe-worker-local",
+        "secretsmanager.capacity.get-current-worker-local",
+        "secretsmanager.capacity.get-version-worker-local",
+        "secretsmanager.capacity.get-current-shared",
+        "secretsmanager.capacity.put-fresh-version",
+        "secretsmanager.capacity.update-fresh-version",
+        "secretsmanager.capacity.list-first-page-32",
+        "secretsmanager.capacity.list-second-page-32",
+        "secretsmanager.capacity.delete-force-fresh"
     };
 
     public static SloQualificationDocument Generate(

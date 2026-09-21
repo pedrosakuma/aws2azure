@@ -1,6 +1,17 @@
 {
   "comment": "Per-scenario regression config for tests/Aws2Azure.PerfTests. Absolute floors/ceilings are wide catastrophe detectors; zero opts out. Relative proxy-vs-SDK pairings use the statistic demonstrated stable for that emulator path. S3 PutObject uses throughput plus p50 because its unchanged-code p99 ratio moved from 0.54x to 4.68x while p50 stayed at 1.08x-1.33x. DynamoDB GetItem retains p99 because its observed 3.18x-3.80x ratio is consistent, but uses a calibrated 4.5x ceiling and 0.40 throughput floor. Kinesis PutRecords keeps a 1.8 ops/s catastrophe floor below the observed unchanged-code range of 2.5-6.2 ops/s. Baseline scenarios never fail directly. Every scenario must remain registered. Optional working-set and allocation ceilings are enforced only when measured and remain deliberately wide.",
   "scenarios": {
+    "secretsmanager.capacity.create-fresh":                 { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.describe-worker-local":        { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.get-current-worker-local":     { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.get-version-worker-local":     { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.get-current-shared":           { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.put-fresh-version":             { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.update-fresh-version":          { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.list-first-page-32":            { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.list-second-page-32":           { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+    "secretsmanager.capacity.delete-force-fresh":            { "emulatorRequired": false, "minThroughputPerSec": 0.0, "maxP99Ms": 0.0 },
+
     "entra.GetToken (cache hit, 1 key, c=64)":                     { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
     "entra.GetToken (cache hit, 64 keys, c=64)":                   { "minThroughputPerSec":   0.0, "maxP99Ms":    0.0 },
 
