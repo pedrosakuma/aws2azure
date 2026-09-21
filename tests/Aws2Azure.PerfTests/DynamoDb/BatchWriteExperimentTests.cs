@@ -72,6 +72,9 @@ public sealed class BatchWriteExperimentTests
         bool? relayIdleBeforeSnapshot = null;
         var finalSnapshotSeconds = 0.0;
         var incompleteOrFaultedObservation = false;
+        Process? profiler = null;
+        int? profileTargetProcessId = null;
+        string? profileFile = null;
         object? rest = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
@@ -154,6 +157,29 @@ public sealed class BatchWriteExperimentTests
                 await BatchWriteExperimentAccounting.DrainAsync(inventory[i].Select(x => x.Write()).ToList(), Submit, warmupAccounting, setupDeadline.Token);
             }
             warmupSeconds = warmup.Elapsed.TotalSeconds;
+            var traceTool = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_TRACE_TOOL");
+            if (traceTool is not null)
+            {
+                profileTargetProcessId = proxy.ProcessId;
+                profileFile = Path.ChangeExtension(reportPath, ".nettrace");
+                var start = new ProcessStartInfo(traceTool)
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                };
+                foreach (var argument in new[] { "collect", "--process-id", proxy.ProcessId.ToString(),
+                    "--duration", "00:00:10", "--buffersize", "32", "--output", profileFile,
+                    "--providers", "Microsoft-Windows-DotNETRuntime:0x1:5,Microsoft-DotNETCore-SampleProfiler:0x0:4" })
+                    start.ArgumentList.Add(argument);
+                profiler = Process.Start(start) ?? throw new InvalidOperationException("Profiler did not start.");
+                using var readyDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                while (true)
+                {
+                    var line = await profiler.StandardOutput.ReadLineAsync(readyDeadline.Token);
+                    if (line is null) throw new InvalidOperationException("Profiler exited before recording.");
+                    if (line.Contains("Recording trace", StringComparison.Ordinal)) break;
+                }
+            }
             using var memory = proxy.CreateMemoryProbe();
             memoryBefore = await memory.SampleAsync(setupDeadline.Token);
             stagesBefore = await BatchWriteStageTelemetry.ScrapeAsync(proxy.ServiceUrl);
@@ -224,7 +250,26 @@ public sealed class BatchWriteExperimentTests
             var cleanup = Stopwatch.StartNew();
             try
             {
-                try { await proxy.DisposeAsync(); }
+                try
+                {
+                    if (profiler is not null)
+                    {
+                        try
+                        {
+                            var outputTask = profiler.StandardOutput.ReadToEndAsync();
+                            await profiler.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+                            await File.WriteAllTextAsync(profileFile + ".log", await outputTask);
+                            if (profiler.ExitCode != 0) snapshotFailures.Add("profile:nonzero-exit");
+                        }
+                        catch
+                        {
+                            if (!profiler.HasExited) profiler.Kill(entireProcessTree: true);
+                            snapshotFailures.Add("profile:incomplete");
+                        }
+                        finally { profiler.Dispose(); }
+                    }
+                    await proxy.DisposeAsync();
+                }
                 finally
                 {
                     try { await relay.DisposeAsync(); }
@@ -241,6 +286,7 @@ public sealed class BatchWriteExperimentTests
                     schemaVersion = 3, reportOnly = true, promotable = false, plan, harnessSource = source,
                     runtimeSlot = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_SLOT"),
                     executionBlock,
+                    profileTargetProcessId, profileFile,
                     campaignPurpose = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_PURPOSE") ?? "standard",
                     runtimeIdentity,
                     capturedAtUtc = DateTimeOffset.UtcNow, imageTag = image, imageId,
