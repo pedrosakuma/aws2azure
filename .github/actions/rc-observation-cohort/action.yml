@@ -1,0 +1,47 @@
+name: Live RC cohort readiness
+description: Keep the prepared harness alive in this job while immutable artifacts coordinate its start.
+runs:
+  using: composite
+  steps:
+    - name: Prepare live sealed cohort
+      shell: bash
+      run: |
+        set -euo pipefail
+        budget=$(( $(date -u -d "$OBSERVATION_DEADLINE_UTC" +%s) - $(date -u +%s) - WINDOW_MINUTES * 60 - 1320 ))
+        if [ "$budget" -le 120 ]; then
+          echo "::error::Insufficient preparation and observation budget."
+          exit 1
+        fi
+        timeout --signal=TERM --kill-after=120s "${budget}s" \
+          bash .github/scripts/rc-observation-run-cohort.sh prepare
+    - name: Publish immutable readiness
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: rc-observation-ready-${{ env.PROFILE }}-${{ env.COHORT }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ env.CAPTURE_ROOT }}/readiness/ready.json
+        if-no-files-found: error
+        overwrite: false
+        retention-days: 90
+    - name: Validate both prepared cohorts and choose a future start
+      if: env.COHORT == 'candidate'
+      shell: bash
+      run: python3 .github/scripts/rc-observation-readiness.py coordinate
+    - name: Publish immutable start release
+      if: env.COHORT == 'candidate'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: rc-observation-start-${{ env.PROFILE }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ env.CAPTURE_ROOT }}/readiness/release-publication.json
+        if-no-files-found: error
+        overwrite: false
+        retention-days: 90
+    - name: Bind release to this exact ready instance
+      shell: bash
+      run: python3 .github/scripts/rc-observation-readiness.py accept
+    - name: Await measurement and exact prior restoration
+      shell: bash
+      run: bash .github/scripts/rc-observation-run-cohort.sh finish
+    - name: Settle owned harness before resource teardown
+      if: always()
+      shell: bash
+      run: python3 .github/scripts/rc-observation-readiness.py stop

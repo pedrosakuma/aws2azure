@@ -123,9 +123,10 @@ permissions:
 jobs:
   select:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       profiles: ${{ steps.profiles.outputs.profiles }}
-      observation_sync_at_utc: ${{ steps.profiles.outputs.observation_sync_at_utc }}
+      observation_deadline_utc: ${{ steps.profiles.outputs.observation_deadline_utc }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
@@ -259,14 +260,13 @@ jobs:
             exit 1
           fi
           if [ "$MODE" = observation ]; then
-            # Give both cohort jobs time to resolve immutable inputs, provision
-            # isolated Azure backends, and reach a shared barrier before the
-            # reviewed observation window begins.
-            sync_at="$(date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+            # Cost/time ceiling, not a guessed start. Live readiness releases
+            # measurement independently once both prepared cohorts rendezvous.
+            deadline="$(date -u -d "+$((WINDOW_MINUTES + 120)) minutes" +%Y-%m-%dT%H:%M:%SZ)"
           else
-            sync_at=''
+            deadline=''
           fi
-          echo "observation_sync_at_utc=$sync_at" >> "$GITHUB_OUTPUT"
+          echo "observation_deadline_utc=$deadline" >> "$GITHUB_OUTPUT"
           if [ "$MODE" = secretsmanager-calibration ]; then
             profiles='["secretsmanager-basic-lifecycle"]'
           else
@@ -1481,6 +1481,7 @@ jobs:
           fi
 
   observe-s3-cohort:
+    name: RC observation s3-basic-object-crud ${{ matrix.cohort }}
     if: ${{ inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 's3-basic-object-crud') }}
     needs: select
     strategy:
@@ -1490,7 +1491,7 @@ jobs:
           - candidate
           - stable
     runs-on: ubuntu-latest
-    # Worst case: up to 45 min pre-window sync wait + up to 180 min policy-max window + 20 min teardown buffer (see rc-observation-run-cohort.sh).
+    # Absolute select-time deadline also bounds preparation/readiness/measurement.
     timeout-minutes: 300
     concurrency:
       group: rc-observation-real-azure-${{ inputs.mode }}-s3-basic-object-crud-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
@@ -1521,7 +1522,7 @@ jobs:
       PRIVATE_ROOT: artifacts/rc-observation-private/s3-basic-object-crud/${{ matrix.cohort }}
       CAPTURE_ROOT: artifacts/rc-observation-capture/s3-basic-object-crud/${{ matrix.cohort }}
       OUTPUT_ROOT: artifacts/rc-observation/s3-basic-object-crud/${{ matrix.cohort }}
-      OBSERVATION_SYNC_AT_UTC: ${{ needs.select.outputs.observation_sync_at_utc }}
+      OBSERVATION_DEADLINE_UTC: ${{ needs.select.outputs.observation_deadline_utc }}
       COHORT_CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-cohort-s3-basic-object-crud-${{ matrix.cohort }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
@@ -1565,8 +1566,7 @@ jobs:
 
       - name: Resolve exact inputs and run isolated cohort
         id: observe
-        shell: bash
-        run: bash .github/scripts/rc-observation-run-cohort.sh
+        uses: ./.github/actions/rc-observation-cohort
 
       - name: Upload immutable cohort capture
         id: cohort_upload
@@ -1591,7 +1591,8 @@ jobs:
             echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
             echo "- Candidate source: \`$CANDIDATE_SOURCE_SHA\`"
             echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
-            echo "- Shared observation barrier: \`${OBSERVATION_SYNC_AT_UTC}\`"
+            echo "- Readiness release and actual start: cohort readiness sidecars"
+            echo "- Cohort deadline: \`${OBSERVATION_DEADLINE_UTC}\`"
             echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
             echo "- Region: \`$AZURE_LOCATION\`"
             echo "- Resource group: \`$RG_NAME\`"
@@ -1631,6 +1632,7 @@ jobs:
           fi
 
   observe-secretsmanager-cohort:
+    name: RC observation secretsmanager-basic-lifecycle ${{ matrix.cohort }}
     if: ${{ inputs.mode == 'observation' && contains(fromJSON(needs.select.outputs.profiles), 'secretsmanager-basic-lifecycle') }}
     needs: select
     strategy:
@@ -1640,7 +1642,7 @@ jobs:
           - candidate
           - stable
     runs-on: ubuntu-latest
-    # Worst case: up to 45 min pre-window sync wait + up to 180 min policy-max window + 20 min teardown buffer (see rc-observation-run-cohort.sh).
+    # Absolute select-time deadline also bounds preparation/readiness/measurement.
     timeout-minutes: 300
     concurrency:
       group: rc-observation-real-azure-${{ inputs.mode }}-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-${{ inputs.release_candidate_id }}
@@ -1671,7 +1673,7 @@ jobs:
       PRIVATE_ROOT: artifacts/rc-observation-private/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
       CAPTURE_ROOT: artifacts/rc-observation-capture/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
       OUTPUT_ROOT: artifacts/rc-observation/secretsmanager-basic-lifecycle/${{ matrix.cohort }}
-      OBSERVATION_SYNC_AT_UTC: ${{ needs.select.outputs.observation_sync_at_utc }}
+      OBSERVATION_DEADLINE_UTC: ${{ needs.select.outputs.observation_deadline_utc }}
       COHORT_CAPTURE_ARTIFACT_NAME: real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
@@ -1715,8 +1717,7 @@ jobs:
 
       - name: Resolve exact inputs and run isolated cohort
         id: observe
-        shell: bash
-        run: bash .github/scripts/rc-observation-run-cohort.sh
+        uses: ./.github/actions/rc-observation-cohort
 
       - name: Upload immutable cohort capture
         id: cohort_upload
@@ -1741,7 +1742,8 @@ jobs:
             echo "- RC: \`$RELEASE_CANDIDATE_ID\`"
             echo "- Candidate source: \`$CANDIDATE_SOURCE_SHA\`"
             echo "- Observation workflow source: \`$GITHUB_SHA\` (protected main)"
-            echo "- Shared observation barrier: \`${OBSERVATION_SYNC_AT_UTC}\`"
+            echo "- Readiness release and actual start: cohort readiness sidecars"
+            echo "- Cohort deadline: \`${OBSERVATION_DEADLINE_UTC}\`"
             echo "- Requested window: \`${WINDOW_MINUTES} minutes\`"
             echo "- Region: \`$AZURE_LOCATION\`"
             echo "- Resource group: \`$RG_NAME\`"

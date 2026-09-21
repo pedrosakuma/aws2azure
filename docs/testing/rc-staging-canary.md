@@ -51,6 +51,79 @@ and isolate candidate and stable members is not an RC canary.
 
 ## Observe and decide
 
+### Live readiness rendezvous
+
+The split S3 and SecretsManager observation jobs retain their own prepared
+harness and sealed proxy processes on separate runners. Both candidate and
+stable must create and read back a canary through their selected runtime before
+publishing readiness. A queued job, provisioned resource group, or successful
+health probe alone is not readiness. Calibration mode is unchanged.
+
+Within the same job, a composite action uploads an immutable ready artifact.
+The candidate coordinator validates both ready artifacts and both still-running
+cohort jobs, then publishes one start release 120 seconds in the future. Each
+live harness accepts only the release bound to its exact ready-file digest.
+There is no preparation job whose processes must survive job completion, and
+no select-time-plus-30-minute start guess.
+
+Signals bind repository, run, attempt, workflow SHA, profile, RC/source
+identity, window, deadline, and both sealed-runtime identity/content digests.
+Artifact names include profile, role where applicable, run and attempt;
+publication refuses overwrite. Readers verify current-attempt job metadata,
+artifact identity, ZIP digest, member name and bounded JSON. Duplicate,
+foreign, expired, malformed or substituted signals fail rather than become
+"not ready." GitHub API failures also fail immediately; only absent signals
+are polled, every 45 seconds. Native artifact uploads and the existing
+`actions: read` permission suffice; no repository write permission is added.
+
+**Bounds and failure handling:**
+
+- Live readiness waits at most 45 minutes, shortened by the remaining absolute
+  budget. Release requires a full 120-second lead within both ready deadlines;
+  a start over 60 seconds late fails.
+- Selection sets the cohort active-process deadline to requested window plus
+  120 minutes from selection. Preparation has its own remaining-budget timeout
+  and refuses provisioning without room for measurement and cleanup.
+  Measurement still receives its existing fresh post-barrier CTS budget;
+  readiness wait is not charged to the requested measurement duration.
+- The supervisor terminates its owned harness process group on its deadline,
+  with bounded TERM/KILL grace. The action always aborts/settles it before the
+  workflow's existing runtime/credential removal and Azure teardown. Ordinary
+  readiness failure allows in-process canary cleanup first; hard termination
+  cannot guarantee restoration or evidence publication and never counts as
+  accepted observation.
+- Selection is bounded to 15 minutes, each cohort job to 300 minutes, and
+  assembly to its existing 120 minutes. GitHub queue delays and asynchronous
+  Azure deletion are not controlled by a wall-clock workflow deadline; the
+  existing always-teardown/reaper remains necessary after runner loss.
+- A missing/failed peer, failed coordinator or cancelled attempt cannot supply
+  a successful paired capture. Rerun **both cohort jobs/full workflow** together;
+  rerunning just one into a new attempt deliberately cannot reuse the old
+  peer's readiness.
+
+Each cohort capture retains `readiness/{context,ready,release-artifact,release,started}.json`.
+The assembled capture also retains `stable-readiness/` and
+`readiness-comparison.json`. These distinguish readiness, scheduled release,
+actual UTC start and reported cross-runner start skew. Schema-1 capture/cohort
+attribution retains its existing **scheduled** boundary; it is not proof of
+simultaneous worker starts. Assembly checks both actual-start receipts, a
+common immutable release, at most 60 seconds of lateness/skew, unchanged
+runtime identities, and each full requested measurement duration. Runner clock
+offsets are not independently calibrated. A peer can still fail after release;
+the paired capture/zero-failure checks, not the release alone, determine success.
+
+Offline coverage lives in `eng/test-rc-observation-readiness.py`,
+`RcObservationReadinessTests`, and `RcObservationWorkflowTests`. No live-Azure
+readiness run is asserted by these tests. Thresholds, exact-prior restoration
+and the zero-failure policy are unchanged. This synchronization change neither
+fixes nor disambiguates the historical public 403: retained evidence cannot
+distinguish a Key Vault rejection from mapped nontransient Entra failures
+([#1016 evidence analysis](https://github.com/pedrosakuma/aws2azure/issues/1016#issuecomment-5768667084)).
+Calibration, threshold restoration and that historical limitation remain
+separate from readiness.
+
+### Measurement and decision
+
 The measurement window starts only after both cohorts serve the intended
 traffic and ends after the reviewed minimum duration. Candidate and stable
 cohorts must cover that full measurement window, and every metric must be

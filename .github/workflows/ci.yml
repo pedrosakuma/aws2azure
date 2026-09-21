@@ -38,6 +38,9 @@ jobs:
       - name: Validate Key Vault RBAC stability gate
         shell: bash
         run: PYTHONDONTWRITEBYTECODE=1 python3 ./.github/scripts/test_keyvault_rbac_stability.py
+      - name: Validate offline RC readiness protocol
+        shell: bash
+        run: PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-rc-observation-readiness.py
       - name: Verify reproducible proxy runtime
         shell: bash
         run: ./eng/verify-deterministic-runtime.sh

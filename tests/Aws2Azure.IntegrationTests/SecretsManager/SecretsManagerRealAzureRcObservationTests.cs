@@ -454,7 +454,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
 
             try
             {
-                if (role == "candidate")
+                // Both live cohorts verify the same backend operation stage.
                 {
                     await client.CreateSecretAsync(
                         new CreateSecretRequest
@@ -472,14 +472,20 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                         timeout.Token).ConfigureAwait(false);
                 }
 
-                var startedAt = await RcObservationCaptureWriter
-                    .WaitForSynchronizedObservationStartAsync(timeout.Token)
-                    .ConfigureAwait(false);
+                var readinessDirectory = RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_READINESS_DIR");
+                var release = await RcObservationReadiness.WaitAsync(
+                    readinessDirectory, role,
+                    role == "candidate" ? fixture.CandidateRuntimeIdentityDigest : fixture.PriorRuntimeIdentityDigest,
+                    role == "candidate" ? fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest
+                        : fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                    () => fixture.IsProxyRunning, timeout.Token).ConfigureAwait(false);
+                var startedAt = release.ScheduledAtUtc;
                 // The wait above no longer counts against the measurement
                 // window's own deadline: give it a fresh budget now.
                 timeout.CancelAfter(duration + TimeSpan.FromMinutes(20));
                 var actualStartedAt = DateTimeOffset.UtcNow;
                 var stopwatch = Stopwatch.StartNew();
+                RcObservationReadiness.RecordMeasurementStart(readinessDirectory, role, release, actualStartedAt);
                 var concurrency = role == "candidate"
                     ? candidateConcurrency
                     : stableConcurrency;

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import importlib.util
 import shutil
 import sys
 from pathlib import Path
@@ -7,12 +8,18 @@ from pathlib import Path
 candidate_dir = Path(sys.argv[1])
 stable_dir = Path(sys.argv[2])
 output_dir = Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location(
+    "readiness", Path(__file__).with_name("rc-observation-readiness.py"))
+readiness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(readiness)
 
 with (candidate_dir / 'cohort-capture.json').open('r', encoding='utf-8') as stream:
     candidate = json.load(stream)
 with (stable_dir / 'cohort-capture.json').open('r', encoding='utf-8') as stream:
     stable = json.load(stream)
 
+timing = readiness.validate_captured_readiness(
+    candidate_dir, stable_dir, {"candidate": candidate, "stable": stable})
 if candidate['schema_version'] != 1 or stable['schema_version'] != 1:
     raise SystemExit('expected cohort schema_version=1')
 if candidate['profile'] != stable['profile']:
@@ -66,6 +73,9 @@ for source in candidate_dir.iterdir():
         shutil.copytree(source, target)
     else:
         shutil.copy2(source, target)
+
+shutil.copytree(stable_dir / "readiness", output_dir / "stable-readiness")
+readiness.publish(output_dir / "readiness-comparison.json", timing)
 
 combined = {
     'schema_version': 1,

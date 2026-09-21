@@ -83,6 +83,7 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
     public bool HasDefaultInstance => _defaultInstance is not null;
+    public bool IsProxyRunning => _defaultInstance?.Process is { HasExited: false };
     public SealedRuntimeIdentity CandidateRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>
