@@ -88,6 +88,7 @@ internal sealed class BatchWriteExperimentAccounting
 {
     private readonly object _gate = new();
     private readonly List<double> _latencies = new(BatchWriteExperimentPlan.MaxBatches);
+    private readonly List<double> _itemLatencies = new(BatchWriteExperimentPlan.MaxBatches * 25);
     private int _started, _completed, _failed, _items, _submissions, _resubmittedItems, _unprocessed;
     private double _backoffMs;
 
@@ -116,6 +117,18 @@ internal sealed class BatchWriteExperimentAccounting
 
     public void Backoff(double milliseconds) { lock (_gate) _backoffMs += milliseconds; }
 
+    public void Acknowledged(int count, double milliseconds)
+    {
+        if (count < 0 || milliseconds < 0 || !double.IsFinite(milliseconds))
+            throw new ArgumentOutOfRangeException(nameof(count));
+        lock (_gate)
+        {
+            if (_itemLatencies.Count + count > BatchWriteExperimentPlan.MaxBatches * 25)
+                throw new InvalidOperationException("Item latency inventory exhausted.");
+            for (var i = 0; i < count; i++) _itemLatencies.Add(milliseconds);
+        }
+    }
+
     public void Settled(double milliseconds, bool failed)
     {
         lock (_gate)
@@ -139,6 +152,7 @@ internal sealed class BatchWriteExperimentAccounting
             settledSeconds = seconds, batchesPerSecond = _completed / seconds,
             acknowledgedItemsPerSecond = _items / seconds,
             batchLatencyMs = Distribution(_latencies),
+            itemAcknowledgementLatencyMs = Distribution(_itemLatencies),
         };
     }
 
@@ -155,6 +169,7 @@ internal sealed class BatchWriteExperimentAccounting
         BatchWriteExperimentAccounting accounting,
         CancellationToken ct)
     {
+        var started = Stopwatch.GetTimestamp();
         var pending = initial;
         var allowed = initial.Select(BatchWriteExperimentItem.Identity).ToHashSet(StringComparer.Ordinal);
         if (allowed.Count != initial.Count) throw new InvalidOperationException("Duplicate inventory keys.");
@@ -165,6 +180,7 @@ internal sealed class BatchWriteExperimentAccounting
             if (returned.Count != remaining.Count || !returned.IsSubsetOf(allowed))
                 throw new InvalidOperationException("UnprocessedItems is not a unique subset of the submitted inventory.");
             accounting.Submission(pending.Count, remaining.Count, attempt != 0);
+            accounting.Acknowledged(pending.Count - remaining.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             if (remaining.Count == 0) return;
             pending = remaining;
             allowed = returned;

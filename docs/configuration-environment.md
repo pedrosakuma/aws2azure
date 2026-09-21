@@ -15,6 +15,7 @@ differences; use a schema-validated JSON file for the stable topology.
 | `AWS2AZURE_MAX_CONNECTIONS_PER_SERVER` | Positive integer | `64` | Outbound Azure HTTP | Invalid, zero, or negative values use `64`. |
 | `AWS2AZURE_SB_SESSION_IDLE_SECONDS` | Integer seconds | `300` | AMQP FIFO session receivers | Positive values set idle eviction; zero/negative disables idle eviction. Invalid text logs a warning and uses `300`. |
 | `AWS2AZURE_AMQP_TIMING` | Exact string `1` | Off | On-demand AMQP diagnosis | Emits allocating, synchronous timing rows to stderr. Never leave enabled in production. |
+| `AWS2AZURE_BATCH_DIAGNOSTICS` | Exact string `1` | Off | On-demand DynamoDB BatchWriteItem diagnosis | Enables nine fixed-cardinality stage wall-time histograms on the existing metrics endpoint. Read once on first batch use; other values disable it. Adds timing/export overhead; use only for a bounded [batch experiment](perf/batch-write-experiment.md), not production capacity claims. |
 | `AZURE_TENANT_ID` | Non-empty string | None | `workloadIdentity` | Required at startup for every workload-identity auth block. |
 | `AZURE_CLIENT_ID` | Non-empty string | None | `workloadIdentity` | Required at startup; identifies the federated Entra application. |
 | `AZURE_FEDERATED_TOKEN_FILE` | File path | None | `workloadIdentity` | A non-empty path is required at startup. The projected token file must be readable and non-empty when a token is acquired and is re-read on refresh. |

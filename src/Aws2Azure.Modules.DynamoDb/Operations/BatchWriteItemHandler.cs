@@ -41,6 +41,7 @@ internal static class BatchWriteItemHandler
         BatchWriteItemRequest? req;
         try
         {
+            using var parse = BatchWriteDiagnostics.Measure("envelope_parse");
             req = JsonSerializer.Deserialize(body, BatchWriteItemJsonContext.Default.BatchWriteItemRequest);
         }
         catch (JsonException ex)
@@ -84,7 +85,10 @@ internal static class BatchWriteItemHandler
                 return;
             }
 
-            using var metaRead = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct).ConfigureAwait(false);
+            CosmosOpsShared.TableMetadataReadResult metaRead;
+            using (BatchWriteDiagnostics.Measure("metadata_read"))
+                metaRead = await CosmosOpsShared.TryReadTableMetadataAsync(cosmos, tableName, ct).ConfigureAwait(false);
+            using var metaReadLifetime = metaRead;
             if (metaRead.Status == CosmosOpsShared.TableMetadataReadStatus.CosmosError)
             {
                 await CosmosOpsShared.WriteCosmosErrorAsync(ctx, metaRead.ErrorResponse!, ct).ConfigureAwait(false);
@@ -111,7 +115,10 @@ internal static class BatchWriteItemHandler
                 // action across the whole batch. The validators/key-extraction
                 // traverse this transient document; it is disposed at the end of
                 // each iteration so its rented metadata DB returns to the pool.
-                using var entryDoc = JsonDocument.Parse(body.AsMemory(entryRange.Start, entryRange.Length));
+                JsonDocument entryDoc;
+                using (BatchWriteDiagnostics.Measure("entry_parse"))
+                    entryDoc = JsonDocument.Parse(body.AsMemory(entryRange.Start, entryRange.Length));
+                using var entryLifetime = entryDoc;
                 var entry = entryDoc.RootElement;
                 if (entry.ValueKind != JsonValueKind.Object)
                 {
@@ -149,45 +156,53 @@ internal static class BatchWriteItemHandler
                             "PutRequest.Item is required and must be an object.").ConfigureAwait(false);
                         return;
                     }
-                    if (!ItemHandlers.ValidateItemShape(itemEl, out var shapeError))
+                    string pk, id;
+                    using (BatchWriteDiagnostics.Measure("put_validation"))
                     {
-                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
-                        return;
-                    }
-                    foreach (var k in meta.KeySchema)
-                    {
-                        if (!itemEl.TryGetProperty(k.Name, out var attr))
+                        if (!ItemHandlers.ValidateItemShape(itemEl, out var shapeError))
+                        {
+                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", shapeError).ConfigureAwait(false);
+                            return;
+                        }
+                        foreach (var k in meta.KeySchema)
+                        {
+                            if (!itemEl.TryGetProperty(k.Name, out var attr))
+                            {
+                                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
+                                    $"Item in PutRequest is missing required key attribute '{k.Name}'.").ConfigureAwait(false);
+                                return;
+                            }
+                            if (!ItemKeyFormatter.ValidateKeyAttributeType(attr, meta, k.Name, out var typeError))
+                            {
+                                await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", typeError).ConfigureAwait(false);
+                                return;
+                            }
+                        }
+                        if (!ItemKeyFormatter.TryBuildFromItem(itemEl, meta, out pk, out id, out var keyError))
+                        {
+                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
+                            return;
+                        }
+                        if (!seenKeys.Add((tableName, pk, id)))
                         {
                             await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                                $"Item in PutRequest is missing required key attribute '{k.Name}'.").ConfigureAwait(false);
+                                $"BatchWriteItem contains duplicate write targeting the same key in table '{tableName}'.").ConfigureAwait(false);
                             return;
                         }
-                        if (!ItemKeyFormatter.ValidateKeyAttributeType(attr, meta, k.Name, out var typeError))
-                        {
-                            await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", typeError).ConfigureAwait(false);
-                            return;
-                        }
-                    }
-                    if (!ItemKeyFormatter.TryBuildFromItem(itemEl, meta, out var pk, out var id, out var keyError))
-                    {
-                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException", keyError).ConfigureAwait(false);
-                        return;
-                    }
-                    if (!seenKeys.Add((tableName, pk, id)))
-                    {
-                        await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
-                            $"BatchWriteItem contains duplicate write targeting the same key in table '{tableName}'.").ConfigureAwait(false);
-                        return;
                     }
                     // Batch units are built upfront and live across all
                     // parallel sends, so a GC-managed byte[] (leak-safe on
                     // every early-return path) is preferred over a pooled
                     // buffer here. Still removes the string / StringContent
                     // re-encode the previous BuildItemDocument path incurred.
-                    int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
-                        itemEl, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                    var orderKeys = SecondaryIndexOrderKeys.Compute(meta, itemEl);
-                    var doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds, orderKeys);
+                    byte[] doc;
+                    using (BatchWriteDiagnostics.Measure("document_encode"))
+                    {
+                        int? ttlSeconds = TtlTranslation.ComputeItemTtlSeconds(
+                            itemEl, meta.TimeToLive, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                        var orderKeys = SecondaryIndexOrderKeys.Compute(meta, itemEl);
+                        doc = ItemHandlers.BuildItemDocumentBytes(id, pk, itemEl, cosmos.CosmosBinaryRequests, ttlSeconds, orderKeys);
+                    }
                     // Keep only the envelope's byte range for any UnprocessedItems
                     // echo (sliced from the request buffer on demand), not a
                     // retained DOM clone.
@@ -195,6 +210,7 @@ internal static class BatchWriteItemHandler
                 }
                 else
                 {
+                    using var validation = BatchWriteDiagnostics.Measure("delete_validation");
                     if (!delEl.TryGetProperty("Key", out var keyEl) || keyEl.ValueKind != JsonValueKind.Object)
                     {
                         await CosmosOpsShared.WriteErrorAsync(ctx, 400, "ValidationException",
@@ -281,17 +297,20 @@ internal static class BatchWriteItemHandler
         {
             UnprocessedItems = unprocessed,
         };
-        await CosmosOpsShared.WriteJsonAsync(ctx, 200, resp,
-            BatchWriteItemJsonContext.Default.BatchWriteItemResponse).ConfigureAwait(false);
+        using (BatchWriteDiagnostics.Measure("response_write"))
+            await CosmosOpsShared.WriteJsonAsync(ctx, 200, resp,
+                BatchWriteItemJsonContext.Default.BatchWriteItemResponse).ConfigureAwait(false);
     }
 
     private static async Task ExecuteOneAsync(
         CosmosClient cosmos, WriteWorkUnit unit, SemaphoreSlim sem,
         WriteResult[] results, int idx, CancellationToken ct)
     {
-        await sem.WaitAsync(ct).ConfigureAwait(false);
+        using (BatchWriteDiagnostics.Measure("semaphore_wait"))
+            await sem.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            using var downstream = BatchWriteDiagnostics.Measure("item_downstream");
             var collLink = "dbs/" + cosmos.DatabaseName + "/colls/" + unit.Table;
             var pkHeader = CosmosOpsShared.BuildPartitionKeyHeader(unit.Pk);
             HttpResponseMessage resp;

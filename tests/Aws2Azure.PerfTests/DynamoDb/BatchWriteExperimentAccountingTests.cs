@@ -72,6 +72,9 @@ public sealed class BatchWriteExperimentAccountingTests
         Assert.Equal(2, root.GetProperty("unprocessedItemOccurrences").GetInt32());
         Assert.Equal(2.5, root.GetProperty("acknowledgedItemsPerSecond").GetDouble());
         Assert.Equal(.5, root.GetProperty("batchesPerSecond").GetDouble());
+        var latency = root.GetProperty("itemAcknowledgementLatencyMs");
+        Assert.Equal(5, latency.GetProperty("count").GetInt32());
+        Assert.True(latency.GetProperty("p99").GetDouble() > latency.GetProperty("p50").GetDouble());
     }
 
     [Fact]
@@ -88,6 +91,7 @@ public sealed class BatchWriteExperimentAccountingTests
         Assert.Equal(1, report.RootElement.GetProperty("failedBatches").GetInt32());
         Assert.Equal(0, report.RootElement.GetProperty("completedBatches").GetInt32());
         Assert.Equal(5, report.RootElement.GetProperty("submissions").GetInt32());
+        Assert.Equal(4, report.RootElement.GetProperty("itemAcknowledgementLatencyMs").GetProperty("count").GetInt32());
     }
 
     [Fact]

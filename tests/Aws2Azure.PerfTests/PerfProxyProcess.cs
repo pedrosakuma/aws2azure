@@ -21,6 +21,7 @@ internal sealed class PerfProxyProcess : IAsyncDisposable
 
     public string ServiceUrl { get; private set; } = string.Empty;
     public string Output => _output.ToString();
+    public int ProcessId => _process?.Id ?? throw new InvalidOperationException("Proxy not started.");
 
     /// <summary>
     /// Returns the proxy URL with the loopback IP replaced by a per-service
@@ -39,7 +40,8 @@ internal sealed class PerfProxyProcess : IAsyncDisposable
     /// </summary>
     public ProxyMemoryProbe CreateMemoryProbe() => new(ServiceUrl);
 
-    public async Task StartAsync(string configJson, TimeSpan readinessTimeout)
+    public async Task StartAsync(string configJson, TimeSpan readinessTimeout,
+        string? executable = null, bool batchDiagnostics = false)
     {
         var port = GetFreePort();
         ServiceUrl = $"http://127.0.0.1:{port}";
@@ -75,6 +77,14 @@ internal sealed class PerfProxyProcess : IAsyncDisposable
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        if (executable is not null)
+        {
+            startInfo.FileName = Path.GetFullPath(executable);
+            startInfo.Arguments = string.Empty;
+            startInfo.WorkingDirectory = Path.GetDirectoryName(startInfo.FileName)!;
+        }
+        if (batchDiagnostics)
+            startInfo.Environment["AWS2AZURE_BATCH_DIAGNOSTICS"] = "1";
         startInfo.Environment["AWS2AZURE_CONFIG_FILE"] = _configFile;
         startInfo.Environment["ASPNETCORE_URLS"] = ServiceUrl;
         startInfo.Environment["DOTNET_ENVIRONMENT"] = "Perf";
