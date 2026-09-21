@@ -33,7 +33,7 @@ namespace Aws2Azure.Modules.DynamoDb.Operations;
 internal static class BatchWriteItemHandler
 {
     private const int MaxItemsPerCall = 25;
-    private const int MaxParallelism = 5;
+    private const int MaxParallelism = 10;
 
     public static async Task HandleBatchWriteItemAsync(
         HttpContext ctx, byte[] body, CosmosClient cosmos, CancellationToken ct)
