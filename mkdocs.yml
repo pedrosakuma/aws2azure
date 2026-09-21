@@ -128,6 +128,7 @@ nav:
       - Performance and footprint:
           - Baseline guide: perf/README.md
           - SecretsManager isolated capacity: perf/secretsmanager-isolated-capacity.md
+          - BatchWriteItem isolated diagnostic: perf/batch-write-experiment.md
           - Latest performance baseline: perf/baseline-latest.md
           - Latest footprint baseline: perf/footprint-latest.md
           - CosmosBinary decode investigation: perf/cosmos-binary-decode.md
