@@ -171,6 +171,97 @@ exception path; periodic samples must not be presented as those missing deltas.
 | Deterministic guardrails | Accounting, missing metrics, sample ordering/caps, tamper rejection and existing qualification/threshold preservation tested; dynamic report-only cells do not enter PerfReport |
 | Published limitations / Azure plan | Run/artifact/commit IDs above, explicit failed evidence and approval-only finite plan below; no Azure production/capacity claim |
 
+### Narrow failure-localization follow-up
+
+The original run is preserved. Its completed-response-only observer cannot
+retrospectively locate the missing attempt; the missing information cannot be
+reconstructed from latency subtraction or a later successful run.
+[Schema 3 boundary observations](batch-write-experiment.md#failure-boundaries-report-schema-3)
+distinguish relay arrival, dispatch, response headers, complete body, response
+write, exceptions and cancellations, with allowlisted metadata and final
+snapshots attempted before shutdown even on worker failure.
+
+The authorized diagnostic is **one** fresh-process pinned-main
+`25:8:mixed:shared:proxy` window followed by its direct reference, with runtime
+`bd89968772af815ad847845159075d2d1521f703`, the same emulator repository digest,
+payloads, seed/key codec, concurrency and finite inventory/time bounds.
+The concrete hypothesis is an incomplete/lost response or unobserved transport
+failure that the old completion-only counter missed. New counters discriminate
+that hypothesis from a complete backend error or failure before relay arrival;
+they do not guarantee reproduction or determine an earlier run's cause.
+
+A separately labeled `staged-continuation` completes the eight previously
+unrun **direct reference** cells in the second source-pinned slot. It does
+not repeat the failed proxy cell, rerun the full 32-window campaign, or claim
+that unexecuted second-slot proxy repetitions succeeded. Outcomes, including
+failures or non-reproduction, must remain separate from the original report.
+
+#### One-shot diagnostic outcome and concrete relay defect
+
+The authorized [diagnostic run 35627946323](https://github.com/pedrosakuma/aws2azure/actions/runs/35627946323)
+and separate [continuation 35627950668](https://github.com/pedrosakuma/aws2azure/actions/runs/35627950668)
+both publish **`batch-write-diagnostic`** artifacts. Harness commit was
+`099309eea31ca822318f0be66f0772029af549e7`, before the 204 relay correction below.
+Both source-pinned runtime manifests match **every one of the 354 file hashes**
+in their respective original slots; the resolved image ID also matches.
+
+The original proxy failure was **not reproduced** in the single authorized
+proxy window. The direct reference failed instead:
+
+| Diagnostic cell | Completed/started batches | Acknowledged items | Relay arrivals / dispatch / headers / completed bodies | Response-write faults |
+| --- | ---: | ---: | ---: | ---: |
+| `25:8:mixed:shared:proxy` | 97 / 97 | 2,425 | 2,425 at every boundary | 1,261 |
+| `25:8:mixed:shared:direct` | 98 / 99 | 2,450 | 2,474 at every boundary | 1,287 |
+
+In each cell, **every observed HTTP 204 delete response** had completed its
+backend body, then faulted during relay response writing, recorded as
+`response-write:Other` by that harness revision. There were no observed
+dispatch/body-read exceptions, cancellations, non-success backend headers,
+repeated dispatch identities, active attempts or dropped observations.
+All snapshots were retained, including the failed direct window, with
+`snapshotFailures=[]`, `relayIdleBeforeSnapshot=true` and successful cleanup.
+The failed report is `4996ab2b373b4dc9ba9d7ded3e9ac55c.json`: the direct caller
+received HTTP 503, but none of the 2,474 relay arrivals had non-success headers.
+One of 2,475 submitted items therefore remained **outside the observed relay
+arrival boundary**. This does not identify its exact pre-relay cause.
+
+The new counts exposed a **test-only relay defect**, not an established Cosmos
+failure: the relay set a zero Content-Length and called `Body.WriteAsync` for
+204 responses. A real-loopback-Kestrel controlled test,
+`BatchWriteExperimentRelayTests.Kestrel_bodyless_response_completes_without_faulting_relay_connection`,
+deterministically failed before correction with one
+`response-write:InvalidOperationException` for a successful 204, despite the
+client receiving that 204. The relay now uses `Response.CompleteAsync()` with
+no body/Content-Length for 204; the same test passes and verifies a following
+201 request on the pooled client. The explicit exception-type allowlist now
+includes `InvalidOperationException`; arbitrary types still become `Other`.
+
+Such response-write faults can disrupt connection handling, making this a
+concrete candidate explanation for the historical missing attempt. Neither the
+original run nor these aggregate counts prove that causal chain for a specific
+request. **No second emulator diagnostic reproduction was run**, and there is
+no post-fix mixed-cell performance claim.
+
+The separately labeled continuation executed all eight previously unrun
+second-slot direct references, with successful client-level batch completion
+and cleanup in all eight. Put-only cells had clean boundary counts. Delete/mixed
+cells still exposed the same pre-fix 204 relay faults: 128 in the one-item delete
+cell, 384 in the five-item mixed cell, and 1,443 in the 25-item mixed cell.
+Their passing workflow status is **not clean-relay evidence** and their numbers
+must not become capacity baselines. This continuation did not rerun the failed
+proxy cell or erase either failed run. Any post-fix emulator confirmation needs
+a new, explicit coordinator decision, not retry-until-green.
+
+Exact core-transport retry/backoff duration is not required to begin a useful
+report-only **#1026 internal-limit sweep**: measured semaphore/downstream
+scopes, caller latency, arrived/completed/failed attempt boundaries, RU/429
+and resources already permit bounded hypotheses. Such a sweep must preserve
+failure evidence and reject hidden work/loss, not declare the original cause
+resolved. Core instrumentation authorization is needed only if a selected
+hypothesis actually depends on internal retry category/delay or pre-relay
+transport behavior that these boundaries cannot distinguish. No such shipping
+change or billed gate is authorized by this follow-up.
+
 ### Directions supported for subsequent investigation
 
 For **#1026**, higher external concurrency here increases semaphore and
@@ -191,11 +282,14 @@ attribution: it discourages claiming that small serialization changes alone
 eliminate the observed tail. Response suppression still requires authoritative
 REST support and separately authorized real-Azure verification.
 
-**#1024 remains open.** Resolve/localize the mixed-cell failure and incomplete
-attempt observation, decide on explicit authorization for exact transport
-retry/backoff instrumentation/gates, and obtain the missing repetition/reference
-if needed for the chosen hypothesis. Do not turn this failed finite campaign
-into an optimized-floor or statistically repeatable improvement claim.
+**#1024 remains open for coordinator acceptance.** The historical missing
+attempt's exact cause remains unproven; the concrete 204 relay defect is fixed
+and controlled-tested, while the authorized emulator reproduction is spent.
+Further post-fix mixed/reference measurements require an explicit decision.
+Exact core retry/backoff timing remains unavailable, but is not a blanket
+prerequisite for a useful #1026 hypothesis sweep. Do not turn these finite,
+partly observer-contaminated windows into an optimized-floor or statistically
+repeatable improvement claim.
 
 ## Separately approved real-Azure experiment plan
 
