@@ -17,6 +17,9 @@ WAIT_SECONDS = 45 * 60
 LEAD_SECONDS = 120
 LATE_SECONDS = 60
 POLL_SECONDS = 45
+TERM_GRACE_SECONDS = 20
+KILL_GRACE_SECONDS = 5
+STOP_SECONDS = TERM_GRACE_SECONDS + KILL_GRACE_SECONDS + 5
 MAX_BYTES = 32768
 ROLES = ("candidate", "stable")
 PROFILES = ("s3-basic-object-crud", "secretsmanager-basic-lifecycle")
@@ -317,11 +320,11 @@ def supervise(directory, context):
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
             try:
-                process.wait(timeout=120)
+                process.wait(timeout=TERM_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=10)
+                process.wait(timeout=KILL_GRACE_SECONDS)
             code = 124
     publish(directory / "result.json", {"exit_code": code})
 
@@ -342,7 +345,7 @@ def main():
             publish(directory / "process.json", {"pid": process.pid, "start": started})
         except (ValueError, OSError):
             process.terminate()
-            process.wait(timeout=130)
+            process.wait(timeout=STOP_SECONDS)
             raise
         deadline = timestamp(context["readiness_deadline_utc"])
         monotonic_deadline = time.monotonic() + WAIT_SECONDS
@@ -357,16 +360,15 @@ def main():
             return
         (directory / "abort").touch(exist_ok=True)
         state = decode((directory / "process.json").read_bytes())
-        for _ in range(130):
-            if (directory / "result.json").exists() or process_start(state["pid"]) != state["start"]:
-                return
-            time.sleep(1)
-        require(process_start(state["pid"]) == state["start"], "supervisor identity changed")
+        if (directory / "result.json").exists() or process_start(state["pid"]) != state["start"]:
+            return
+        # Measurement does not poll abort; reserve cancellation grace for Azure cleanup.
+        deadline = time.monotonic() + STOP_SECONDS
         os.kill(state["pid"], signal.SIGTERM)
-        for _ in range(130):
+        while time.monotonic() < deadline:
             if (directory / "result.json").exists() or process_start(state["pid"]) != state["start"]:
                 return
-            time.sleep(1)
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
         raise TimeoutError("owned harness did not settle after abort and termination")
     context = decode((directory / "context.json").read_bytes())
     if mode == "supervise":

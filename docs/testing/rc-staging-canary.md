@@ -86,12 +86,16 @@ are polled, every 45 seconds. Native artifact uploads and the existing
   and refuses provisioning without room for measurement and cleanup.
   Measurement still receives its existing fresh post-barrier CTS budget;
   readiness wait is not charged to the requested measurement duration.
-- The supervisor terminates its owned harness process group on its deadline,
-  with bounded TERM/KILL grace. The action always aborts/settles it before the
-  workflow's existing runtime/credential removal and Azure teardown. Ordinary
-  readiness failure allows in-process canary cleanup first; hard termination
-  cannot guarantee restoration or evidence publication and never counts as
-  accepted observation.
+- On cancellation, the action writes abort and immediately signals the
+  identity-checked owned supervisor: active measurement does not poll the
+  readiness abort file. The supervisor forwards TERM to its owned harness
+  process group, waits at most 20 seconds, then KILL with at most 5 seconds to
+  settle. The stop step has a 30-second monotonic wait ceiling, leaving most
+  of the runner's cancellation grace for upload, credential removal, login
+  and Azure teardown. The same short TERM/KILL grace applies on the process
+  deadline. An unsettled stop fails loudly; interrupted runs record failure,
+  never successful restoration. Termination can prevent in-process cleanup
+  or evidence publication, so existing always-teardown remains essential.
 - Selection is bounded to 15 minutes, each cohort job to 300 minutes, and
   assembly to its existing 120 minutes. GitHub queue delays and asynchronous
   Azure deletion are not controlled by a wall-clock workflow deadline; the

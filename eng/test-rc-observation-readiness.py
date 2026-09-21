@@ -219,7 +219,7 @@ class ReadinessTests(unittest.TestCase):
             child = Mock(pid=4321)
             child.poll.return_value = None
             child.wait.side_effect = [subprocess.TimeoutExpired("test", 1),
-                                      subprocess.TimeoutExpired("test", 120), 0]
+                                      subprocess.TimeoutExpired("test", protocol.TERM_GRACE_SECONDS), 0]
             context = {**self.context, "end_to_end_deadline_utc": (protocol.utc() + dt.timedelta(minutes=10)).isoformat()}
             with patch.dict(os.environ, {"PRIVATE_ROOT": directory, "TEST_FILTER": "offline"}), \
                  patch.object(protocol.subprocess, "Popen", return_value=child), \
@@ -227,7 +227,81 @@ class ReadinessTests(unittest.TestCase):
                 protocol.supervise(Path(directory), context)
             self.assertEqual(kill.call_args_list[0].args, (4321, signal.SIGTERM))
             self.assertEqual(kill.call_args_list[1].args, (4321, signal.SIGKILL))
+            self.assertEqual(child.wait.call_args_list[1].kwargs, {"timeout": 20})
+            self.assertEqual(child.wait.call_args_list[2].kwargs, {"timeout": 5})
             self.assertEqual(json.loads((Path(directory) / "result.json").read_text()), {"exit_code": 124})
+
+    def test_stop_signals_active_measurement_before_waiting_and_bounds_settlement(self):
+        for settles in (True, False):
+            with self.subTest(settles=settles), tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
+                root = Path(directory)
+                protocol.publish(root / "process.json", {"pid": 1234, "start": "owned"})
+                elapsed = [0]
+                signals = []
+                def kill(pid, number):
+                    self.assertTrue((root / "abort").exists())
+                    self.assertEqual(elapsed[0], 0, "measurement ignores abort; signal must be immediate")
+                    signals.append((pid, number))
+                def sleep(seconds):
+                    self.assertEqual(signals, [(1234, signal.SIGTERM)])
+                    elapsed[0] += seconds
+                    if settles and elapsed[0] == 25:
+                        protocol.publish(root / "result.json", {"exit_code": 124})
+                with patch.dict(os.environ, {"AWS2AZURE_RC_OBSERVATION_READINESS_DIR": directory}), \
+                     patch.object(protocol.sys, "argv", ["readiness", "stop"]), \
+                     patch.object(protocol, "process_start", return_value="owned"), \
+                     patch.object(protocol.os, "kill", side_effect=kill), \
+                     patch.object(protocol.time, "monotonic", side_effect=lambda: elapsed[0]), \
+                     patch.object(protocol.time, "sleep", side_effect=sleep):
+                    if settles:
+                        protocol.main()
+                        self.assertEqual(protocol.decode((root / "result.json").read_bytes())["exit_code"], 124)
+                    else:
+                        with self.assertRaises(TimeoutError):
+                            protocol.main()
+                        self.assertFalse((root / "result.json").exists())
+                self.assertEqual(elapsed[0], 25 if settles else 30)
+
+    def test_stop_never_signals_reused_supervisor_pid(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
+            protocol.publish(Path(directory) / "process.json", {"pid": 1234, "start": "owned"})
+            with patch.dict(os.environ, {"AWS2AZURE_RC_OBSERVATION_READINESS_DIR": directory}), \
+                 patch.object(protocol.sys, "argv", ["readiness", "stop"]), \
+                 patch.object(protocol, "process_start", return_value="replacement"), \
+                 patch.object(protocol.os, "kill") as kill, patch.object(protocol.time, "sleep") as sleep:
+                protocol.main()
+            kill.assert_not_called()
+            sleep.assert_not_called()
+
+    def test_mid_measurement_signal_forwards_term_then_kill_without_success_receipt(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
+            child = Mock(pid=4321)
+            child.poll.return_value = None
+            handlers = {}
+            waits = []
+            def register(number, handler):
+                handlers[number] = handler
+            def wait(timeout):
+                waits.append(timeout)
+                if len(waits) == 1:
+                    # An active measurement never observes the readiness abort file.
+                    (Path(directory) / "abort").touch()
+                    handlers[signal.SIGTERM](signal.SIGTERM, None)
+                if len(waits) == 2:
+                    raise subprocess.TimeoutExpired("test", timeout)
+                return -signal.SIGKILL
+            child.wait.side_effect = wait
+            context = {**self.context, "end_to_end_deadline_utc": (protocol.utc() + dt.timedelta(hours=2)).isoformat()}
+            with patch.dict(os.environ, {"PRIVATE_ROOT": directory, "TEST_FILTER": "offline"}), \
+                 patch.object(protocol.subprocess, "Popen", return_value=child), \
+                 patch.object(protocol.signal, "signal", side_effect=register), \
+                 patch.object(protocol.os, "killpg") as kill:
+                protocol.supervise(Path(directory), context)
+            self.assertGreater(waits[0], 3600)
+            self.assertEqual(waits[1:], [20, 5])
+            self.assertEqual([call.args for call in kill.call_args_list],
+                             [(4321, signal.SIGTERM), (4321, signal.SIGKILL)])
+            self.assertEqual(protocol.decode((Path(directory) / "result.json").read_bytes())["exit_code"], 124)
 
     def test_cancellation_during_spawn_still_settles_the_owned_child(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as directory:
@@ -247,7 +321,7 @@ class ReadinessTests(unittest.TestCase):
                  patch.object(protocol.os, "killpg") as kill:
                 protocol.supervise(Path(directory), context)
             kill.assert_called_once_with(4321, signal.SIGTERM)
-            child.wait.assert_called_once_with(timeout=120)
+            child.wait.assert_called_once_with(timeout=20)
             self.assertEqual(json.loads((Path(directory) / "result.json").read_text()), {"exit_code": 124})
 
     def test_assembly_preserves_and_checks_actual_start_not_fabricated_synchrony(self):
