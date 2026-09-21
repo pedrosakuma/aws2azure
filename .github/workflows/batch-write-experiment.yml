@@ -14,6 +14,16 @@ on:
       candidate:
         description: 'Candidate source revision (empty uses harness HEAD; equal pins give explicit A/A repetitions)'
         required: false
+      runtime_slots:
+        description: 'Execute both slots, or just one for a single authorized diagnostic reproduction'
+        type: choice
+        options: [both, main, candidate]
+        default: both
+      purpose:
+        description: 'Label observations without changing success/failure handling'
+        type: choice
+        options: [standard, diagnostic-reproduction, staged-continuation]
+        default: standard
       image:
         description: 'Pinned Cosmos emulator repository digest'
         required: true
@@ -36,6 +46,9 @@ jobs:
   diagnostic:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RUNTIME_SLOTS: ${{ inputs.runtime_slots || 'both' }}
+      AWS2AZURE_BATCH_PURPOSE: ${{ inputs.purpose || 'standard' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
@@ -50,8 +63,13 @@ jobs:
         run: |
           set -euo pipefail
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
-          bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
-          bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate
+          case "$RUNTIME_SLOTS" in both|main|candidate) ;; *) exit 1 ;; esac
+          if [[ "$RUNTIME_SLOTS" != candidate ]]; then
+            bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
+          fi
+          if [[ "$RUNTIME_SLOTS" != main ]]; then
+            bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate
+          fi
           if [[ ! "$EMULATOR_IMAGE" =~ ^mcr[.]microsoft[.]com/cosmosdb/linux/azure-cosmos-emulator@sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Select a pinned Cosmos emulator repository digest."
             exit 1
@@ -76,18 +94,27 @@ jobs:
             echo "::error::Select between one and sixteen staged cells."
             exit 1
           fi
-          for runtime in main candidate; do
+          slots=(main candidate)
+          if [[ "$RUNTIME_SLOTS" != both ]]; then slots=("$RUNTIME_SLOTS"); fi
+          failed=0
+          for runtime in "${slots[@]}"; do
             export AWS2AZURE_BATCH_RUNTIME="$GITHUB_WORKSPACE/artifacts/batch-runtimes/$runtime"
             for cell in "${cells[@]}"; do
               label="$runtime-${cell//:/-}"
               ps -eo pid,comm,pcpu > "$AWS2AZURE_BATCH_OUTPUT/processes-$label.txt"
               docker ps --no-trunc > "$AWS2AZURE_BATCH_OUTPUT/containers-$label.txt"
               cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-before-$label.txt"
-              AWS2AZURE_BATCH_SLOT="$runtime" AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
+              if ! AWS2AZURE_BATCH_SLOT="$runtime" AWS2AZURE_BATCH_CELL="$cell" dotnet test tests/Aws2Azure.PerfTests \
                 -c Release --no-build --nologo \
-                --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'
+                --filter 'FullyQualifiedName~BatchWriteExperimentTests.Selected_cell_records_bounded_diagnostic'; then
+                failed=$((failed + 1))
+              fi
               cat /proc/pressure/{cpu,memory,io} > "$AWS2AZURE_BATCH_OUTPUT/pressure-after-$label.txt"
             done
+            if (( failed > 0 )); then
+              echo "::error::$failed cells failed; retained their reports and attempted remaining selected cells once."
+              exit 1
+            fi
           done
       - name: Upload diagnostics, including failures
         if: always()

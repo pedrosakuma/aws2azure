@@ -106,6 +106,63 @@ adds overhead to both paths; these timings must not be represented as
 uninstrumented production latency. Do not subtract their p99 values to
 derive a per-stage duration.
 
+## Failure boundaries (report schema 3)
+
+The legacy `rest.writeRestAttempts`, `repeatedItemAttempts`, status/RU/byte
+fields and attempt-latency distribution still mean **completed backend write
+response bodies**, not every attempted send. Schema 3 adds `rest.boundaries`,
+separately for `writes` and `otherRequests` (including metadata accesses):
+
+| Counter | Observed boundary |
+| --- | --- |
+| `arrived` | Relay handler entered, before reading the request body |
+| `dispatchStarted` | Relay calls its HTTP transport after reading/preparing the request |
+| `responseHeadersReceived` | Backend HTTP response headers returned |
+| `bodyCompleted` | Entire backend response body read successfully |
+| `responseWriteCompleted` | Async relay-to-client response write returned; not proof the client acknowledged it |
+| `failed` / `cancelled` | Exceptional terminal paths, distinct from complete non-success HTTP responses |
+| `clientDisconnects` | Exceptional completion with the relay request-aborted token set |
+| `timeouts` | Cancellation with an actual `TimeoutException` cause and no client abort |
+| `otherCancellations` | Other observed cancellation; not mislabeled a timeout |
+| `activeAtSnapshot` | Admitted attempts not yet at a terminal boundary when snapshotted |
+| `repeatedDispatches` | Repeated internal item identities reaching dispatch, including incomplete responses |
+
+`nonSuccessResponseHeaders` and allowlisted `statusCounts` are retained even
+when reading the body fails. `faultsByPhaseAndType` uses only four fixed phases
+(`request-read`, `dispatch`, `response-body`, `response-write`) and five fixed
+exception categories (`OperationCanceledException`, `HttpRequestException`,
+`IOException`, `JsonException`, `Other`). No exception messages, dynamic type
+names, URLs/keys, credentials, request/response bodies or authorization
+headers are serialized into these metadata. Statuses outside the fixed
+common-code list use `other`.
+
+At most 65,536 arrivals across the two scopes are admitted. Counters/series,
+latency storage and internal identity sets are bounded by this admission cap;
+`droppedArrivals` is a saturating counter. Capacity exhaustion stops observation,
+**not forwarding**. Attempts admitted before the observer closes may finish;
+the report is an immutable snapshot, with active/dropped counts exposing
+incompleteness. An idle wait of at most two seconds precedes the final snapshot.
+This observer drain is outside the measured dispatch/drain denominator.
+
+Fewer arrivals than submitted inventory identifies an **unobserved-before-relay
+boundary**, not necessarily packet loss: prevalidation, upstream transport,
+admission logic or cancellation may prevent an item from reaching the relay.
+Arrivals without headers plus a dispatch fault differ from a backend non-success
+header, a body-read interruption, or an aborted response write. These counts do
+not measure internal retry/backoff time, and time gaps must not be used to invent it.
+
+Final stage, process, memory and sampled-resource snapshots are attempted on
+both success and worker-failure paths, before process/relay/container shutdown.
+`snapshotFailures` explicitly records unavailable observations with safe
+categories; `relayIdleBeforeSnapshot=false` prevents claiming a drained observer.
+Snapshot work is bracketed diagnostic overhead, not extra measured throughput.
+
+The workflow `runtime_slots` input can select a single pinned slot for one
+authorized diagnostic reproduction. `purpose` distinguishes `standard`,
+`diagnostic-reproduction` and `staged-continuation` in reports. Each selected
+cell is attempted once, even after an earlier cell fails; the overall workflow
+still fails if any cell failed. This is continuation, not automatic retry.
+
 ## Internal attribution and resource scope
 
 `AWS2AZURE_BATCH_DIAGNOSTICS=1` opts the proxy into a single histogram on the
@@ -167,9 +224,10 @@ Resource fields likewise have explicit scopes:
   They describe the runner, not an assertion of backend saturation.
 
 Backend CPU/allocation, true window peak memory, sampled CPU stacks, and separate
-transport retry/backoff timings remain unavailable. The relay observes
+transport retry/backoff timings remain unavailable. The legacy relay fields observe
 REST attempts only after a complete backend response, including RU/429s and
-repeated identities. Incomplete transport/body-read attempts are not counted;
+repeated identities. Schema 3 boundary counters separately retain incomplete
+transport/body-read attempts without inventing their missing response values;
 the driver measures its own
 resubmission backoff. Zero terminal failures does not imply zero retries.
 

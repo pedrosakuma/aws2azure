@@ -57,6 +57,37 @@ internal sealed record BatchWriteProcessSample(
         };
 }
 
+internal sealed record BatchWriteFinalSnapshots(
+    BatchWriteProcessSample? Proxy, BatchWriteProcessSample? Driver,
+    Dictionary<string, double>? Stages, RuntimeMemorySnapshot? Memory, string[] Unavailable)
+{
+    public static async Task<BatchWriteFinalSnapshots> CaptureAsync(int proxyPid, string endpoint)
+    {
+        var unavailable = new List<string>();
+        BatchWriteProcessSample? proxy = null, driver = null;
+        Dictionary<string, double>? stages = null;
+        RuntimeMemorySnapshot? memory = null;
+        try { proxy = BatchWriteProcessSample.Capture(proxyPid); }
+        catch (Exception ex) { unavailable.Add("proxy-process:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+        try { driver = BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true); }
+        catch (Exception ex) { unavailable.Add("driver-process:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+        try
+        {
+            stages = await BatchWriteStageTelemetry.ScrapeAsync(endpoint);
+            if (stages is null) unavailable.Add("stages:missing");
+        }
+        catch (Exception ex) { unavailable.Add("stages:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+        try
+        {
+            using var probe = new ProxyMemoryProbe(endpoint);
+            memory = await probe.SampleAsync();
+            if (memory is null) unavailable.Add("memory:missing");
+        }
+        catch (Exception ex) { unavailable.Add("memory:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+        return new(proxy, driver, stages, memory, unavailable.ToArray());
+    }
+}
+
 internal sealed class BatchWriteResourceWindow : IAsyncDisposable
 {
     internal const int MaxSamples = 160;

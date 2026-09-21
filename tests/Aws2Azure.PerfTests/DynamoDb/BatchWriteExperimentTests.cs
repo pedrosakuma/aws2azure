@@ -67,6 +67,9 @@ public sealed class BatchWriteExperimentTests
         BatchWriteProcessSample? proxyBefore = null, proxyAfter = null, driverBefore = null, driverAfter = null;
         Dictionary<string, double>? stagesBefore = null, stagesAfter = null;
         BatchWriteResourceWindow? resourceWindow = null;
+        var snapshotFailures = new List<string>();
+        bool? relayIdleBeforeSnapshot = null;
+        var finalSnapshotSeconds = 0.0;
         object? rest = null;
         var relay = new BatchWriteExperimentRelay();
         var proxy = new PerfProxyProcess();
@@ -181,14 +184,6 @@ public sealed class BatchWriteExperimentTests
                 }
             }).ToArray();
             await Task.WhenAll(workers);
-            clock.Stop();
-            dispatchSeconds = Math.Min(clock.Elapsed.TotalSeconds, BatchWriteExperimentPlan.DispatchDuration.TotalSeconds);
-            rest = relay.End();
-            await resourceWindow.StopAsync();
-            proxyAfter = BatchWriteProcessSample.Capture(proxy.ProcessId);
-            driverAfter = BatchWriteProcessSample.Capture(Environment.ProcessId, currentProcess: true);
-            stagesAfter = await BatchWriteStageTelemetry.ScrapeAsync(proxy.ServiceUrl);
-            memoryAfter = await memory.SampleAsync();
         }
         catch (Exception ex)
         {
@@ -199,8 +194,30 @@ public sealed class BatchWriteExperimentTests
         {
             clock.Stop();
             setup.Stop();
-            if (measurementStarted && rest is null) rest = relay.End();
-            if (resourceWindow is not null) await resourceWindow.DisposeAsync();
+            if (measurementStarted)
+            {
+                var snapshotClock = Stopwatch.StartNew();
+                dispatchSeconds = Math.Min(clock.Elapsed.TotalSeconds, BatchWriteExperimentPlan.DispatchDuration.TotalSeconds);
+                if (resourceWindow is not null)
+                {
+                    try { await resourceWindow.StopAsync(); }
+                    catch (Exception ex) { snapshotFailures.Add("window:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+                }
+                relayIdleBeforeSnapshot = await relay.WaitForIdleAsync();
+                rest = relay.End();
+                var final = await BatchWriteFinalSnapshots.CaptureAsync(proxy.ProcessId, proxy.ServiceUrl);
+                proxyAfter = final.Proxy;
+                driverAfter = final.Driver;
+                stagesAfter = final.Stages;
+                memoryAfter = final.Memory;
+                snapshotFailures.AddRange(final.Unavailable);
+                finalSnapshotSeconds = snapshotClock.Elapsed.TotalSeconds;
+            }
+            if (resourceWindow is not null)
+            {
+                try { await resourceWindow.DisposeAsync(); }
+                catch (Exception ex) { snapshotFailures.Add("window-dispose:" + BatchWriteExperimentRelay.SafeExceptionType(ex)); }
+            }
             var cleanup = Stopwatch.StartNew();
             try
             {
@@ -218,8 +235,9 @@ public sealed class BatchWriteExperimentTests
                 await using var file = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                 await JsonSerializer.SerializeAsync(file, new
                 {
-                    schemaVersion = 2, reportOnly = true, promotable = false, plan, harnessSource = source,
+                    schemaVersion = 3, reportOnly = true, promotable = false, plan, harnessSource = source,
                     runtimeSlot = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_SLOT"),
+                    campaignPurpose = Environment.GetEnvironmentVariable("AWS2AZURE_BATCH_PURPOSE") ?? "standard",
                     runtimeIdentity,
                     capturedAtUtc = DateTimeOffset.UtcNow, imageTag = image, imageId,
                     backend = "exclusive disposable local Cosmos emulator; no Azure capacity claim",
@@ -231,6 +249,7 @@ public sealed class BatchWriteExperimentTests
                     cleanupSeconds, cleanupComplete, failure,
                     measurement = clock.Elapsed.TotalSeconds > 0 ? accounting.Snapshot(clock.Elapsed.TotalSeconds) : null,
                     rest, proxyMemoryBefore = memoryBefore, proxyMemoryAfter = memoryAfter,
+                    relayIdleBeforeSnapshot, snapshotFailures, finalSnapshotSeconds,
                     proxyProcess = BatchWriteProcessSample.Delta(proxyBefore, proxyAfter),
                     driverProcess = BatchWriteProcessSample.Delta(driverBefore, driverAfter),
                     resourcesDuringWindow = resourceWindow?.Snapshot(),

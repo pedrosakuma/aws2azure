@@ -171,6 +171,41 @@ exception path; periodic samples must not be presented as those missing deltas.
 | Deterministic guardrails | Accounting, missing metrics, sample ordering/caps, tamper rejection and existing qualification/threshold preservation tested; dynamic report-only cells do not enter PerfReport |
 | Published limitations / Azure plan | Run/artifact/commit IDs above, explicit failed evidence and approval-only finite plan below; no Azure production/capacity claim |
 
+### Narrow failure-localization follow-up
+
+The original run is preserved. Its completed-response-only observer cannot
+retrospectively locate the missing attempt; the missing information cannot be
+reconstructed from latency subtraction or a later successful run.
+[Schema 3 boundary observations](batch-write-experiment.md#failure-boundaries-report-schema-3)
+distinguish relay arrival, dispatch, response headers, complete body, response
+write, exceptions and cancellations, with allowlisted metadata and final
+snapshots attempted before shutdown even on worker failure.
+
+The authorized diagnostic is **one** fresh-process pinned-main
+`25:8:mixed:shared:proxy` window followed by its direct reference, with runtime
+`bd89968772af815ad847845159075d2d1521f703`, the same emulator repository digest,
+payloads, seed/key codec, concurrency and finite inventory/time bounds.
+The concrete hypothesis is an incomplete/lost response or unobserved transport
+failure that the old completion-only counter missed. New counters discriminate
+that hypothesis from a complete backend error or failure before relay arrival;
+they do not guarantee reproduction or determine an earlier run's cause.
+
+A separately labeled `staged-continuation` completes the eight previously
+unrun **direct reference** cells in the second source-pinned slot. It does
+not repeat the failed proxy cell, rerun the full 32-window campaign, or claim
+that unexecuted second-slot proxy repetitions succeeded. Outcomes, including
+failures or non-reproduction, must remain separate from the original report.
+
+Exact core-transport retry/backoff duration is not required to begin a useful
+report-only **#1026 internal-limit sweep**: measured semaphore/downstream
+scopes, caller latency, arrived/completed/failed attempt boundaries, RU/429
+and resources already permit bounded hypotheses. Such a sweep must preserve
+failure evidence and reject hidden work/loss, not declare the original cause
+resolved. Core instrumentation authorization is needed only if a selected
+hypothesis actually depends on internal retry category/delay or pre-relay
+transport behavior that these boundaries cannot distinguish. No such shipping
+change or billed gate is authorized by this follow-up.
+
 ### Directions supported for subsequent investigation
 
 For **#1026**, higher external concurrency here increases semaphore and
