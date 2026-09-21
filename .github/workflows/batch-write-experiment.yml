@@ -52,7 +52,7 @@ jobs:
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
           bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
           bash eng/publish-batch-runtime.sh "$CANDIDATE" artifacts/batch-runtimes/candidate
-          if [[ ! "$EMULATOR_IMAGE" =~ ^mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:[0-9a-f]{64}$ ]]; then
+          if [[ ! "$EMULATOR_IMAGE" =~ ^mcr[.]microsoft[.]com/cosmosdb/linux/azure-cosmos-emulator@sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Select a pinned Cosmos emulator repository digest."
             exit 1
           fi
