@@ -20,17 +20,22 @@ public sealed class BatchWriteExperimentAccountingTests
     public void Invalid_execution_blocks_fail_before_infrastructure(string value)
         => Assert.Throws<ArgumentException>(() => BatchWriteExperimentPlan.ParseExecutionBlock(value));
 
-    [Fact]
-    public void Direct_reference_uses_the_same_encoded_keys_and_document_shape()
+    [Theory]
+    [InlineData(256)]
+    [InlineData(8192)]
+    public void Direct_reference_uses_the_same_encoded_keys_and_document_shape(int payloadBytes)
     {
-        var item = new BatchWriteExperimentItem("partition", "item", false);
+        var plan = BatchWriteExperimentPlan.Parse($"25:8:put:shared:direct:{payloadBytes}");
+        Assert.All(plan.Items(4), fixture => Assert.Equal(payloadBytes, fixture.PayloadBytes));
+        var item = new BatchWriteExperimentItem("partition", "item", false, payloadBytes);
         using var document = JsonDocument.Parse(item.CosmosDocument());
         Assert.Equal("706172746974696f6e", item.CosmosPk);
         Assert.Equal("6974656d", item.CosmosId);
         Assert.Equal(item.CosmosId, document.RootElement.GetProperty("id").GetString());
         Assert.Equal(item.CosmosPk, document.RootElement.GetProperty("_a2a_pk").GetString());
         Assert.Equal("partition", document.RootElement.GetProperty("pk").GetString());
-        Assert.Equal(256, document.RootElement.GetProperty("payload").GetString()!.Length);
+        Assert.Equal(payloadBytes, document.RootElement.GetProperty("payload").GetString()!.Length);
+        Assert.Equal(payloadBytes, item.Write().PutRequest.Item["payload"].S.Length);
     }
 
     [Theory]
@@ -41,6 +46,8 @@ public sealed class BatchWriteExperimentAccountingTests
     [InlineData("25:8:upsert:distinct:proxy")]
     [InlineData("25:8:put:random:proxy")]
     [InlineData("25:8:put:distinct:azure")]
+    [InlineData("25:8:put:distinct:proxy:512")]
+    [InlineData("25:8:put:distinct:proxy:8192:extra")]
     public void Invalid_cells_fail_loud(string? value)
         => Assert.Throws<ArgumentException>(() => BatchWriteExperimentPlan.Parse(value));
 

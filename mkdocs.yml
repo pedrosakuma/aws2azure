@@ -132,6 +132,7 @@ nav:
           - BatchWriteItem representative campaign: perf/batch-write-campaign.md
           - BatchWriteItem concurrency investigation: perf/batch-write-concurrency.md
           - BatchWriteItem overhead investigation: perf/batch-write-overhead.md
+          - BatchWriteItem retained-body ownership: perf/batch-write-body-ownership.md
           - Latest performance baseline: perf/baseline-latest.md
           - Latest footprint baseline: perf/footprint-latest.md
           - CosmosBinary decode investigation: perf/cosmos-binary-decode.md

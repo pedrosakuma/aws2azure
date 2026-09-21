@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Aws2Azure.PerfTests.DynamoDb;
 
-internal sealed record BatchWriteRuntime(string Commit, string Executable, Dictionary<string, string> Files)
+internal sealed record BatchWriteRuntime(string Commit, string Executable, Dictionary<string, string> Files, string? BuildMode = null)
 {
     public static BatchWriteRuntime Verify(string directory)
     {
