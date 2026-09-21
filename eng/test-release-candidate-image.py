@@ -1107,7 +1107,7 @@ esac
         self.assertEqual(len(output_lines), 2)
         self.assertRegex(
             output_lines[0],
-            r"^observation_sync_at_utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+            r"^observation_deadline_utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
         )
         self.assertEqual(
             output_lines[1],
