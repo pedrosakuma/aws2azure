@@ -119,7 +119,7 @@ separately for `writes` and `otherRequests` (including metadata accesses):
 | `dispatchStarted` | Relay calls its HTTP transport after reading/preparing the request |
 | `responseHeadersReceived` | Backend HTTP response headers returned |
 | `bodyCompleted` | Entire backend response body read successfully |
-| `responseWriteCompleted` | Async relay-to-client response write returned; not proof the client acknowledged it |
+| `responseWriteCompleted` | Async relay-to-client write or bodyless completion returned; not proof the client acknowledged it |
 | `failed` / `cancelled` | Exceptional terminal paths, distinct from complete non-success HTTP responses |
 | `clientDisconnects` | Exceptional completion with the relay request-aborted token set |
 | `timeouts` | Cancellation with an actual `TimeoutException` cause and no client abort |
@@ -129,9 +129,9 @@ separately for `writes` and `otherRequests` (including metadata accesses):
 
 `nonSuccessResponseHeaders` and allowlisted `statusCounts` are retained even
 when reading the body fails. `faultsByPhaseAndType` uses only four fixed phases
-(`request-read`, `dispatch`, `response-body`, `response-write`) and five fixed
+(`request-read`, `dispatch`, `response-body`, `response-write`) and six fixed
 exception categories (`OperationCanceledException`, `HttpRequestException`,
-`IOException`, `JsonException`, `Other`). No exception messages, dynamic type
+`IOException`, `JsonException`, `InvalidOperationException`, `Other`). No exception messages, dynamic type
 names, URLs/keys, credentials, request/response bodies or authorization
 headers are serialized into these metadata. Statuses outside the fixed
 common-code list use `other`.

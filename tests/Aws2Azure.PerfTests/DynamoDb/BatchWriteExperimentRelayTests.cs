@@ -10,6 +10,35 @@ public sealed class BatchWriteExperimentRelayTests
 {
     private static readonly Uri Backend = new("http://backend.invalid/");
 
+    [Fact]
+    public async Task Kestrel_bodyless_response_completes_without_faulting_relay_connection()
+    {
+        await using var relay = new BatchWriteExperimentRelay(new ControlledHandler((request, _) =>
+            Task.FromResult(Response(request.Method == HttpMethod.Delete ? 204 : 201,
+                request.Method == HttpMethod.Delete ? new ByteArrayContent([]) : new FaultContent()))));
+        await relay.StartAsync(Backend.ToString(), CancellationToken.None);
+        using var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, MaxConnectionsPerServer = 1 });
+        relay.Begin();
+        using (var response = await client.DeleteAsync(relay.Endpoint + "dbs/db/colls/table/docs/item"))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+        }
+        Assert.True(await relay.WaitForIdleAsync());
+        using (var response = await client.PostAsync(relay.Endpoint + "dbs/db/colls/table/docs",
+            new StringContent("""{"id":"item"}""", Encoding.UTF8, "application/json")))
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal("part", await response.Content.ReadAsStringAsync());
+        }
+        Assert.True(await relay.WaitForIdleAsync());
+        using var report = Report(relay);
+        var writes = Writes(report);
+        Assert.True(writes.GetProperty("failed").GetInt32() == 0, report.RootElement.GetRawText());
+        Assert.Equal(2, writes.GetProperty("responseWriteCompleted").GetInt32());
+        Assert.Equal(2, report.RootElement.GetProperty("writeRestAttempts").GetInt32());
+    }
+
     [Theory]
     [InlineData(201, "201")]
     [InlineData(429, "429")]
@@ -184,7 +213,7 @@ public sealed class BatchWriteExperimentRelayTests
         Assert.Equal(1, writes.GetProperty("arrived").GetInt32());
         Assert.Equal(0, writes.GetProperty("dispatchStarted").GetInt32());
         Assert.Equal(1, writes.GetProperty("faultsByPhaseAndType").GetProperty("request-read:IOException").GetInt32());
-        Assert.Equal("Other", BatchWriteExperimentRelay.SafeExceptionType(new InvalidOperationException("secret-error")));
+        Assert.Equal("Other", BatchWriteExperimentRelay.SafeExceptionType(new ArgumentException("secret-error")));
         AssertSafe(report);
     }
 

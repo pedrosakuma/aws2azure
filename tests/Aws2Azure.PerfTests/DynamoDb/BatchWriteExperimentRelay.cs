@@ -150,8 +150,16 @@ internal sealed class BatchWriteExperimentRelay : IAsyncDisposable
                     || header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
                 ctx.Response.Headers[header.Key] = header.Value.ToArray();
             }
-            ctx.Response.ContentLength = bytes.Length;
-            await ctx.Response.Body.WriteAsync(bytes, ctx.RequestAborted);
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                // Even an empty Body.WriteAsync is invalid for Kestrel's 204 response.
+                await ctx.Response.CompleteAsync();
+            }
+            else
+            {
+                ctx.Response.ContentLength = bytes.Length;
+                await ctx.Response.Body.WriteAsync(bytes, ctx.RequestAborted);
+            }
             lock (_gate)
                 if (counts is not null) counts.ResponseWriteCompleted++;
         }
@@ -233,6 +241,7 @@ internal sealed class BatchWriteExperimentRelay : IAsyncDisposable
         HttpRequestException => "HttpRequestException",
         IOException => "IOException",
         JsonException => "JsonException",
+        InvalidOperationException => "InvalidOperationException",
         _ => "Other",
     };
 
