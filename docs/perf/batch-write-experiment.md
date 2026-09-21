@@ -167,8 +167,10 @@ Resource fields likewise have explicit scopes:
   They describe the runner, not an assertion of backend saturation.
 
 Backend CPU/allocation, true window peak memory, sampled CPU stacks, and separate
-transport retry/backoff timings remain unavailable. The relay still observes
-REST attempts/RU/429s and repeated item attempts; the driver measures its own
+transport retry/backoff timings remain unavailable. The relay observes
+REST attempts only after a complete backend response, including RU/429s and
+repeated identities. Incomplete transport/body-read attempts are not counted;
+the driver measures its own
 resubmission backoff. Zero terminal failures does not imply zero retries.
 
 ## Source-pinned paired execution
