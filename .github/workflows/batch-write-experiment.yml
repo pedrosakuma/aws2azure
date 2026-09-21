@@ -63,9 +63,6 @@ jobs:
         run: |
           set -euo pipefail
           dotnet build tests/Aws2Azure.PerfTests -c Release --nologo
-          if ! .tools/trace/dotnet-trace --version; then
-            dotnet tool install dotnet-trace --version 10.0.745401 --tool-path .tools/trace
-          fi
           case "$RUNTIME_SLOTS" in both|main|candidate|balanced) ;; *) exit 1 ;; esac
           if [[ "$RUNTIME_SLOTS" != candidate ]]; then
             bash eng/publish-batch-runtime.sh "$BASELINE" artifacts/batch-runtimes/main
@@ -85,7 +82,6 @@ jobs:
           AWS2AZURE_BATCH_EXPERIMENT: '1'
           AWS2AZURE_BATCH_EXCLUSIVE_HOST: '1'
           AWS2AZURE_BATCH_OUTPUT: ${{ github.workspace }}/artifacts/batch-write
-          AWS2AZURE_BATCH_TRACE_TOOL: ${{ github.workspace }}/.tools/trace/dotnet-trace
         shell: bash
         run: |
           set -euo pipefail
