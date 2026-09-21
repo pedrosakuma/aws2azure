@@ -17,7 +17,7 @@ fi
 git worktree add --detach "$destination/source" "$sha"
 trap 'git worktree remove "$destination/source"' EXIT
 dotnet publish "$destination/source/src/Aws2Azure.Proxy/Aws2Azure.Proxy.csproj" \
-  -c Release -r linux-x64 --self-contained true -p:PublishAot=true -p:EnableRequestDelegateGenerator=true \
+  -c Release -r linux-x64 --self-contained true -p:PublishAot=false -p:EnableRequestDelegateGenerator=true \
   -o "$destination/app" --nologo
 git -C "$destination/source" diff --exit-code
 dotnet --info > "$destination/build-dotnet-info.txt"
@@ -29,6 +29,6 @@ files = {p.relative_to(app).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest
          for p in sorted(app.rglob("*")) if p.is_file()}
 assert "Aws2Azure.Proxy" in files
 (root / "runtime-identity.json").write_text(json.dumps({
-    "Commit": sys.argv[2], "Executable": "Aws2Azure.Proxy", "Files": files, "BuildMode": "native-aot"
+    "Commit": sys.argv[2], "Executable": "Aws2Azure.Proxy", "Files": files
 }, indent=2) + "\n")
 PY
