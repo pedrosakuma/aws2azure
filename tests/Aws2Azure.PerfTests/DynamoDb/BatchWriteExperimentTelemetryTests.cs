@@ -75,8 +75,11 @@ public sealed class BatchWriteExperimentTelemetryTests
         }
     }
 
-    [Fact]
-    public void Runtime_manifest_rejects_changed_missing_and_additional_dependencies()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("self-contained-jit")]
+    [InlineData("native-aot")]
+    public void Runtime_manifest_preserves_mode_and_rejects_changed_missing_and_additional_dependencies(string? mode)
     {
         var directory = Path.Combine(AppContext.BaseDirectory, "batch-runtime-test-" + Guid.NewGuid().ToString("N"));
         var app = Path.Combine(directory, "app");
@@ -85,9 +88,13 @@ public sealed class BatchWriteExperimentTelemetryTests
         {
             File.WriteAllText(Path.Combine(app, "Aws2Azure.Proxy"), "executable");
             File.WriteAllText(Path.Combine(app, "dependency.dll"), "dependency");
-            var manifest = new BatchWriteRuntime(new string('a', 40), "Aws2Azure.Proxy", BatchWriteRuntime.HashFiles(app));
-            File.WriteAllText(Path.Combine(directory, "runtime-identity.json"), JsonSerializer.Serialize(manifest));
+            var manifest = new BatchWriteRuntime(new string('a', 40), "Aws2Azure.Proxy", BatchWriteRuntime.HashFiles(app), mode);
+            var serialized = mode is null
+                ? JsonSerializer.Serialize(new { manifest.Commit, manifest.Executable, manifest.Files })
+                : JsonSerializer.Serialize(manifest);
+            File.WriteAllText(Path.Combine(directory, "runtime-identity.json"), serialized);
             Assert.Equal(manifest.Commit, BatchWriteRuntime.Verify(directory).Commit);
+            Assert.Equal(mode, BatchWriteRuntime.Verify(directory).BuildMode);
             File.WriteAllText(Path.Combine(app, "dependency.dll"), "changed");
             Assert.Throws<InvalidOperationException>(() => BatchWriteRuntime.Verify(directory));
             File.WriteAllText(Path.Combine(app, "dependency.dll"), "dependency");

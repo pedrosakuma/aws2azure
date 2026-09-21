@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:6aff994c5bcf0eebfc2971b8a9cd6a724e9a9f45c4f4f7b6ecde7174244f98c3",
+  "manifest_revision": "sha256:9975e187631f6d6ad8f2cddec68cc676d55e5d801b202a940e5f1a632757c4ec",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1432,6 +1432,18 @@
       }
     },
     {
+      "id": "documentation:docs-perf-batch-write-body-ownership",
+      "path": "docs/perf/batch-write-body-ownership.md",
+      "type": "documentation-guide",
+      "scope": "perf",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:927ebe8a6fbe2ae3b7b7167cc308c6c4c575df6e151c5c174ec7eaa35e052e9a",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-perf-batch-write-campaign",
       "path": "docs/perf/batch-write-campaign.md",
       "type": "documentation-guide",
@@ -1462,7 +1474,7 @@
       "scope": "perf",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:ccb18ef0759e37c92d3b7d76936d90be537fba0235c37a1b183c2b7141e5b179",
+      "revision": "sha256:07b59500a3a6f5e77d07c651f5c3ec6a21c4207179032e358056d2ddb08e1db4",
       "freshness": {
         "mode": "current"
       }

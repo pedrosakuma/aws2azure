@@ -28,6 +28,7 @@ public sealed class AzureHttpClientRequestLifetimeTests
         var headersSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bodyRead = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? uploadConnection = null, probeConnection = null;
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(options =>
@@ -39,6 +40,13 @@ public sealed class AzureHttpClientRequestLifetimeTests
         await using var app = builder.Build();
         app.Run(async context =>
         {
+            if (context.Request.Path == "/probe")
+            {
+                probeConnection = context.Connection.Id;
+                context.Response.StatusCode = 204;
+                return;
+            }
+            uploadConnection = context.Connection.Id;
             context.Response.StatusCode = 400;
             await context.Response.StartAsync(deadline.Token);
             headersSent.TrySetResult();
@@ -72,6 +80,12 @@ public sealed class AzureHttpClientRequestLifetimeTests
         try
         {
             await headersSent.Task.WaitAsync(deadline.Token);
+            using var probe = new HttpRequestMessage(HttpMethod.Get, new Uri(uri, "probe"));
+            using var probeResponse = await transport.SendAsync(probe, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            Assert.Equal(HttpStatusCode.NoContent, probeResponse.StatusCode);
+            Assert.Equal(uploadConnection, probeConnection);
+            // Later headers on the same HTTP/2 connection prove its reader has
+            // processed the upload's earlier headers, without a timing sleep.
             Assert.False(send.IsCompleted);
             if (cancel)
             {
@@ -97,7 +111,7 @@ public sealed class AzureHttpClientRequestLifetimeTests
 
     private sealed class ExactHttp2Handler : DelegatingHandler
     {
-        public ExactHttp2Handler() : base(new SocketsHttpHandler { UseProxy = false }) { }
+        public ExactHttp2Handler() : base(new SocketsHttpHandler { UseProxy = false, MaxConnectionsPerServer = 1 }) { }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
