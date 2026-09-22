@@ -51,3 +51,26 @@ def required_profiles() -> frozenset[str]:
         raise SystemExit(f"release-profile-coverage: {error}") from error
     # Expiry/downgrade must not silently shrink a release's evidence obligations.
     return REQUIRED_PROFILES
+
+
+def approved_ledger_filename(profile: str) -> str:
+    if profile not in REQUIRED_PROFILES:
+        raise ValueError(f"unsupported release profile: {profile}")
+    return profile.split("-", 1)[0] + "-approved-runtime.json"
+
+
+def resolved_identity_filename(profile: str) -> str:
+    if profile not in REQUIRED_PROFILES:
+        raise ValueError(f"unsupported release profile: {profile}")
+    # Retain the existing S3 filename in archive payloads.
+    if profile == "s3-basic-object-crud":
+        return "resolved-x64-identity.json"
+    return f"resolved-x64-{profile}-identity.json"
+
+
+if __name__ == "__main__":
+    for profile in sorted(required_profiles()):
+        print(
+            profile, approved_ledger_filename(profile),
+            resolved_identity_filename(profile), sep="\t",
+        )

@@ -33,18 +33,27 @@ with no leading zeroes. They are produced by
 The RC producer runs only from protected `main` at an explicitly pinned
 orchestration SHA containing the workflow, helpers, and approved ledgers. The
 protected candidate tag is a separate input identity: its commit is checked out
-into a separate path and must equal both GA ledgers' runtime and attestation
+into a separate path and must equal all required GA ledgers' runtime and attestation
 source SHA. The orchestration source, approved-ledger source, and candidate
 source are recorded independently even when the first two identify the same
 trusted main commit. This avoids requiring an older qualified source commit to
 contain a workflow and approvals that were added later.
 
 The RC archive producer never rebuilds linux-x64. It downloads and verifies the
-approved sealed bytes, builds linux-arm64 once on a native arm64 runner, performs
+approved sealed bytes for every required profile, builds linux-arm64 once on a native arm64 runner, performs
 native architecture-specific health smokes, creates deterministic digest-named
 archives and checksums, and attests the executables, manifests, checksums, and
 archives. Artifact uploads are non-overwriting and include the full archive-input
 digest in their names.
+
+The shared release coverage contract requires DynamoDB CRUD, S3 CRUD,
+SecretsManager lifecycle and SQS standard messaging. Every profile must approve
+the same exact sealed runtime/artifact/producer tuple, with distinct per-profile
+ledger digests. Each ledger and resolved identity is retained in the archive and
+checked again by the GHCR consumer. Incompatible sources, builds or expired
+artifacts fail closed; the tools never overwrite approvals to make packaging
+possible. See the [packaging prerequisite](testing/rc-staging-canary.md#four-profile-packaging-prerequisite)
+for current incompatible approvals and remaining live producer work.
 
 `release-candidate-archive-inputs.json` is an attested input fragment for the
 canonical `eng/release-candidate-manifest.py` interface, not a completed RC
@@ -74,8 +83,10 @@ platform manifest digest, the index digest, tags, bases, executable/archive
 materials, and the exact archive artifact identity. Its `container` object is
 the canonical GHCR input accepted by `eng/release-candidate-manifest.py`.
 
-The real-Azure observation workflow supplies immutable evidence for both GA
-profiles. `eng/release-candidate-manifest.py finalize` combines the canonical
+The real-Azure observation workflow currently supplies immutable evidence only
+for S3/SecretsManager; DynamoDB/SQS live producer support is still pending.
+New promotion requires genuine observations for all four profiles.
+`eng/release-candidate-manifest.py finalize` combines the canonical
 identity receipt with the exact observation-selection receipts, reproduces the
 pre-observation identity digest, and emits the final manifest only when every
 supported workload has a distinct `pass` verdict.

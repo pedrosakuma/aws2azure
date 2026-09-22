@@ -9,7 +9,10 @@ import json
 import pathlib
 import re
 import stat
+from datetime import datetime, timezone
 from typing import Any, NoReturn
+
+from release_profile_coverage import required_profiles
 
 
 SCHEMA_VERSION = 1
@@ -19,7 +22,6 @@ CANDIDATE_RE = re.compile(
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 REPOSITORY_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-PROFILES = ("s3-basic-object-crud", "secretsmanager-basic-lifecycle")
 POLICY_IDENTIFIER = "aws2azure-compatibility-policy-v1"
 SEALED_WORKFLOW = ".github/workflows/sealed-runtime.yml"
 RC_WORKFLOW = ".github/workflows/release-candidate.yml"
@@ -178,6 +180,8 @@ def approved_runtime(
     source_profile = top_level_yaml_identity(profile_path)
     if source_profile != {"id": profile_id, "version": profile_version}:
         fail(f"{expected_profile} profile file identity drifts from its ledger")
+    if profile_version != 1:
+        fail(f"{expected_profile} requires reviewed release profile version 1")
     if (
         record.get("schema_version") != 1
         or record.get("status") != "approved"
@@ -198,7 +202,12 @@ def approved_runtime(
         runtime.get("source_repository") != repository
         or runtime.get("source_sha") != source_sha
     ):
-        fail(f"{expected_profile} approved runtime source drifts from the producer")
+        fail(
+            f"{expected_profile} approved source "
+            f"{runtime.get('source_repository')}@{runtime.get('source_sha')} differs "
+            f"from candidate {repository}@{source_sha}; one RC cannot package mixed "
+            "approved sources; qualify a common runtime first"
+        )
     aggregate_digest = require_digest(
         runtime.get("aggregate_digest"), f"{expected_profile} aggregate digest"
     )
@@ -224,6 +233,15 @@ def approved_runtime(
     upload_digest = require_digest(
         artifact.get("upload_digest"), f"{expected_profile} upload digest"
     )
+    try:
+        created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00"))
+        if created.tzinfo is None or expires.tzinfo is None or not created < expires:
+            fail(f"{expected_profile} artifact validity interval is invalid")
+        if expires <= datetime.now(timezone.utc):
+            fail(f"{expected_profile} approved artifact is expired")
+    except (KeyError, AttributeError, TypeError, ValueError):
+        fail(f"{expected_profile} artifact timestamps are invalid")
     attestation = require_object(
         record.get("attestation"), f"{expected_profile} attestation"
     )
@@ -298,13 +316,17 @@ def create_context(args: argparse.Namespace) -> None:
         fail("source ref must be the exact candidate tag")
     common_identities: list[dict[str, Any]] = []
     workloads: list[dict[str, Any]] = []
-    for profile_id, ledger_path, profile_path in (
-        (PROFILES[0], args.s3_ledger, args.s3_profile),
-        (PROFILES[1], args.secrets_ledger, args.secrets_profile),
-    ):
+    profiles = required_profiles()
+    selected = [item[0] for item in args.profile_input]
+    if len(selected) != len(profiles) or set(selected) != profiles:
+        fail(
+            "profile inputs must uniquely cover all required GA profiles: "
+            + ", ".join(sorted(profiles))
+        )
+    for profile_id, ledger_path, profile_path in sorted(args.profile_input):
         common, workload = approved_runtime(
-            ledger_path.resolve(),
-            profile_path.resolve(),
+            pathlib.Path(ledger_path).absolute(),
+            pathlib.Path(profile_path).absolute(),
             profile_id,
             candidate,
             args.repository,
@@ -312,12 +334,13 @@ def create_context(args: argparse.Namespace) -> None:
         )
         common_identities.append(common)
         workloads.append(workload)
-    if common_identities[0] != common_identities[1]:
-        fail("both GA profile ledgers must approve the exact same sealed runtime")
-    if (
-        workloads[0]["approved_runtime"]["ledger_record_digest"]
-        == workloads[1]["approved_runtime"]["ledger_record_digest"]
-    ):
+    if any(identity != common_identities[0] for identity in common_identities[1:]):
+        fail(
+            "all GA profile ledgers must approve the same exact sealed "
+            "runtime/artifact/producer tuple; independent approvals cannot be relabeled as one RC"
+        )
+    ledger_digests = {item["approved_runtime"]["ledger_record_digest"] for item in workloads}
+    if len(ledger_digests) != len(profiles):
         fail("GA profile ledger identities must remain distinct")
     workloads.sort(key=lambda item: item["profile"]["id"])
     policy_path = regular_file(args.policy.resolve(), "compatibility policy")
@@ -461,9 +484,9 @@ def validate_context(path: pathlib.Path) -> dict[str, Any]:
     workloads = context["workloads"]
     if (
         not isinstance(workloads, list)
-        or [item.get("profile", {}).get("id") for item in workloads] != sorted(PROFILES)
+        or [item.get("profile", {}).get("id") for item in workloads] != sorted(required_profiles())
     ):
-        fail("context workloads must contain both GA profiles in sorted order")
+        fail("context workloads must contain all required GA profiles in sorted order")
     ledger_digests: list[str] = []
     for workload in workloads:
         workload = require_keys(
@@ -472,7 +495,8 @@ def validate_context(path: pathlib.Path) -> dict[str, Any]:
         profile = require_keys(
             workload["profile"], "workload profile", {"id", "version", "digest"}
         )
-        require_integer(profile["version"], "workload profile version")
+        if require_integer(profile["version"], "workload profile version") != 1:
+            fail("unsupported release profile version")
         require_digest(profile["digest"], "workload profile digest")
         approved = require_keys(
             workload.get("approved_runtime"),
@@ -502,7 +526,7 @@ def validate_context(path: pathlib.Path) -> dict[str, Any]:
             fail("approved runtime profile or status is invalid")
         if any(approved.get(key) != sealed.get(key) for key in sealed):
             fail("approved runtime drifts from the shared sealed runtime")
-    if len(set(ledger_digests)) != 2:
+    if len(set(ledger_digests)) != len(required_profiles()):
         fail("approved ledger identities must be distinct")
     policy = require_object(context["compatibility_policy"], "compatibility policy")
     if policy.get("identifier") != POLICY_IDENTIFIER:
@@ -633,7 +657,7 @@ def assemble(args: argparse.Namespace) -> None:
     if sha256_file(args.sealed_manifest.resolve()) != context["sealed_runtime"][
         "manifest_digest"
     ]:
-        fail("sealed runtime manifest bytes drift from both approved ledgers")
+        fail("sealed runtime manifest bytes drift from the approved ledgers")
 
     platforms: list[dict[str, Any]] = []
     for manifest_path in (args.arm64_manifest, args.x64_manifest):
@@ -854,9 +878,9 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
     workloads = evidence["workloads"]
     if (
         not isinstance(workloads, list)
-        or [item.get("profile", {}).get("id") for item in workloads] != sorted(PROFILES)
+        or [item.get("profile", {}).get("id") for item in workloads] != sorted(required_profiles())
     ):
-        fail("archive inputs must bind both exact GA profiles")
+        fail("archive inputs must bind all exact required GA profiles")
     ledger_digests: list[str] = []
     for workload in workloads:
         workload = require_keys(
@@ -865,7 +889,8 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
         profile = require_keys(
             workload["profile"], "profile", {"id", "version", "digest"}
         )
-        require_integer(profile["version"], "profile version")
+        if require_integer(profile["version"], "profile version") != 1:
+            fail("unsupported release profile version")
         require_digest(profile["digest"], "profile digest")
         approved = require_keys(
             workload["approved_runtime"],
@@ -912,7 +937,7 @@ def validate_inputs(path: pathlib.Path) -> dict[str, Any]:
             approved_common = common
         elif approved_common != common:
             fail("GA profile approved runtime identities disagree")
-    if len(set(ledger_digests)) != 2 or approved_common is None:
+    if len(set(ledger_digests)) != len(required_profiles()) or approved_common is None:
         fail("approved runtime ledger identities must be distinct")
     x64_platform = next(
         item for item in platforms if item["target"]["rid"] == "linux-x64"
@@ -961,10 +986,10 @@ def main() -> None:
     context_parser.add_argument("--source-ref", required=True)
     context_parser.add_argument("--orchestration-sha", required=True)
     context_parser.add_argument("--approval-sha", required=True)
-    context_parser.add_argument("--s3-ledger", type=pathlib.Path, required=True)
-    context_parser.add_argument("--s3-profile", type=pathlib.Path, required=True)
-    context_parser.add_argument("--secrets-ledger", type=pathlib.Path, required=True)
-    context_parser.add_argument("--secrets-profile", type=pathlib.Path, required=True)
+    context_parser.add_argument(
+        "--profile-input", nargs=3, action="append", required=True,
+        metavar=("PROFILE", "LEDGER_JSON", "PROFILE_YAML"),
+    )
     context_parser.add_argument("--policy", type=pathlib.Path, required=True)
     context_parser.add_argument("--output", type=pathlib.Path, required=True)
     validate_context_parser = subparsers.add_parser("validate-context")

@@ -10,8 +10,12 @@ import pathlib
 import re
 import shutil
 import subprocess
+import textwrap
 import unittest
 
+from release_profile_coverage import (
+    approved_ledger_filename, required_profiles, resolved_identity_filename,
+)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_TOOL = REPO_ROOT / "eng" / "release-candidate-package.py"
@@ -56,7 +60,7 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.sealed_manifest.write_text('{"sealed":"runtime"}\n', encoding="utf-8")
         self.manifest_digest = digest_bytes(self.sealed_manifest.read_bytes())
         self.ledgers: dict[str, pathlib.Path] = {}
-        for profile in ("s3-basic-object-crud", "secretsmanager-basic-lifecycle"):
+        for profile in sorted(required_profiles()):
             path = self.root / "input" / f"{profile}-ledger.json"
             write_json(path, self.make_ledger(profile))
             self.ledgers[profile] = path
@@ -109,6 +113,8 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
                     "id": 987654,
                     "name": artifact_name,
                     "upload_digest": digest_bytes(b"artifact zip"),
+                    "created_at": "2026-07-17T18:01:00+00:00",
+                    "expires_at": "2099-07-17T18:01:00+00:00",
                 },
                 "attestation": {
                     "predicate_type": "https://slsa.dev/provenance/v1",
@@ -143,8 +149,16 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             self.fail(f"tool unexpectedly passed:\nstdout={result.stdout}")
         return result
 
-    def create_context(self, *, expect_success: bool = True) -> None:
-        self.run_tool(
+    def profile_arguments(self, profiles: list[str] | None = None) -> list[str]:
+        return [
+            value for profile in (sorted(self.ledgers) if profiles is None else profiles)
+            for value in ("--profile-input", profile, str(self.ledgers[profile]),
+                          str(REPO_ROOT / f"docs/workloads/{profile}.yaml"))
+        ]
+
+    def create_context(self, *, expect_success: bool = True,
+                       profiles: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+        return self.run_tool(
             INPUTS_TOOL,
             "create-context",
             "--candidate",
@@ -159,14 +173,7 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             ORCHESTRATION_SHA,
             "--approval-sha",
             APPROVAL_SHA,
-            "--s3-ledger",
-            str(self.ledgers["s3-basic-object-crud"]),
-            "--s3-profile",
-            str(REPO_ROOT / "docs/workloads/s3-basic-object-crud.yaml"),
-            "--secrets-ledger",
-            str(self.ledgers["secretsmanager-basic-lifecycle"]),
-            "--secrets-profile",
-            str(REPO_ROOT / "docs/workloads/secretsmanager-basic-lifecycle.yaml"),
+            *self.profile_arguments(profiles),
             "--policy",
             str(REPO_ROOT / "docs/versioning-and-compatibility.md"),
             "--output",
@@ -201,13 +208,14 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         )
         return output / "platform-manifest.json"
 
-    def test_context_binds_both_ledgers_profiles_and_policy(self) -> None:
+    def test_context_binds_four_ledgers_profiles_and_policy(self) -> None:
         self.create_context()
         self.run_tool(INPUTS_TOOL, "validate-context", str(self.context))
         context = json.loads(self.context.read_text(encoding="utf-8"))
         self.assertEqual(
             [item["profile"]["id"] for item in context["workloads"]],
-            ["s3-basic-object-crud", "secretsmanager-basic-lifecycle"],
+            ["dynamodb-basic-crud", "s3-basic-object-crud",
+             "secretsmanager-basic-lifecycle", "sqs-standard-messaging"],
         )
         self.assertNotEqual(
             context["workloads"][0]["approved_runtime"]["ledger_record_digest"],
@@ -275,20 +283,76 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             ORCHESTRATION_SHA,
             "--approval-sha",
             APPROVAL_SHA,
-            "--s3-ledger",
-            str(self.ledgers["s3-basic-object-crud"]),
-            "--s3-profile",
-            str(REPO_ROOT / "docs/workloads/s3-basic-object-crud.yaml"),
-            "--secrets-ledger",
-            str(self.ledgers["secretsmanager-basic-lifecycle"]),
-            "--secrets-profile",
-            str(REPO_ROOT / "docs/workloads/secretsmanager-basic-lifecycle.yaml"),
+            *self.profile_arguments(),
             "--policy",
             str(REPO_ROOT / "docs/versioning-and-compatibility.md"),
             "--output",
             str(self.context),
             expect_success=False,
         )
+
+    def test_each_required_profile_is_unique_approved_unexpired_and_exact(self) -> None:
+        profiles = sorted(self.ledgers)
+        mutations = {
+            ("profile", "id"): "unadvertised-profile",
+            ("profile", "version"): 2,
+            ("eligibility", "promotion_eligible"): False,
+            ("runtime", "source_sha"): "e" * 40,
+            ("runtime", "aggregate_digest"): digest_bytes(b"other build"),
+            ("runtime", "executable_digest"): digest_bytes(b"other executable"),
+            ("producer", "run_id"): 999,
+            ("producer", "run_attempt"): 3,
+            ("artifact", "id"): 999,
+            ("artifact", "upload_digest"): digest_bytes(b"other upload"),
+            ("artifact", "expires_at"): "2000-01-01T00:00:00Z",
+            ("artifact", "created_at"): "2026-07-17T18:01:00",
+            ("attestation", "manifest_subject_digest"): digest_bytes(b"other manifest"),
+        }
+        for profile in profiles:
+            with self.subTest(profile=profile, case="missing"):
+                result = self.create_context(
+                    profiles=[item for item in profiles if item != profile], expect_success=False)
+                self.assertIn("uniquely cover", result.stderr)
+            with self.subTest(profile=profile, case="duplicate"):
+                result = self.create_context(profiles=profiles + [profile], expect_success=False)
+                self.assertIn("uniquely cover", result.stderr)
+            for (section, key), value in mutations.items():
+                with self.subTest(profile=profile, field=f"{section}.{key}"):
+                    ledger = self.make_ledger(profile)
+                    ledger["record"][section][key] = value
+                    if key == "expires_at":
+                        ledger["record"]["artifact"]["created_at"] = "1999-01-01T00:00:00Z"
+                    write_json(self.ledgers[profile], ledger)
+                    result = self.create_context(expect_success=False)
+                    if key == "expires_at":
+                        self.assertIn("expired", result.stderr)
+                    self.assertFalse(self.context.exists())
+            write_json(self.ledgers[profile], self.make_ledger(profile))
+        self.create_context()
+
+    def test_context_revalidation_rejects_rehashed_profile_coverage_drift(self) -> None:
+        self.create_context()
+        original = self.context.read_bytes()
+        for profile in sorted(self.ledgers):
+            for mutation in ("missing", "duplicate", "substituted", "version"):
+                with self.subTest(profile=profile, mutation=mutation):
+                    context = json.loads(original)
+                    workload = next(item for item in context["workloads"] if item["profile"]["id"] == profile)
+                    if mutation == "missing":
+                        context["workloads"].remove(workload)
+                    elif mutation == "duplicate":
+                        context["workloads"].append(workload)
+                    elif mutation == "substituted":
+                        workload["profile"]["id"] = "unadvertised-profile"
+                    else:
+                        workload["profile"]["version"] = 2
+                        workload["approved_runtime"]["profile"]["version"] = 2
+                    body = {key: value for key, value in context.items() if key != "content_digest"}
+                    context["content_digest"] = digest_bytes(
+                        json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+                    write_json(self.context, context)
+                    result = self.run_tool(INPUTS_TOOL, "validate-context", str(self.context), expect_success=False)
+                    self.assertNotIn("digest does not match", result.stderr)
 
     def test_archive_inputs_reject_mixed_platform_candidate_sources(self) -> None:
         self.create_context()
@@ -498,6 +562,113 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
             INPUTS_TOOL, "validate", str(traversal_path), expect_success=False
         )
 
+    def test_actual_workflow_steps_export_and_resolve_every_profile_fail_closed(self) -> None:
+        workspace = self.root / "workflow"
+        orchestration = workspace / "orchestration"
+        tools = orchestration / "eng"
+        tools.mkdir(parents=True)
+        (workspace / "artifacts/trust").mkdir(parents=True)
+        for name in ("release-candidate-inputs.py", "release_profile_coverage.py"):
+            shutil.copyfile(REPO_ROOT / "eng" / name, tools / name)
+        for relative in (
+            "docs/site/workload-ga.json", "docs/versioning-and-compatibility.md",
+            *(f"docs/workloads/{profile}.yaml" for profile in sorted(self.ledgers)),
+        ):
+            destination = orchestration / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO_ROOT / relative, destination)
+        bin_dir = workspace / "bin"
+        bin_dir.mkdir()
+        dotnet = bin_dir / "dotnet"
+        dotnet.write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import os, pathlib, shutil, sys
+            args = sys.argv
+            profile = args[args.index("--profile") + 1]
+            if profile == os.environ.get("FAIL_EXPORT_PROFILE"):
+                raise SystemExit("offline exporter failure")
+            shutil.copyfile(pathlib.Path(os.environ["LEDGER_INPUT"]) / (profile + "-ledger.json"),
+                            args[args.index("--output") + 1])
+            """))
+        dotnet.chmod(0o755)
+        resolver = tools / "resolve-sealed-runtime.sh"
+        resolver.write_text(textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, os, pathlib, shutil, sys
+            args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+            with open(os.environ["RESOLVER_LOG"], "a") as log:
+                log.write(json.dumps(args) + "\\n")
+            if args["--profile"] == os.environ.get("FAIL_RESOLVE_PROFILE"):
+                raise SystemExit("offline resolver failure")
+            bundle = pathlib.Path(args["--destination"]) / "bundle"
+            bundle.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(os.environ["SEALED_INPUT"], bundle / "sealed-runtime-manifest.json")
+            pathlib.Path(args["--identity-output"]).write_text(json.dumps(args))
+            """))
+        resolver.chmod(0o755)
+        env = {
+            **os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LEDGER_INPUT": str(self.root / "input"),
+            "RESOLVER_LOG": str(workspace / "resolver.jsonl"),
+            "SEALED_INPUT": str(self.sealed_manifest),
+            "GITHUB_WORKSPACE": str(workspace), "GITHUB_ENV": str(workspace / "github-env"),
+            "GITHUB_REPOSITORY": REPOSITORY, "CANDIDATE": CANDIDATE,
+            "CANDIDATE_SHA": SOURCE_SHA, "ORCHESTRATION_SHA": ORCHESTRATION_SHA,
+        }
+        workflow = WORKFLOW.read_text()
+
+        def run_step(name: str, overrides: dict[str, str] | None = None):
+            section = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - ", 1)[0]
+            script = textwrap.dedent(section.split("        run: |\n", 1)[1])
+            return subprocess.run(
+                ["bash", "-c", script], cwd=workspace, env={**env, **(overrides or {})},
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+        export_step = "Export and bind all required GA runtime ledgers"
+        resolve_step = "Resolve exact approved sealed linux-x64 bytes"
+        for name in (export_step, resolve_step):
+            result = run_step(name)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in (workspace / "resolver.jsonl").read_text().splitlines()]
+        self.assertEqual([call["--profile"] for call in calls], sorted(required_profiles()))
+        for call in calls:
+            profile = call["--profile"]
+            self.assertEqual(call["--profile-version"], "1")
+            self.assertEqual(call["--artifact-id"], "987654")
+            self.assertEqual(call["--run-id"], "123456")
+            self.assertEqual(call["--run-attempt"], "2")
+            self.assertEqual(call["--expected-sha"], SOURCE_SHA)
+            self.assertEqual(call["--expected-ref"], "refs/heads/main")
+            self.assertEqual(call["--ledger-json"], f"artifacts/rc-x64/context/{approved_ledger_filename(profile)}")
+            self.assertEqual(call["--identity-output"], f"artifacts/rc-x64/context/{resolved_identity_filename(profile)}")
+            self.assertTrue((workspace / call["--identity-output"]).is_file())
+        result = run_step(resolve_step, {"FAIL_RESOLVE_PROFILE": "dynamodb-basic-crud"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("offline resolver failure", result.stderr)
+        self.assertEqual(len((workspace / "resolver.jsonl").read_text().splitlines()), 5)
+        context = workspace / "artifacts/rc-x64/context/release-candidate-context.json"
+        context.unlink()
+        result = run_step(export_step, {"FAIL_EXPORT_PROFILE": "sqs-standard-messaging"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(context.exists())
+        certification = orchestration / "docs/site/workload-ga.json"
+        original_rows = json.loads(certification.read_bytes())
+        for mutation in ("new-ga", "missing-required", "new-version"):
+            with self.subTest(certification=mutation):
+                rows = json.loads(json.dumps(original_rows))
+                if mutation == "new-ga":
+                    rows.append({"schema_version": 1, "profile_id": "new-ga-profile",
+                                 "profile_version": 1, "verdict": "ga"})
+                elif mutation == "missing-required":
+                    rows = [row for row in rows if row["profile_id"] != "dynamodb-basic-crud"]
+                else:
+                    next(row for row in rows if row["profile_id"] == "sqs-standard-messaging")["profile_version"] = 2
+                write_json(certification, rows)
+                result = run_step(export_step)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("release-profile-coverage:", result.stderr)
+                self.assertFalse(context.exists())
+
     def test_workflow_enforces_trust_architecture_and_nonpublication_invariants(
         self,
     ) -> None:
@@ -546,6 +717,14 @@ class ReleaseCandidateProducerTests(unittest.TestCase):
         self.assertIn("actions/attest-build-provenance@", text)
         self.assertIn("actions/download-artifact@", text)
         self.assertIn("context_hex", text)
+        self.assertIn("python3 orchestration/eng/release_profile_coverage.py", text)
+        self.assertEqual(text.count("done < artifacts/trust/required-profiles.tsv"), 2)
+        self.assertIn('--profile-input "$profile"', text)
+        self.assertIn('--profile "$profile"', text)
+        self.assertIn('--profile-version "$profile_version"', text)
+        self.assertIn('--ledger-json "artifacts/rc-x64/context/$ledger"', text)
+        self.assertIn('--identity-output "artifacts/rc-x64/context/$identity"', text)
+        self.assertNotIn("--s3-ledger", text)
         self.assertIn("archive_hex", text)
         self.assertIn("digest_hex", text)
         self.assertNotIn("packages: write", text)

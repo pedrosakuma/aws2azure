@@ -153,7 +153,7 @@ jobs:
         with:
           cache-prefix: rc-orchestration-${{ github.sha }}
 
-      - name: Export and bind both approved GA runtime ledgers
+      - name: Export and bind all required GA runtime ledgers
         shell: bash
         env:
           CANDIDATE: ${{ inputs.candidate }}
@@ -162,17 +162,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/rc-x64/context
-          (
-            cd orchestration
-            dotnet run --project tools/Aws2Azure.GapDocs -- \
-              export-approved-runtime \
-              --profile s3-basic-object-crud \
-              --output "$GITHUB_WORKSPACE/artifacts/rc-x64/context/s3-approved-runtime.json"
-            dotnet run --project tools/Aws2Azure.GapDocs -- \
-              export-approved-runtime \
-              --profile secretsmanager-basic-lifecycle \
-              --output "$GITHUB_WORKSPACE/artifacts/rc-x64/context/secretsmanager-approved-runtime.json"
-          )
+          python3 orchestration/eng/release_profile_coverage.py > artifacts/trust/required-profiles.tsv
+          profile_inputs=()
+          while IFS=$'\t' read -r profile ledger identity; do
+            (
+              cd orchestration
+              dotnet run --project tools/Aws2Azure.GapDocs -- \
+                export-approved-runtime \
+                --profile "$profile" \
+                --output "$GITHUB_WORKSPACE/artifacts/rc-x64/context/$ledger"
+            )
+            profile_inputs+=(--profile-input "$profile" "artifacts/rc-x64/context/$ledger" "orchestration/docs/workloads/$profile.yaml")
+          done < artifacts/trust/required-profiles.tsv
           python3 orchestration/eng/release-candidate-inputs.py create-context \
             --candidate "$CANDIDATE" \
             --repository "$GITHUB_REPOSITORY" \
@@ -180,10 +181,7 @@ jobs:
             --source-ref "refs/tags/$CANDIDATE" \
             --orchestration-sha "$ORCHESTRATION_SHA" \
             --approval-sha "$ORCHESTRATION_SHA" \
-            --s3-ledger artifacts/rc-x64/context/s3-approved-runtime.json \
-            --s3-profile orchestration/docs/workloads/s3-basic-object-crud.yaml \
-            --secrets-ledger artifacts/rc-x64/context/secretsmanager-approved-runtime.json \
-            --secrets-profile orchestration/docs/workloads/secretsmanager-basic-lifecycle.yaml \
+            "${profile_inputs[@]}" \
             --policy orchestration/docs/versioning-and-compatibility.md \
             --output artifacts/rc-x64/context/release-candidate-context.json
 
@@ -200,23 +198,26 @@ jobs:
           run_id="$(jq -er '.sealed_runtime.producer.run_id' "$context")"
           run_attempt="$(jq -er '.sealed_runtime.producer.run_attempt' "$context")"
           artifact_id="$(jq -er '.sealed_runtime.artifact.id' "$context")"
-          orchestration/eng/resolve-sealed-runtime.sh \
-            --repository "$repository" \
-            --run-id "$run_id" \
-            --run-attempt "$run_attempt" \
-            --expected-sha "$source_sha" \
-            --expected-ref "$source_ref" \
-            --profile s3-basic-object-crud \
-            --profile-version 1 \
-            --role prior \
-            --artifact-id "$artifact_id" \
-            --ledger-json artifacts/rc-x64/context/s3-approved-runtime.json \
-            --destination artifacts/resolved-x64 \
-            --identity-output artifacts/rc-x64/context/resolved-x64-identity.json \
-            --github-env "$GITHUB_ENV"
-          mkdir -p artifacts/rc-x64/sealed-runtime
-          cp artifacts/resolved-x64/bundle/sealed-runtime-manifest.json \
-            artifacts/rc-x64/sealed-runtime/sealed-runtime-manifest.json
+          while IFS=$'\t' read -r profile ledger identity; do
+            profile_version="$(jq -er --arg profile "$profile" '.workloads[] | select(.profile.id == $profile) | .profile.version' "$context")"
+            orchestration/eng/resolve-sealed-runtime.sh \
+              --repository "$repository" \
+              --run-id "$run_id" \
+              --run-attempt "$run_attempt" \
+              --expected-sha "$source_sha" \
+              --expected-ref "$source_ref" \
+              --profile "$profile" \
+              --profile-version "$profile_version" \
+              --role prior \
+              --artifact-id "$artifact_id" \
+              --ledger-json "artifacts/rc-x64/context/$ledger" \
+              --destination "artifacts/resolved-x64/$profile" \
+              --identity-output "artifacts/rc-x64/context/$identity" \
+              --github-env "$GITHUB_ENV"
+            mkdir -p artifacts/rc-x64/sealed-runtime
+            cp "artifacts/resolved-x64/$profile/bundle/sealed-runtime-manifest.json" \
+              artifacts/rc-x64/sealed-runtime/sealed-runtime-manifest.json
+          done < artifacts/trust/required-profiles.tsv
 
       - name: Smoke exact linux-x64 executable natively
         shell: bash

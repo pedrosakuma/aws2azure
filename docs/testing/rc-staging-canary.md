@@ -33,15 +33,54 @@ Offline gate fixtures place receipts beneath
 the four observations. Old two-profile plans are historical records, **not
 valid inputs to a new promotion**. There is no grandfathering or skip flag.
 
-**Producer expansion remains incomplete (#1009).** The RC archive/GHCR inputs
-and observation workflow below still support only S3/SecretsManager. The
-new coverage checks deliberately block a new stable promotion until genuine
-DynamoDB/SQS evidence and full producer support exist; they do not make the
-two-profile archive promotable by adding synthetic descriptors.
-Remaining work includes four-profile sealed archive/identity packaging,
-DynamoDB/SQS cohort harnesses, explicit provisioning/dispatch/assembly/cleanup
+**Live producer expansion remains incomplete (#1009).** Archive/GHCR input
+selection and local canonical identity/manifest tools require all four profiles.
+The observation workflow still supports only S3/SecretsManager; no new selectable
+routes or synthetic observations are supplied by offline packaging support.
+New stable promotion remains blocked until genuine DynamoDB/SQS evidence and
+full live producer support exist.
+Remaining work includes DynamoDB/SQS cohort harnesses, explicit provisioning/dispatch/assembly/cleanup
 routing, exact-prior restoration, and approved live observation validation.
 Existing S3/SecretsManager observation and cancellation behavior is unchanged.
+
+### Four-profile packaging prerequisite
+
+The archive producer exports each required profile's approved ledger from the
+exact protected-main orchestration checkout. `eng/release_profile_coverage.py`
+provides the shared coverage check and archive filenames. Local
+`release-candidate-inputs.py create-context` takes one
+`--profile-input PROFILE LEDGER_JSON PROFILE_YAML` for each required profile;
+missing, duplicate, foreign, unsupported-version or expired approvals fail.
+The same coverage applies to archive validation, GHCR bundle validation,
+canonical identity generation/validation and final manifests.
+
+One RC still has **one candidate source and one sealed linux-x64 runtime**.
+All four approvals must independently bind that exact source, executable and
+complete-runtime digests, sealed manifest, producer run/attempt and immutable
+artifact id/name/upload digest. Distinct profile ledger digests remain required.
+Different approvals are not relabeled as a shared runtime merely because they
+are all GA, and different builds of one commit are not interchangeable.
+
+Each profile goes through the existing exact sealed-artifact resolver, including
+live artifact expiry/digest/attestation checks. Its resolved identity and ledger
+are retained and attested in the archive payload; the GHCR consumer validates
+each pair against the context and sealed manifest before using any executable.
+The pre-existing S3/SecretsManager ledger filenames and S3 resolved-identity
+filename remain unchanged. Creating a context and validating a bundle for GHCR
+both reject expired sealed approvals; network retrieval additionally rechecks
+current artifact availability. Historical byte integrity is not fresh eligibility.
+Older two-profile records are not rewritten; current packaging/identity commands
+reject them as inputs to a new four-profile candidate.
+
+**Committed approvals currently cannot fulfill this prerequisite.**
+S3/SecretsManager approve source `952c333fa24106103f3a3349fe9c9c53be6ba5aa`;
+DynamoDB approves `e3984773699f4133ff9073a5ef5f374671b181c9`; SQS approves
+`81155ec3ded9dfb0fa8eb058b1dd860346f031dd`. Their runtime digests also differ.
+Packaging deliberately fails until separately authorized qualification yields
+compatible exact approvals; it does not rewrite ledgers, rebuild approved bytes,
+publish a tag/image or claim a live observation. Offline producer/image/manifest
+fixtures exercise compatible four-profile identities without providing live
+qualification evidence.
 
 The DynamoDB/SQS observation policy YAMLs already exist at concurrency `8/8`.
 They reference reviewed qualification throughput floors of 17 `GetItem`/s and
@@ -337,7 +376,7 @@ gh workflow run release-candidate.yml \
 
 The workflow fails if `main` resolves to a different SHA, if the dispatch ref is
 not protected `main`, if the candidate tag is not protected, or if its commit
-does not equal both approved runtime ledgers' runtime and attestation source.
+does not equal all four approved runtime ledgers' runtime and attestation source.
 After the archive succeeds, dispatch the image workflow from protected `main`
 with both identities:
 

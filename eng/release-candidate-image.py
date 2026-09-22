@@ -17,6 +17,11 @@ import struct
 from collections import Counter
 from typing import Any, NoReturn
 
+from release_profile_coverage import (
+    approved_ledger_filename,
+    required_profiles,
+    resolved_identity_filename,
+)
 
 SCHEMA_VERSION = 1
 RC_WORKFLOW = ".github/workflows/release-candidate.yml"
@@ -580,6 +585,7 @@ def validate_resolved_x64_identity(
     context: dict[str, Any],
     approved_ledger: dict[str, Any],
     sealed_manifest: dict[str, Any],
+    profile_id: str,
 ) -> None:
     identity = require_object(
         load_json(path),
@@ -598,24 +604,24 @@ def validate_resolved_x64_identity(
             "attestation",
         },
     )
-    s3_workload = next(
+    workload = next(
         (
             item
             for item in context["workloads"]
-            if item["profile"]["id"] == "s3-basic-object-crud"
+            if item["profile"]["id"] == profile_id
         ),
         None,
     )
-    if s3_workload is None:
-        fail("release-candidate context omits the approved S3 runtime")
-    approved = s3_workload["approved_runtime"]
-    ledger = require_object(approved_ledger, "S3 approved-runtime ledger")
-    record = require_object(ledger.get("record"), "S3 approved-runtime record")
+    if workload is None:
+        fail(f"release-candidate context omits the approved {profile_id} runtime")
+    approved = workload["approved_runtime"]
+    ledger = require_object(approved_ledger, f"{profile_id} approved-runtime ledger")
+    record = require_object(ledger.get("record"), f"{profile_id} approved-runtime record")
     ledger_artifact = require_object(
-        record.get("artifact"), "S3 approved-runtime artifact"
+        record.get("artifact"), f"{profile_id} approved-runtime artifact"
     )
     ledger_attestation = require_object(
-        record.get("attestation"), "S3 approved-runtime attestation"
+        record.get("attestation"), f"{profile_id} approved-runtime attestation"
     )
     if (
         ledger.get("schema_version") != SCHEMA_VERSION
@@ -626,12 +632,35 @@ def validate_resolved_x64_identity(
         or record.get("eligibility")
         != {"rollback_baseline_eligible": True, "promotion_eligible": True}
     ):
-        fail("S3 approved-runtime ledger drifts from the selected context")
+        fail(f"{profile_id} approved-runtime ledger drifts from the selected context")
 
     source = context["sealed_runtime"]
+    ledger_runtime = require_object(record.get("runtime"), f"{profile_id} runtime")
+    ledger_producer = require_object(record.get("producer"), f"{profile_id} producer")
+    if (
+        any(
+            ledger_runtime.get(key) != source[key]
+            for key in (
+                "source_repository", "source_sha", "aggregate_digest", "executable_digest"
+            )
+        )
+        or ledger_runtime.get("target") != {
+            "operating_system": "linux", "architecture": "x64", "rid": "linux-x64"
+        }
+        or any(
+            ledger_producer.get(key) != source["producer"][key]
+            for key in ("workflow", "run_id", "run_attempt")
+        )
+        or ledger_producer.get("run_url") != (
+            f"https://github.com/{source['source_repository']}/actions/runs/"
+            f"{source['producer']['run_id']}"
+        )
+        or any(ledger_artifact.get(key) != value for key, value in source["artifact"].items())
+    ):
+        fail(f"{profile_id} approved-runtime bytes or producer drifts from the selected context")
     expected_profile = {
-        "id": s3_workload["profile"]["id"],
-        "version": s3_workload["profile"]["version"],
+        "id": workload["profile"]["id"],
+        "version": workload["profile"]["version"],
     }
     if (
         identity["schema_version"] != SCHEMA_VERSION
@@ -724,10 +753,10 @@ def validate_resolved_x64_identity(
         artifact["expires_at"], "resolved linux-x64 artifact.expires_at"
     )
     ledger_created_at = parse_timestamp(
-        ledger_artifact.get("created_at"), "S3 approved-runtime artifact.created_at"
+        ledger_artifact.get("created_at"), f"{profile_id} approved-runtime artifact.created_at"
     )
     ledger_expires_at = parse_timestamp(
-        ledger_artifact.get("expires_at"), "S3 approved-runtime artifact.expires_at"
+        ledger_artifact.get("expires_at"), f"{profile_id} approved-runtime artifact.expires_at"
     )
     if (
         created_at != ledger_created_at
@@ -735,6 +764,8 @@ def validate_resolved_x64_identity(
         or expires_at <= created_at
     ):
         fail("resolved linux-x64 artifact timestamps drift from its approved ledger")
+    if expires_at <= datetime.datetime.now(datetime.timezone.utc):
+        fail(f"{profile_id} approved sealed artifact is expired")
 
     attestation = require_object(
         identity["attestation"],
@@ -845,40 +876,30 @@ def validate_bundle(args: argparse.Namespace) -> None:
         )
     ):
         fail("release-candidate context drifts from the archive inputs")
-    s3_ledger_path = resolve_file(
-        root,
-        "context/s3-approved-runtime.json",
-        "S3 approved-runtime ledger",
-    )
     sealed_manifest_path = resolve_file(
         root,
         "sealed-runtime/sealed-runtime-manifest.json",
         "sealed runtime manifest",
     )
-    resolved_x64_identity_path = resolve_file(
-        root,
-        "context/resolved-x64-identity.json",
-        "resolved linux-x64 identity",
-    )
-    validate_resolved_x64_identity(
-        resolved_x64_identity_path,
-        context,
-        load_json(s3_ledger_path),
-        require_object(load_json(sealed_manifest_path), "sealed runtime manifest"),
-    )
-
     platform_identities: list[dict[str, Any]] = []
     payload_paths: list[pathlib.Path] = [
         context_path,
-        s3_ledger_path,
-        resolve_file(
-            root,
-            "context/secretsmanager-approved-runtime.json",
-            "Secrets Manager approved-runtime ledger",
-        ),
-        resolved_x64_identity_path,
         sealed_manifest_path,
     ]
+    sealed_manifest = require_object(load_json(sealed_manifest_path), "sealed runtime manifest")
+    for profile_id in sorted(required_profiles()):
+        ledger_path = resolve_file(
+            root, f"context/{approved_ledger_filename(profile_id)}",
+            f"{profile_id} approved ledger",
+        )
+        identity_path = resolve_file(
+            root, f"context/{resolved_identity_filename(profile_id)}",
+            f"{profile_id} resolved identity",
+        )
+        validate_resolved_x64_identity(
+            identity_path, context, load_json(ledger_path), sealed_manifest, profile_id,
+        )
+        payload_paths.extend((ledger_path, identity_path))
     for rid in ("linux-x64", "linux-arm64"):
         manifest_relative = f"platforms/{rid}/platform-manifest.json"
         manifest_path = resolve_file(root, manifest_relative, f"{rid} platform manifest")
