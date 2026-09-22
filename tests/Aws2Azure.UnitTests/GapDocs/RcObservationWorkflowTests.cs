@@ -17,7 +17,8 @@ public sealed class RcObservationWorkflowTests
             ".github", "actions", "rc-observation-cohort", "action.yml"));
         Assert.DoesNotContain("+30 minutes", Workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("OBSERVATION_SYNC_AT_UTC", Workflow, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(Workflow, "uses: ./.github/actions/rc-observation-cohort"));
+        Assert.Equal(1, CountOccurrences(Workflow, "uses: ./.github/actions/rc-observation-cohort"));
+        Assert.Contains("profile: ${{ fromJSON(needs.select.outputs.profiles) }}", Workflow, StringComparison.Ordinal);
         Assert.Contains("actions: read", Workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("actions: write", Workflow, StringComparison.Ordinal);
         Assert.Contains("observation_deadline_utc", Workflow, StringComparison.Ordinal);
@@ -28,7 +29,7 @@ public sealed class RcObservationWorkflowTests
         Assert.True(action.IndexOf(" accept", StringComparison.Ordinal) < action.IndexOf(" finish", StringComparison.Ordinal));
         Assert.Contains("if: always()", action, StringComparison.Ordinal);
         Assert.Contains("rc-observation-readiness.py stop", action, StringComparison.Ordinal);
-        foreach (var job in new[] { "observe-s3-cohort:", "observe-secretsmanager-cohort:" })
+        foreach (var job in new[] { "observe-cohort:" })
         {
             var start = Workflow.IndexOf(job, StringComparison.Ordinal);
             var matrix = Workflow.IndexOf("strategy:", start, StringComparison.Ordinal);
@@ -43,11 +44,11 @@ public sealed class RcObservationWorkflowTests
         Assert.DoesNotContain("pull_request:", Workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("schedule:", Workflow, StringComparison.Ordinal);
         Assert.Contains(
-            "profiles='[\"s3-basic-object-crud\",\"secretsmanager-basic-lifecycle\"]'",
+            "from release_profile_coverage import required_profiles",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "s3-basic-object-crud|secretsmanager-basic-lifecycle)",
+            "selected not in profiles",
             Workflow,
             StringComparison.Ordinal);
         Assert.DoesNotContain("candidate_run_id:", Workflow, StringComparison.Ordinal);
@@ -439,24 +440,19 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Equal(
-            6,
+            4,
             CountOccurrences(
                 Workflow,
                 "if [[ \"$upload_digest\" =~ ^[0-9a-f]{64}$ ]]; then"));
-        Assert.Contains("observe-s3-cohort:", Workflow, StringComparison.Ordinal);
-        Assert.Contains("observe-secretsmanager-cohort:", Workflow, StringComparison.Ordinal);
-        Assert.Contains("assemble-s3-observation:", Workflow, StringComparison.Ordinal);
-        Assert.Contains("assemble-secretsmanager-observation:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("observe-cohort:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("assemble-observation:", Workflow, StringComparison.Ordinal);
+        Assert.Contains("needs.select.result == 'success'", Workflow, StringComparison.Ordinal);
         Assert.Contains(
             "OBSERVATION_DEADLINE_UTC:",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "real-azure-rc-observation-cohort-s3-basic-object-crud-${{ matrix.cohort }}-run-",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "real-azure-rc-observation-cohort-secretsmanager-basic-lifecycle-${{ matrix.cohort }}-run-",
+            "real-azure-rc-observation-cohort-${{ matrix.profile }}-${{ matrix.cohort }}-run-",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -473,12 +469,7 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "real-azure-rc-observation-capture-s3-basic-object-crud-run-" +
-            "${{ github.run_id }}-attempt-${{ github.run_attempt }}",
-            Workflow,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "real-azure-rc-observation-capture-secretsmanager-basic-lifecycle-run-" +
+            "real-azure-rc-observation-capture-${{ matrix.profile }}-run-" +
             "${{ github.run_id }}-attempt-${{ github.run_attempt }}",
             Workflow,
             StringComparison.Ordinal);

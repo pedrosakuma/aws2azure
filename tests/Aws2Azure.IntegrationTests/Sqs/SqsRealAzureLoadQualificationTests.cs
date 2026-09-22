@@ -30,7 +30,7 @@ namespace Aws2Azure.IntegrationTests.Sqs;
 public sealed partial class SqsRealAzureLoadQualificationTests(RealAzureProxyFixture fixture)
 {
     private const string Service = "sqs";
-    private static readonly string[] Operations =
+    internal static readonly string[] Operations =
     [
         "CreateQueue",
         "GetQueueUrl",

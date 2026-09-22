@@ -139,6 +139,20 @@ class RcObservationCleanupTests(unittest.TestCase):
         )
         self.assertEqual(self.cleanup_log.read_text(encoding="utf-8"), group + "\n")
 
+    def test_each_split_profile_requires_matching_cohort_and_attempt_tags(self) -> None:
+        for profile in ("s3-basic-object-crud", "secretsmanager-basic-lifecycle",
+                        "dynamodb-basic-crud", "sqs-standard-messaging"):
+            for cohort in ("candidate", "stable"):
+                with self.subTest(profile=profile, cohort=cohort):
+                    self.cleanup_log.unlink(missing_ok=True)
+                    group = f"aws2azure-rc-observe-{profile}-{cohort}-123-2"
+                    tags = {"purpose": "aws2azure-rc-observation", "profile": profile,
+                            "cohort": cohort, "run-id": "123", "run-attempt": "2", "rc": "v1.2.0-rc.1"}
+                    for key in ("cohort", "run-attempt", "profile", "run-id"):
+                        self.run_script([group], {group: {**tags, key: "wrong"}}, expect_success=False)
+                    self.run_script([group], {group: tags})
+                    self.assertEqual(self.cleanup_log.read_text(), group + "\n")
+
     def test_absent_exact_group_is_success_without_cleanup_invocation(self) -> None:
         group = "aws2azure-rc-observe-secretsmanager-basic-lifecycle-29667841798-1"
         result = self.run_script([group], absent=[group])
@@ -196,7 +210,7 @@ class RcObservationCleanupTests(unittest.TestCase):
         between = workflow[refresh_login:cleanup]
         self.assertIn("if: always()", between)
         self.assertIn(
-            "uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5",
+            "uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c",
             between,
         )
         self.assertNotIn("${{ inputs.", between)

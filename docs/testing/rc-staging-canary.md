@@ -33,15 +33,17 @@ Offline gate fixtures place receipts beneath
 the four observations. Old two-profile plans are historical records, **not
 valid inputs to a new promotion**. There is no grandfathering or skip flag.
 
-**Live producer expansion remains incomplete (#1009).** Archive/GHCR input
-selection and local canonical identity/manifest tools require all four profiles.
-The observation workflow still supports only S3/SecretsManager; no new selectable
-routes or synthetic observations are supplied by offline packaging support.
-New stable promotion remains blocked until genuine DynamoDB/SQS evidence and
-full live producer support exist.
-Remaining work includes DynamoDB/SQS cohort harnesses, explicit provisioning/dispatch/assembly/cleanup
-routing, exact-prior restoration, and approved live observation validation.
-Existing S3/SecretsManager observation and cancellation behavior is unchanged.
+**Four-profile producer wiring is implemented, not live-verified (#1009).**
+Archive/GHCR selection, canonical identities, workflow routing and cohort
+producers cover all four profiles. Shared profile/cohort matrices keep candidate
+and stable processes on separate runners and isolated backend resource groups.
+Assembly uses the same strict identity, readiness, capture and evidence checks
+for every profile. Unknown profiles have no S3/SecretsManager fallback.
+New promotion remains blocked until compatible exact approvals and genuine
+passing observations exist. Offline tests do not supply that evidence.
+S3/SecretsManager workload and readiness timing are unchanged; failed cohort
+jobs now retain available sanitized captures/readiness/diagnostic sidecars too,
+without turning a failed job into a passing observation.
 
 ### Four-profile packaging prerequisite
 
@@ -87,12 +89,73 @@ They reference reviewed qualification throughput floors of 17 `GetItem`/s and
 4 `ReceiveMessage`/s respectively, with zero failures. Their load harnesses
 use concurrency 8 and the seven-operation profile lifecycles, but ordinary
 short single-cohort qualification is **not 60-minute dual-cohort calibration**.
-These policies and qualification ledgers are unchanged by the coverage
-foundation. Reuse/verify the exact workload semantics before enabling the new
-producers; obtain an explicit calibration/observation decision and authorization
+The new producers reuse the existing qualification workers and their successful
+operation sequences; policies and qualification ledgers remain unchanged.
+An explicit calibration/observation decision and authorization are still needed,
 rather than inventing floors or marking unperformed observations verified.
 The historical SecretsManager 403 limitation and #1016's pending manual
 readiness observation remain unresolved.
+
+## DynamoDB and SQS cohort contracts
+
+Both new producers require the split-cohort mode, actual real backend
+configuration, verified candidate/prior executables and the committed 8/8 shape.
+They use the existing runtime fixtures, sealed-artifact resolver, immutable
+readiness rendezvous and 30-second cancellation-stop ceiling. DynamoDB uses the
+existing Strong-consistency serverless Cosmos template; SQS uses the existing
+Service Bus template and namespace-default AMQP transport, not the supplementary
+REST lane or FIFO. No shipping handler or authentication code is instrumented.
+
+Each process first creates and verifies a separate service canary, bounded to
+two minutes, then publishes readiness. The eight worker tables/queues are created
+inside the measurement window, as in qualification, not before the barrier.
+Each worker owns its unique table/queue; its normal item/message is settled
+before the next iteration. Inventories are at most eight worker resources plus
+one canary per cohort. A failed observation worker stops instead of accumulating
+failed iterations/messages; its recorded failure is never retried into success.
+Existing ordinary qualification failure handling is unchanged.
+
+| Profile | Before readiness | Exact-prior restoration on the candidate backend |
+|---|---|---|
+| DynamoDB CRUD | Create an ACTIVE hash-key table, write a nonce payload/version, verify a strongly consistent read | Read the candidate's persisted value, increment and read its version, delete and verify item absence, delete and verify table absence |
+| SQS standard | Create a private queue, send/read the nonce message, explicitly abandon its candidate-owned lock with visibility zero | Receive and settle that persisted message using a fresh prior-owned receipt, send/receive/settle another message, verify no remaining message, delete and verify queue absence |
+
+Restoration reuses the original configuration file and AWS binding; the fixtures
+rehash the actual config bytes and the coordinator checks backend/config/binding
+identity and process liveness before readiness and after the switch. The prior
+comes from that profile's committed rollback target, not a source rebuild and
+not an assumption that prior sources match across profiles. Cancellation or a
+failed state/identity check cannot set restoration `verified`.
+
+The operation-mix policy digest identifies the manifest-ordered operation set,
+not equal operation weights. DynamoDB's repeated cycle remains PutItem, GetItem,
+UpdateItem, GetItem, DeleteItem, then the qualification worker's second
+idempotent DeleteItem completion marker, with 4-KiB payload padding. SQS keeps
+512-byte padding and SendMessage, ReceiveMessage (five-second long poll),
+GetQueueUrl, bounded ListQueues propagation polling, DeleteMessage. Resource
+create/describe/delete and worker drain time remain inside the same stopwatch
+denominator as qualification. Representative throughput counts successful
+GetItem/ReceiveMessage calls; failure rate uses all tracked logical AWS calls.
+SDK retries and the existing ListQueues propagation loop are not independently
+counted backend attempts. Canary/setup probes outside the tracked worker chain
+do not inflate representative samples.
+
+The shared coordinator retains existing per-operation diagnostic types and
+failure counts even when exact-prior restoration succeeds. Incomplete/cancelled
+attempts retain `cohort-capture.json.diagnostics.json` when the harness can write
+it, not a synthetic complete observation. A measured failure can retain a
+complete failing capture and rollback evidence; its harness/job still fails.
+Canary cleanup has a separate ten-second cancellation budget, with always-run
+resource-group deletion and the tagged orphan reaper as the backstop after
+process loss. No cleanup exception becomes a successful observation.
+
+`RcCrudCohortTests` uses stateful offline SDK fakes for both service canaries,
+the actual reused worker cycles, corruption, cancellation, binding drift and
+failure-preserving restoration. The canonical PR command runs these tests
+without Azure or emulators. Executed shell tests cover profile selection,
+backend credential export, missing outputs and tagged cohort cleanup; the
+existing fake-clock/transport readiness tests also cover all four profiles.
+These checks verify implementation contracts, **not live calibration**.
 
 ## Freeze the identities
 
@@ -143,7 +206,7 @@ and isolate candidate and stable members is not an RC canary.
 
 ### Live readiness rendezvous
 
-The split S3 and SecretsManager observation jobs retain their own prepared
+The split per-profile observation jobs retain their own prepared
 harness and sealed proxy processes on separate runners. Both candidate and
 stable must create and read back a canary through their selected runtime before
 publishing readiness. A queued job, provisioned resource group, or successful

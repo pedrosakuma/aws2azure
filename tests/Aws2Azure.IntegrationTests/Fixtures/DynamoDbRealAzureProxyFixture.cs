@@ -73,6 +73,16 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
     public string AwsBindingDigest { get; private set; } = string.Empty;
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
+    public bool IsProxyRunning => _proxyProcess is { HasExited: false };
+    public string CandidateRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(_runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).IdentityPath));
+    public string PriorRuntimeIdentityDigest =>
+        Digest(File.ReadAllBytes(_runtimeSelection.GetTarget(SealedRuntimeRole.Prior).IdentityPath));
+    internal void VerifyConfigurationUnchanged()
+    {
+        if (_configFile is null || Digest(File.ReadAllBytes(_configFile)) != ProxyConfigDigest)
+            throw new InvalidDataException("The DynamoDB runtime configuration changed.");
+    }
     public SealedRuntimeIdentity CandidateRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>
@@ -120,7 +130,8 @@ public sealed class DynamoDbRealAzureProxyFixture : IAsyncLifetime
             _proxyProcess = StartProxyProcess(
                 _proxyPort,
                 _configFile,
-                SealedRuntimeRole.Candidate);
+                string.Equals(Env("AWS2AZURE_RC_OBSERVATION_COHORT_ROLE"), "stable", StringComparison.Ordinal)
+                    ? SealedRuntimeRole.Prior : SealedRuntimeRole.Candidate);
             await WaitForProxyAsync(_proxyPort, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
             ProxyStarted = true;
         }

@@ -1020,6 +1020,8 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             REPO_ROOT / "eng/release_profile_coverage.py",
             tool_root / "release_profile_coverage.py",
         )
+        (runtime_root / "docs/site").mkdir(parents=True)
+        shutil.copy2(REPO_ROOT / "docs/site/workload-ga.json", runtime_root / "docs/site/workload-ga.json")
         write_json(
             runtime_root / "main.json",
             {
@@ -1105,9 +1107,22 @@ esac
             r"^observation_deadline_utc=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
         )
         self.assertEqual(
-            output_lines[1],
-            'profiles=["s3-basic-object-crud","secretsmanager-basic-lifecycle"]',
+            json.loads(output_lines[1].removeprefix("profiles=")),
+            sorted(required_profiles()),
         )
+
+        for profile in (*sorted(required_profiles()), "unknown-profile"):
+            result = subprocess.run(
+                ["bash", "-c", script], cwd=runtime_root,
+                env={**environment, "REQUESTED_PROFILE": profile},
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            if profile == "unknown-profile":
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsupported RC observation profile", result.stderr)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = output.read_text().splitlines()[-1].removeprefix("profiles=")
+                self.assertEqual(json.loads(selected), [profile])
 
         ahead = ahead_comparison(ORCHESTRATION_SHA, CURRENT_MAIN_SHA)
         ahead["head_commit"] = None
