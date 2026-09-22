@@ -62,7 +62,7 @@ class ReleasePromotionTests(unittest.TestCase):
     def make_plan(self) -> dict[str, object]:
         observations = []
         for index, profile in enumerate(
-            ("s3-basic-object-crud", "secretsmanager-basic-lifecycle")
+            ("s3-basic-object-crud", "secretsmanager-basic-lifecycle", "dynamodb-basic-crud", "sqs-standard-messaging")
         ):
             observations.append(
                 {
@@ -125,6 +125,14 @@ class ReleasePromotionTests(unittest.TestCase):
 
     def test_exact_plan_passes(self) -> None:
         self.run_tool()
+
+    def test_omitting_any_required_observation_fails(self) -> None:
+        for index in range(4):
+            with self.subTest(index=index):
+                plan = self.make_plan()
+                del plan["observations"][index]
+                write_json(self.plan_path, plan)
+                self.run_tool(expect_success=False)
 
     def test_stable_candidate_and_profile_drift_fail(self) -> None:
         self.plan["stable_tag"] = "v1.0.1"

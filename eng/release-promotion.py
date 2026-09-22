@@ -9,6 +9,7 @@ import pathlib
 import re
 from typing import Any, NoReturn
 
+from release_profile_coverage import required_profiles
 
 SCHEMA_VERSION = 1
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -18,10 +19,6 @@ CANDIDATE_RE = re.compile(
     r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*"
 )
 REPOSITORY_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-PROFILES = {
-    "s3-basic-object-crud",
-    "secretsmanager-basic-lifecycle",
-}
 
 
 def fail(message: str) -> NoReturn:
@@ -104,6 +101,7 @@ def validate_producer(value: Any, name: str, workflow_path: str) -> dict[str, An
 
 
 def validate_plan(path: pathlib.Path) -> dict[str, Any]:
+    required = required_profiles()
     plan = require_object(
         load_json(path),
         "plan",
@@ -171,8 +169,8 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
     require_digest(ghcr["index_digest"], "ghcr.index_digest")
 
     observations = plan["observations"]
-    if not isinstance(observations, list) or len(observations) != len(PROFILES):
-        fail("observations must contain exactly the two supported profiles")
+    if not isinstance(observations, list) or len(observations) != len(required):
+        fail("observations must contain every required release profile: " + ", ".join(sorted(required)))
     profiles: set[str] = set()
     evidence_digests: set[str] = set()
     for index, value in enumerate(observations):
@@ -188,8 +186,8 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
             },
         )
         profile = require_string(observation["profile"], f"observations[{index}].profile")
-        if profile not in PROFILES or profile in profiles:
-            fail("observations must uniquely cover the two supported profiles")
+        if profile not in required or profile in profiles:
+            fail("observations must uniquely cover every required release profile")
         profiles.add(profile)
         validate_producer(
             observation["producer"],
@@ -211,8 +209,8 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
         if evidence_digest in evidence_digests:
             fail("observation evidence digests must be distinct")
         evidence_digests.add(evidence_digest)
-    if profiles != PROFILES:
-        fail("observations must cover both supported profiles")
+    if profiles != required:
+        fail("observations must cover every required release profile")
 
     for key in ("readiness_plan", "release_notes"):
         relative = require_string(plan[key], key)

@@ -4,6 +4,57 @@ Use this procedure once per advertised workload profile. RC observation is
 real-Azure operational evidence; emulator, source-rebuild, mixed-version, and
 cross-profile measurements do not qualify.
 
+## Release coverage and pending producer support
+
+Release plans now require all four profiles advertised as GA by the committed
+`docs/site/workload-ga.json`: `dynamodb-basic-crud`, `s3-basic-object-crud`,
+`secretsmanager-basic-lifecycle`, and `sqs-standard-messaging`. That authority
+is evaluated at its pinned `2026-09-10T16:48:19Z`, not at the wall-clock time
+of a new promotion. Reading its GA list is a **coverage check**, not fresh
+qualification or live observation evidence. A later expiry/downgrade does not
+automatically remove a release's evidence obligations; a newly advertised GA
+profile blocks these tools until its release coverage is explicitly added.
+
+`eng/release-readiness-gate.py` requires exactly one `real-azure`, `profile`,
+and **profile-scoped `observation`** gate for each required profile, plus the
+existing singleton CI/AOT/conformance/perf/footprint gates. A successful
+observation workflow run alone no longer covers unspecified profiles.
+Each observation gate uses `candidate_receipt` to select its immutable
+`real-azure-rc-observation-selection-<profile>-run-<run>-attempt-<attempt>`
+artifact and `observation-upload-identity.json`. The gate verifies the ZIP
+digest, profile, candidate identity, producer attempt/source, passing verdict,
+manifest descriptor and the referenced evidence artifact's metadata.
+Promotion still downloads and strictly validates the actual YAML/binding,
+including freshness; this receipt check does not replace that validation.
+Offline gate fixtures place receipts beneath
+`artifact-<artifact_id>/<receipt_name>` to keep identical basenames separate.
+
+`eng/release-promotion.py` likewise rejects a promotion plan omitting any of
+the four observations. Old two-profile plans are historical records, **not
+valid inputs to a new promotion**. There is no grandfathering or skip flag.
+
+**Producer expansion remains incomplete (#1009).** The RC archive/GHCR inputs
+and observation workflow below still support only S3/SecretsManager. The
+new coverage checks deliberately block a new stable promotion until genuine
+DynamoDB/SQS evidence and full producer support exist; they do not make the
+two-profile archive promotable by adding synthetic descriptors.
+Remaining work includes four-profile sealed archive/identity packaging,
+DynamoDB/SQS cohort harnesses, explicit provisioning/dispatch/assembly/cleanup
+routing, exact-prior restoration, and approved live observation validation.
+Existing S3/SecretsManager observation and cancellation behavior is unchanged.
+
+The DynamoDB/SQS observation policy YAMLs already exist at concurrency `8/8`.
+They reference reviewed qualification throughput floors of 17 `GetItem`/s and
+4 `ReceiveMessage`/s respectively, with zero failures. Their load harnesses
+use concurrency 8 and the seven-operation profile lifecycles, but ordinary
+short single-cohort qualification is **not 60-minute dual-cohort calibration**.
+These policies and qualification ledgers are unchanged by the coverage
+foundation. Reuse/verify the exact workload semantics before enabling the new
+producers; obtain an explicit calibration/observation decision and authorization
+rather than inventing floors or marking unperformed observations verified.
+The historical SecretsManager 403 limitation and #1016's pending manual
+readiness observation remain unresolved.
+
 ## Freeze the identities
 
 Before shifting traffic, retain one trusted tuple:
