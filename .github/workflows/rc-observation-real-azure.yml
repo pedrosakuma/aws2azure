@@ -1605,7 +1605,10 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$PRIVATE_ROOT"
-          find tests/Aws2Azure.IntegrationTests/bin             -type d             \( -name 'real-azure-it-*' -o -name 'secretsmanager-it-*' -o -name 'dynamodb-load-it-*' \)             -prune -exec rm -rf -- {} +
+          find tests/Aws2Azure.IntegrationTests/bin \
+            -type d \
+            \( -name 'real-azure-it-*' -o -name 'secretsmanager-it-*' -o -name 'dynamodb-load-it-*' \) \
+            -prune -exec rm -rf -- {} +
 
       - name: Refresh Azure login for cleanup (OIDC)
         if: always()
