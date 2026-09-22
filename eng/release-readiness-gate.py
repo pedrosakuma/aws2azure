@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 from typing import Any, NoReturn
 
+from release_profile_coverage import required_profiles
 
 SCHEMA_VERSION = 1
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -23,13 +24,8 @@ REQUIRED_SINGLETONS = {
     "conformance",
     "perf",
     "footprint",
-    "observation",
 }
-PROFILE_CATEGORIES = {"real-azure", "profile"}
-SUPPORTED_PROFILES = {
-    "s3-basic-object-crud",
-    "secretsmanager-basic-lifecycle",
-}
+PROFILE_CATEGORIES = {"real-azure", "profile", "observation"}
 WORKFLOWS = {
     "ci": ".github/workflows/ci.yml",
     "aot": ".github/workflows/sealed-runtime.yml",
@@ -89,6 +85,7 @@ def canonical_digest(value: dict[str, Any]) -> str:
 
 
 def validate_plan(path: pathlib.Path) -> dict[str, Any]:
+    supported_profiles = required_profiles()
     plan = require_object(
         load_json(path),
         "plan",
@@ -154,14 +151,18 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
             fail(f"{name} expected_head_sha is invalid")
         profile = gate["profile"]
         if category in PROFILE_CATEGORIES:
-            if profile not in SUPPORTED_PROFILES:
+            if profile not in supported_profiles:
                 fail(f"{name} must identify a supported profile")
+            if profile in profile_coverage[category]:
+                fail(f"duplicate {category} gate for {profile}")
             profile_coverage[category].add(profile)
         elif profile is not None:
             fail(f"{name} must not declare a profile")
         if category in REQUIRED_SINGLETONS:
             singleton_counts[category] += 1
         candidate_receipt = gate["candidate_receipt"]
+        if category == "observation" and candidate_receipt is None:
+            fail(f"{name} requires its immutable profile observation selection receipt")
         if candidate_receipt is not None:
             receipt = require_object(
                 candidate_receipt,
@@ -193,6 +194,13 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
             )
             if pathlib.PurePosixPath(receipt_name).name != receipt_name:
                 fail(f"{name} candidate receipt name must be a basename")
+            if category == "observation":
+                expected_name = (
+                    f"real-azure-rc-observation-selection-{profile}"
+                    f"-run-{gate['run_id']}-attempt-{gate['run_attempt']}"
+                )
+                if receipt["artifact_name"] != expected_name or receipt_name != "observation-upload-identity.json":
+                    fail(f"{name} must select the exact profile/run/attempt observation receipt")
 
     missing_singletons = sorted(
         category for category, count in singleton_counts.items() if count != 1
@@ -203,8 +211,8 @@ def validate_plan(path: pathlib.Path) -> dict[str, Any]:
             + ", ".join(missing_singletons)
         )
     for category, profiles in profile_coverage.items():
-        if profiles != SUPPORTED_PROFILES:
-            fail(f"{category} gates must cover both supported profiles")
+        if profiles != supported_profiles:
+            fail(f"{category} gates must cover every required release profile: " + ", ".join(sorted(supported_profiles)))
     return plan
 
 
@@ -254,6 +262,7 @@ def validate_candidate_receipt(
     repository: str,
     gate: dict[str, Any],
     candidate_source_sha: str,
+    candidate_identity_digest: str,
     run_data_directory: pathlib.Path | None,
 ) -> None:
     expected = gate["candidate_receipt"]
@@ -262,7 +271,7 @@ def validate_candidate_receipt(
     artifact_id = expected["artifact_id"]
     if run_data_directory is not None:
         metadata = load_json(run_data_directory / f"artifact-{artifact_id}.json")
-        receipt = load_json(run_data_directory / expected["receipt_name"])
+        receipt = load_json(run_data_directory / f"artifact-{artifact_id}" / expected["receipt_name"])
     else:
         metadata_result = subprocess.run(
             [
@@ -301,6 +310,8 @@ def validate_candidate_receipt(
                     f"{archive_result.stderr.decode(errors='replace').strip()}"
                 )
             archive_path.write_bytes(archive_result.stdout)
+            if "sha256:" + hashlib.sha256(archive_result.stdout).hexdigest() != expected["artifact_upload_digest"]:
+                fail(f"candidate receipt artifact {artifact_id} ZIP digest mismatch")
             try:
                 with zipfile.ZipFile(archive_path) as archive:
                     names = archive.namelist()
@@ -330,6 +341,26 @@ def validate_candidate_receipt(
             )
     if workflow_run.get("id") != gate["run_id"]:
         fail(f"candidate receipt artifact {artifact_id} belongs to another run")
+    if gate["category"] == "observation":
+        validate_observation_receipt(receipt, repository, gate, candidate_identity_digest)
+        evidence = receipt["artifact"]
+        if run_data_directory is not None:
+            evidence_metadata = load_json(run_data_directory / f"artifact-{evidence['id']}.json")
+        else:
+            response = subprocess.run(
+                ["gh", "api", f"repos/{repository}/actions/artifacts/{evidence['id']}"],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            if response.returncode != 0:
+                fail(f"cannot resolve observation evidence artifact {evidence['id']}: {response.stderr.strip()}")
+            evidence_metadata = json.loads(response.stdout, object_pairs_hook=duplicate_object)
+        if (evidence_metadata.get("id") != evidence["id"]
+                or evidence_metadata.get("name") != evidence["name"]
+                or evidence_metadata.get("digest") != evidence["upload_digest"]
+                or evidence_metadata.get("expired") is not False
+                or evidence_metadata.get("workflow_run", {}).get("id") != gate["run_id"]):
+            fail("observation evidence artifact is absent, expired or does not match its selection")
+        return
     receipt = require_object(
         receipt,
         f"gate {gate['name']} candidate receipt",
@@ -358,6 +389,62 @@ def validate_candidate_receipt(
     }
     if receipt != required_receipt:
         fail(f"gate {gate['name']} candidate receipt does not match the trusted run")
+
+
+def validate_observation_receipt(
+    value: Any, repository: str, gate: dict[str, Any], candidate_identity_digest: str,
+) -> None:
+    receipt = require_object(value, "observation selection", {
+        "schema_version", "profile_id", "release_candidate_id",
+        "release_candidate_identity_digest", "evidence_digest", "verdict", "producer",
+        "artifact", "archive_inputs", "ghcr_inputs", "manifest_observation",
+    })
+    if (type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1
+            or receipt["profile_id"] != gate["profile"]
+            or receipt["release_candidate_identity_digest"] != candidate_identity_digest
+            or receipt["verdict"] != "pass"):
+        fail(f"gate {gate['name']} observation profile, candidate identity or verdict mismatch")
+    require_string(receipt["release_candidate_id"], "release_candidate_id")
+    evidence_digest = require_string(receipt["evidence_digest"], "evidence_digest")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", evidence_digest) is None:
+        fail("invalid observation evidence digest")
+    producer = require_object(receipt["producer"], "observation producer", {
+        "repository", "workflow_path", "run_id", "run_attempt", "run_url", "source_sha", "source_ref",
+    })
+    require_positive_integer(producer["run_id"], "observation run id")
+    require_positive_integer(producer["run_attempt"], "observation run attempt")
+    required_producer = {
+        "repository": repository, "workflow_path": WORKFLOWS["observation"],
+        "run_id": gate["run_id"], "run_attempt": gate["run_attempt"],
+        "run_url": f"https://github.com/{repository}/actions/runs/{gate['run_id']}",
+        "source_sha": gate["expected_head_sha"], "source_ref": "refs/heads/main",
+    }
+    if producer != required_producer:
+        fail(f"gate {gate['name']} observation producer mismatch")
+    artifact = require_object(receipt["artifact"], "observation evidence artifact", {"id", "name", "upload_digest"})
+    require_positive_integer(artifact["id"], "observation evidence artifact id")
+    expected_name = f"real-azure-rc-observation-{gate['profile']}-run-{gate['run_id']}-attempt-{gate['run_attempt']}"
+    if artifact["name"] != expected_name or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", require_string(artifact["upload_digest"], "observation upload digest")) is None:
+        fail("observation evidence artifact identity mismatch")
+    observation = require_object(receipt["manifest_observation"], "manifest observation", {
+        "profile", "identifier", "digest", "verdict",
+    })
+    profile = require_object(observation["profile"], "manifest observation profile", {"id", "version"})
+    require_positive_integer(profile["version"], "manifest observation profile version")
+    expected_observation = {
+        "profile": {"id": gate["profile"], "version": 1},
+        "identifier": (f"github-actions:{repository}:run-{gate['run_id']}:attempt-{gate['run_attempt']}"
+                       f":artifact-{artifact['id']}:{artifact['upload_digest']}"),
+        "digest": evidence_digest, "verdict": "pass",
+    }
+    if observation != expected_observation:
+        fail("manifest observation does not bind the exact passing profile evidence")
+    # Full archive/GHCR/evidence binding and freshness remain mandatory in promotion's
+    # validate-rc-observation call; this gate verifies the producer's selection receipt.
+    for key in ("archive_inputs", "ghcr_inputs"):
+        require_object(receipt[key], key, {"content_digest", "producer", "artifact"} |
+                       ({"index_digest"} if key == "ghcr_inputs" else set()))
 
 
 def gate(plan_path: pathlib.Path, run_data_directory: pathlib.Path | None) -> None:
@@ -396,6 +483,7 @@ def gate(plan_path: pathlib.Path, run_data_directory: pathlib.Path | None) -> No
             plan["repository"],
             expected,
             plan["candidate_source_sha"],
+            plan["candidate_identity_digest"],
             run_data_directory,
         )
         results.append(
