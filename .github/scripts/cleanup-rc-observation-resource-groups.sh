@@ -43,12 +43,13 @@ declare -A seen=()
 declare -a candidates=()
 
 for resource_group in "${requested_groups[@]}"; do
-  if [[ ! "$resource_group" =~ ^aws2azure-rc-observe-(s3-basic-object-crud|secretsmanager-basic-lifecycle)-([1-9][0-9]*)-([1-9][0-9]*)$ ]]; then
+  if [[ ! "$resource_group" =~ ^aws2azure-rc-observe-(s3-basic-object-crud|secretsmanager-basic-lifecycle|dynamodb-basic-crud|sqs-standard-messaging)(-(candidate|stable))?-([1-9][0-9]*)-([1-9][0-9]*)$ ]]; then
     fail "resource group '$resource_group' is not an exact RC observation group name"
   fi
   expected_profile="${BASH_REMATCH[1]}"
-  expected_run_id="${BASH_REMATCH[2]}"
-  expected_run_attempt="${BASH_REMATCH[3]}"
+  expected_cohort="${BASH_REMATCH[3]}"
+  expected_run_id="${BASH_REMATCH[4]}"
+  expected_run_attempt="${BASH_REMATCH[5]}"
 
   if [ -n "${seen[$resource_group]:-}" ]; then
     fail "duplicate resource group '$resource_group'"
@@ -84,6 +85,14 @@ for resource_group in "${requested_groups[@]}"; do
     fail "resource group '$resource_group' profile tag '$profile' does not match its exact name"
   [ "$run_id" = "$expected_run_id" ] ||
     fail "resource group '$resource_group' run-id tag '$run_id' does not match its exact name"
+  if [ -n "$expected_cohort" ]; then
+    cohort="$(jq -er '."cohort" // empty' <<< "$tags")" ||
+      fail "resource group '$resource_group' is missing its cohort tag"
+    [ "$cohort" = "$expected_cohort" ] ||
+      fail "resource group '$resource_group' cohort tag does not match its exact name"
+    [ "$run_attempt" = "$expected_run_attempt" ] ||
+      fail "resource group '$resource_group' is missing its exact run-attempt tag"
+  fi
   if [ -n "$run_attempt" ] && [ "$run_attempt" != "$expected_run_attempt" ]; then
     fail "resource group '$resource_group' run-attempt tag '$run_attempt' does not match its exact name"
   fi

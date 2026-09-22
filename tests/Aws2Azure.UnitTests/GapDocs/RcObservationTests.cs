@@ -511,6 +511,58 @@ public sealed class RcObservationTests
     }
 
     [Fact]
+    public void Sqs_observation_requires_all_seven_diagnostics_and_receive_sample_accounting()
+    {
+        var (evidence, context) = ValidEvidence();
+        var names = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CreateBucket"] = "CreateQueue", ["DeleteBucket"] = "DeleteQueue",
+            ["DeleteObject"] = "DeleteMessage", ["GetObject"] = "ReceiveMessage",
+            ["HeadObject"] = "GetQueueUrl", ["ListObjectsV2"] = "ListQueues",
+            ["PutObject"] = "SendMessage",
+        };
+        evidence = evidence with
+        {
+            Profile = evidence.Profile with { Id = "sqs-standard-messaging" },
+            Cohorts = evidence.Cohorts.Select(cohort => cohort with
+            {
+                OperationDiagnostics = cohort.OperationDiagnostics.Select(row => row with
+                {
+                    Service = "sqs", Operation = names[row.Operation],
+                }).ToList(),
+            }).ToList(),
+        };
+        context = context with { ProfileId = evidence.Profile.Id };
+        (evidence, context) = Reseal(evidence, context);
+        Assert.Empty(RcObservationValidator.Validate(evidence, context, Now));
+        var complete = evidence;
+        foreach (var operation in names.Values)
+        {
+            evidence = complete with
+            {
+                Cohorts = complete.Cohorts.Select(cohort => cohort with
+                {
+                    OperationDiagnostics = cohort.OperationDiagnostics
+                        .Where(row => row.Operation != operation).ToList(),
+                }).ToList(),
+            };
+            (evidence, context) = Reseal(evidence, context);
+            Assert.NotEmpty(RcObservationValidator.Validate(evidence, context, Now));
+        }
+        evidence = complete with
+        {
+            Cohorts = complete.Cohorts.Select(cohort => cohort with
+            {
+                OperationDiagnostics = cohort.OperationDiagnostics.Select(row =>
+                    row.Operation == "ReceiveMessage" ? row with { Completions = row.Completions + 1 } : row).ToList(),
+            }).ToList(),
+        };
+        (evidence, context) = Reseal(evidence, context);
+        Assert.Contains(RcObservationValidator.Validate(evidence, context, Now),
+            error => error.Contains("representative throughput samples", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Diagnostic_tampering_is_digest_bound_and_consistency_validated()
     {
         var (evidence, context) = ValidEvidence();

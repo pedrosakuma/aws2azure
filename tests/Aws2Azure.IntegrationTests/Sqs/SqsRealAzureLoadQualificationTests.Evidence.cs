@@ -42,14 +42,15 @@ public sealed partial class SqsRealAzureLoadQualificationTests
     /// DeleteQueue at the end — so the operation mix matches the full
     /// seven-operation profile rather than only its read/write hot path.
     /// </summary>
-    private static async Task RunWorkerAsync(
+    internal static async Task RunWorkerAsync(
         IAmazonSQS client,
         RealAzureWorkloadLoadTracker tracker,
         CompletedIterationCounter completedIterations,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool strictObservation = false)
     {
         var queueName = $"a2a-load-{worker:x2}-{Guid.NewGuid():N}"[..40];
         var queueCreated = false;
@@ -154,7 +155,7 @@ public sealed partial class SqsRealAzureLoadQualificationTests
                         },
                         IsThrottle)).ConfigureAwait(false);
                 }
-                catch when (!cancellationToken.IsCancellationRequested)
+                catch when (!strictObservation && !cancellationToken.IsCancellationRequested)
                 {
                 }
             }
@@ -167,21 +168,30 @@ public sealed partial class SqsRealAzureLoadQualificationTests
             }, IsThrottle).ConfigureAwait(false);
             queueCreated = false;
         }
-        catch when (!cancellationToken.IsCancellationRequested)
+        catch when (!strictObservation && !cancellationToken.IsCancellationRequested)
         {
         }
         finally
         {
             if (queueCreated && queueUrl is not null)
             {
-                try
+                if (strictObservation)
                 {
-                    await client.DeleteQueueAsync(
-                        new DeleteQueueRequest { QueueUrl = queueUrl },
-                        CancellationToken.None).ConfigureAwait(false);
+                    await MeasureAsync(tracker, "DeleteQueue",
+                        () => client.DeleteQueueAsync(new DeleteQueueRequest { QueueUrl = queueUrl },
+                            cancellationToken), IsThrottle).ConfigureAwait(false);
                 }
-                catch
+                else
                 {
+                    try
+                    {
+                        await client.DeleteQueueAsync(
+                            new DeleteQueueRequest { QueueUrl = queueUrl },
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
                 }
             }
         }

@@ -9,14 +9,15 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 
 public sealed partial class DynamoDbRealAzureLoadQualificationTests
 {
-    private static async Task RunWorkerAsync(
+    internal static async Task RunWorkerAsync(
         IAmazonDynamoDB client,
         RealAzureWorkloadLoadTracker tracker,
         CompletedIterationCounter completedIterations,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool strictObservation = false)
     {
         var table = $"a2a-load-{worker:x2}-{Guid.NewGuid():N}"[..40];
         var tableCreated = false;
@@ -159,26 +160,38 @@ public sealed partial class DynamoDbRealAzureLoadQualificationTests
                         },
                         IsThrottle)).ConfigureAwait(false);
                 }
-                catch when (!cancellationToken.IsCancellationRequested)
+                catch when (!strictObservation && !cancellationToken.IsCancellationRequested)
                 {
                 }
                 finally
                 {
                     if (itemCreated)
                     {
-                        try
+                        if (strictObservation)
                         {
-                            await client.DeleteItemAsync(new DeleteItemRequest
-                            {
-                                TableName = table,
-                                Key = new Dictionary<string, AttributeValue>
+                            await MeasureAsync(tracker, "DeleteItem", () => client.DeleteItemAsync(
+                                new DeleteItemRequest
                                 {
-                                    ["pk"] = new AttributeValue { S = key },
-                                },
-                            }, CancellationToken.None).ConfigureAwait(false);
+                                    TableName = table,
+                                    Key = new() { ["pk"] = new AttributeValue { S = key } },
+                                }, cancellationToken), IsThrottle).ConfigureAwait(false);
                         }
-                        catch
+                        else
                         {
+                            try
+                            {
+                                await client.DeleteItemAsync(new DeleteItemRequest
+                                {
+                                    TableName = table,
+                                    Key = new Dictionary<string, AttributeValue>
+                                    {
+                                        ["pk"] = new AttributeValue { S = key },
+                                    },
+                                }, CancellationToken.None).ConfigureAwait(false);
+                            }
+                            catch
+                            {
+                            }
                         }
                     }
                 }
@@ -192,21 +205,30 @@ public sealed partial class DynamoDbRealAzureLoadQualificationTests
             }, IsThrottle).ConfigureAwait(false);
             tableCreated = false;
         }
-        catch when (!cancellationToken.IsCancellationRequested)
+        catch when (!strictObservation && !cancellationToken.IsCancellationRequested)
         {
         }
         finally
         {
             if (tableCreated)
             {
-                try
+                if (strictObservation)
                 {
-                    await client.DeleteTableAsync(
-                        new DeleteTableRequest { TableName = table },
-                        CancellationToken.None).ConfigureAwait(false);
+                    await MeasureAsync(tracker, "DeleteTable",
+                        () => client.DeleteTableAsync(new DeleteTableRequest { TableName = table },
+                            cancellationToken), IsThrottle).ConfigureAwait(false);
                 }
-                catch
+                else
                 {
+                    try
+                    {
+                        await client.DeleteTableAsync(
+                            new DeleteTableRequest { TableName = table },
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
                 }
             }
         }

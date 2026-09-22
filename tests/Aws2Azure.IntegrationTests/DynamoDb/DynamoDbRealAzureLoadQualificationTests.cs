@@ -29,7 +29,7 @@ namespace Aws2Azure.IntegrationTests.DynamoDb;
 public sealed partial class DynamoDbRealAzureLoadQualificationTests(DynamoDbRealAzureProxyFixture fixture)
 {
     private const string Service = "dynamodb";
-    private static readonly string[] Operations =
+    internal static readonly string[] Operations =
     [
         "CreateTable",
         "DescribeTable",

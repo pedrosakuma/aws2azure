@@ -245,6 +245,11 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
     public bool IsProxyRunning => _proxyProcess is { HasExited: false };
+    internal void VerifyConfigurationUnchanged()
+    {
+        if (_configFile is null || Digest(File.ReadAllBytes(_configFile)) != ProxyConfigDigest)
+            throw new InvalidDataException("The runtime configuration changed.");
+    }
     public SealedRuntimeIdentity CandidateRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>

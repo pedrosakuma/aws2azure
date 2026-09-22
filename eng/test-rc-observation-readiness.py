@@ -59,6 +59,27 @@ class ReadinessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             protocol.make_release(self.context, {"candidate": self.entries["candidate"]}, self.now)
 
+    def test_all_required_profiles_have_isolated_current_attempt_rendezvous(self):
+        names = set()
+        for profile in protocol.PROFILES:
+            context = {**self.context, "profile": profile}
+            entries = copy.deepcopy(self.entries)
+            for role in protocol.ROLES:
+                name = protocol.artifact_name(context, "ready", role)
+                self.assertNotIn(name, names)
+                names.add(name)
+                entries[role]["name"] = name
+            release = protocol.make_release(context, entries, self.now)
+            for role in protocol.ROLES:
+                protocol.validate_release(context, role, release, entries[role], self.now)
+            foreign = copy.deepcopy(entries)
+            foreign["stable"]["name"] = protocol.artifact_name(
+                {**context, "profile": "unrelated-profile"}, "ready", "stable")
+            with self.assertRaises(ValueError):
+                protocol.validate_release(context, "candidate",
+                    protocol.make_release(context, foreign, self.now), entries["candidate"], self.now)
+        self.assertEqual(len(names), 8)
+
     def test_invalid_readiness_is_not_a_prepared_process(self):
         changes = (
             ("schema_version", True), ("context_id", "foreign-run-or-attempt"),

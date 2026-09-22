@@ -1886,6 +1886,7 @@ public static partial class RcObservationValidator
             "s3-basic-object-crud" => ("s3", "GetObject"),
             "secretsmanager-basic-lifecycle" => ("secretsmanager", "GetSecretValue"),
             "dynamodb-basic-crud" => ("dynamodb", "GetItem"),
+            "sqs-standard-messaging" => ("sqs", "ReceiveMessage"),
             _ => null,
         };
 
@@ -1922,6 +1923,17 @@ public static partial class RcObservationValidator
             "dynamodb:UpdateItem",
             "dynamodb:DeleteItem",
             "dynamodb:DeleteTable",
+        ],
+        StringComparer.Ordinal),
+        "sqs-standard-messaging" => new HashSet<string>(
+        [
+            "sqs:CreateQueue",
+            "sqs:GetQueueUrl",
+            "sqs:ListQueues",
+            "sqs:SendMessage",
+            "sqs:ReceiveMessage",
+            "sqs:DeleteMessage",
+            "sqs:DeleteQueue",
         ],
         StringComparer.Ordinal),
         _ => null,

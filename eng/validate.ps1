@@ -55,6 +55,8 @@ try {
         "pr" {
             Invoke-Build
             Invoke-DotNet test tests/Aws2Azure.UnitTests -c Release --no-build --nologo
+            Invoke-DotNet test tests/Aws2Azure.IntegrationTests -c Release --no-build --nologo `
+                --filter "Category=RcObservationOffline"
             Invoke-DotNet test tests/Aws2Azure.Conformance -c Release --no-build --nologo
             Invoke-DotNet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo `
                 --filter "Category!=RelativeGate"

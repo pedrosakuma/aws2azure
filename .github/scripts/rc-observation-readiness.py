@@ -13,6 +13,9 @@ import sys
 import time
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eng"))
+from release_profile_coverage import required_profiles
+
 WAIT_SECONDS = 45 * 60
 LEAD_SECONDS = 120
 LATE_SECONDS = 60
@@ -22,7 +25,7 @@ KILL_GRACE_SECONDS = 5
 STOP_SECONDS = TERM_GRACE_SECONDS + KILL_GRACE_SECONDS + 5
 MAX_BYTES = 32768
 ROLES = ("candidate", "stable")
-PROFILES = ("s3-basic-object-crud", "secretsmanager-basic-lifecycle")
+PROFILES = tuple(sorted(required_profiles()))
 
 
 def require(condition, message):

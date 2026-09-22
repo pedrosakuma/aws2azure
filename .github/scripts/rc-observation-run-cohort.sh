@@ -50,6 +50,16 @@ case "$PROFILE" in
     BICEP_PATH=deploy/realazure/secretsmanager-load.bicep
     TEST_FILTER=Category=SecretsManagerRcObservation
     ;;
+  dynamodb-basic-crud)
+    DEPLOYMENT_NAME=aws2azure-rc-observe-dynamodb
+    BICEP_PATH=deploy/realazure/dynamodb-load.bicep
+    TEST_FILTER=Category=DynamoDbRcObservation
+    ;;
+  sqs-standard-messaging)
+    DEPLOYMENT_NAME=aws2azure-rc-observe-sqs
+    BICEP_PATH=deploy/realazure/sqs-load.bicep
+    TEST_FILTER=Category=SqsRcObservation
+    ;;
   *)
     echo "::error::Unsupported profile: $PROFILE"
     exit 1
@@ -58,6 +68,7 @@ esac
 append_env DEPLOYMENT_NAME "$DEPLOYMENT_NAME"
 append_env BICEP_PATH "$BICEP_PATH"
 append_env TEST_FILTER "$TEST_FILTER"
+append_env AWS2AZURE_QUALIFICATION_PROFILE "$PROFILE"
 
 if [ -z "${AZURE_CLIENT_ID:-}" ] ||
    [ -z "${AZURE_TENANT_ID:-}" ] ||
@@ -189,10 +200,8 @@ jq -e \
     | select(any(.verificationResult.statement.subject[]; .name == "release-candidate-archive-inputs.json" and .digest.sha256 == $digest))] | length == 1' \
   "$archive_attestations" >/dev/null
 
-case "$PROFILE" in
-  s3-basic-object-crud) ledger_name=s3-approved-runtime.json ;;
-  secretsmanager-basic-lifecycle) ledger_name=secretsmanager-approved-runtime.json ;;
-esac
+ledger_name="$(PYTHONPATH=eng python3 -c \
+  'import sys; from release_profile_coverage import approved_ledger_filename; print(approved_ledger_filename(sys.argv[1]))' "$PROFILE")"
 approved_ledger="$archive_root/content/context/$ledger_name"
 if [ ! -f "$approved_ledger" ] || [ -L "$approved_ledger" ]; then
   echo "::error::RC archive does not contain the exact regular approved-runtime export."
@@ -408,7 +417,27 @@ if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
     exit 1
   fi
   append_env AZURE_KEYVAULT_URL "$endpoint"
-else
+elif [ "$PROFILE" = dynamodb-basic-crud ]; then
+  account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.cosmosAccountName.value -o tsv)"
+  database="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.cosmosDatabaseName.value -o tsv)"
+  endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.cosmosEndpoint.value -o tsv)"
+  key="$(az cosmosdb keys list -g "$RG_NAME" -n "$account" --query primaryMasterKey -o tsv)"
+  if [ -z "$account" ] || [ -z "$database" ] || [ -z "$endpoint" ] || [ -z "$key" ]; then
+    echo "::error::Cosmos DB deployment outputs are incomplete."
+    exit 1
+  fi
+  echo "::add-mask::$key"
+  append_env AZURE_COSMOS_ENDPOINT "$endpoint"
+  append_env AZURE_COSMOS_KEY "$key"
+  append_env AZURE_COSMOS_DATABASE "$database"
+elif [ "$PROFILE" = sqs-standard-messaging ]; then
+  namespace="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.serviceBusNamespaceName.value -o tsv)"
+  [ -n "$namespace" ] || { echo "::error::Service Bus namespace is missing."; exit 1; }
+  connection="$(az servicebus namespace authorization-rule keys list -g "$RG_NAME" --namespace-name "$namespace" --name RootManageSharedAccessKey --query primaryConnectionString -o tsv)"
+  [ -n "$connection" ] || { echo "::error::Service Bus credentials are missing."; exit 1; }
+  echo "::add-mask::$connection"
+  append_env AZURE_SB_CONNSTR "$connection"
+elif [ "$PROFILE" = s3-basic-object-crud ]; then
   account="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.storageAccountName.value -o tsv)"
   endpoint="$(az deployment group show -g "$RG_NAME" -n "$DEPLOYMENT_NAME" --query properties.outputs.blobEndpoint.value -o tsv)"
   key="$(az storage account keys list -g "$RG_NAME" -n "$account" --query '[0].value' -o tsv)"
@@ -420,6 +449,9 @@ else
   append_env AZURE_BLOB_ACCOUNT "$account"
   append_env AZURE_BLOB_KEY "$key"
   append_env AZURE_BLOB_ENDPOINT "$endpoint"
+else
+  echo "::error::Unsupported backend profile: $PROFILE"
+  exit 1
 fi
 
 if [ "$PROFILE" = secretsmanager-basic-lifecycle ]; then
