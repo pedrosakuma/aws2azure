@@ -96,7 +96,10 @@ qualification floor is not a universal capacity claim.
 - There is no explicit warmup (`warmup: not_performed`). Setup, network probes,
   canary setup/restoration/teardown, credential rotation, synchronization wait,
   and post-load qualification scenarios are excluded. Diagnostics do not
-  introduce a readiness barrier or alter existing synchronization. Split-cohort
+  introduce a readiness barrier or alter synchronization themselves. The
+  [split-cohort readiness protocol](../testing/rc-staging-canary.md#live-readiness-rendezvous)
+  releases the prepared live harnesses independently of these diagnostics.
+  Split-cohort
   reports distinguish actual `started_at_utc` from `scheduled_start_utc`;
   timestamp offsets and rates use the actual start and monotonic clock.
 - Each operation exports successes, settled attempts, errors, throttles, success
@@ -134,5 +137,5 @@ require separately scoped, opt-in shipping instrumentation and validation.
 This first delivery adds no shipping instrumentation or dependencies.
 [Delivery 2's isolated seven-operation capacity harness](../perf/secretsmanager-isolated-capacity.md)
 is opt-in, finite-budget and report-only; it has offline validation, not an
-asserted live-Azure capacity result. Controlled comparisons/readiness
-improvements and evidence-calibrated gates remain subsequent deliveries.
+asserted live-Azure capacity result. Readiness is covered by the linked
+protocol; controlled comparisons and evidence-calibrated gates remain separate.

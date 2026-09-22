@@ -244,6 +244,7 @@ public sealed class RealAzureProxyFixture : IAsyncLifetime
     public string AwsBindingDigest { get; private set; } = string.Empty;
     public bool SealedCandidateConfigured => _runtimeSelection.IsSealed;
     public bool SealedRollbackConfigured => _runtimeSelection.RequiresRollback;
+    public bool IsProxyRunning => _proxyProcess is { HasExited: false };
     public SealedRuntimeIdentity CandidateRuntimeIdentity =>
         _runtimeSelection.GetTarget(SealedRuntimeRole.Candidate).Identity;
     public SealedRuntimeIdentity PriorRuntimeIdentity =>

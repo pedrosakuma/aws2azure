@@ -11,6 +11,32 @@ public sealed class RcObservationWorkflowTests
         "rc-observation-real-azure.yml"));
 
     [Fact]
+    public void Readiness_is_live_same_job_current_attempt_and_not_a_guessed_start()
+    {
+        var action = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
+            ".github", "actions", "rc-observation-cohort", "action.yml"));
+        Assert.DoesNotContain("+30 minutes", Workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("OBSERVATION_SYNC_AT_UTC", Workflow, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(Workflow, "uses: ./.github/actions/rc-observation-cohort"));
+        Assert.Contains("actions: read", Workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("actions: write", Workflow, StringComparison.Ordinal);
+        Assert.Contains("observation_deadline_utc", Workflow, StringComparison.Ordinal);
+        Assert.Contains("run-${{ github.run_id }}-attempt-${{ github.run_attempt }}", action, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(action, "overwrite: false"));
+        Assert.True(action.IndexOf(" prepare", StringComparison.Ordinal) < action.IndexOf("Publish immutable readiness", StringComparison.Ordinal));
+        Assert.True(action.IndexOf(" coordinate", StringComparison.Ordinal) < action.IndexOf("Publish immutable start release", StringComparison.Ordinal));
+        Assert.True(action.IndexOf(" accept", StringComparison.Ordinal) < action.IndexOf(" finish", StringComparison.Ordinal));
+        Assert.Contains("if: always()", action, StringComparison.Ordinal);
+        Assert.Contains("rc-observation-readiness.py stop", action, StringComparison.Ordinal);
+        foreach (var job in new[] { "observe-s3-cohort:", "observe-secretsmanager-cohort:" })
+        {
+            var start = Workflow.IndexOf(job, StringComparison.Ordinal);
+            var matrix = Workflow.IndexOf("strategy:", start, StringComparison.Ordinal);
+            Assert.Contains("needs: select", Workflow[start..matrix], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Workflow_is_manual_and_selects_only_committed_profiles()
     {
         Assert.Contains("workflow_dispatch:", Workflow, StringComparison.Ordinal);
@@ -422,7 +448,7 @@ public sealed class RcObservationWorkflowTests
         Assert.Contains("assemble-s3-observation:", Workflow, StringComparison.Ordinal);
         Assert.Contains("assemble-secretsmanager-observation:", Workflow, StringComparison.Ordinal);
         Assert.Contains(
-            "OBSERVATION_SYNC_AT_UTC:",
+            "OBSERVATION_DEADLINE_UTC:",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(

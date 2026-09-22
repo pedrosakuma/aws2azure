@@ -318,7 +318,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
 
                 try
                 {
-                    if (role == "candidate")
+                    // Both live cohorts verify the same backend operation stage.
                     {
                         await client.PutBucketAsync(
                             new PutBucketRequest { BucketName = canaryBucket },
@@ -341,19 +341,24 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                             timeout.Token).ConfigureAwait(false);
                     }
 
-                    var startedAt = await RcObservationCaptureWriter
-                        .WaitForSynchronizedObservationStartAsync(timeout.Token)
-                        .ConfigureAwait(false);
+                    var readinessDirectory = RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_READINESS_DIR");
+                    var startedRuntime = role == "candidate"
+                        ? fixture.CandidateRuntimeIdentity : fixture.PriorRuntimeIdentity;
+                    var release = await RcObservationReadiness.WaitAsync(
+                        readinessDirectory, role,
+                        role == "candidate" ? fixture.CandidateRuntimeIdentityDigest : fixture.PriorRuntimeIdentityDigest,
+                        startedRuntime.Runtime.AggregateDigest, () => fixture.IsProxyRunning,
+                        timeout.Token).ConfigureAwait(false);
+                    var startedAt = release.ScheduledAtUtc;
                     // The wait above no longer counts against the measurement
                     // window's own deadline: give it a fresh budget now.
                     timeout.CancelAfter(duration + TimeSpan.FromMinutes(15));
+                    var actualStartedAt = DateTimeOffset.UtcNow;
                     var stopwatch = Stopwatch.StartNew();
+                    RcObservationReadiness.RecordMeasurementStart(readinessDirectory, role, release, actualStartedAt);
                     var concurrency = role == "candidate"
                         ? candidateConcurrency
                         : stableConcurrency;
-                    var startedRuntime = role == "candidate"
-                        ? fixture.CandidateRuntimeIdentity
-                        : fixture.PriorRuntimeIdentity;
                     var workers = new List<Task>(concurrency);
                     for (var worker = 0; worker < concurrency; worker++)
                     {
