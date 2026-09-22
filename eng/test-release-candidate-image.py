@@ -13,6 +13,10 @@ import shutil
 import struct
 import subprocess
 import unittest
+
+from release_profile_coverage import (
+    approved_ledger_filename, required_profiles, resolved_identity_filename,
+)
 from collections import Counter
 
 
@@ -242,7 +246,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         workload = next(
             item
             for item in context["workloads"]
-            if item["profile"]["id"] == "s3-basic-object-crud"
+            if item["profile"]["id"] == ledger["record"]["profile"]["id"]
         )
         approved = workload["approved_runtime"]
         source = context["sealed_runtime"]
@@ -356,7 +360,7 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         sealed_digest = digest_file(sealed)
         executable_digest = digest_file(packaged_x64)
         ledgers: dict[str, pathlib.Path] = {}
-        for profile in ("s3-basic-object-crud", "secretsmanager-basic-lifecycle"):
+        for profile in sorted(required_profiles()):
             ledger = input_dir / f"{profile}.json"
             write_json(
                 ledger,
@@ -380,35 +384,22 @@ class ReleaseCandidateImageTests(unittest.TestCase):
             ORCHESTRATION_SHA,
             "--approval-sha",
             APPROVAL_SHA,
-            "--s3-ledger",
-            str(ledgers["s3-basic-object-crud"]),
-            "--s3-profile",
-            str(REPO_ROOT / "docs/workloads/s3-basic-object-crud.yaml"),
-            "--secrets-ledger",
-            str(ledgers["secretsmanager-basic-lifecycle"]),
-            "--secrets-profile",
-            str(REPO_ROOT / "docs/workloads/secretsmanager-basic-lifecycle.yaml"),
+            *[value for profile in sorted(ledgers) for value in (
+                "--profile-input", profile, str(ledgers[profile]),
+                str(REPO_ROOT / f"docs/workloads/{profile}.yaml"))],
             "--policy",
             str(REPO_ROOT / "docs/versioning-and-compatibility.md"),
             "--output",
             str(context),
         )
-        shutil.copyfile(
-            ledgers["s3-basic-object-crud"],
-            bundle / "context" / "s3-approved-runtime.json",
-        )
-        shutil.copyfile(
-            ledgers["secretsmanager-basic-lifecycle"],
-            bundle / "context" / "secretsmanager-approved-runtime.json",
-        )
         context_value = json.loads(context.read_text(encoding="utf-8"))
-        s3_ledger = json.loads(
-            ledgers["s3-basic-object-crud"].read_text(encoding="utf-8")
-        )
-        write_json(
-            bundle / "context" / "resolved-x64-identity.json",
-            self.make_resolved_x64_identity(context_value, s3_ledger),
-        )
+        for profile, ledger_path in ledgers.items():
+            shutil.copyfile(ledger_path, bundle / "context" / approved_ledger_filename(profile))
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            write_json(
+                bundle / "context" / resolved_identity_filename(profile),
+                self.make_resolved_x64_identity(context_value, ledger),
+            )
         sealed_output = bundle / "sealed-runtime" / "sealed-runtime-manifest.json"
         sealed_output.parent.mkdir()
         shutil.copyfile(sealed, sealed_output)
@@ -1025,6 +1016,10 @@ class ReleaseCandidateImageTests(unittest.TestCase):
         mock_bin.mkdir(parents=True)
         tool_root.mkdir()
         shutil.copy2(IMAGE_TOOL, tool_root / IMAGE_TOOL.name)
+        shutil.copy2(
+            REPO_ROOT / "eng/release_profile_coverage.py",
+            tool_root / "release_profile_coverage.py",
+        )
         write_json(
             runtime_root / "main.json",
             {
@@ -1464,6 +1459,9 @@ esac
         self.assertEqual(subject_name_counts["platform-manifest.json"], 2)
         self.assertEqual(subject_name_counts["SHA256SUMS"], 2)
         self.assertEqual(subject_name_counts["resolved-x64-identity.json"], 1)
+        for profile in required_profiles():
+            self.assertEqual(subject_name_counts[resolved_identity_filename(profile)], 1)
+            self.assertEqual(subject_name_counts[approved_ledger_filename(profile)], 1)
 
         resolved_index = next(
             index
@@ -1508,6 +1506,56 @@ esac
                     str(verification),
                     expect_success=False,
                 )
+
+    def test_every_profile_ledger_and_resolution_is_required_and_bound(self) -> None:
+        bundle, selection, identity_path = self.create_bundle()
+        self.validate_bundle(bundle, selection, identity_path)
+        output = self.root / "invalid-profile-identity.json"
+        for profile in sorted(required_profiles()):
+            ledger = bundle / "context" / approved_ledger_filename(profile)
+            identity = bundle / "context" / resolved_identity_filename(profile)
+            for path in (ledger, identity):
+                original = path.read_bytes()
+                with self.subTest(profile=profile, file=path.name, mutation="missing"):
+                    path.unlink()
+                    self.write_complete_checksums(bundle)
+                    self.validate_bundle(bundle, selection, output, expect_success=False)
+                    path.write_bytes(original)
+                for section, key, replacement in (
+                    ("profile", "id", "unadvertised-profile"),
+                    ("profile", "version", 2),
+                    ("runtime", "executable_digest", digest_bytes(b"substitution")),
+                    ("producer", "run_id", 456),
+                    ("producer", "run_attempt", 9),
+                    ("artifact", "id", 456),
+                    ("artifact", "upload_digest", digest_bytes(b"other artifact")),
+                    ("artifact", "expires_at", "2000-01-01T00:00:00Z"),
+                ):
+                    with self.subTest(profile=profile, file=path.name, mutation=f"{section}.{key}"):
+                        value = json.loads(original)
+                        record = value["record"] if path == ledger else value
+                        record[section][key] = replacement
+                        write_json(path, value)
+                        self.write_complete_checksums(bundle)
+                        result = self.validate_bundle(bundle, selection, output, expect_success=False)
+                        self.assertNotIn("checksum mismatch", result.stderr)
+                        self.assertFalse(output.exists())
+                path.write_bytes(original)
+            originals = {path: path.read_bytes() for path in (ledger, identity)}
+            with self.subTest(profile=profile, mutation="matched-expired-approval"):
+                for path, original in originals.items():
+                    value = json.loads(original)
+                    record = value["record"] if path == ledger else value
+                    record["artifact"]["created_at"] = "1999-01-01T00:00:00Z"
+                    record["artifact"]["expires_at"] = "2000-01-01T00:00:00Z"
+                    write_json(path, value)
+                self.write_complete_checksums(bundle)
+                result = self.validate_bundle(bundle, selection, output, expect_success=False)
+                self.assertIn("approved sealed artifact is expired", result.stderr)
+                for path, original in originals.items():
+                    path.write_bytes(original)
+        self.write_complete_checksums(bundle)
+        self.validate_bundle(bundle, selection, self.root / "restored-profile-identity.json")
 
     def test_resolved_x64_identity_is_required_regular_and_semantically_bound(
         self,

@@ -14,6 +14,7 @@ import stat
 import tarfile
 from typing import Any, NoReturn
 
+from release_profile_coverage import required_profiles
 
 SCHEMA_VERSION = 1
 MAX_ARCHIVE_ENTRIES = 4096
@@ -1234,6 +1235,8 @@ def generate(
         ledger_digests.add(approved["ledger_record_digest"])
         workloads.append({"profile": profile, "approved_runtime": approved})
     workloads.sort(key=lambda item: (item["profile"]["id"], item["profile"]["version"]))
+    if workload_keys != {(profile, 1) for profile in required_profiles()}:
+        fail("workloads must cover every required GA release profile at version 1")
 
     policy = validate_policy(descriptor["compatibility_policy"], "compatibility_policy")
     observations: list[dict[str, Any]] = []
@@ -1349,6 +1352,13 @@ def validate_identity(receipt_path: pathlib.Path) -> None:
         or receipt["artifact_kind"] != "release_candidate_identity"
     ):
         fail("identity receipt schema or artifact kind is invalid")
+    profile_keys = []
+    for item in require_array(receipt["workloads"], "identity workloads"):
+        workload = require_object(item, "identity workload", {"profile", "approved_runtime"})
+        profile = validate_profile(workload["profile"], "identity workload profile")
+        profile_keys.append((profile["id"], profile["version"]))
+    if profile_keys != sorted((profile, 1) for profile in required_profiles()):
+        fail("identity workloads must uniquely cover all required GA profiles in sorted order")
     identity_body = {
         key: value
         for key, value in receipt.items()
@@ -1652,6 +1662,8 @@ def validate(
         ledger_digests.append(approved["ledger_record_digest"])
     if workload_keys != sorted(set(workload_keys)):
         fail("workloads must be unique and sorted by profile identity")
+    if set(workload_keys) != {(profile, 1) for profile in required_profiles()}:
+        fail("workloads must cover every required GA release profile at version 1")
     if len(profile_digests) != len(set(profile_digests)):
         fail("workload profile digests must be distinct")
     if len(ledger_digests) != len(set(ledger_digests)):

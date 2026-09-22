@@ -14,6 +14,8 @@ import subprocess
 import tarfile
 import unittest
 
+from release_profile_coverage import required_profiles
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOL = REPO_ROOT / "eng" / "release-candidate-manifest.py"
@@ -353,24 +355,15 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             "workloads": [
                 {
                     "profile": {
-                        "id": "secretsmanager-basic-lifecycle",
+                        "id": profile,
                         "version": 1,
-                        "digest": digest_bytes(b"secrets profile"),
+                        "digest": digest_bytes(f"{profile} profile".encode()),
                     },
                     "approved_runtime": self.approved_runtime(
-                        "secretsmanager-basic-lifecycle", "secrets ledger"
+                        profile, f"{profile} ledger"
                     ),
-                },
-                {
-                    "profile": {
-                        "id": "s3-basic-object-crud",
-                        "version": 1,
-                        "digest": digest_bytes(b"s3 profile"),
-                    },
-                    "approved_runtime": self.approved_runtime(
-                        "s3-basic-object-crud", "s3 ledger"
-                    ),
-                },
+                }
+                for profile in sorted(required_profiles(), reverse=True)
             ],
             "compatibility_policy": {
                 "identifier": "aws2azure-compatibility-policy-v1",
@@ -379,22 +372,14 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             "observation_evidence": [
                 {
                     "profile": {
-                        "id": "s3-basic-object-crud",
+                        "id": profile,
                         "version": 1,
                     },
-                    "identifier": "rc-observation/s3/v1",
-                    "digest": digest_bytes(b"s3 observation contract"),
+                    "identifier": f"rc-observation/{profile}/v1",
+                    "digest": digest_bytes(f"{profile} observation contract".encode()),
                     "verdict": "pass",
-                },
-                {
-                    "profile": {
-                        "id": "secretsmanager-basic-lifecycle",
-                        "version": 1,
-                    },
-                    "identifier": "rc-observation/secrets/v1",
-                    "digest": digest_bytes(b"secrets observation contract"),
-                    "verdict": "pass",
-                },
+                }
+                for profile in sorted(required_profiles())
             ],
         }
 
@@ -461,7 +446,8 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["profile"]["id"] for item in manifest["observation_evidence"]],
-            ["s3-basic-object-crud", "secretsmanager-basic-lifecycle"],
+            ["dynamodb-basic-crud", "s3-basic-object-crud",
+             "secretsmanager-basic-lifecycle", "sqs-standard-messaging"],
         )
         self.assertEqual(manifest["candidate"]["source"]["sha"], SOURCE_SHA)
         self.assertEqual(manifest["producer"]["source_sha"], ORCHESTRATION_SHA)
@@ -509,6 +495,45 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
             str(linked_receipt),
             expect_success=False,
         )
+
+    def test_generation_and_rehashed_identities_cannot_omit_any_ga_profile(self) -> None:
+        original = json.dumps(self.descriptor)
+        manifest = self.generate()
+        identity_descriptor = json.loads(original)
+        identity_descriptor.pop("observation_evidence")
+        descriptor_path = self.root / "identity-inputs.json"
+        receipt_path = self.root / "identity.json"
+        write_json(descriptor_path, identity_descriptor)
+        self.run_tool("identity", str(descriptor_path), str(receipt_path))
+        receipt = json.loads(receipt_path.read_bytes())
+        for profile in sorted(required_profiles()):
+            with self.subTest(profile=profile):
+                descriptor = json.loads(original)
+                descriptor["workloads"] = [
+                    item for item in descriptor["workloads"] if item["profile"]["id"] != profile]
+                descriptor["observation_evidence"] = [
+                    item for item in descriptor["observation_evidence"] if item["profile"]["id"] != profile]
+                write_json(self.descriptor_path, descriptor)
+                result = self.run_tool("generate", str(self.descriptor_path),
+                                       str(self.root / "incomplete.json"), expect_success=False)
+                self.assertIn("every required GA", result.stderr)
+
+                for value, path, command in (
+                    (json.loads(json.dumps(receipt)), receipt_path, "validate-identity"),
+                    (json.loads(json.dumps(manifest)), self.manifest_path, "validate"),
+                ):
+                    value["workloads"] = [
+                        item for item in value["workloads"] if item["profile"]["id"] != profile]
+                    value["identity_digest"] = canonical_identity_digest(
+                        {key: item for key, item in value.items() if key != "artifact_kind"})
+                    value["content_digest"] = canonical_body_digest(value)
+                    write_json(path, value)
+                    if command == "validate-identity":
+                        result = self.run_tool(command, str(path), expect_success=False)
+                    else:
+                        result = self.validate_manifest(
+                            expect_success=False, expected_content_digest=value["content_digest"])
+                    self.assertIn("required GA", result.stderr)
 
     def test_finalizer_binds_exact_observation_receipts(self) -> None:
         identity_descriptor = dict(self.descriptor)
