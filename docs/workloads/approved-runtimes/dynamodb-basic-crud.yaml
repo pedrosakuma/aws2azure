@@ -12,36 +12,36 @@ runtime:
     architecture: x64
     rid: linux-x64
   source_repository: pedrosakuma/aws2azure
-  source_sha: e3984773699f4133ff9073a5ef5f374671b181c9
-  aggregate_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
-  executable_digest: sha256:849957b8ee519a6ec395e1c84d0ecb779ca6a4b7f4d39c2d10c8cd3bc9966a4a
+  source_sha: d6619b09b209e166eaed924388796ff5a7dd41d0
+  aggregate_digest: sha256:c07814df47331fb3ee1304d4a87cdd32425d18ffa657a55719c3ce417a0b3333
+  executable_digest: sha256:efb8bdb87a10759cc84ffae907d0fa23eef2b0bf70c67635c8ab97f394dc4c47
 producer:
   workflow: .github/workflows/sealed-runtime.yml
-  run_id: 33020647541
+  run_id: 35761930042
   run_attempt: 1
-  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020647541
+  run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/35761930042
 artifact:
-  id: 9626431836
-  name: aws2azure-sealed-linux-x64-9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5-run-33020647541-attempt-1
-  upload_digest: sha256:4322a81c904ecfab361c1f330086c7f86a6791795227d7ea1671c9bd1a601041
-  created_at: 2026-08-26T22:46:45.0000000+00:00
-  expires_at: 2026-11-24T22:44:44.0000000+00:00
+  id: 10710381571
+  name: aws2azure-sealed-linux-x64-c07814df47331fb3ee1304d4a87cdd32425d18ffa657a55719c3ce417a0b3333-run-35761930042-attempt-1
+  upload_digest: sha256:90fdc053b599c5715700e5efcffc829e05e251e0e79bf9e63c003dd22e9349e1
+  created_at: '2026-09-22T17:40:03.0000000+00:00'
+  expires_at: '2026-12-21T17:37:37.0000000+00:00'
 attestation:
   predicate_type: https://slsa.dev/provenance/v1
   repository: pedrosakuma/aws2azure
   signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-  source_sha: e3984773699f4133ff9073a5ef5f374671b181c9
+  source_sha: d6619b09b209e166eaed924388796ff5a7dd41d0
   source_ref: refs/heads/main
   subject_name: Aws2Azure.Proxy
-  subject_digest: sha256:849957b8ee519a6ec395e1c84d0ecb779ca6a4b7f4d39c2d10c8cd3bc9966a4a
+  subject_digest: sha256:efb8bdb87a10759cc84ffae907d0fa23eef2b0bf70c67635c8ab97f394dc4c47
   manifest_subject_name: sealed-runtime-manifest.json
-  manifest_subject_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
+  manifest_subject_digest: sha256:aa48db10902c0724b971bbc8f205d6f519149ec2c88156933c03ec795efed560
 qualification:
   artifact: docs/workloads/evidence/dynamodb-basic-crud.yaml
-  digest: sha256:e46b5276209507c036c7a6bcfa0485a6484033b1ef947091b6759d39b58e9720
+  digest: sha256:ac5ebdba2856cd4809cc9ce9d6911e80683c89f0f78abda7782fc5f13e7def07
   verdict: qualified
-  candidate_runtime_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
-  rollback_target_runtime_digest: sha256:12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2
+  candidate_runtime_digest: sha256:c07814df47331fb3ee1304d4a87cdd32425d18ffa657a55719c3ce417a0b3333
+  rollback_target_runtime_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
   rollback_target:
     schema_version: 1
     role: prior
@@ -52,51 +52,49 @@ qualification:
     eligibility:
       rollback_baseline_eligible: true
       promotion_eligible: true
-    ledger_record_digest: sha256:0eabf1ff1d1b1c07867a891638f0a8ad56e5310fb573094297d9c819083f555b
+    ledger_record_digest: sha256:e8c99d4739b14aa89b80e906ffaf41748812e2e755ecfc97f5c75b761a8600bf
     source:
       repository: pedrosakuma/aws2azure
-      sha: 9fa2ec1b7f1ceb0248a9a26be6836f873c757ecd
+      sha: e3984773699f4133ff9073a5ef5f374671b181c9
       ref: refs/heads/main
     runtime:
-      aggregate_digest: sha256:12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2
-      executable_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
-      manifest_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
+      aggregate_digest: sha256:9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5
+      executable_digest: sha256:849957b8ee519a6ec395e1c84d0ecb779ca6a4b7f4d39c2d10c8cd3bc9966a4a
+      manifest_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
     producer:
       workflow: .github/workflows/sealed-runtime.yml
       event_name: workflow_dispatch
-      run_id: 29822338496
+      run_id: 33020647541
       run_attempt: 1
-      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29822338496
-      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29822338496/attempts/1
-      run_started_at: 2026-07-21T10:28:16.0000000+00:00
+      run_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020647541
+      attempt_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020647541/attempts/1
+      run_started_at: '2026-08-26T22:44:43.0000000+00:00'
     artifact:
-      id: 8491912990
-      name: aws2azure-sealed-linux-x64-12c43ca8ad3ce8be924eb8f2f607044246dfbeb3ceb76fb9c5372fd2ffeb75b2-run-29822338496-attempt-1
-      upload_digest: sha256:b9ab008ca3839d54b49b54f1384df4e7bc86ac2bd7ec68954961ee756668b511
-      created_at: 2026-07-21T10:30:18.0000000+00:00
-      expires_at: 2026-10-19T10:28:17.0000000+00:00
+      id: 9626431836
+      name: aws2azure-sealed-linux-x64-9eb8586f37c2193b88c6e0dca2d35e6bc55c19d8696b3a74c31ceeb13c4121d5-run-33020647541-attempt-1
+      upload_digest: sha256:4322a81c904ecfab361c1f330086c7f86a6791795227d7ea1671c9bd1a601041
+      created_at: '2026-08-26T22:46:45.0000000+00:00'
+      expires_at: '2026-11-24T22:44:44.0000000+00:00'
     attestation:
       predicate_type: https://slsa.dev/provenance/v1
       repository: pedrosakuma/aws2azure
       signer_workflow: pedrosakuma/aws2azure/.github/workflows/sealed-runtime.yml
-      source_sha: 9fa2ec1b7f1ceb0248a9a26be6836f873c757ecd
+      source_sha: e3984773699f4133ff9073a5ef5f374671b181c9
       source_ref: refs/heads/main
-      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/29822338496/attempts/1
-      bundle_digest: sha256:540d6e829fd4e8ad8740687a0764646fb98e569e6cfe153e76b79951769dee02
+      run_invocation_url: https://github.com/pedrosakuma/aws2azure/actions/runs/33020647541/attempts/1
+      bundle_digest: sha256:fbfaf24995239d6fb98697895625c251b2ec938fc12b9e2903f1e8796c3bcfd0
       executable_subject_name: Aws2Azure.Proxy
-      executable_subject_digest: sha256:bdd354984b73c563cda91b2dccc4aba0130c43831d6307ce442a293fee647538
+      executable_subject_digest: sha256:849957b8ee519a6ec395e1c84d0ecb779ca6a4b7f4d39c2d10c8cd3bc9966a4a
       manifest_subject_name: sealed-runtime-manifest.json
-      manifest_subject_digest: sha256:a727ac82f09607ea6c0f192b8ba969ebe552e59bdb86f52853495b149d3742fe
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34361482716
-  qualified_at: 2026-09-09T14:07:55.0354329+00:00
+      manifest_subject_digest: sha256:1820ea548710723533fb685c3cd326a47d05e0f68c9bb6ca3bf4b060710f23f8
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/35790192745
+  qualified_at: '2026-09-22T22:03:50.4426952+00:00'
 approval:
-  reason: 'Real-Azure qualification run 34361482716 reaffirmed the already-approved
-    DynamoDB basic CRUD runtime (unchanged candidate e3984773699f4133ff9073a5ef5f374671b181c9)
-    so its evidence remains fresh under the shared v1.1.0 GA clock advance required
-    by issue #991 and PR #1001''s S3/SecretsManager promotion. Correctness run 34350755941
-    and production-shaped load runs 34354433731, 34356714870, and 34359073231 (attempt
-    1) passed with zero blocking findings, renewing evidence freshness without a new
-    sealed candidate.'
-  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/34361482716
-  reviewed_at: 2026-09-09T14:09:51Z
-  reviewed_by: pedrosakuma
+  reason: 'Qualification run 35790192745 qualified the exact sealed candidate from run 35761930042/1 for
+    dynamodb-basic-crud. Correctness run 35767204243 and load runs 35783373976, 35785839970, 35788054163
+    (all attempt 1) have no blocking findings under the unchanged policy, including exact-prior rollback.
+    This aligns the four RC profile approvals for #1009; it is not RC observation, dual-cohort calibration
+    or stable release promotion.'
+  review_url: https://github.com/pedrosakuma/aws2azure/actions/runs/35790192745
+  reviewed_at: '2026-09-22T22:45:25Z'
+  reviewed_by: Copilot

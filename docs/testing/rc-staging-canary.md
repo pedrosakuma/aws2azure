@@ -9,7 +9,7 @@ cross-profile measurements do not qualify.
 Release plans now require all four profiles advertised as GA by the committed
 `docs/site/workload-ga.json`: `dynamodb-basic-crud`, `s3-basic-object-crud`,
 `secretsmanager-basic-lifecycle`, and `sqs-standard-messaging`. That authority
-is evaluated at its pinned `2026-09-10T16:48:19Z`, not at the wall-clock time
+is evaluated at its pinned certification instant, not at the wall-clock time
 of a new promotion. Reading its GA list is a **coverage check**, not fresh
 qualification or live observation evidence. A later expiry/downgrade does not
 automatically remove a release's evidence obligations; a newly advertised GA
@@ -74,15 +74,37 @@ current artifact availability. Historical byte integrity is not fresh eligibilit
 Older two-profile records are not rewritten; current packaging/identity commands
 reject them as inputs to a new four-profile candidate.
 
-**Committed approvals currently cannot fulfill this prerequisite.**
-S3/SecretsManager approve source `952c333fa24106103f3a3349fe9c9c53be6ba5aa`;
-DynamoDB approves `e3984773699f4133ff9073a5ef5f374671b181c9`; SQS approves
-`81155ec3ded9dfb0fa8eb058b1dd860346f031dd`. Their runtime digests also differ.
-Packaging deliberately fails until separately authorized qualification yields
-compatible exact approvals; it does not rewrite ledgers, rebuild approved bytes,
-publish a tag/image or claim a live observation. Offline producer/image/manifest
-fixtures exercise compatible four-profile identities without providing live
-qualification evidence.
+**The four profile approvals now bind one qualified runtime.**
+The September 22 qualification campaign used source
+`d6619b09b209e166eaed924388796ff5a7dd41d0`, sealed producer
+`35761930042/1`, artifact `10710381571`, and complete-runtime digest
+`sha256:c07814df47331fb3ee1304d4a87cdd32425d18ffa657a55719c3ce417a0b3333`.
+Each profile has one sealed correctness run and three distinct production-shaped
+load runs, with its unchanged policy and exact historical rollback target.
+The emitted qualification YAMLs are retained unchanged under
+`docs/workloads/evidence/`; the matching approved-runtime ledgers bind their
+digests and preserve each proof's prior identity.
+
+| Profile | Qualified evaluator run | Correctness run | Three load runs (all attempt 1) |
+|---|---|---|---|
+| S3 CRUD | [35775823055](https://github.com/pedrosakuma/aws2azure/actions/runs/35775823055) | 35762672800 | 35771812522, 35773459618, 35774691563 |
+| SecretsManager lifecycle | [35783133225](https://github.com/pedrosakuma/aws2azure/actions/runs/35783133225) | 35765120475 | 35776170897, 35778529303, 35780855854 |
+| DynamoDB CRUD | [35790192745](https://github.com/pedrosakuma/aws2azure/actions/runs/35790192745) | 35767204243 | 35783373976, 35785839970, 35788054163 |
+| SQS standard | [35793795979](https://github.com/pedrosakuma/aws2azure/actions/runs/35793795979) | 35769474349 | 35790487207, 35791665540, 35792799563 |
+
+SQS's three source load artifacts each retain one supplementary `rollback-rest`
+failure. The pre-existing policy excludes that REST counterpart; all required
+AMQP rollback proofs passed. SecretsManager's successful rotation proof includes
+the intended revoked-identity denial, not an explanation of the historical #1016
+403. Neither caveat is waived or converted into a successful production operation.
+
+This alignment supplies the packaging prerequisite, not a published RC, completed
+60-minute dual-cohort observation, calibration, or stable release promotion.
+The later approved-ledger/orchestration commit may differ from the candidate
+source: the new RC tag must identify the qualified source above, and packaging
+must reuse its sealed x64 bytes rather than rebuild the approval commit.
+Artifact availability, attestations and freshness are rechecked by consumers.
+Existing `v1.1.1-rc.1` and `v1.1.1-rc.2` identities must not be moved or overwritten.
 
 The DynamoDB/SQS observation policy YAMLs already exist at concurrency `8/8`.
 They reference reviewed qualification throughput floors of 17 `GetItem`/s and

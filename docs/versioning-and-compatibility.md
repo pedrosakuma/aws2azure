@@ -53,7 +53,7 @@ ledger digests. Each ledger and resolved identity is retained in the archive and
 checked again by the GHCR consumer. Incompatible sources, builds or expired
 artifacts fail closed; the tools never overwrite approvals to make packaging
 possible. See the [packaging prerequisite](testing/rc-staging-canary.md#four-profile-packaging-prerequisite)
-for current incompatible approvals and remaining authorized live evidence.
+for the aligned four-profile approval identities and remaining live evidence.
 
 `release-candidate-archive-inputs.json` is an attested input fragment for the
 canonical `eng/release-candidate-manifest.py` interface, not a completed RC
@@ -84,8 +84,9 @@ materials, and the exact archive artifact identity. Its `container` object is
 the canonical GHCR input accepted by `eng/release-candidate-manifest.py`.
 
 The real-Azure observation workflow has cohort producers for all four profiles.
-DynamoDB/SQS wiring is offline-tested, not live-verified or dual-cohort calibrated;
-current incompatible approvals still block a real four-profile candidate.
+DynamoDB/SQS RC wiring is offline-tested, not live-verified or dual-cohort calibrated.
+The four profiles now approve one exact sealed runtime after separate real-Azure
+correctness/load qualification; RC publication and observation remain distinct steps.
 New promotion requires genuine observations for all four profiles.
 `eng/release-candidate-manifest.py finalize` combines the canonical
 identity receipt with the exact observation-selection receipts, reproduces the
