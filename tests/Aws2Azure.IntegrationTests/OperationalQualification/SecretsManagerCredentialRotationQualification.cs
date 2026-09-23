@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -244,29 +243,10 @@ internal static class SecretsManagerCredentialRotationQualification
         ArgumentException.ThrowIfNullOrWhiteSpace(tokenFile);
         var requestUrl = RequiredEnvironment("ACTIONS_ID_TOKEN_REQUEST_URL");
         var requestToken = RequiredEnvironment("ACTIONS_ID_TOKEN_REQUEST_TOKEN");
-        var separator = requestUrl.Contains('?', StringComparison.Ordinal) ? '&' : '?';
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            requestUrl + separator + "audience=api%3A%2F%2FAzureADTokenExchange");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", requestToken);
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException(
-                $"GitHub OIDC token request failed with HTTP {(int)response.StatusCode}.",
-                null,
-                response.StatusCode);
-        }
-
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        using var document = JsonDocument.Parse(body);
-        if (!document.RootElement.TryGetProperty("value", out var valueElement)
-            || valueElement.ValueKind != JsonValueKind.String
-            || string.IsNullOrWhiteSpace(valueElement.GetString()))
-        {
-            throw new InvalidDataException("GitHub OIDC response did not contain a token assertion.");
-        }
+        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        var assertion = await GitHubOidcAssertion.AcquireAsync(
+            client, requestUrl, requestToken, Console.Error, TimeProvider.System, cancellationToken)
+            .ConfigureAwait(false);
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(tokenFile))
             ?? throw new InvalidDataException("The projected token file has no parent directory.");
@@ -282,7 +262,7 @@ internal static class SecretsManagerCredentialRotationQualification
         {
             await File.WriteAllTextAsync(
                 pending,
-                valueElement.GetString()!,
+                assertion,
                 cancellationToken).ConfigureAwait(false);
             if (!OperatingSystem.IsWindows())
             {

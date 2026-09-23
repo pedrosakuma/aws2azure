@@ -42,6 +42,19 @@ feature-specific A/B experiments.
   RBAC gate has one shared fifteen-minute deadline; requests and sleeps are
   capped to their remaining monotonic budgets. This setup gate does not retry
   production AWS operations or reinterpret an authorization failure as success.
+- **GitHub OIDC assertion acquisition**: the SecretsManager load/rotation and
+  RC harness may retry only the idempotent request to GitHub's assertion
+  endpoint on HTTP 429, 500, 502, 503 or 504. It makes at most three attempts
+  within one shared 30-second budget, including requests, response reads and
+  delays. Default delays are one then two seconds; a valid `Retry-After`
+  delta or date takes precedence. A delay that would consume the remaining
+  budget fails rather than extending it or retrying early. Caller cancellation,
+  other statuses (including 401/403), transport exceptions and malformed
+  successful responses are not retried. Diagnostics record attempt counts and
+  status codes, never request URLs, credentials, response bodies or assertions.
+  No measured AWS call, workload, credential revocation or workflow is retried
+  by this policy. Failed acquisition leaves the existing projected assertion
+  file unchanged and still fails the harness; it is not a stale-token fallback.
 - **rollback**: deploy the sealed candidate, create/read canary state, replace it
   with the previously approved sealed runtime without changing the backend, and
   verify the same state plus cleanup. A source build of "main" or a config-only
