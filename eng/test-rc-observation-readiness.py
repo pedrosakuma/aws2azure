@@ -23,6 +23,91 @@ SCRATCH.mkdir(parents=True, exist_ok=True)
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_failed_launch_retains_allowlisted_diagnostics_without_private_data(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as scratch:
+            root = Path(scratch)
+            directory = root / "readiness"
+            directory.mkdir()
+            private = root / "private"
+            private.mkdir()
+            (private / "cohort-harness.log").write_text(
+                "System.IO.InvalidDataException: The observation operation-mix identity differs from policy.\n"
+                "at hidden(args) in /private/config/credential/RcCrudCohort.cs:line 40\n"
+                "Authorization: Bearer super-secret-token\n"
+                '{"bindings":[{"secretAccessKey":"private-key"}]}\n'
+                "https://vault.invalid/secrets/secret-value?sig=private-sas\n"
+                "::error::untrusted-workflow-command\n")
+            protocol.publish(directory / "result.json", {"exit_code": 1})
+            env = {"PRIVATE_ROOT": str(private), "CAPTURE_ROOT": str(root / "capture"),
+                   "AWS2AZURE_RC_OBSERVATION_READINESS_DIR": str(directory)}
+            context = {"readiness_deadline_utc": (protocol.utc() + dt.timedelta(minutes=5)).isoformat()}
+            output = io.StringIO()
+            with patch.dict(os.environ, env), patch.object(protocol, "initialize", return_value=context), \
+                 patch.object(protocol.subprocess, "Popen", return_value=Mock(pid=123)), \
+                 patch.object(protocol, "process_start", return_value="1"), \
+                 patch.object(protocol.sys, "argv", ["readiness", "launch"]), \
+                 patch.object(protocol.sys, "stdout", output):
+                with self.assertRaisesRegex(ValueError, "failed before readiness"):
+                    protocol.main()
+            report = json.loads((root / "capture/harness-diagnostics.json").read_text())
+            self.assertEqual(report["exit_code"], 1)
+            self.assertEqual(report["stage"], "before-readiness")
+            self.assertFalse(report["promotable"])
+            self.assertEqual(report["reason_codes"], ["operation-mix-policy-mismatch"])
+            self.assertEqual(report["exception_categories"], ["InvalidDataException"])
+            self.assertEqual(report["source_locations"], [{"source": "RcCrudCohort.cs", "line": 40}])
+            for secret in ("super-secret-token", "private-key", "private-sas", "vault.invalid",
+                           "bindings", "Authorization", "::error::", "/private/config"):
+                self.assertNotIn(secret, output.getvalue())
+                self.assertNotIn(secret, json.dumps(report))
+
+    def test_missing_private_log_and_cancelled_harness_have_safe_diagnostics(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as scratch:
+            root = Path(scratch)
+            directory = root / "readiness"
+            directory.mkdir()
+            protocol.publish(directory / "result.json", {"exit_code": 124})
+            with patch.dict(os.environ, {"PRIVATE_ROOT": str(root / "missing"),
+                                        "CAPTURE_ROOT": str(root / "capture")}), \
+                 patch.object(protocol.sys, "stdout", io.StringIO()):
+                protocol.retain_diagnostics(directory)
+            report = json.loads((root / "capture/harness-diagnostics.json").read_text())
+            self.assertEqual(report["exit_code"], 124)
+            self.assertFalse(report["private_log_present"])
+            self.assertEqual(report["source_locations"], [])
+            self.assertEqual(report["reason_codes"], [])
+
+    def test_ticks_preserve_one_hundred_nanosecond_ordering(self):
+        self.assertEqual(protocol.timestamp_ticks("2026-09-23T17:42:49.4372058Z")
+                         - protocol.timestamp_ticks("2026-09-23T17:42:49.4372054+00:00"), 4)
+        for invalid in ("2026-09-23T17:42:49.43720581Z", "2026-09-23T17:42:49+01:00"):
+            with self.assertRaises(ValueError):
+                protocol.timestamp_ticks(invalid)
+
+    def test_finish_failure_emits_only_sanitized_diagnostics(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as scratch:
+            root = Path(scratch)
+            directory = root / "readiness"
+            directory.mkdir()
+            protocol.publish(directory / "context.json", {
+                "end_to_end_deadline_utc": (protocol.utc() + dt.timedelta(minutes=1)).isoformat()})
+            protocol.publish(directory / "result.json", {"exit_code": 1})
+            (directory / "started.json").write_text("{}")
+            (root / "cohort-harness.log").write_text(
+                "System.Net.Http.HttpRequestException: Bearer credential-never-retain")
+            output = io.StringIO()
+            with patch.dict(os.environ, {"PRIVATE_ROOT": str(root), "CAPTURE_ROOT": str(root / "capture"),
+                                        "AWS2AZURE_RC_OBSERVATION_READINESS_DIR": str(directory)}), \
+                 patch.object(protocol.sys, "argv", ["readiness", "finish"]), \
+                 patch.object(protocol.sys, "stdout", output):
+                with self.assertRaisesRegex(ValueError, "cohort harness failed"):
+                    protocol.main()
+            self.assertNotIn("credential-never-retain", output.getvalue())
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["stage"], "measurement-started")
+            self.assertEqual(report["exception_categories"], ["HttpRequestException"])
+            self.assertTrue((root / "capture/harness-diagnostics.json").is_file())
+
     def setUp(self):
         self.now = dt.datetime(2026, 9, 21, tzinfo=dt.timezone.utc)
         self.context = {

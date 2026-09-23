@@ -716,7 +716,7 @@ public sealed class RcObservationTests
         };
         var evidence = new RcObservationEvidence
         {
-            SchemaVersion = RcObservationValidator.CurrentSchemaVersion,
+            SchemaVersion = 3,
             ArtifactKind = "rc_observation",
             ReleaseCandidate = new RcObservationReleaseCandidate
             {

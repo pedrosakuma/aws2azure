@@ -39,7 +39,8 @@ public sealed class DynamoDbRealAzureRcObservationTests(DynamoDbRealAzureProxyFi
             canary.PrepareAsync, canary.VerifyRestoredAsync, canary.CleanupAsync,
             (worker, tracker, duration, stopwatch, token) =>
                 DynamoDbRealAzureLoadQualificationTests.RunWorkerAsync(
-                    client, tracker, iterations, worker, duration, stopwatch, token, strictObservation: true))
+                    client, tracker, iterations, worker, duration, stopwatch, token, strictObservation: true),
+            operationSchedule: DynamoDbRealAzureLoadQualificationTests.LifecycleOperationSchedule)
             .ConfigureAwait(false);
     }
 }

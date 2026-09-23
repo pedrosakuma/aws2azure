@@ -45,3 +45,7 @@ runs:
       if: always()
       shell: bash
       run: python3 .github/scripts/rc-observation-readiness.py stop
+    - name: Retain sanitized harness diagnostics even before readiness
+      if: always()
+      shell: bash
+      run: python3 .github/scripts/rc-observation-readiness.py diagnostics

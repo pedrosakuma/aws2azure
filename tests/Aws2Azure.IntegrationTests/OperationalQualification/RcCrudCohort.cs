@@ -28,7 +28,8 @@ internal static class RcCrudCohort
         string profile, string service, string backend, string representative, string[] operations,
         RcCohortRuntime runtime, Func<CancellationToken, Task> prepare,
         Func<CancellationToken, Task> verifyRestored, Func<CancellationToken, Task> cleanup,
-        Func<int, RealAzureWorkloadLoadTracker, TimeSpan, Stopwatch, CancellationToken, Task> worker)
+        Func<int, RealAzureWorkloadLoadTracker, TimeSpan, Stopwatch, CancellationToken, Task> worker,
+        IReadOnlyList<string>? operationSchedule = null)
     {
         var role = RcObservationCaptureWriter.ReadObservationCohortRole()
             ?? throw new InvalidDataException("A split RC cohort role is required.");
@@ -36,7 +37,7 @@ internal static class RcCrudCohort
         if (RcObservationCaptureWriter.ReadConcurrency("candidate") != 8
             || RcObservationCaptureWriter.ReadConcurrency("stable") != 8)
             throw new InvalidDataException("CRUD observation requires the reviewed 8/8 workload.");
-        var mix = RcObservationCaptureWriter.OperationMixIdentity(profile, operations);
+        var mix = RcObservationCaptureWriter.OperationMixIdentity(profile, operationSchedule ?? operations);
         if (mix != RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_OPERATION_MIX_IDENTITY"))
             throw new InvalidDataException("The observation operation-mix identity differs from policy.");
         var directory = RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_READINESS_DIR");

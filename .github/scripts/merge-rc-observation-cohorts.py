@@ -14,13 +14,13 @@ readiness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(readiness)
 
 with (candidate_dir / 'cohort-capture.json').open('r', encoding='utf-8') as stream:
-    candidate = json.load(stream)
+    candidate = json.load(stream, object_pairs_hook=readiness.pairs)
 with (stable_dir / 'cohort-capture.json').open('r', encoding='utf-8') as stream:
-    stable = json.load(stream)
+    stable = json.load(stream, object_pairs_hook=readiness.pairs)
 
 timing = readiness.validate_captured_readiness(
     candidate_dir, stable_dir, {"candidate": candidate, "stable": stable})
-if candidate['schema_version'] != 1 or stable['schema_version'] != 1:
+if any(type(c['schema_version']) is not int or c['schema_version'] != 1 for c in (candidate, stable)):
     raise SystemExit('expected cohort schema_version=1')
 if candidate['profile'] != stable['profile']:
     raise SystemExit('candidate/stable profile mismatch')
@@ -39,6 +39,33 @@ if stable['cohort']['runtime_identity_digest'] != candidate['restoration']['runt
 if stable['cohort']['runtime_digest'] != candidate['restoration']['runtime_digest']:
     raise SystemExit('stable prior runtime digest does not match candidate restoration runtime digest')
 
+ticks = readiness.timestamp_ticks
+for capture in (candidate, stable):
+    window, cohort = capture['observation'], capture['cohort']
+    start, measured, ended = (ticks(window[field]) for field in
+                             ('started_at_utc', 'measurement_ended_at_utc', 'ended_at_utc'))
+    readiness.require(type(window['requested_window_minutes']) is int
+                      and 60 <= window['requested_window_minutes'] <= 180,
+                      'invalid requested cohort duration')
+    readiness.require(measured - start >= window['requested_window_minutes'] * 60 * 10_000_000
+                      and measured <= ended, 'invalid local cohort window')
+    readiness.require(ticks(cohort['observed_from_utc']) == start
+                      and ticks(cohort['observed_until_utc']) == ended,
+                      'cohort attribution differs from its local window')
+    readiness.require('measurement_ended_at_utc' not in cohort,
+                      'schema-1 cohort contains ambiguous independent boundaries')
+    readiness.require(len(capture['metrics']) == len({metric['id'] for metric in capture['metrics']}),
+                      'duplicate cohort metric')
+    readiness.require(all(ticks(metric['captured_at_utc']) == measured for metric in capture['metrics']),
+                      'metric does not belong to its cohort measurement endpoint')
+    for field in ('backend_kind', 'region', 'backend_identity_digest', 'config_digest', 'aws_binding_digest'):
+        readiness.require(cohort[field] == capture['azure'][field], 'local cohort environment drift')
+restoration = candidate['restoration']
+readiness.require(
+    ticks(candidate['observation']['measurement_ended_at_utc']) <= ticks(restoration['started_at_utc'])
+    < ticks(restoration['verified_at_utc']) <= ticks(candidate['observation']['ended_at_utc']),
+    'restoration is outside the candidate completion window')
+
 candidate_metrics = {metric['id']: metric for metric in candidate['metrics']}
 stable_metrics = {metric['id']: metric for metric in stable['metrics']}
 if set(candidate_metrics) != set(stable_metrics):
@@ -56,9 +83,12 @@ for metric_id, candidate_metric in sorted(candidate_metrics.items()):
         'stable_value': stable_metric['value'],
         'candidate_samples': candidate_metric['samples'],
         'stable_samples': stable_metric['samples'],
+        'candidate_captured_at_utc': candidate_metric['captured_at_utc'],
+        'stable_captured_at_utc': stable_metric['captured_at_utc'],
         'captured_at_utc': max(
             candidate_metric['captured_at_utc'],
             stable_metric['captured_at_utc'],
+            key=ticks,
         ),
     })
 
@@ -78,26 +108,33 @@ shutil.copytree(stable_dir / "readiness", output_dir / "stable-readiness")
 readiness.publish(output_dir / "readiness-comparison.json", timing)
 
 combined = {
-    'schema_version': 1,
+    'schema_version': 2,
     'profile': candidate['profile'],
     'azure': candidate['azure'],
     'observation': {
         'started_at_utc': min(
             candidate['observation']['started_at_utc'],
             stable['observation']['started_at_utc'],
+            key=ticks,
         ),
         'measurement_ended_at_utc': max(
             candidate['observation']['measurement_ended_at_utc'],
             stable['observation']['measurement_ended_at_utc'],
+            key=ticks,
         ),
         'ended_at_utc': max(
             candidate['observation']['ended_at_utc'],
             stable['observation']['ended_at_utc'],
+            key=ticks,
         ),
         'requested_window_minutes': candidate['observation']['requested_window_minutes'],
     },
     'load_shape': candidate['load_shape'],
-    'cohorts': [candidate['cohort'], stable['cohort']],
+    'cohorts': [
+        {**capture['cohort'],
+         'measurement_ended_at_utc': capture['observation']['measurement_ended_at_utc']}
+        for capture in (candidate, stable)
+    ],
     'metrics': combined_metrics,
     'restoration': candidate['restoration'],
 }
