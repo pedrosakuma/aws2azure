@@ -46,9 +46,10 @@ Without `AWS2AZURE_PERF=1` every scenario self-skips, so a plain
 `dotnet test` at the solution level is unaffected.
 
 Each scenario brings up its own emulator(s) + a fresh out-of-process
-`Aws2Azure.Proxy`. Total bring-up + run time for the full module sweep is
-~8–12 min on a developer laptop (Cosmos emulator dominates with a
-~1.5 GB image pull on first run).
+`Aws2Azure.Proxy`. Collections execute serially, including fixture startup
+and disposal, so another scenario's image build or emulator startup cannot
+overlap the active measurement. Full-suite time includes the sum of those
+setup and measurement windows; cold image downloads add further time.
 
 To run a single module:
 
@@ -63,6 +64,39 @@ ad-hoc run does not dirty tracked baseline files. Set
 `docs/perf/baseline-latest.md`, `baseline-latest.json`, and `history.csv`
 (CI sets this), or set `AWS2AZURE_PERF_DIR` to an explicit output
 directory.
+
+## Measurement isolation on hosted runners
+
+The performance assembly disables xUnit test-collection parallelism for
+both local and CI runs. This is deliberately **not** a reduction of load:
+each scenario retains its configured `PerfRunner` worker concurrency,
+warmup, duration, operation accounting and regression limits. Executable
+guardrails check the assembly setting and require all configured workers
+to enter an action concurrently.
+
+Build the harness before measurement (`dotnet test --no-build` in CI).
+Each collection awaits its own backend readiness before executing tests;
+other collections cannot concurrently prepare backends or run workloads.
+Do not run another test/build process alongside a measurement on the same
+machine or override the assembly's serial collection setting.
+
+The `perf-results` artifact includes `runner-environment.txt` with the runner
+image version, CPU, memory/disk snapshot, .NET and Docker versions. This is
+provenance, not a continuous contention monitor or a guarantee of dedicated
+physical hardware. Hosted-runner variability, backend variability and
+background services can still affect measurements.
+
+Inspect sample counts as well as percentiles. With only 12 completions,
+the nearest-rank p99 is the maximum sample, not a statistically robust tail
+estimate. In particular, the simulated
+`sqs.ReceiveMessage+DeleteMessageBatch (8, fifo multi-session)` scenario
+retains its existing short window and ceiling; isolation does not silently
+recalibrate it or turn its numbers into real-Azure capacity evidence.
+
+A failed gate still blocks acceptance. Compare the same workload with
+`main` under equivalent conditions, preserve failed evidence, and diagnose
+before considering at most one evidence-backed diagnostic rerun. Do not
+raise thresholds, discard outliers, or rerun paid workloads until green.
 
 ## Routing & DNS dependency
 

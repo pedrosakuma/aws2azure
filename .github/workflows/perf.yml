@@ -54,6 +54,21 @@ jobs:
         run: docker info
       - name: Restore + build
         run: dotnet build -c Release --nologo
+      - name: Record measurement environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/perf
+          {
+            printf 'runner_os=%s\nrunner_arch=%s\nimage_os=%s\nimage_version=%s\n' \
+              "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-not-reported}" "${ImageVersion:-not-reported}"
+            uname -srmo
+            lscpu
+            free -b
+            df -B1 "$GITHUB_WORKSPACE"
+            dotnet --info
+            docker version
+          } > artifacts/perf/runner-environment.txt
       - name: Run perf scenarios
         run: dotnet test tests/Aws2Azure.PerfTests -c Release --no-build --nologo --filter "Category!=RelativeGate" --logger "console;verbosity=normal"
       - name: Relative regression gate (proxy vs SDK baseline)
@@ -116,6 +131,7 @@ jobs:
         with:
           name: perf-results
           path: |
+            artifacts/perf/runner-environment.txt
             artifacts/perf/candidate-sha256.txt
             artifacts/perf/emulator-qualification.yaml
             docs/perf/baseline-latest.md
