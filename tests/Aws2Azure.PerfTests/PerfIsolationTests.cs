@@ -24,9 +24,10 @@ public sealed class PerfIsolationTests
         var allEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = 0;
         var workerMask = 0;
+        var scenario = "test.isolated-worker-concurrency";
 
         var result = await PerfRunner.RunAsync(
-            scenario: "test.isolated-worker-concurrency",
+            scenario: scenario,
             concurrency: concurrency,
             duration: TimeSpan.FromSeconds(30),
             maxAttempts: concurrency,
