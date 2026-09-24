@@ -84,7 +84,7 @@ class ReadinessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 protocol.timestamp_ticks(invalid)
 
-    def test_finish_failure_emits_only_sanitized_diagnostics(self):
+    def test_cleanup_failure_emits_only_sanitized_diagnostics(self):
         with tempfile.TemporaryDirectory(dir=SCRATCH) as scratch:
             root = Path(scratch)
             directory = root / "readiness"
@@ -94,6 +94,7 @@ class ReadinessTests(unittest.TestCase):
             protocol.publish(directory / "result.json", {"exit_code": 1})
             (directory / "started.json").write_text("{}")
             (root / "cohort-harness.log").write_text(
+                "System.IO.InvalidDataException: RC canary cleanup failed.\n"
                 "System.Net.Http.HttpRequestException: Bearer credential-never-retain")
             output = io.StringIO()
             with patch.dict(os.environ, {"PRIVATE_ROOT": str(root), "CAPTURE_ROOT": str(root / "capture"),
@@ -105,7 +106,9 @@ class ReadinessTests(unittest.TestCase):
             self.assertNotIn("credential-never-retain", output.getvalue())
             report = json.loads(output.getvalue())
             self.assertEqual(report["stage"], "measurement-started")
-            self.assertEqual(report["exception_categories"], ["HttpRequestException"])
+            self.assertEqual(report["reason_codes"], ["canary-cleanup-failed"])
+            self.assertEqual(report["exception_categories"], ["InvalidDataException", "HttpRequestException"])
+            self.assertFalse(report["promotable"])
             self.assertTrue((root / "capture/harness-diagnostics.json").is_file())
 
     def setUp(self):

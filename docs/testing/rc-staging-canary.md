@@ -140,7 +140,7 @@ Existing ordinary qualification failure handling is unchanged.
 | Profile | Before readiness | Exact-prior restoration on the candidate backend |
 |---|---|---|
 | DynamoDB CRUD | Create an ACTIVE hash-key table, write a nonce payload/version, verify a strongly consistent read | Read the candidate's persisted value, increment and read its version, delete and verify item absence, delete and verify table absence |
-| SQS standard | Create a private queue, send/read the nonce message, explicitly abandon its candidate-owned lock with visibility zero | Receive and settle that persisted message using a fresh prior-owned receipt, send/receive/settle another message, verify no remaining message, delete and verify queue absence |
+| SQS standard | Create a private queue, send/read the nonce message, explicitly abandon its candidate-owned lock with visibility zero | Receive and settle that persisted message using a fresh prior-owned receipt, send/receive/settle another message, verify no remaining message |
 
 Restoration reuses the original configuration file and AWS binding; the fixtures
 rehash the actual config bytes and the coordinator checks backend/config/binding
@@ -179,6 +179,20 @@ complete failing capture and rollback evidence; its harness/job still fails.
 Canary cleanup has a separate ten-second cancellation budget, with always-run
 resource-group deletion and the tagged orphan reaper as the backstop after
 process loss. No cleanup exception becomes a successful observation.
+
+For SQS, queue deletion runs only in that separate cleanup step, after the
+restoration proof. Cleanup success means `DeleteQueue` was acknowledged or the
+queue was already absent; it does **not** certify management-plane absence.
+`GetQueueUrl` can remain stale-positive after deletion with no proven upper bound
+([DeleteQueue gap](../gaps/sqs/DeleteQueue.yaml), #626), so the canary neither
+probes for immediate absence nor adds an arbitrary propagation retry window.
+A cleanup failure preserves an already verified restoration in raw diagnostics
+but still fails the harness/job, with the allowlisted
+`canary-cleanup-failed` reason in `harness-diagnostics.json`. Cancellation,
+deletion failures, and failed restoration checks are not converted to success.
+Offline `RcCrudCohortTests` cover stale-positive reads, deletion failure and
+cancellation, already-missing queues, and retained cleanup ownership. This
+contract correction does not retroactively accept a failed observation.
 
 Even if the process exits **before readiness**, the always-run composite action
 retains `harness-diagnostics.json` in the cohort capture artifact (90 days).

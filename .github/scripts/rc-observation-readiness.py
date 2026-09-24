@@ -283,6 +283,7 @@ def retain_diagnostics(directory):
             stream.seek(max(0, log.stat().st_size - 512 * 1024))
             text = stream.read(512 * 1024).decode("utf-8", errors="replace")
     reasons = {
+        "canary-cleanup-failed": "RC canary cleanup failed.",
         "operation-mix-policy-mismatch": "The observation operation-mix identity differs from policy.",
         "sealed-binding-changed": "The sealed process or backend/config/AWS binding changed.",
         "readiness-timeout": "bounded readiness wait expired",

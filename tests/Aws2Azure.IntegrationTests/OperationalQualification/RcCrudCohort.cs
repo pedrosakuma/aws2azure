@@ -159,7 +159,8 @@ internal static class RcCrudCohort
             }
             catch (Exception error)
             {
-                failure = failure is null ? error : new AggregateException(failure, error);
+                var cleanupError = new InvalidDataException("RC canary cleanup failed.", error);
+                failure = failure is null ? cleanupError : new AggregateException(failure, cleanupError);
             }
         }
         var measurement = tracker.Snapshot(representative);
