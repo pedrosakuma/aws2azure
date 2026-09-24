@@ -19,6 +19,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// deadline (cross-replica source of truth — see
 /// docs/gaps/sqs/PurgeQueue.yaml).
 /// </summary>
+[Collection(SqsQueueMetadataTestCollection.Name)]
 public sealed class PurgeQueueHandlerTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
