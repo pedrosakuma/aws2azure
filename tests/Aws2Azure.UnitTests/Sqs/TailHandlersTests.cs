@@ -24,6 +24,7 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// round-trip through QueueDescription.UserMetadata, and permission stubs
 /// gate on queue existence.
 /// </summary>
+[Collection(SqsQueueMetadataTestCollection.Name)]
 public sealed class TailHandlersTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;

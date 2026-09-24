@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -20,6 +21,7 @@ using Xunit;
 
 namespace Aws2Azure.UnitTests.Sqs;
 
+[Collection(SqsQueueMetadataTestCollection.Name)]
 public sealed class QueueMetadataHandlersTests : IDisposable
 {
     private const string AtomNs = AtomQueueXmlReader.AtomNs;
@@ -40,6 +42,71 @@ public sealed class QueueMetadataHandlersTests : IDisposable
     public void Dispose()
     {
         SqsQueueMetadataCache.ResetForTesting();
+    }
+
+    [Theory]
+    [InlineData(typeof(QueueMetadataHandlersTests))]
+    [InlineData(typeof(TailHandlersTests))]
+    [InlineData(typeof(PurgeQueueHandlerTests))]
+    public void Shared_cache_reset_fixtures_use_the_same_nonparallel_collection(Type fixtureType)
+    {
+        var collection = Assert.Single(fixtureType.CustomAttributes,
+            attribute => attribute.AttributeType == typeof(CollectionAttribute));
+        Assert.Equal(SqsQueueMetadataTestCollection.Name, Assert.Single(collection.ConstructorArguments).Value);
+
+        var definitionData = Assert.Single(typeof(SqsQueueMetadataTestCollection).CustomAttributes,
+            attribute => attribute.AttributeType == typeof(CollectionDefinitionAttribute));
+        Assert.Equal(SqsQueueMetadataTestCollection.Name, Assert.Single(definitionData.ConstructorArguments).Value);
+        var definition = typeof(SqsQueueMetadataTestCollection)
+            .GetCustomAttribute<CollectionDefinitionAttribute>();
+        Assert.NotNull(definition);
+        Assert.True(definition.DisableParallelization);
+    }
+
+    [Theory]
+    [InlineData(nameof(TailHandlersTests))]
+    [InlineData(nameof(PurgeQueueHandlerTests))]
+    public async Task Other_fixture_setup_and_teardown_clear_remembered_metadata(string fixtureName)
+    {
+        // Deliberately reproduce the forbidden interleaving without relying on
+        // scheduling. The collection contract above prevents xUnit from doing it.
+        const string queueName = "fixture-reset-q";
+        var handler = new ScriptedHandler();
+        handler.Enqueue(_ => Atom200(queueName));
+        handler.Enqueue(_ => Atom200(queueName));
+        using var http = NewHttpClient(handler);
+        var sb = new ServiceBusClient(http, Creds);
+        var metadata = new SqsQueueTagStore.QueueMetadata { DelaySeconds = 6 };
+
+        SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, metadata);
+        var beforeSetup = await SqsQueueMetadataCache.GetAsync(sb, queueName, CancellationToken.None);
+        Assert.True(beforeSetup.Success);
+        Assert.Equal(6, beforeSetup.Metadata.DelaySeconds);
+        Assert.Empty(handler.Calls);
+
+        using (IDisposable fixture = fixtureName switch
+        {
+            nameof(TailHandlersTests) => new TailHandlersTests(),
+            nameof(PurgeQueueHandlerTests) => new PurgeQueueHandlerTests(),
+            _ => throw new ArgumentOutOfRangeException(nameof(fixtureName)),
+        })
+        {
+            var afterSetup = await SqsQueueMetadataCache.GetAsync(sb, queueName, CancellationToken.None);
+            Assert.True(afterSetup.Success);
+            Assert.Null(afterSetup.Metadata.DelaySeconds);
+            Assert.Single(handler.Calls);
+
+            SqsQueueMetadataCache.RememberSuccessfulWrite(sb, queueName, metadata);
+            var beforeTeardown = await SqsQueueMetadataCache.GetAsync(sb, queueName, CancellationToken.None);
+            Assert.True(beforeTeardown.Success);
+            Assert.Equal(6, beforeTeardown.Metadata.DelaySeconds);
+            Assert.Single(handler.Calls);
+        }
+
+        var afterTeardown = await SqsQueueMetadataCache.GetAsync(sb, queueName, CancellationToken.None);
+        Assert.True(afterTeardown.Success);
+        Assert.Null(afterTeardown.Metadata.DelaySeconds);
+        Assert.Equal(2, handler.Calls.Count);
     }
 
     [Fact]
