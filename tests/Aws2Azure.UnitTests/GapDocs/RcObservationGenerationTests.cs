@@ -2,7 +2,7 @@ using Aws2Azure.GapDocs;
 
 namespace Aws2Azure.UnitTests.GapDocs;
 
-public sealed class RcObservationGenerationTests
+public sealed partial class RcObservationGenerationTests
 {
     private static readonly DateTimeOffset Now =
         new(2026, 7, 18, 8, 0, 0, TimeSpan.Zero);
@@ -1002,7 +1002,7 @@ public sealed class RcObservationGenerationTests
         public required WorkloadGaManifest Workload { get; init; }
         public required WorkloadQualificationPolicy QualificationPolicy { get; init; }
         public required RcObservationPolicy Policy { get; init; }
-        public required RcObservationCapture Capture { get; init; }
+        public required RcObservationCapture Capture { get; set; }
         public required RcObservationArchiveInputSelection ArchiveSelection { get; init; }
         public required RcObservationGhcrInputSelection GhcrSelection { get; init; }
         public required RcObservationCanonicalIdentitySelection IdentitySelection { get; init; }

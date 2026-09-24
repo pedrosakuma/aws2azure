@@ -25,7 +25,7 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         "ListSecrets",
         "DeleteSecret",
     ];
-    private static readonly string[] LifecycleOperationSchedule =
+    internal static readonly string[] LifecycleOperationSchedule =
     [
         "CreateSecret",
         "DescribeSecret",

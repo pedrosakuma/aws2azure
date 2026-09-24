@@ -47,6 +47,16 @@ def timestamp(value):
     return result
 
 
+def timestamp_ticks(value):
+    """Compare .NET UTC timestamps without Python's microsecond truncation."""
+    match = re.fullmatch(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?(?:Z|\+00:00)", value)
+    require(match is not None, "timestamp must be UTC with at most 100ns precision")
+    seconds = timestamp(match[1] + "Z") - dt.datetime(1, 1, 1, tzinfo=dt.timezone.utc)
+    return ((seconds.days * 86400 + seconds.seconds) * 10_000_000
+            + int((match[2] or "").ljust(7, "0")))
+
+
 def pairs(items):
     result = {}
     for key, value in items:
@@ -232,25 +242,28 @@ def validate_captured_readiness(candidate_directory, stable_directory, captures)
         require(started["context_id"] == ready["context_id"] == released["context_id"], "mixed readiness contexts")
         require(started["ready_content_digest"] == released["ready"][role]["content_digest"] == digest(ready_bytes),
                 "actual start is not bound to the released ready instance")
-        scheduled = timestamp(released["scheduled_at_utc"])
-        actual = timestamp(started["actual_at_utc"])
-        require(timestamp(started["scheduled_at_utc"]) == scheduled
-                and 0 <= (actual - scheduled).total_seconds() <= LATE_SECONDS, "late actual start")
+        scheduled_ticks = timestamp_ticks(released["scheduled_at_utc"])
+        actual_ticks = timestamp_ticks(started["actual_at_utc"])
+        require(timestamp_ticks(started["scheduled_at_utc"]) == scheduled_ticks
+                and 0 <= actual_ticks - scheduled_ticks <= LATE_SECONDS * 10_000_000,
+                "late actual start")
         capture = captures[role]
-        require(timestamp(capture["observation"]["started_at_utc"]) == scheduled, "scheduled attribution drift")
-        require(timestamp(capture["observation"]["measurement_ended_at_utc"]) - actual
-                >= dt.timedelta(minutes=capture["observation"]["requested_window_minutes"]),
+        require(timestamp_ticks(capture["observation"]["started_at_utc"])
+                == timestamp_ticks(released["scheduled_at_utc"]), "scheduled attribution drift")
+        require(timestamp_ticks(capture["observation"]["measurement_ended_at_utc"])
+                - timestamp_ticks(started["actual_at_utc"])
+                >= capture["observation"]["requested_window_minutes"] * 60 * 10_000_000,
                 "measurement did not cover its full requested duration")
         require(capture["cohort"]["runtime_digest"] == ready["runtime_digest"]
                 and capture["cohort"]["runtime_identity_digest"] == ready["runtime_identity_digest"],
                 "captured runtime differs from prepared runtime")
         releases.append(artifact)
-        actual_starts.append(actual)
+        actual_starts.append(actual_ticks)
     require(releases[0] == releases[1], "cohorts consumed different immutable releases")
-    skew = abs((actual_starts[0] - actual_starts[1]).total_seconds())
-    require(skew <= LATE_SECONDS, "reported start skew exceeds tolerance")
+    skew_ticks = abs(actual_starts[0] - actual_starts[1])
+    require(skew_ticks <= LATE_SECONDS * 10_000_000, "reported start skew exceeds tolerance")
     return {"schema_version": 1, "context_id": releases[0]["document"]["context_id"],
-            "reported_start_skew_seconds": skew,
+            "reported_start_skew_seconds": skew_ticks / 10_000_000,
             "scope": "UTC-reported measurement starts; runner clock offsets are not independently calibrated."}
 
 
@@ -259,6 +272,58 @@ def alive(directory):
         return False
     state = decode((directory / "process.json").read_bytes())
     return state["start"] is not None and process_start(state["pid"]) == state["start"]
+
+
+def retain_diagnostics(directory):
+    """Publish only allowlisted classifications, never private log text or config."""
+    log = Path(os.environ["PRIVATE_ROOT"]) / "cohort-harness.log"
+    text = ""
+    if log.is_file():
+        with log.open("rb") as stream:
+            stream.seek(max(0, log.stat().st_size - 512 * 1024))
+            text = stream.read(512 * 1024).decode("utf-8", errors="replace")
+    reasons = {
+        "operation-mix-policy-mismatch": "The observation operation-mix identity differs from policy.",
+        "sealed-binding-changed": "The sealed process or backend/config/AWS binding changed.",
+        "readiness-timeout": "bounded readiness wait expired",
+        "invalid-release": "Release schedule is invalid or outside the readiness budget.",
+    }
+    exceptions = ("InvalidDataException", "TimeoutException", "OperationCanceledException",
+                  "TaskCanceledException", "HttpRequestException", "AmazonDynamoDBException",
+                  "AmazonSQSException", "AmazonS3Exception", "AmazonSecretsManagerException",
+                  "XunitException", "TrueException", "EqualException")
+    classes = ("RcCrudCohort", "RcObservationReadiness", "SealedRuntimeLauncher",
+               "DynamoDbRealAzureRcObservationTests", "SqsRealAzureRcObservationTests",
+               "S3RealAzureRcObservationTests", "SecretsManagerRealAzureRcObservationTests",
+               "RcCrudCanaries")
+    frames = []
+    for name in classes:
+        # Retain source location only, not exception messages, paths or arguments.
+        for line in re.findall(r"\b" + name + r"\.cs:line ([0-9]{1,6})\b", text):
+            frame = {"source": name + ".cs", "line": int(line)}
+            if frame not in frames:
+                frames.append(frame)
+    exit_code = None
+    result = directory / "result.json"
+    if result.is_file():
+        code = decode(result.read_bytes()).get("exit_code")
+        if type(code) is int and -255 <= code <= 255:
+            exit_code = code
+    report = {
+        "schema_version": 1, "artifact_kind": "rc_observation_harness_diagnostics",
+        "promotable": False, "exit_code": exit_code, "private_log_present": log.is_file(),
+        "stage": ("measurement-started" if (directory / "started.json").exists()
+                  else "ready" if (directory / "ready.json").exists() else "before-readiness"),
+        "reason_codes": sorted(code for code, marker in reasons.items() if marker in text),
+        "exception_categories": [name for name in exceptions if re.search(r"\b" + name + r"\b", text)],
+        "source_locations": frames[:32],
+        "scope": "Allowlisted classifications from the final 512 KiB; raw logs and credentials excluded.",
+    }
+    output = Path(os.environ["CAPTURE_ROOT"])
+    output.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(report, sort_keys=True, indent=2) + "\n"
+    (output / "harness-diagnostics.json").write_text(content, encoding="utf-8")
+    sys.stdout.write(content)
 
 
 def initialize(directory):
@@ -334,6 +399,11 @@ def supervise(directory, context):
 
 def main():
     mode = sys.argv[1]
+    if mode == "diagnostics":
+        configured = os.environ.get("AWS2AZURE_RC_OBSERVATION_READINESS_DIR")
+        if configured:
+            retain_diagnostics(Path(configured))
+        return
     if mode == "stop" and not os.environ.get("AWS2AZURE_RC_OBSERVATION_READINESS_DIR"):
         return  # Preparation failed before any harness could be launched.
     directory = Path(os.environ["AWS2AZURE_RC_OBSERVATION_READINESS_DIR"])
@@ -353,7 +423,9 @@ def main():
         deadline = timestamp(context["readiness_deadline_utc"])
         monotonic_deadline = time.monotonic() + WAIT_SECONDS
         while not (directory / "ready.json").exists():
-            require(alive(directory), "harness failed before readiness; inspect harness.log")
+            if not alive(directory):
+                retain_diagnostics(directory)
+                raise ValueError("harness failed before readiness; inspect harness-diagnostics.json")
             require(utc() < deadline and time.monotonic() < monotonic_deadline, "harness readiness timed out")
             time.sleep(1)
         validate_ready(context, os.environ["COHORT"], decode((directory / "ready.json").read_bytes()), utc())
@@ -382,7 +454,7 @@ def main():
         while not (directory / "result.json").exists():
             require(alive(directory) and utc() < deadline, "harness exited or exceeded its end-to-end budget")
             time.sleep(5)
-        sys.stdout.write((Path(os.environ["PRIVATE_ROOT"]) / "cohort-harness.log").read_text())
+        retain_diagnostics(directory)
         require(decode((directory / "result.json").read_bytes())["exit_code"] == 0, "cohort harness failed")
         return
     require(mode in ("coordinate", "accept"), "unknown readiness command")

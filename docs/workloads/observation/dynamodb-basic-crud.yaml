@@ -1,5 +1,9 @@
 # Reviewed RC observation generation policy, not runtime evidence.
 # The real-Azure workflow emits measured evidence only as immutable run artifacts.
+# Shape identity binds the measured worker schedule: CreateTable, DescribeTable,
+# PutItem, GetItem, UpdateItem, GetItem, DeleteItem, DeleteItem, DeleteTable.
+# The second DeleteItem is the existing idempotent iteration-completion marker;
+# unmeasured readiness polling is excluded. See RcCrudCohortTests.
 schema_version: 1
 profile_id: dynamodb-basic-crud
 profile_version: 1
@@ -10,7 +14,7 @@ minimum_samples_per_cohort: 300
 load_shape:
   candidate_concurrency: 8
   stable_concurrency: 8
-  operation_mix_identity: sha256:eec0ee9517995d6e6f4de7e6e0aead4854f4b3557c6321a3081aca727b4a8fd8
+  operation_mix_identity: sha256:41147e676947cadd10564977b634d5f30fabc922cee11d1191053d6d340b6244
 metrics:
   - id: representative-load-throughput
     unit: throughput_per_sec

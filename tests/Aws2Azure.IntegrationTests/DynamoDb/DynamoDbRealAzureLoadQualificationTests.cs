@@ -39,6 +39,13 @@ public sealed partial class DynamoDbRealAzureLoadQualificationTests(DynamoDbReal
         "DeleteItem",
         "DeleteTable",
     ];
+    // One measured CRUD cycle, including the read after update and idempotent
+    // delete completion marker. Table readiness polling is preparation, not a measurement.
+    internal static readonly string[] LifecycleOperationSchedule =
+    [
+        "CreateTable", "DescribeTable", "PutItem", "GetItem", "UpdateItem",
+        "GetItem", "DeleteItem", "DeleteItem", "DeleteTable",
+    ];
 
     [SkippableFact]
     public async Task Production_shaped_item_crud_writes_immutable_load_evidence()

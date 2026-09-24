@@ -24,7 +24,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
         "DeleteObject",
         "DeleteBucket",
     ];
-    private static readonly string[] LifecycleOperationSchedule =
+    internal static readonly string[] LifecycleOperationSchedule =
     [
         "CreateBucket",
         "PutObject",

@@ -169,6 +169,7 @@ public sealed record RcObservationCohort
     public string AwsBindingDigest { get; init; } = string.Empty;
     public DateTimeOffset ObservedFromUtc { get; init; }
     public DateTimeOffset ObservedUntilUtc { get; init; }
+    public DateTimeOffset? MeasurementEndedAtUtc { get; init; }
     public IReadOnlyList<string> MemberDigests
     {
         get => memberDigests;
@@ -461,6 +462,7 @@ public static class RcObservationLoader
         AwsBindingDigest = value?.AwsBindingDigest!,
         ObservedFromUtc = value?.ObservedFromUtc ?? default,
         ObservedUntilUtc = value?.ObservedUntilUtc ?? default,
+        MeasurementEndedAtUtc = value?.MeasurementEndedAtUtc,
         MemberDigests = value?.MemberDigests?.Select(item => item!).ToArray()
             ?? Array.Empty<string>(),
         OperationDiagnostics = value?.OperationDiagnostics?.Select(Map).ToArray()
@@ -666,6 +668,7 @@ public static class RcObservationLoader
         public string? AwsBindingDigest { get; set; }
         public DateTimeOffset ObservedFromUtc { get; set; }
         public DateTimeOffset ObservedUntilUtc { get; set; }
+        public DateTimeOffset? MeasurementEndedAtUtc { get; set; }
         public List<string?>? MemberDigests { get; set; }
         public List<RcObservationOperationDiagnosticYaml?>? OperationDiagnostics { get; set; }
     }
@@ -924,6 +927,9 @@ public static class RcObservationIntegrity
             Append(canonical, prefix + ".aws_binding_digest", cohort.AwsBindingDigest);
             Append(canonical, prefix + ".observed_from_utc", cohort.ObservedFromUtc);
             Append(canonical, prefix + ".observed_until_utc", cohort.ObservedUntilUtc);
+            if (evidence.SchemaVersion >= 4 || cohort.MeasurementEndedAtUtc is not null)
+                Append(canonical, prefix + ".measurement_ended_at_utc",
+                    cohort.MeasurementEndedAtUtc ?? default);
             Append(canonical, prefix + ".member_digests.count", cohort.MemberDigests.Count);
             for (var memberIndex = 0; memberIndex < cohort.MemberDigests.Count; memberIndex++)
             {
@@ -1068,7 +1074,7 @@ public static class RcObservationIntegrity
 
 public static partial class RcObservationValidator
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public static IReadOnlyList<string> Validate(
         RcObservationEvidence evidence,
@@ -1327,7 +1333,7 @@ public static partial class RcObservationValidator
         RcObservationValidationContext context,
         Action<string> err)
     {
-        if (evidence.SchemaVersion != CurrentSchemaVersion)
+        if (evidence.SchemaVersion is not (3 or CurrentSchemaVersion))
         {
             err(
                 $"unsupported schema_version '{evidence.SchemaVersion}'; " +
@@ -1543,6 +1549,16 @@ public static partial class RcObservationValidator
         }
         var candidate = candidateCohorts[0];
         var stable = stableCohorts[0];
+        if (evidence.SchemaVersion >= 4)
+        {
+            var measured = evidence.Cohorts.Max(cohort => cohort.MeasurementEndedAtUtc ?? default);
+            var expectedEnd = evidence.Decision.Verdict == "rollback" && evidence.Restoration is not null
+                ? (measured > evidence.Restoration.VerifiedAtUtc ? measured : evidence.Restoration.VerifiedAtUtc)
+                : measured;
+            if (evidence.Observation.EndedAtUtc != expectedEnd
+                || evidence.Metrics.Any(metric => metric.CapturedAtUtc != measured))
+                err("independent measurement endpoints do not match the aggregate observation");
+        }
         if (evidence.LoadShape.CandidateConcurrency <= 0
             || evidence.LoadShape.StableConcurrency <= 0
             || !IsDigest(evidence.LoadShape.OperationMixIdentity))
@@ -1632,7 +1648,22 @@ public static partial class RcObservationValidator
                             && evidence.Decision.Verdict == "rollback"
                             && evidence.Restoration is not null
             ? evidence.Restoration.StartedAtUtc
-            : evidence.Observation.EndedAtUtc;
+            : evidence.SchemaVersion >= 4
+                ? cohort.MeasurementEndedAtUtc ?? default
+                : evidence.Observation.EndedAtUtc;
+        if (evidence.SchemaVersion >= 4)
+        {
+            if (cohort.MeasurementEndedAtUtc is not { } measured
+                || measured - cohort.ObservedFromUtc
+                    < TimeSpan.FromMinutes(evidence.Observation.MinimumWindowMinutes)
+                || measured > cohort.ObservedUntilUtc
+                || cohort.ObservedUntilUtc > evidence.Observation.EndedAtUtc)
+                err($"cohort '{cohort.Id}' has invalid measurement boundaries");
+        }
+        else if (cohort.MeasurementEndedAtUtc is not null)
+        {
+            err("schema-3 evidence cannot contain independent measurement boundaries");
+        }
         if (cohort.ObservedFromUtc != evidence.Observation.StartedAtUtc
             || cohort.ObservedUntilUtc != expectedUntil)
         {

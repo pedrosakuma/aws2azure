@@ -162,6 +162,15 @@ SDK retries and the existing ListQueues propagation loop are not independently
 counted backend attempts. Canary/setup probes outside the tracked worker chain
 do not inflate representative samples.
 
+The operation-mix identity hashes the explicit schedule, not just the unique
+operation names. DynamoDB's measured schedule includes both GetItem calls and
+both DeleteItem calls. The old `eec0ee…` policy declaration did not reproduce
+that worker schedule; the corrected identity is `41147e…`, asserted against
+the committed policy and the offline SDK worker trace. This corrects the shape
+declaration only: no worker behavior, capacity floor, failure threshold, or
+historical evidence is changed. All four committed observation policies are
+checked against their harness schedules offline.
+
 The shared coordinator retains existing per-operation diagnostic types and
 failure counts even when exact-prior restoration succeeds. Incomplete/cancelled
 attempts retain `cohort-capture.json.diagnostics.json` when the harness can write
@@ -170,6 +179,15 @@ complete failing capture and rollback evidence; its harness/job still fails.
 Canary cleanup has a separate ten-second cancellation budget, with always-run
 resource-group deletion and the tagged orphan reaper as the backstop after
 process loss. No cleanup exception becomes a successful observation.
+
+Even if the process exits **before readiness**, the always-run composite action
+retains `harness-diagnostics.json` in the cohort capture artifact (90 days).
+It is explicitly non-promotable: exit status, preparation/measurement stage,
+allowlisted reason/exception categories, and known source filenames/line numbers
+from at most the final 512 KiB. Raw harness/supervisor logs, exception messages,
+arguments, URLs, and private configuration are never copied or printed. Private
+logs are deleted with the projected credentials. Missing logs or forced
+cancellation retain a bounded diagnostic record, not invented success evidence.
 
 `RcCrudCohortTests` uses stateful offline SDK fakes for both service canaries,
 the actual reused worker cycles, corruption, cancellation, binding drift and
@@ -283,7 +301,7 @@ are polled, every 45 seconds. Native artifact uploads and the existing
 Each cohort capture retains `readiness/{context,ready,release-artifact,release,started}.json`.
 The assembled capture also retains `stable-readiness/` and
 `readiness-comparison.json`. These distinguish readiness, scheduled release,
-actual UTC start and reported cross-runner start skew. Schema-1 capture/cohort
+actual UTC start and reported cross-runner start skew. Schema-1 individual cohort
 attribution retains its existing **scheduled** boundary; it is not proof of
 simultaneous worker starts. Assembly checks both actual-start receipts, a
 common immutable release, at most 60 seconds of lateness/skew, unchanged
@@ -303,13 +321,26 @@ separate from readiness.
 
 ### Measurement and decision
 
-The measurement window starts only after both cohorts serve the intended
-traffic and ends after the reviewed minimum duration. Candidate and stable
-cohorts must cover that full measurement window, and every metric must be
-captured inside it. When restoration is required, candidate attribution ends
-when the exact-prior switch starts and stable attribution continues until
-restoration verification. Evidence generated in the future, before the
-measurement window ends, or after its reviewed freshness budget is invalid.
+Each cohort must cover its full requested duration after its actual start.
+The merger emits schema-2 combined captures preserving independent
+`cohorts[].measurement_ended_at_utc` and candidate/stable metric capture
+timestamps. The aggregate measurement end remains the **maximum**, never the
+minimum. Restoration must begin after **candidate** measurement completion and
+be verified within the candidate's local capture window; stable measurement may
+finish before or after restoration. Stable attribution ends at its own measured
+endpoint, not an invented extension through candidate restoration.
+
+Canonical schema-4 evidence retains these per-cohort endpoints in its integrity
+digest. UTC comparisons and serialization preserve all seven fractional digits
+(100 ns), including a restoration just four ticks after candidate completion.
+The strict schema-1 combined-capture path remains supported for historical
+synchronous captures and still requires restoration after the aggregate end.
+Schema-1 captures with new timing fields, schema-2 captures with absent,
+shortened or inconsistent windows, and schema-3 evidence with new timing fields
+fail closed. Existing historical schema-3 evidence keeps its original digest
+and ordering rules. No old artifact is rewritten or promoted by this change.
+Evidence generated in the future, before the observation ends, or after its
+reviewed freshness budget remains invalid.
 
 Each metric uses one mechanical comparison:
 
@@ -338,11 +369,11 @@ exact prior runtime and environment.
 
 ## Evidence shape
 
-The strict schema-v2 YAML model is `RcObservationEvidence` in
+The strict schema-v4 YAML model is `RcObservationEvidence` in
 `tools/Aws2Azure.GapDocs/RcObservation.cs`. Its top-level fields are:
 
 ```yaml
-schema_version: 2
+schema_version: 4
 artifact_kind: rc_observation
 evidence_digest: sha256:<canonical-payload-digest>
 release_candidate:
@@ -412,7 +443,7 @@ observation:
   ended_at_utc: ...
   generated_at_utc: ...
   minimum_window_minutes: 60
-cohorts: [...]
+cohorts: [...] # each includes measurement_ended_at_utc in addition to attributable boundaries
 metrics: [...]
 rollback_triggers: [...]
 decision: { verdict: pass, owner: ..., reason: ..., decided_at_utc: ... }

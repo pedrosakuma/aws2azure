@@ -258,6 +258,8 @@ public sealed class RcObservationCaptureMetric
     public long CandidateSamples { get; set; }
     public long StableSamples { get; set; }
     public DateTimeOffset CapturedAtUtc { get; set; }
+    public DateTimeOffset? CandidateCapturedAtUtc { get; set; }
+    public DateTimeOffset? StableCapturedAtUtc { get; set; }
 }
 
 public sealed class RcObservationCaptureArtifactSelection
@@ -546,16 +548,19 @@ public static class RcObservationGenerator
         var evidenceEndedAt = verdict == "rollback"
             ? capture.Observation.EndedAtUtc
             : capture.Observation.MeasurementEndedAtUtc;
+        if (capture.SchemaVersion == 2 && verdict == "rollback")
+            evidenceEndedAt = capture.Restoration!.VerifiedAtUtc > capture.Observation.MeasurementEndedAtUtc
+                ? capture.Restoration.VerifiedAtUtc : capture.Observation.MeasurementEndedAtUtc;
         var cohorts = capture.Cohorts.Select(cohort => cohort with
         {
             ObservedUntilUtc = cohort.Role == "candidate" && verdict == "rollback"
                 ? capture.Restoration!.StartedAtUtc
-                : evidenceEndedAt,
+                : cohort.MeasurementEndedAtUtc ?? evidenceEndedAt,
         }).ToArray();
 
         var evidence = new RcObservationEvidence
         {
-            SchemaVersion = RcObservationValidator.CurrentSchemaVersion,
+            SchemaVersion = capture.SchemaVersion == 1 ? 3 : RcObservationValidator.CurrentSchemaVersion,
             ArtifactKind = "rc_observation",
             ReleaseCandidate = new RcObservationReleaseCandidate
             {
@@ -994,7 +999,7 @@ public static class RcObservationGenerator
         WorkloadGaManifest workload,
         IReadOnlyList<ResolvedMetric> resolvedPolicy)
     {
-        if (capture.SchemaVersion != 1
+        if (capture.SchemaVersion is not (1 or 2)
             || capture.Profile.Id != policy.ProfileId
             || capture.Profile.Version != policy.ProfileVersion
             || capture.LoadShape.CandidateConcurrency
@@ -1017,10 +1022,12 @@ public static class RcObservationGenerator
                 != capture.Azure.BackendIdentityDigest
             || capture.Restoration.ConfigDigest != capture.Azure.ConfigDigest
             || capture.Restoration.AwsBindingDigest != capture.Azure.AwsBindingDigest
-            || capture.Restoration.StartedAtUtc <
-                capture.Observation.MeasurementEndedAtUtc
+            || (capture.SchemaVersion == 1 && capture.Restoration.StartedAtUtc <
+                capture.Observation.MeasurementEndedAtUtc)
             || capture.Restoration.VerifiedAtUtc <= capture.Restoration.StartedAtUtc
-            || capture.Restoration.VerifiedAtUtc != capture.Observation.EndedAtUtc
+            || (capture.SchemaVersion == 1
+                ? capture.Restoration.VerifiedAtUtc != capture.Observation.EndedAtUtc
+                : capture.Restoration.VerifiedAtUtc > capture.Observation.EndedAtUtc)
             || capture.Cohorts.Count != 2
             || capture.Metrics.Count != resolvedPolicy.Count
             || capture.Metrics.Select(metric => metric.Id)
@@ -1099,12 +1106,47 @@ public static class RcObservationGenerator
             throw new InvalidDataException(
                 "RC observation capture cohorts do not match the exact selected runtimes.");
         }
+        ValidateCaptureWindows(capture, candidateCohort, stableCohort);
         ValidateCaptureDiagnostics(
             capture,
             qualification,
             workload,
             candidateCohort,
             stableCohort);
+    }
+
+    private static void ValidateCaptureWindows(
+        RcObservationCapture capture, RcObservationCohort candidate, RcObservationCohort stable)
+    {
+        if (capture.SchemaVersion == 1)
+        {
+            if (capture.Cohorts.Any(cohort => cohort.MeasurementEndedAtUtc is not null)
+                || capture.Metrics.Any(metric =>
+                    metric.CandidateCapturedAtUtc is not null || metric.StableCapturedAtUtc is not null))
+                throw new InvalidDataException("Schema-1 capture cannot contain independent cohort windows.");
+            return;
+        }
+
+        foreach (var cohort in capture.Cohorts)
+        {
+            if (cohort.ObservedFromUtc != capture.Observation.StartedAtUtc
+                || cohort.MeasurementEndedAtUtc is not { } measured
+                || measured - cohort.ObservedFromUtc <
+                    TimeSpan.FromMinutes(capture.Observation.RequestedWindowMinutes)
+                || measured > cohort.ObservedUntilUtc
+                || cohort.ObservedUntilUtc > capture.Observation.EndedAtUtc)
+                throw new InvalidDataException("Invalid independent cohort measurement window.");
+        }
+        if (capture.Observation.MeasurementEndedAtUtc !=
+                capture.Cohorts.Max(cohort => cohort.MeasurementEndedAtUtc!.Value)
+            || capture.Observation.EndedAtUtc != capture.Cohorts.Max(cohort => cohort.ObservedUntilUtc)
+            || capture.Restoration!.StartedAtUtc < candidate.MeasurementEndedAtUtc!.Value
+            || capture.Restoration.VerifiedAtUtc > candidate.ObservedUntilUtc
+            || capture.Metrics.Any(metric =>
+                metric.CandidateCapturedAtUtc != candidate.MeasurementEndedAtUtc
+                || metric.StableCapturedAtUtc != stable.MeasurementEndedAtUtc
+                || metric.CapturedAtUtc != capture.Observation.MeasurementEndedAtUtc))
+            throw new InvalidDataException("Independent cohort measurement/restoration attribution is inconsistent.");
     }
 
     private static void ValidateCaptureDiagnostics(
@@ -1412,6 +1454,8 @@ public static class RcObservationRenderer
             Line(builder, 2, "aws_binding_digest", cohort.AwsBindingDigest);
             Line(builder, 2, "observed_from_utc", cohort.ObservedFromUtc);
             Line(builder, 2, "observed_until_utc", cohort.ObservedUntilUtc);
+            if (cohort.MeasurementEndedAtUtc is { } measured)
+                Line(builder, 2, "measurement_ended_at_utc", measured);
             builder.Append(' ', 4).AppendLine("member_digests:");
             foreach (var member in cohort.MemberDigests)
             {

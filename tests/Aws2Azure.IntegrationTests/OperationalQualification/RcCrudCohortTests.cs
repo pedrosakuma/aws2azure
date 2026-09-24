@@ -5,6 +5,8 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Aws2Azure.IntegrationTests.DynamoDb;
 using Aws2Azure.IntegrationTests.Sqs;
+using Aws2Azure.IntegrationTests.S3;
+using Aws2Azure.IntegrationTests.SecretsManager;
 using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 using DdbMissing = Amazon.DynamoDBv2.Model.ResourceNotFoundException;
@@ -14,6 +16,31 @@ namespace Aws2Azure.IntegrationTests.OperationalQualification;
 [Trait("Category", "RcObservationOffline")]
 public sealed class RcCrudCohortTests
 {
+    [Theory]
+    [InlineData("dynamodb-basic-crud")]
+    [InlineData("sqs-standard-messaging")]
+    [InlineData("s3-basic-object-crud")]
+    [InlineData("secretsmanager-basic-lifecycle")]
+    public void Committed_observation_policies_match_the_actual_harness_schedules(string profile)
+    {
+        var schedule = profile switch
+        {
+            "dynamodb-basic-crud" => DynamoDbRealAzureLoadQualificationTests.LifecycleOperationSchedule,
+            "sqs-standard-messaging" => SqsRealAzureLoadQualificationTests.Operations,
+            "s3-basic-object-crud" => S3RealAzureRcObservationTests.LifecycleOperationSchedule,
+            "secretsmanager-basic-lifecycle" => SecretsManagerRealAzureRcObservationTests.LifecycleOperationSchedule,
+            _ => throw new InvalidDataException("Unknown observation profile."),
+        };
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "aws2azure.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var policy = File.ReadLines(Path.Combine(root.FullName, "docs", "workloads", "observation", profile + ".yaml"));
+        var identity = Assert.Single(policy, line => line.TrimStart().StartsWith(
+            "operation_mix_identity:", StringComparison.Ordinal)).Trim().Split(' ', 2)[1];
+        Assert.Equal(identity, RcObservationCaptureWriter.OperationMixIdentity(profile, schedule));
+    }
+
     [Theory]
     [InlineData("dynamodb-basic-crud", "candidate", "")]
     [InlineData("sqs-standard-messaging", "candidate", "")]
@@ -191,6 +218,11 @@ public sealed class RcCrudCohortTests
         Assert.Equal(2, tracker.Snapshot("DeleteItem").Completions);
         Assert.Equal(1, tracker.Snapshot("UpdateItem").Completions);
         Assert.Equal(1, tracker.Snapshot("PutItem").Failures);
+        var schedule = DynamoDbRealAzureLoadQualificationTests.LifecycleOperationSchedule;
+        Assert.Equal(
+            schedule.Take(2).Concat(["DescribeTable"]).Concat(schedule.Skip(2).SkipLast(1))
+                .Concat(["PutItem", "DeleteTable"]),
+            state.Calls.Select(call => call["candidate:".Length..]));
         Assert.Empty(state.Tables);
     }
 
