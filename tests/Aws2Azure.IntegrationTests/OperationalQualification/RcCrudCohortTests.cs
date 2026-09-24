@@ -181,9 +181,92 @@ public sealed class RcCrudCohortTests
         Assert.Single(state.Queues.Values.Single().Available);
         state.Role = "prior";
         await canary.VerifyRestoredAsync(default);
-        Assert.Empty(state.Queues);
+        Assert.Single(state.Queues);
+        Assert.Equal(0, state.Deletes);
         Assert.Equal(["prior", "prior"], state.SettledBy);
         await canary.CleanupAsync(default);
+        Assert.Empty(state.Queues);
+        Assert.Equal(1, state.Deletes);
+        await canary.CleanupAsync(default);
+        Assert.Equal(1, state.Deletes);
+    }
+
+    [Fact]
+    public async Task Sqs_canary_does_not_require_management_absence_after_acknowledged_cleanup()
+    {
+        var state = new SqsState { StaleDeletedQueue = true };
+        var canary = new SqsRcCanary(() => new SqsClient(state));
+        await canary.PrepareAsync(default);
+        var queueName = Assert.Single(state.Queues).Key;
+        state.Role = "prior";
+
+        await canary.VerifyRestoredAsync(default);
+        Assert.Equal(["prior", "prior"], state.SettledBy);
+        Assert.Equal(1, state.GetQueueUrls);
+        Assert.Equal(0, state.Deletes);
+        await canary.CleanupAsync(default);
+
+        Assert.Empty(state.Queues);
+        Assert.Equal(1, state.Deletes);
+        Assert.Equal(1, state.GetQueueUrls);
+        using var observer = new SqsClient(state);
+        Assert.Equal(queueName, (await observer.GetQueueUrlAsync(
+            new GetQueueUrlRequest { QueueName = queueName })).QueueUrl);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Sqs_cleanup_failure_is_separate_from_verified_restoration_and_fails_cohort(bool cancellation)
+    {
+        var cleanupError = cancellation
+            ? (Exception)new OperationCanceledException("cleanup cancelled")
+            : new AmazonSQSException("cleanup denied");
+        var state = new SqsState { DeleteFailure = cleanupError };
+        var canary = new SqsRcCanary(() => new SqsClient(state));
+        var operations = SqsRealAzureLoadQualificationTests.Operations;
+        var binding = new RcCohortBinding("backend", "config", "aws");
+        var result = await RcCrudCohort.RunAsync(
+            "sqs-standard-messaging", "sqs", "servicebus", "ReceiveMessage", operations,
+            "candidate", "test-region", TimeSpan.FromMinutes(60), 1,
+            RcObservationCaptureWriter.OperationMixIdentity("sqs-standard-messaging", operations),
+            new("candidate-id", "candidate-bytes", "prior-id", "prior-bytes", "http://owned",
+                () => true, () => binding, _ => { state.Role = "prior"; return Task.CompletedTask; }),
+            canary.PrepareAsync, canary.VerifyRestoredAsync, canary.CleanupAsync,
+            (_, tracker, _, _, _) =>
+            {
+                foreach (var operation in operations) tracker.RecordSuccess(operation, 1);
+                return Task.CompletedTask;
+            },
+            _ => Task.FromResult(DateTimeOffset.UtcNow), _ => "member", "candidate-test", default);
+
+        Assert.True(result.Capture.Restoration?.Verified);
+        Assert.Equal("prior-bytes", result.Capture.Restoration!.RuntimeDigest);
+        Assert.Equal(["prior", "prior"], state.SettledBy);
+        Assert.Equal(1, state.Deletes);
+        Assert.Single(state.Queues);
+        var error = Assert.Throws<InvalidDataException>(result.ThrowIfFailed);
+        Assert.Equal("RC canary cleanup failed.", error.Message);
+        Assert.Same(cleanupError, error.InnerException);
+
+        state.DeleteFailure = null;
+        await canary.CleanupAsync(default);
+        Assert.Empty(state.Queues);
+    }
+
+    [Fact]
+    public async Task Sqs_cleanup_accepts_already_missing_queue_without_an_existence_probe()
+    {
+        var state = new SqsState();
+        var canary = new SqsRcCanary(() => new SqsClient(state));
+        await canary.PrepareAsync(default);
+        state.Queues.Clear();
+
+        await canary.CleanupAsync(default);
+        await canary.CleanupAsync(default);
+
+        Assert.Equal(1, state.Deletes);
+        Assert.Equal(0, state.GetQueueUrls);
     }
 
     [Fact]
@@ -313,6 +396,11 @@ public sealed class RcCrudCohortTests
         public string Role = "candidate";
         public bool FailSecondSend;
         public int Sends;
+        public int Deletes;
+        public int GetQueueUrls;
+        public bool StaleDeletedQueue;
+        public Exception? DeleteFailure;
+        public HashSet<string> DeletedQueues = [];
         public Dictionary<string, QueueState> Queues = [];
         public List<string> SettledBy = [];
     }
@@ -329,7 +417,10 @@ public sealed class RcCrudCohortTests
         public override Task<GetQueueUrlResponse> GetQueueUrlAsync(GetQueueUrlRequest request, CancellationToken token = default)
         {
             token.ThrowIfCancellationRequested();
-            if (!state.Queues.ContainsKey(request.QueueName)) throw new QueueDoesNotExistException("absent");
+            state.GetQueueUrls++;
+            if (!state.Queues.ContainsKey(request.QueueName)
+                && !(state.StaleDeletedQueue && state.DeletedQueues.Contains(request.QueueName)))
+                throw new QueueDoesNotExistException("absent");
             return Task.FromResult(new GetQueueUrlResponse { QueueUrl = request.QueueName });
         }
         public override Task<ListQueuesResponse> ListQueuesAsync(ListQueuesRequest request, CancellationToken token = default)
@@ -377,7 +468,11 @@ public sealed class RcCrudCohortTests
         }
         public override Task<DeleteQueueResponse> DeleteQueueAsync(DeleteQueueRequest request, CancellationToken token = default)
         {
-            token.ThrowIfCancellationRequested(); state.Queues.Remove(request.QueueUrl);
+            token.ThrowIfCancellationRequested();
+            state.Deletes++;
+            if (state.DeleteFailure is { } failure) return Task.FromException<DeleteQueueResponse>(failure);
+            if (!state.Queues.Remove(request.QueueUrl)) throw new QueueDoesNotExistException("absent");
+            state.DeletedQueues.Add(request.QueueUrl);
             return Task.FromResult(new DeleteQueueResponse());
         }
     }

@@ -139,16 +139,6 @@ internal sealed class SqsRcCanary(Func<IAmazonSQS> clientFactory)
         }, token).ConfigureAwait(false);
         if (empty.Messages is { Count: > 0 })
             throw new InvalidDataException("The restored runtime did not settle its RC canary messages.");
-        await client.DeleteQueueAsync(new DeleteQueueRequest { QueueUrl = _url }, token).ConfigureAwait(false);
-        try
-        {
-            await client.GetQueueUrlAsync(new GetQueueUrlRequest { QueueName = _name }, token).ConfigureAwait(false);
-            throw new InvalidDataException("The restored runtime did not delete its RC canary queue.");
-        }
-        catch (QueueDoesNotExistException)
-        {
-            _url = null;
-        }
     }
 
     private Task SendAsync(IAmazonSQS client, string body, CancellationToken token) =>
@@ -173,6 +163,7 @@ internal sealed class SqsRcCanary(Func<IAmazonSQS> clientFactory)
     {
         if (_url is null) return;
         using var client = clientFactory();
+        // Management-plane existence reads can lag a successful delete with no proven bound (#626).
         try
         {
             await client.DeleteQueueAsync(new DeleteQueueRequest { QueueUrl = _url }, token).ConfigureAwait(false);
