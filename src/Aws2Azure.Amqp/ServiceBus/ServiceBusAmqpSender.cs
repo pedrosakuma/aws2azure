@@ -24,11 +24,14 @@ namespace Aws2Azure.Amqp.ServiceBus;
 internal sealed class ServiceBusAmqpSender : IAsyncDisposable
 {
     private readonly AmqpLink _link;
+    private readonly Func<CancellationToken, Task>? _authorize;
     private int _disposed;
 
-    internal ServiceBusAmqpSender(AmqpLink link, string queueName)
+    internal ServiceBusAmqpSender(
+        AmqpLink link, string queueName, Func<CancellationToken, Task>? authorize = null)
     {
         _link = link;
+        _authorize = authorize;
         QueueName = queueName;
     }
 
@@ -65,6 +68,8 @@ internal sealed class ServiceBusAmqpSender : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(message);
         ThrowIfDisposed();
+        if (_authorize is not null)
+            await _authorize(cancellationToken).ConfigureAwait(false);
         var result = await _link
             .SendMessageAsync(message, settled, cancellationToken)
             .ConfigureAwait(false);

@@ -122,7 +122,8 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
+            if (ShouldInvalidateSender(wrapped))
+                await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             throw wrapped;
         }
     }
@@ -165,7 +166,8 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 }
                 catch (Exception ex) when (TryWrap(ex, out var wrapped))
                 {
-                    await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
+                    if (ShouldInvalidateSender(wrapped))
+                        await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
                     if (wrapped.Kind == SnsAmqpFailureKind.Auth)
                     {
                         throw wrapped;
@@ -185,7 +187,8 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
         }
         catch (Exception ex) when (TryWrap(ex, out var wrapped))
         {
-            await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
+            if (ShouldInvalidateSender(wrapped))
+                await InvalidatePooledSenderAsync(endpoint, credentialMarker, topicName).ConfigureAwait(false);
             if (wrapped.Kind == SnsAmqpFailureKind.Auth)
             {
                 throw wrapped;
@@ -327,6 +330,9 @@ internal sealed class SnsAmqpSender : ISnsAmqpSender, IAsyncDisposable
                 SenderFault: true),
             _ => new SnsBatchSendOutcome(false, "InternalFailure", SnsAmqpFailureMessages.Build(exception), false),
         };
+
+    internal static bool ShouldInvalidateSender(SnsAmqpException failure) =>
+        failure.InnerException is not (CbsAuthenticationException or EntraIdTokenException);
 
     internal static bool TryWrap(Exception exception, out SnsAmqpException wrapped)
     {

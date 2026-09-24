@@ -36,11 +36,14 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     private static readonly TimeSpan DefaultServerTimeout = TimeSpan.FromSeconds(60);
 
     private readonly AmqpRequestResponseLink _link;
+    private readonly Func<CancellationToken, Task>? _authorize;
     private int _disposed;
 
-    private ServiceBusManagementClient(AmqpRequestResponseLink link)
+    private ServiceBusManagementClient(
+        AmqpRequestResponseLink link, Func<CancellationToken, Task>? authorize)
     {
         _link = link;
+        _authorize = authorize;
     }
 
     /// <summary>
@@ -59,7 +62,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
     public static async Task<ServiceBusManagementClient> OpenAsync(
         AmqpSession session,
         string managementAddress,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task>? authorize = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrWhiteSpace(managementAddress);
@@ -71,7 +75,7 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
         try
         {
             await link.OpenAsync(cancellationToken).ConfigureAwait(false);
-            return new ServiceBusManagementClient(link);
+            return new ServiceBusManagementClient(link, authorize);
         }
         catch
         {
@@ -109,6 +113,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
         if (lockTokens.Count == 0)
             throw new ArgumentException("At least one lock token is required.", nameof(lockTokens));
 
+        if (_authorize is not null)
+            await _authorize(cancellationToken).ConfigureAwait(false);
         using var body = EncodeRenewLockRequest(lockTokens);
         var request = new AmqpMessage
         {
@@ -153,6 +159,8 @@ internal sealed class ServiceBusManagementClient : IAsyncDisposable
         ArgumentException.ThrowIfNullOrEmpty(sessionId);
         ArgumentException.ThrowIfNullOrEmpty(associatedLinkName);
 
+        if (_authorize is not null)
+            await _authorize(cancellationToken).ConfigureAwait(false);
         using var body = EncodeRenewSessionLockRequest(sessionId);
         var request = new AmqpMessage
         {

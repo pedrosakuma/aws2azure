@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Aws2Azure.Amqp.Connection;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
@@ -18,7 +19,9 @@ using Aws2Azure.Modules.Sqs.Operations;
 using Aws2Azure.Modules.Sqs.WireProtocol;
 using Aws2Azure.UnitTests.Amqp.ServiceBus;
 using Aws2Azure.UnitTests.Amqp.Transport;
+using Aws2Azure.UnitTests.Azure;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Aws2Azure.UnitTests.Sqs;
@@ -33,6 +36,104 @@ namespace Aws2Azure.UnitTests.Sqs;
 public sealed class AmqpReceiveMessageHandlersTests
 {
     private const string QueueName = "amqp-q";
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Rejected_management_renewal_keeps_management_link_and_receipt(bool batch, bool fifo)
+    {
+        var rejected = false;
+        await using var harness = await TestHarness.OpenWithManagementAsync(
+            QueueName, DateTimeOffset.UtcNow.AddMinutes(1), sessionId: fifo ? "group" : null,
+            authorize: _ =>
+            {
+                rejected = true;
+                return Task.FromException(new CbsAuthenticationException("management-audience", 403, "denied"));
+            },
+            messages: [(Guid.NewGuid().ToByteArray(), EncodeMessage("held"))]);
+        var message = Assert.Single(await harness.Receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2)));
+        var handle = AmqpReceiptHandle.Encode(
+            QueueName, message.LockToken!.Value, default, fifo ? "group" : null);
+        var context = NewCtx();
+        var parameters = batch
+            ? QueryParsed(SqsOperation.ChangeMessageVisibilityBatch,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.Id", "one"),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.ReceiptHandle", handle),
+                ("ChangeMessageVisibilityBatchRequestEntry.1.VisibilityTimeout", "30"))
+            : QueryParsed(SqsOperation.ChangeMessageVisibility,
+                ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+                ("ReceiptHandle", handle), ("VisibilityTimeout", "30"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(context, parameters, harness.Provider, CancellationToken.None);
+
+        Assert.True(rejected);
+        Assert.Contains("<Code>InternalFailure</Code>", ReadBody(context));
+        Assert.Equal(0, harness.Provider.InvalidateManagementCount);
+        Assert.False(harness.Management!.IsClosed);
+        Assert.True(harness.Receiver.ContainsLockToken(message.LockToken.Value));
+        Assert.True(await harness.Receiver.CompleteAsync(message.LockToken.Value));
+    }
+
+    [Theory]
+    [InlineData(SqsOperation.DeleteMessage, false, 0)]
+    [InlineData(SqsOperation.DeleteMessage, true, 0)]
+    [InlineData(SqsOperation.DeleteMessageBatch, false, 0)]
+    [InlineData(SqsOperation.DeleteMessageBatch, true, 0)]
+    [InlineData(SqsOperation.ChangeMessageVisibility, false, 0)]
+    [InlineData(SqsOperation.ChangeMessageVisibility, true, 0)]
+    [InlineData(SqsOperation.ChangeMessageVisibilityBatch, false, 0)]
+    [InlineData(SqsOperation.ChangeMessageVisibilityBatch, true, 0)]
+    [InlineData(SqsOperation.ChangeMessageVisibility, false, 30)]
+    [InlineData(SqsOperation.ChangeMessageVisibility, true, 30)]
+    [InlineData(SqsOperation.ChangeMessageVisibilityBatch, false, 30)]
+    [InlineData(SqsOperation.ChangeMessageVisibilityBatch, true, 30)]
+    [InlineData(SqsOperation.ReceiveMessage, false, 0)]
+    public async Task Rejected_cached_renewal_keeps_receipt_and_receiver_for_later_settlement(
+        SqsOperation operation, bool fifo, int visibility)
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var harness = await TestHarness.OpenRenewalAsync(
+            QueueName, fifo ? "group" : null, clock,
+            (Guid.NewGuid().ToByteArray(), EncodeMessage("held")));
+        var message = Assert.Single(await harness.Receiver.ReceiveBatchAsync(1, TimeSpan.FromSeconds(2)));
+        var handle = AmqpReceiptHandle.Encode(
+            QueueName, message.LockToken!.Value, default, fifo ? "group" : null);
+        clock.Advance(TimeSpan.FromMinutes(16));
+        harness.Broker.CbsStatus = 401;
+        var batch = operation is SqsOperation.DeleteMessageBatch or SqsOperation.ChangeMessageVisibilityBatch;
+        var prefix = operation == SqsOperation.DeleteMessageBatch
+            ? "DeleteMessageBatchRequestEntry.1."
+            : "ChangeMessageVisibilityBatchRequestEntry.1.";
+        var parameters = new List<(string, string)>
+        {
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            (batch ? prefix + "ReceiptHandle" : "ReceiptHandle", handle),
+            (batch ? prefix + "VisibilityTimeout" : "VisibilityTimeout", visibility.ToString()),
+        };
+        if (batch) parameters.Add((prefix + "Id", "one"));
+        var context = NewCtx();
+        using var services = new ServiceCollection().BuildServiceProvider();
+        context.RequestServices = services;
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            context, QueryParsed(operation, parameters.ToArray()), harness.Provider, CancellationToken.None);
+
+        Assert.Contains("<Code>InternalFailure</Code>", ReadBody(context));
+        Assert.Equal(2, harness.Broker.AuthorizedAudiences.Count);
+        Assert.Equal(0, harness.Provider.InvalidateCount);
+        Assert.Equal(0, harness.Provider.InvalidateSessionCount);
+        Assert.Equal(1, harness.Receiver.InFlightCount);
+        harness.Broker.CbsStatus = 202;
+        var retry = NewCtx();
+        await AmqpReceiveMessageHandlers.HandleAsync(retry, QueryParsed(SqsOperation.DeleteMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("ReceiptHandle", handle)), harness.Provider, CancellationToken.None);
+        Assert.Equal(200, retry.Response.StatusCode);
+        Assert.Equal(0, harness.Receiver.InFlightCount);
+    }
 
     [Fact]
     public async Task ReceiveMessage_returns_messages_with_AMQP_receipt_handles()
@@ -1127,19 +1228,27 @@ public sealed class AmqpReceiveMessageHandlersTests
             params (byte[] tag, byte[] payload)[] messages)
             => await OpenInternalAsync(queueName, sessionId: sessionId, messages);
 
+        public static Task<TestHarness> OpenRenewalAsync(
+            string queueName, string? sessionId, FakeTimeProvider clock,
+            params (byte[] tag, byte[] payload)[] messages) =>
+            OpenInternalAsync(queueName, sessionId, messages, clock);
+
         private static async Task<TestHarness> OpenInternalAsync(string queueName, string? sessionId,
-            (byte[] tag, byte[] payload)[] messages)
+            (byte[] tag, byte[] payload)[] messages, FakeTimeProvider? clock = null)
         {
             var (client, server) = PipePairTransport.CreatePair();
             var broker = new ServiceBusBrokerSimulator(server);
             broker.Start();
+            IAmqpTokenProvider provider = clock is null
+                ? new FakeTokenProvider()
+                : new ServiceBusSasTokenProvider("Root", "key", clock: clock);
             var conn = await ServiceBusAmqpConnection
-                .OpenAsync(client, new FakeTokenProvider(), new AmqpConnectionSettings
+                .OpenAsync(client, provider, new AmqpConnectionSettings
                 {
                     ContainerId = "test-client",
                     Hostname = "ns.servicebus.windows.net",
                     IdleTimeout = TimeSpan.Zero,
-                })
+                }, clock, refreshSafetyWindow: null)
                 .WaitAsync(TimeSpan.FromSeconds(10));
             var audience = ServiceBusEndpoint.BuildQueueAudience("ns.servicebus.windows.net", queueName);
 
@@ -1182,6 +1291,7 @@ public sealed class AmqpReceiveMessageHandlersTests
             string? statusDescription = "OK",
             string? errorCondition = null,
             string? sessionId = null,
+            Func<CancellationToken, Task>? authorize = null,
             params (byte[] tag, byte[] payload)[] messages)
         {
             var baseHarness = sessionId is null
@@ -1205,7 +1315,8 @@ public sealed class AmqpReceiveMessageHandlersTests
             var mgmtSession = await mgmtConn.BeginSessionAsync();
             var mgmt = await ServiceBusManagementClient.OpenAsync(
                 mgmtSession,
-                ServiceBusEndpoint.BuildManagementAddress(QueueName));
+                ServiceBusEndpoint.BuildManagementAddress(QueueName),
+                authorize: authorize);
 
             return new TestHarness
             {

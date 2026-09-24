@@ -34,6 +34,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     private const string DeadLetterCondition = "com.microsoft:dead-letter";
 
     private readonly AmqpLink _link;
+    private readonly Func<CancellationToken, Task>? _authorize;
     private readonly ConcurrentDictionary<Guid, InFlightDelivery> _inFlight = new();
     private int _trackedInFlight;
     private long _sessionLockExpiryUtcTicks;
@@ -42,9 +43,12 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     internal ServiceBusReceiver(AmqpLink link, string queueName)
         : this(link, queueName, sessionId: null) { }
 
-    internal ServiceBusReceiver(AmqpLink link, string queueName, string? sessionId)
+    internal ServiceBusReceiver(
+        AmqpLink link, string queueName, string? sessionId,
+        Func<CancellationToken, Task>? authorize = null)
     {
         _link = link;
+        _authorize = authorize;
         QueueName = queueName;
         SessionId = sessionId;
     }
@@ -160,6 +164,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        await EnsureAuthorizedAsync(cancellationToken).ConfigureAwait(false);
         PruneExpired(DateTimeOffset.UtcNow);
         var reserved = ReserveSlots(maxMessages);
         if (reserved == 0) return Array.Empty<ServiceBusReceivedMessage>();
@@ -220,7 +225,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         if (message.LockToken is { } token)
             return SettleAsync(token, message.Delivery, static (link, delivery, ct) =>
                 link.AcceptAsync(delivery, ct), cancellationToken);
-        return _link.AcceptAsync(message.Delivery, cancellationToken);
+        return SettleUntrackedAsync(message.Delivery,
+            static (link, delivery, ct) => link.AcceptAsync(delivery, ct), cancellationToken);
     }
 
     /// <summary>
@@ -252,7 +258,9 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         if (message.LockToken is { } token)
             return SettleAsync(token, message.Delivery, static (link, delivery, ct) =>
                 link.ModifyAsync(delivery, deliveryFailed: null, undeliverableHere: null, ct), cancellationToken);
-        return _link.ModifyAsync(message.Delivery, deliveryFailed: null, undeliverableHere: null, cancellationToken);
+        return SettleUntrackedAsync(message.Delivery,
+            static (link, delivery, ct) =>
+                link.ModifyAsync(delivery, deliveryFailed: null, undeliverableHere: null, ct), cancellationToken);
     }
 
     /// <summary>Lock-token-only overload (see <see cref="CompleteAsync(Guid, CancellationToken)"/>).</summary>
@@ -284,7 +292,8 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
                 static (link, delivery, ct) => link.ReleaseAsync(delivery, ct),
                 cancellationToken);
         }
-        return _link.ReleaseAsync(message.Delivery, cancellationToken);
+        return SettleUntrackedAsync(message.Delivery,
+            static (link, delivery, ct) => link.ReleaseAsync(delivery, ct), cancellationToken);
     }
 
     /// <summary>
@@ -335,9 +344,10 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
         }
     }
 
-    private Task RejectInternal(
+    private async Task RejectInternal(
         AmqpIncomingDelivery delivery, string? reason, string? description, CancellationToken cancellationToken)
     {
+        await EnsureAuthorizedAsync(cancellationToken).ConfigureAwait(false);
         (reason, description) = ServiceBusDeadLetterInfo.ClampToFrame(
             reason,
             description,
@@ -368,7 +378,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             Description = fallbackDescription,
             Info = info,
         };
-        return _link.RejectAsync(delivery, error, cancellationToken);
+        await _link.RejectAsync(delivery, error, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> SettleAsync(
@@ -380,6 +390,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             return false;
         try
         {
+            await EnsureAuthorizedAsync(cancellationToken).ConfigureAwait(false);
             await settle(_link, tracked.Message.Delivery, cancellationToken).ConfigureAwait(false);
             RemoveTracked(lockToken, tracked);
             return true;
@@ -431,6 +442,7 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
     {
         try
         {
+            await EnsureAuthorizedAsync(cancellationToken).ConfigureAwait(false);
             await settle(_link, tracked.Message.Delivery, cancellationToken).ConfigureAwait(false);
             RemoveTracked(lockToken, tracked);
         }
@@ -439,6 +451,18 @@ internal sealed class ServiceBusReceiver : IAsyncDisposable
             tracked.ReleaseClaim();
             throw;
         }
+    }
+
+    internal Task EnsureAuthorizedAsync(CancellationToken cancellationToken) =>
+        _authorize?.Invoke(cancellationToken) ?? Task.CompletedTask;
+
+    private async Task SettleUntrackedAsync(
+        AmqpIncomingDelivery delivery,
+        Func<AmqpLink, AmqpIncomingDelivery, CancellationToken, Task> settle,
+        CancellationToken cancellationToken)
+    {
+        await EnsureAuthorizedAsync(cancellationToken).ConfigureAwait(false);
+        await settle(_link, delivery, cancellationToken).ConfigureAwait(false);
     }
 
     private int ReserveSlots(int requested)

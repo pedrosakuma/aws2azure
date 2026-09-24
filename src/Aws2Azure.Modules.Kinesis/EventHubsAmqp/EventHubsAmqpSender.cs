@@ -273,6 +273,8 @@ internal sealed class EventHubsAmqpSender : IEventHubsAmqpSender, IAsyncDisposab
 
     private async Task InvalidateOnFailureAsync(EventHubsAmqpConnectionKey key, string entityPath, EventHubsAmqpException failure)
     {
+        if (EventHubsAmqpExceptionMapper.IsTokenAcquisitionFailure(failure))
+            return;
         switch (failure.Kind)
         {
             case EventHubsAmqpFailureKind.Auth:

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Internal;
@@ -80,7 +81,8 @@ internal static class AmqpSettleDispatcher
         catch (Exception ex)
         {
             settleLeaseScope?.Dispose();
-            await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
+            if (ex is not CbsAuthenticationException)
+                await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                 AmqpErrorMapper.MapSettleException(ex, "DeleteMessage")).ConfigureAwait(false);
             return;
@@ -174,7 +176,8 @@ internal static class AmqpSettleDispatcher
             catch (Exception ex)
             {
                 settleLeaseScope?.Dispose();
-                await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
+                if (ex is not CbsAuthenticationException)
+                    await InvalidateSettleReceiverAsync(receivers, queueName, decoded.SessionId).ConfigureAwait(false);
                 await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                     AmqpErrorMapper.MapSettleException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
                 return;
@@ -231,6 +234,7 @@ internal static class AmqpSettleDispatcher
         ServiceBusManagementClient mgmt;
         try
         {
+            await trackedReceiver.EnsureAuthorizedAsync(ct).ConfigureAwait(false);
             mgmt = await receivers.GetManagementClientAsync(queueName, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -263,7 +267,8 @@ internal static class AmqpSettleDispatcher
         }
         catch (Exception ex)
         {
-            await receivers.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
+            if (ex is not CbsAuthenticationException)
+                await receivers.InvalidateManagementClientAsync(queueName).ConfigureAwait(false);
             await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                 AmqpErrorMapper.MapAmqpException(ex, "ChangeMessageVisibility")).ConfigureAwait(false);
             return;
