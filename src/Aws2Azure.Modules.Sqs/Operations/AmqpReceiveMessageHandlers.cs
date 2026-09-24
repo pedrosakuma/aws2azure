@@ -217,7 +217,8 @@ internal static partial class AmqpReceiveMessageHandlers
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         LogReceiveFailure(context, queueName, "message receive", ex);
-                        if (receiver.SessionId is { } sessionId)
+                        if (ex is not Aws2Azure.Amqp.Security.CbsAuthenticationException
+                            && receiver.SessionId is { } sessionId)
                             await receivers.InvalidateSessionReceiverAsync(queueName, sessionId).ConfigureAwait(false);
                         await CleanupFailedReceiveAsync(
                             context, queueName, receiveBatches, receivers).ConfigureAwait(false);
@@ -254,7 +255,8 @@ internal static partial class AmqpReceiveMessageHandlers
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     LogReceiveFailure(context, queueName, "message receive", ex);
-                    await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
+                    if (ex is not Aws2Azure.Amqp.Security.CbsAuthenticationException)
+                        await receivers.InvalidateAsync(queueName, closeConnection: false).ConfigureAwait(false);
                     await AmqpReceiveParameters.WriteErrorAsync(context, parsed.Protocol,
                         AmqpErrorMapper.MapAmqpException(ex, "ReceiveMessage")).ConfigureAwait(false);
                     return;

@@ -68,6 +68,35 @@ only what the SQS-over-Service-Bus path requires:
 - No sender link in the first cut (REST `SendMessage` already works);
   added later only if profiling justifies it.
 
+### Cached authorization renewal
+
+Service Bus resources created through `ServiceBusAmqpConnection` check the
+connection's per-audience CBS cache before sending, receiving, settling, or
+issuing management requests. This includes pool-cached resources, FIFO
+settlement leases, and references retained without another pool lookup.
+Positive visibility renewal also checks the associated receiver's audience,
+not only the distinct `$management` audience.
+
+An advertised token expiry triggers renewal within the existing five-minute
+safety window. Concurrent callers recheck under the existing connection lock;
+fresh authorizations take the lock-free cache path without another token
+request. Tokens without an advertised expiry retain their existing semantics.
+The operation hook is allocated once per resource, not once per request.
+No timer, background thread, or replacement of a healthy link is introduced.
+Idle resources are checked on next use; an already detached link still follows
+the existing pool invalidation/reconnection contract.
+
+Renewal errors and cancellation fail the operation, without replaying it.
+A rejected CBS renewal does not discard in-flight delivery ownership or
+invalidate an otherwise healthy receiver. SNS and Kinesis share these resources and
+also preserve healthy links/connections on CBS or token-endpoint failures;
+their existing wire-error classifications and transport-failure eviction
+remain unchanged. This corrects a locally reproduced
+cached-use defect (#1041); it does not establish the precise broker-side cause
+of the earlier RC observation failure. Fake-clock/in-process coverage lives in
+`ServiceBusCachedAuthorizationTests`; release qualification must use newly
+sealed runtime bytes and real-Azure evidence.
+
 ### AOT constraints (binding)
 
 - No `System.Reflection.Emit`, `Activator.CreateInstance(Type)`,

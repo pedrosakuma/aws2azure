@@ -15,6 +15,10 @@ internal enum EventHubsAmqpOperation
 
 internal static class EventHubsAmqpExceptionMapper
 {
+    internal static bool IsTokenAcquisitionFailure(Exception failure) =>
+        failure is CbsAuthenticationException or EntraIdTokenException
+            or EventHubsAmqpException { InnerException: CbsAuthenticationException or EntraIdTokenException };
+
     public static bool TryWrap(
         Exception exception,
         EventHubsAmqpOperation operation,

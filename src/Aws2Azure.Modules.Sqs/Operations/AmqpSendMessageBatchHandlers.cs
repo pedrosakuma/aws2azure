@@ -248,7 +248,7 @@ internal static class AmqpSendMessageBatchHandlers
         }
         catch (Exception ex)
         {
-            transportFailures[index] = true;
+            transportFailures[index] = ex is not Aws2Azure.Amqp.Security.CbsAuthenticationException;
             errors[index] = SqsErrorMapping.InternalError($"AMQP send failed: {ex.GetType().Name}");
             return false;
         }

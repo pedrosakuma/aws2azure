@@ -30,6 +30,7 @@ public sealed class SnsAmqpTokenClassificationTests
         Assert.True(handled);
         Assert.Equal(expectedKind, wrapped.Kind.ToString());
         Assert.Same(token, wrapped.InnerException);
+        Assert.False(SnsAmqpSender.ShouldInvalidateSender(wrapped));
     }
 
     [Fact]
@@ -48,6 +49,7 @@ public sealed class SnsAmqpTokenClassificationTests
         Assert.True(handled);
         Assert.Equal("EntityUnavailable", wrapped.Kind.ToString());
         Assert.Same(cbsFailure, wrapped.InnerException);
+        Assert.False(SnsAmqpSender.ShouldInvalidateSender(wrapped));
     }
 
     [Theory]
@@ -63,6 +65,14 @@ public sealed class SnsAmqpTokenClassificationTests
 
         Assert.True(handled);
         Assert.Equal("Auth", wrapped.Kind.ToString());
+        Assert.False(SnsAmqpSender.ShouldInvalidateSender(wrapped));
+    }
+
+    [Fact]
+    public void Non_token_failures_still_invalidate_sender()
+    {
+        Assert.True(SnsAmqpSender.TryWrap(new TimeoutException("transport"), out var wrapped));
+        Assert.True(SnsAmqpSender.ShouldInvalidateSender(wrapped));
     }
 
     [Fact]

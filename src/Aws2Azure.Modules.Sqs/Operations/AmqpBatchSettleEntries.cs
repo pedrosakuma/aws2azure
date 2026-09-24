@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Aws2Azure.Amqp.Security;
 using Aws2Azure.Amqp.ServiceBus;
 using Aws2Azure.Modules.Sqs.Errors;
 using Aws2Azure.Modules.Sqs.Internal;
@@ -54,7 +55,8 @@ internal static class AmqpBatchSettleEntries
         {
             // Defer invalidation until after sibling entries finish: disposing
             // the shared session receiver mid-batch can hang siblings.
-            AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
+            if (ex is not CbsAuthenticationException)
+                AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
             AddFailure(failed, entry.Id, AmqpErrorMapper.MapSettleException(ex, "DeleteMessageBatch"));
             return;
         }
@@ -136,7 +138,8 @@ internal static class AmqpBatchSettleEntries
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
+            if (ex is not CbsAuthenticationException)
+                AddReceiverInvalidation(receiversToInvalidate, decoded.SessionId);
             AddFailure(failed, entryId, AmqpErrorMapper.MapSettleException(ex, "ChangeMessageVisibilityBatch"));
             return;
         }
@@ -182,6 +185,7 @@ internal static class AmqpBatchSettleEntries
         ServiceBusManagementClient mgmt;
         try
         {
+            await trackedReceiver.EnsureAuthorizedAsync(ct).ConfigureAwait(false);
             mgmt = await receivers.GetManagementClientAsync(queueName, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -206,7 +210,8 @@ internal static class AmqpBatchSettleEntries
         }
         catch (Exception ex)
         {
-            markManagementFailed();
+            if (ex is not CbsAuthenticationException)
+                markManagementFailed();
             AddFailure(failed, entryId, AmqpErrorMapper.MapAmqpException(ex, "ChangeMessageVisibilityBatch"));
             return;
         }

@@ -157,13 +157,14 @@ internal static class AmqpSendMessageHandlers
                 await SendMessageHandlers.WriteErrorAsync(context, parsed.Protocol, mapping).ConfigureAwait(false);
                 return;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // Link- or connection-level failure: evict the cached
                 // sender so the next request rebuilds it. Keep the
                 // connection warm — caller can retry idempotently
                 // because we use a stable MessageId.
-                await senders.InvalidateSenderAsync(queueName, closeConnection: false).ConfigureAwait(false);
+                if (ex is not Aws2Azure.Amqp.Security.CbsAuthenticationException)
+                    await senders.InvalidateSenderAsync(queueName, closeConnection: false).ConfigureAwait(false);
                 throw;
             }
         }

@@ -22,10 +22,9 @@ namespace Aws2Azure.Amqp.ServiceBus;
 /// the namespace.
 /// </para>
 /// <para>
-/// Authorisation is per-audience and cached for the lifetime of the
-/// connection. Token renewal (before <c>expiresAtUtc</c>) is intentionally
-/// out of scope for Slice 8a — the <c>resilience-cbs-token-cache</c>
-/// follow-up adds proactive refresh.
+/// Authorisation is cached per audience and checked before link creation
+/// and resource operations. Active cached links renew within the safety
+/// window without being replaced; idle links renew on their next use.
 /// </para>
 /// </summary>
 internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
@@ -183,7 +182,8 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         {
             if (prefetchCredit > 0)
                 await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
-            return new ServiceBusReceiver(link, queueName);
+            return new ServiceBusReceiver(link, queueName, sessionId: null,
+                ct => EnsureAuthorizedAsync(audience, ct));
         }
         catch
         {
@@ -268,7 +268,8 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
 
             if (prefetchCredit > 0)
                 await link.GrantCreditAsync(prefetchCredit, cancellationToken).ConfigureAwait(false);
-            return new ServiceBusReceiver(link, queueName, boundSessionId);
+            return new ServiceBusReceiver(link, queueName, boundSessionId,
+                ct => EnsureAuthorizedAsync(audience, ct));
         }
 
         catch
@@ -375,7 +376,8 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         var link = await dataSession.AttachLinkAsync(settings, cancellationToken).ConfigureAwait(false);
         try
         {
-            return new ServiceBusAmqpSender(link, queueName);
+            return new ServiceBusAmqpSender(link, queueName,
+                ct => EnsureAuthorizedAsync(audience, ct));
         }
         catch
         {
@@ -427,13 +429,16 @@ internal sealed class ServiceBusAmqpConnection : IAsyncDisposable
         await EnsureAuthorizedAsync(managementAudience, cancellationToken).ConfigureAwait(false);
         var dataSession = await EnsureDataSessionAsync(cancellationToken).ConfigureAwait(false);
         return await ServiceBusManagementClient
-            .OpenAsync(dataSession, managementAddress, cancellationToken)
+            .OpenAsync(dataSession, managementAddress, cancellationToken,
+                ct => EnsureAuthorizedAsync(managementAudience, ct))
             .ConfigureAwait(false);
     }
 
 
     private async Task EnsureAuthorizedAsync(string audience, CancellationToken cancellationToken)
     {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
         // Lock-free fast path: ConcurrentDictionary makes the read safe to
         // race against concurrent writers under the lock. We refresh the
         // token when its expiry is within `_refreshSafetyWindow` from now —
