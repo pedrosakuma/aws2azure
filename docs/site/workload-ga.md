@@ -2,9 +2,9 @@
 
 These verdicts are generated from versioned profile manifests, gap docs, real-Azure seals, and qualification artifacts.
 
-> **Current adoption authority (as of `2026-09-22T22:45:25Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
+> **Current adoption authority (as of `2026-09-25T23:05:38Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
 >
-> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8`; contract: `docs/workloads/certification/authority.yaml`.
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8`; contract: `docs/workloads/certification/authority.yaml`.
 
 ## Authority precedence
 
@@ -20,18 +20,18 @@ Legend: ⛔ blocked · 🟡 conditional · 🔵 candidate · ✅ GA
 
 | Profile | Version | Minimum proxy | Verdict | Freshness | Blocking reasons |
 |---|---:|---|---|---|---|
-| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | ✅ GA | expires in 67h (2026-09-25T18:32:50Z) | 0 |
+| DynamoDB basic table and item CRUD (`dynamodb-basic-crud`) | 1 | `0.1.0` | ✅ GA | expires in 69h (2026-09-28T20:41:58Z) | 0 |
 | DynamoDB Query, Scan, and secondary indexes (`dynamodb-query-scan-indexes`) | 1 | `0.1.0` | 🟡 conditional | n/a | 1 |
-| DynamoDB single-table single-partition transactions (`dynamodb-single-partition-transactions`) | 1 | `0.1.0` | 🔵 candidate | expired 1313h ago (2026-07-30T05:23:29Z) | 16 |
+| DynamoDB single-table single-partition transactions (`dynamodb-single-partition-transactions`) | 1 | `0.1.0` | 🔵 candidate | expired 1385h ago (2026-07-30T05:23:29Z) | 16 |
 | Kinesis basic record ingestion (`kinesis-basic-record-ingestion`) | 1 | `0.1.0` | 🔵 candidate | n/a | 1 |
 | Kinesis single consumer per shard (`kinesis-single-consumer-per-shard`) | 1 | `0.1.0` | 🔵 candidate | n/a | 1 |
-| S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | ✅ GA | expires in 67h (2026-09-25T17:50:22Z) | 0 |
-| Secrets Manager basic lifecycle (`secretsmanager-basic-lifecycle`) | 1 | `0.1.0` | ✅ GA | expires in 67h (2026-09-25T18:13:11Z) | 0 |
+| S3 basic object CRUD (`s3-basic-object-crud`) | 1 | `0.1.0` | ✅ GA | expires in 71h (2026-09-28T22:13:36Z) | 0 |
+| Secrets Manager basic lifecycle (`secretsmanager-basic-lifecycle`) | 1 | `0.1.0` | ✅ GA | expires in 68h (2026-09-28T19:15:05Z) | 0 |
 | SNS standard publish (Event Grid backend) (`sns-standard-publish-event-grid`) | 1 | `0.1.0` | 🔵 candidate | n/a | 1 |
 | SNS standard publish (Service Bus Topics backend) (`sns-standard-publish-service-bus`) | 1 | `0.1.0` | 🔵 candidate | n/a | 1 |
 | SNS subscription management (Service Bus Topics backend) (`sns-subscription-management-service-bus`) | 1 | `0.1.0` | 🔵 candidate | n/a | 1 |
 | SQS dead-letter and redrive (`sqs-dlq-redrive`) | 1 | `0.1.0` | ⛔ blocked | n/a | 7 |
 | SQS FIFO messaging over AMQP (`sqs-fifo-amqp`) | 1 | `0.1.0` | ⛔ blocked | n/a | 2 |
-| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | ✅ GA | expires in 68h (2026-09-25T18:54:48Z) | 0 |
+| SQS standard messaging (`sqs-standard-messaging`) | 1 | `0.1.0` | ✅ GA | expires in 67h (2026-09-28T18:15:08Z) | 0 |
 
 A profile reaches GA only when every required operation is compatible or explicitly accepted, every real-Azure seal is fresh, and a matching reviewed qualification artifact is `qualified`.

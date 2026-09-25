@@ -6,7 +6,7 @@
     "name": "DynamoDB basic table and item CRUD",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-25T18:32:50.0457207+00:00",
+    "evidence_expires_at_utc": "2026-09-28T20:41:58.6051764+00:00",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -64,12 +64,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -170,12 +170,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -360,12 +360,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -472,12 +472,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -602,12 +602,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -668,7 +668,7 @@
     "name": "S3 basic object CRUD",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-25T17:50:22.9687576+00:00",
+    "evidence_expires_at_utc": "2026-09-28T22:13:36.6403072+00:00",
     "findings": [
       {
         "code": "profile_ga",
@@ -678,12 +678,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -744,7 +744,7 @@
     "name": "Secrets Manager basic lifecycle",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-25T18:13:11.4506387+00:00",
+    "evidence_expires_at_utc": "2026-09-28T19:15:05.1395798+00:00",
     "findings": [
       {
         "code": "partial_operation_accepted",
@@ -784,12 +784,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -908,12 +908,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -1032,12 +1032,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -1174,12 +1174,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -1310,12 +1310,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -1410,12 +1410,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
@@ -1476,7 +1476,7 @@
     "name": "SQS standard messaging",
     "minimum_proxy_version": "0.1.0",
     "verdict": "ga",
-    "evidence_expires_at_utc": "2026-09-25T18:54:48.3514388+00:00",
+    "evidence_expires_at_utc": "2026-09-28T18:15:08.6092567+00:00",
     "findings": [
       {
         "code": "design_gap_accepted",
@@ -1492,12 +1492,12 @@
       }
     ],
     "evaluation": {
-      "evaluated_as_of_utc": "2026-09-22T22:45:25Z",
+      "evaluated_as_of_utc": "2026-09-25T23:05:38Z",
       "contract": "docs/workloads/certification/authority.yaml",
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:6c9d7587bb23dccb1558895ded914af4a093bf44adaa155d47e157c85212fd86",
+        "canonical_inputs_revision": "sha256:f4701719c3ab5028ed09eb9c8cf88fa6d51275de31d7ddb5f44956326adefbab",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8",
