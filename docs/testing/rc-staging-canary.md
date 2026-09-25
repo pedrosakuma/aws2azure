@@ -677,9 +677,15 @@ manifest validator against the exact archive files; it does not rebuild or
 repackage them.
 
 The workflow deletes projected credentials and sealed runtime bytes, then
-deallocates its tagged resource group even on failure. Missing Azure
-credentials, missing artifacts, test skips, incomplete cleanup evidence,
-generation errors, or strict-validation errors fail closed. Never copy job
+requests deletion of its tagged resource group even on failure. Missing Azure
+credentials, missing artifacts, test skips, rejected cleanup operations,
+unreadable cleanup state, generation errors, or strict-validation errors fail
+closed. Only a resource-group deletion already accepted by Azure but still
+pending after the 20-minute confirmation budget produces a warning and a
+pending-group job summary rather than failing observation/calibration.
+The six-hour reaper remains strict, and operators must verify eventual absence.
+This exception does not apply to in-harness canary cleanup or restoration
+failures and does not make a historically failed run acceptable. Never copy job
 logs, backend keys, projected tokens, or generated proxy configuration into an
 observation artifact.
 

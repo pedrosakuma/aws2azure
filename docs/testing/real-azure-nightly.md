@@ -61,7 +61,13 @@ and no long-lived account-key secrets:
    non-empty accounts from deletion), deletes/purges Key Vault, requests
    resource-group deletion, and waits for Azure to confirm it. This runs in an
    `if: always()` teardown, so cleanup is attempted even when provisioning or
-   tests fail, and a rejected or incomplete deletion fails visibly. A final
+   tests fail. These foreground workflows opt into
+   `--allow-pending-deletion`: only when Azure has accepted deletion and the
+   group still exists after the unchanged 20-minute confirmation window does
+   cleanup emit a warning and identify the pending group in the job summary
+   instead of failing the run. Acceptance is not confirmation of deletion.
+   Rejected deletion, protected resources, authorization failures, unreadable
+   state, and unexpected existence responses remain blocking. A final
    gate then restores the captured test/report exit codes; report generation
    and cleanup never turn a failing test green.
 
@@ -69,7 +75,12 @@ A [`real-azure-reaper`](../../.github/workflows/real-azure-reaper.yml) workflow
 runs every 6 hours as a backstop, permanently deleting blob versions from
 immutable-versioned storage accounts and deleting any
 `purpose=aws2azure-nightly` resource group older than `MAX_AGE_HOURS` (default
-6) — covering the rare case where a force-cancelled run skips its teardown.
+6), as well as tagged `aws2azure-rc-observation` groups. It covers pending
+accepted deletions and force-cancelled runs that skip teardown. The reaper
+and local cleanup commands keep the helper's strict default: failure to
+confirm deletion still fails them. Scheduling and the age threshold mean
+cleanup is not guaranteed exactly six hours after creation; inspect pending
+groups and costs rather than assuming a successful test run left no resources.
 
 Cosmos DB account creation dominates the run (normally ~5–10 min). The job has
 a hard **60-minute timeout**, global fixed concurrency
@@ -82,7 +93,7 @@ resource group, asynchronous teardown, six-hour reaper, and subscription Cost
 Management budget cap both duration and cost; investigate any run approaching
 the timeout rather than increasing workloads or the timeout.
 
-The operational cost ceiling is **one active ephemeral resource group**:
+Each integration run provisions **one ephemeral resource group**:
 Standard LRS Storage (including a Storage Queue used only as Event Grid
 delivery evidence), one Standard Service Bus namespace, one serverless Cosmos
 account, one capacity-1 Standard Event Hubs namespace with a two-partition hub,
@@ -91,7 +102,8 @@ scales SKU/capacity or derives request count from input. Azure prices vary by
 agreement and region, so the currency-denominated limit belongs in the
 subscription Cost Management budget; set that budget to the operator-approved
 nightly amount and do not raise these SKUs/counts to make a conformance test
-pass.
+pass. An accepted but unconfirmed deletion can outlive its run and overlap a
+later run's resources, so workflow concurrency is not a hard billing cap.
 
 ## What runs
 

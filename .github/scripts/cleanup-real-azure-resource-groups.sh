@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+allow_pending_deletion=false
+if [ "${1:-}" = --allow-pending-deletion ]; then
+  allow_pending_deletion=true
+  shift
+fi
+
 if [ "$#" -eq 0 ]; then
-  echo "usage: $0 <resource-group> [<resource-group> ...]" >&2
+  echo "usage: $0 [--allow-pending-deletion] <resource-group> [<resource-group> ...]" >&2
   exit 2
 fi
 
@@ -229,11 +235,14 @@ while [ "${#pending_groups[@]}" -gt 0 ] && [ "$(date -u +%s)" -lt "$deadline" ];
       continue
     fi
     group_exists="${group_exists//$'\r'/}"
-    if [ "$group_exists" = false ]; then
-      echo "Deleted resource group $resource_group."
-    else
-      still_pending+=("$resource_group")
-    fi
+    case "$group_exists" in
+      false) echo "Deleted resource group $resource_group." ;;
+      true) still_pending+=("$resource_group") ;;
+      *)
+        echo "::error::Azure returned an unexpected existence result for $resource_group: $group_exists"
+        failed=1
+        ;;
+    esac
   done
   pending_groups=("${still_pending[@]}")
   if [ "${#pending_groups[@]}" -gt 0 ]; then
@@ -242,8 +251,16 @@ while [ "${#pending_groups[@]}" -gt 0 ] && [ "$(date -u +%s)" -lt "$deadline" ];
 done
 
 for resource_group in "${pending_groups[@]}"; do
-  echo "::error::Azure did not confirm deletion of resource group $resource_group."
-  failed=1
+  if [ "$allow_pending_deletion" = true ]; then
+    echo "::warning::Azure accepted deletion of resource group $resource_group, but did not confirm it within ${group_delete_timeout_seconds}s. Cleanup remains pending; verify absence or follow up with the six-hour real-azure-reaper."
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      printf -- '- **Cleanup pending:** Azure accepted deletion of `%s`, but absence was not confirmed within %ss. Verify deletion; the six-hour real-azure-reaper remains the backstop.\n' \
+        "$resource_group" "$group_delete_timeout_seconds" >> "$GITHUB_STEP_SUMMARY"
+    fi
+  else
+    echo "::error::Azure did not confirm deletion of resource group $resource_group."
+    failed=1
+  fi
 done
 
 exit "$failed"

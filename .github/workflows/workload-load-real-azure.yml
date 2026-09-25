@@ -1259,4 +1259,5 @@ jobs:
         if: always()
         run: >-
           bash .github/scripts/cleanup-real-azure-resource-groups.sh
+          --allow-pending-deletion
           "$PRIMARY_RG_NAME" "$RETRY_RG_NAME"
