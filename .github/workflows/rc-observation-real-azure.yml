@@ -1453,7 +1453,7 @@ jobs:
       - name: Deallocate ephemeral Azure resources
         if: always()
         shell: bash
-        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh --allow-pending-deletion "$RG_NAME"
 
       - name: Enforce successful trigger-free observation
         if: always()
@@ -1621,7 +1621,7 @@ jobs:
       - name: Deallocate ephemeral Azure resources
         if: always()
         shell: bash
-        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh --allow-pending-deletion "$RG_NAME"
 
       - name: Enforce successful cohort capture
         if: always()

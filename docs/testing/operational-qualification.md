@@ -168,6 +168,15 @@ candidate or promoted itself.
    verdict is published to `docs/site/workload-ga.json`, which remains the
    live record of record.
 
+Correctness and load workflows distinguish a rejected cleanup operation from
+an accepted resource-group deletion that Azure has not yet confirmed. Only
+the latter may finish with an explicit pending-cleanup warning after the
+20-minute confirmation budget. The six-hour reaper remains strict; operators
+must track the named groups until deletion is confirmed. Other cleanup errors
+still fail the workflow. This does not change test/evidence gates or make
+historically failed runs eligible for qualification. See
+[the cleanup policy](real-azure-nightly.md).
+
 The bootstrap record currently held for SQS remains profile-owned. Every load
 proof records the prior ledger file digest/status and
 the exact prior producer, artifact, manifest, executable, and attestation

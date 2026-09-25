@@ -44,6 +44,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-rc-observation-readiness.py
           PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-rc-observation-profiles.py
           PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-rc-observation-cleanup.py
+          PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-real-azure-cleanup.py
       - name: Validate release profile coverage gates
         shell: bash
         run: |

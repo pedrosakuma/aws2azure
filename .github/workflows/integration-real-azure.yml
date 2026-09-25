@@ -989,14 +989,15 @@ jobs:
       # provisioning or the tests failed. Immutable storage with versioning
       # protects an account from deletion while it contains containers, so the
       # shared cleanup permanently deletes every blob version and waits for
-      # Azure to confirm the resource-group deletion. The reaper backstops
-      # force-cancelled runs.
+      # Azure to confirm the resource-group deletion. An accepted deletion
+      # still pending at the deadline is a warning; other cleanup errors fail.
+      # The six-hour reaper remains strict and backstops pending cleanup.
       - name: Deallocate ephemeral Azure backends
         if: >-
           always() &&
           steps.gate.outputs.enabled == 'true' &&
           steps.plan.outputs.requires_real_azure == 'true'
-        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+        run: bash .github/scripts/cleanup-real-azure-resource-groups.sh --allow-pending-deletion "$RG_NAME"
 
       - name: Remove downloaded sealed runtime bytes
         if: always()

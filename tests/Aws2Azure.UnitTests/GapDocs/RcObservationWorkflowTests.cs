@@ -525,7 +525,7 @@ public sealed class RcObservationWorkflowTests
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "cleanup-real-azure-resource-groups.sh \"$RG_NAME\"",
+            "cleanup-real-azure-resource-groups.sh --allow-pending-deletion \"$RG_NAME\"",
             Workflow,
             StringComparison.Ordinal);
         Assert.Contains(
