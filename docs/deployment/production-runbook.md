@@ -359,6 +359,41 @@ HTTP status as a diagnosis:
 | `500` | Unmapped proxy failure, serialization/handler fault, or service-specific internal error | Inspect proxy logs/restarts and response body; compare candidate vs. stable cohort; reproduce with the same request | Roll back on a candidate regression; otherwise isolate the operation and preserve evidence for a defect |
 | `503` | Azure/server/transport failure after retries, token-source transient failure, or an open per-endpoint circuit breaker returning a synthetic service-native transient error | Check Azure availability, network/TLS/DNS, identity endpoint, backend duration, Azure 5xx, and whether failures persist through the breaker's cool-down | Stop load amplification, keep client retries bounded, restore Azure/network/identity, and roll back if candidate-specific |
 
+### Secrets Manager authentication diagnostics
+
+Warning events in the `Aws2Azure.Modules.SecretsManager.SecretsManagerServiceModule`
+logger category distinguish two failure boundaries without changing AWS responses:
+
+- **Event 5, `TokenAcquisitionFailed`**: Entra token acquisition failed after the
+  existing retry policy. `TokenStatus` retains the token provider's status before
+  AWS mapping (for example, token HTTP 400/401/403 all map to AWS 403).
+  This is not proof of an HTTP response: the provider also reports a synthetic
+  503 for transport failures, timeouts, or an open circuit breaker.
+  Token response request-ID metadata is not retained; `UpstreamRequestId` is
+  explicitly `unavailable`.
+- **Event 6, `KeyVaultAuthorizationFailed`**: Key Vault returned HTTP 401 or 403.
+  `UpstreamStatus` preserves that status before operation-specific AWS mapping.
+  A 403 alone does not prove an RBAC problem (a disabled secret version can also
+  return 403); use Azure-side authorization evidence to determine the cause.
+
+Both events include the allowlisted incoming `Operation` and a bounded
+`RequestId` from the proxy's `HttpContext.TraceIdentifier` (also used by the
+default AWS error request-ID header). Accepted formats are Kestrel's 13-character
+uppercase base32 connection ID plus `:` and eight uppercase hexadecimal
+sequence digits, or a 32/36-character GUID. Other formats become `unavailable`.
+Event 6 retains only a single 32/36-character GUID from `x-ms-request-id`;
+absent, multiple, oversized, or malformed values become `unavailable`.
+Incoming request headers are not used as diagnostic identity. Request identity
+is copied per operation, including any subsequent background purge calls, not
+stored on a shared mutable cached client.
+
+These events never include secret names/values, credential identifiers, bearer
+tokens, Authorization, full URIs, exception details, or response bodies.
+Diagnostics do not read upstream bodies, add retries, or emit success/caller
+cancellation events. Multiple failing backend calls in one operation can yield
+multiple events. This is bounded failure attribution, not a diagnosis or fix
+for historical 403s, and is not evidence of new real-Azure qualification.
+
 The shared Azure REST client defaults to a 100-second request timeout and up to
 three attempts for replayable requests. It retries transport failures, internal
 timeouts, 408, and 5xx with exponential jitter; 503 can honor `Retry-After`.

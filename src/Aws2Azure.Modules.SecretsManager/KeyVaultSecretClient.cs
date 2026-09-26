@@ -4,10 +4,11 @@ using System.Text;
 using System.Text.Json;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Aws2Azure.Modules.SecretsManager;
 
-internal sealed class KeyVaultSecretClient
+internal readonly struct KeyVaultSecretClient
 {
     internal const string ApiVersion = "7.6";
     internal const string VaultScope = "https://vault.azure.net/.default";
@@ -33,6 +34,9 @@ internal sealed class KeyVaultSecretClient
     private readonly AzureHttpClient _http;
     private readonly EntraIdTokenProvider _tokenProvider;
     private readonly KeyVaultCredentials _credentials;
+    private readonly ILogger? _logger;
+    private readonly string? _operation;
+    private readonly string? _requestId;
 
     public KeyVaultSecretClient(AzureHttpClient http, EntraIdTokenProvider tokenProvider, KeyVaultCredentials credentials)
     {
@@ -41,16 +45,54 @@ internal sealed class KeyVaultSecretClient
         _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
     }
 
+    private KeyVaultSecretClient(KeyVaultSecretClient client, ILogger logger, string operation, string requestId)
+    {
+        _http = client._http;
+        _tokenProvider = client._tokenProvider;
+        _credentials = client._credentials;
+        _logger = logger;
+        _operation = operation;
+        _requestId = requestId;
+    }
+
+    // Copy request identity, never mutate the cached client or retain HttpContext:
+    // the same binding can serve concurrent requests and background purge work.
+    public KeyVaultSecretClient WithDiagnostics(ILogger logger, string operation, string requestId)
+        => new(this, logger, operation, SecretsManagerLog.SafeRequestId(requestId));
+
     public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        => await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+    {
+        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+            && _logger is { } logger && logger.IsEnabled(LogLevel.Warning))
+        {
+            SecretsManagerLog.KeyVaultAuthorizationFailed(
+                logger, _operation!, _requestId!, (int)response.StatusCode,
+                SecretsManagerLog.SafeUpstreamRequestId(response.Headers));
+        }
+
+        return response;
+    }
 
     public async Task<string> GetAccessTokenAsync(CancellationToken cancellationToken)
     {
         var auth = new AadAuthSettings(_credentials.AuthMode, _credentials.TenantId, _credentials.ClientId, _credentials.ClientSecret);
-        return await _tokenProvider.GetTokenAsync(
-            auth,
-            VaultScope,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _tokenProvider.GetTokenAsync(
+                auth,
+                VaultScope,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (EntraIdTokenException ex)
+        {
+            if (_logger is { } logger)
+            {
+                SecretsManagerLog.TokenAcquisitionFailed(logger, _operation!, _requestId!, (int)ex.StatusCode);
+            }
+
+            throw;
+        }
     }
 
     public string BuildVaultUri(string path)
