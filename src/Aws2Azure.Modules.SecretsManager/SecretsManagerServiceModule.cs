@@ -114,6 +114,11 @@ public sealed class SecretsManagerServiceModule : IServiceModule
             accessKeyId,
             static (_, state) => new KeyVaultSecretClient(state.Http, state.TokenProvider, state.KeyVault),
             (Http: _http, TokenProvider: _tokenProvider, KeyVault: keyVault));
+        if (_logger is { } logger && logger.IsEnabled(LogLevel.Warning))
+        {
+            client = client.WithDiagnostics(logger, operationName, context.TraceIdentifier);
+        }
+
         try
         {
             using var document = await ReadRequestDocumentAsync(context.Request, context.RequestAborted).ConfigureAwait(false);
