@@ -1,0 +1,220 @@
+{
+  "candidate_identity_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+  "candidate_source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+  "gates": [
+    {
+      "candidate_receipt": null,
+      "category": "ci",
+      "event": "push",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "ci-candidate",
+      "profile": null,
+      "run_attempt": 1,
+      "run_id": 36275944033,
+      "workflow_path": ".github/workflows/ci.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "aot",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "aot-sealed-runtime",
+      "profile": null,
+      "run_attempt": 1,
+      "run_id": 36280313825,
+      "workflow_path": ".github/workflows/sealed-runtime.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "conformance",
+      "event": "schedule",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "conformance-tier2",
+      "profile": null,
+      "run_attempt": 1,
+      "run_id": 36294993426,
+      "workflow_path": ".github/workflows/conformance.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "footprint",
+      "event": "schedule",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "footprint-candidate",
+      "profile": null,
+      "run_attempt": 1,
+      "run_id": 36299654870,
+      "workflow_path": ".github/workflows/footprint.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "real-azure",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "real-azure-sqs",
+      "profile": "sqs-standard-messaging",
+      "run_attempt": 1,
+      "run_id": 36280537667,
+      "workflow_path": ".github/workflows/integration-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "profile",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "profile-sqs",
+      "profile": "sqs-standard-messaging",
+      "run_attempt": 1,
+      "run_id": 36283672084,
+      "workflow_path": ".github/workflows/qualification-real-azure.yml"
+    },
+    {
+      "candidate_receipt": {
+        "artifact_id": 10974952138,
+        "artifact_name": "real-azure-rc-observation-selection-sqs-standard-messaging-run-36426059230-attempt-1",
+        "artifact_upload_digest": "sha256:c5f6fb1e87c4cd34164cf141d1d554f63002c26b3d8822b019d5869f1854fa3c",
+        "receipt_name": "observation-upload-identity.json"
+      },
+      "category": "observation",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "82b690090d7d59f7a8caa7f65772039d7a7448c1",
+      "name": "observation-sqs",
+      "profile": "sqs-standard-messaging",
+      "run_attempt": 1,
+      "run_id": 36426059230,
+      "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "real-azure",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "real-azure-secrets",
+      "profile": "secretsmanager-basic-lifecycle",
+      "run_attempt": 1,
+      "run_id": 36283772869,
+      "workflow_path": ".github/workflows/integration-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "profile",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "profile-secrets",
+      "profile": "secretsmanager-basic-lifecycle",
+      "run_attempt": 1,
+      "run_id": 36288126483,
+      "workflow_path": ".github/workflows/qualification-real-azure.yml"
+    },
+    {
+      "candidate_receipt": {
+        "artifact_id": 10988398839,
+        "artifact_name": "real-azure-rc-observation-selection-secretsmanager-basic-lifecycle-run-36455379008-attempt-1",
+        "artifact_upload_digest": "sha256:ed88a47e51b853ed3f5cacb0163a451ffe280c62bb3d6da0cc74fb3e267d4e92",
+        "receipt_name": "observation-upload-identity.json"
+      },
+      "category": "observation",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "82b690090d7d59f7a8caa7f65772039d7a7448c1",
+      "name": "observation-secrets",
+      "profile": "secretsmanager-basic-lifecycle",
+      "run_attempt": 1,
+      "run_id": 36455379008,
+      "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "real-azure",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "real-azure-dynamodb",
+      "profile": "dynamodb-basic-crud",
+      "run_attempt": 1,
+      "run_id": 36288199735,
+      "workflow_path": ".github/workflows/integration-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "profile",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "profile-dynamodb",
+      "profile": "dynamodb-basic-crud",
+      "run_attempt": 1,
+      "run_id": 36292709091,
+      "workflow_path": ".github/workflows/qualification-real-azure.yml"
+    },
+    {
+      "candidate_receipt": {
+        "artifact_id": 10992168023,
+        "artifact_name": "real-azure-rc-observation-selection-dynamodb-basic-crud-run-36463787285-attempt-1",
+        "artifact_upload_digest": "sha256:c015dd435225f0d0d75c911f77e6d2b3e532f69b9e619fdf7b2cc50aac013253",
+        "receipt_name": "observation-upload-identity.json"
+      },
+      "category": "observation",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "82b690090d7d59f7a8caa7f65772039d7a7448c1",
+      "name": "observation-dynamodb",
+      "profile": "dynamodb-basic-crud",
+      "run_attempt": 1,
+      "run_id": 36463787285,
+      "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "real-azure",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "real-azure-s3",
+      "profile": "s3-basic-object-crud",
+      "run_attempt": 1,
+      "run_id": 36292783112,
+      "workflow_path": ".github/workflows/integration-real-azure.yml"
+    },
+    {
+      "candidate_receipt": null,
+      "category": "profile",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+      "name": "profile-s3",
+      "profile": "s3-basic-object-crud",
+      "run_attempt": 1,
+      "run_id": 36368783013,
+      "workflow_path": ".github/workflows/qualification-real-azure.yml"
+    },
+    {
+      "candidate_receipt": {
+        "artifact_id": 10995934184,
+        "artifact_name": "real-azure-rc-observation-selection-s3-basic-object-crud-run-36473482616-attempt-1",
+        "artifact_upload_digest": "sha256:60e0cfe8ec23d45993b26b5baeb3f8cad955f1d962f60422199382d2790ddc11",
+        "receipt_name": "observation-upload-identity.json"
+      },
+      "category": "observation",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "82b690090d7d59f7a8caa7f65772039d7a7448c1",
+      "name": "observation-s3",
+      "profile": "s3-basic-object-crud",
+      "run_attempt": 1,
+      "run_id": 36473482616,
+      "workflow_path": ".github/workflows/rc-observation-real-azure.yml"
+    },
+    {
+      "candidate_receipt": {
+        "artifact_id": 11002183249,
+        "artifact_name": "release-candidate-perf-v1.1.1-rc.5-run-36491855259-attempt-1",
+        "artifact_upload_digest": "sha256:4d30e24d8e107a5b0c405f7aa40f73083478655960cca251f4c414a695302f96",
+        "receipt_name": "release-candidate-perf.json"
+      },
+      "category": "perf",
+      "event": "workflow_dispatch",
+      "expected_head_sha": "af3142fd9ae14c5ae193ec1fc17ccaa23e03a3e5",
+      "name": "perf-exact-candidate",
+      "profile": null,
+      "run_attempt": 1,
+      "run_id": 36491855259,
+      "workflow_path": ".github/workflows/release-candidate-perf.yml"
+    }
+  ],
+  "repository": "pedrosakuma/aws2azure",
+  "schema_version": 1
+}
