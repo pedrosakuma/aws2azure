@@ -1707,7 +1707,7 @@ jobs:
           mkdir -p "$CAPTURE_ROOT" "$OUTPUT_ROOT"
           python3 .github/scripts/merge-rc-observation-cohorts.py             "$PRIVATE_ROOT/candidate"             "$PRIVATE_ROOT/stable"             "$CAPTURE_ROOT"
           jq -e             --arg profile "$PROFILE"             '
-              .schema_version == 1 and
+              .schema_version == 2 and
               .profile.id == $profile and
               .profile.version == 1 and
               (.cohorts | length) == 2 and
