@@ -75,10 +75,10 @@ Older two-profile records are not rewritten; current packaging/identity commands
 reject them as inputs to a new four-profile candidate.
 
 **The four profile approvals now bind one qualified runtime.**
-The September 25 qualification campaign used source
-`40c1ea996ec8d971dd4bb2aeda5de904d123f5c5`, sealed producer
-`36171044613/1`, artifact `10880620175`, and complete-runtime digest
-`sha256:7d8b3c21181f246c8746e39454a5b22a1fc0dc73ee339279e97d6b997e417d6d`.
+The September 26-28 qualification campaign used source
+`bf2274dc6469ce2a8a0c2db4b956391f24c74076`, sealed producer
+`36280313825/1`, artifact `10918950988`, and complete-runtime digest
+`sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322`.
 Each profile has one sealed correctness run and three distinct production-shaped
 load runs, with its unchanged policy and exact historical rollback target.
 The emitted qualification YAMLs are retained unchanged under
@@ -87,10 +87,10 @@ digests and preserve each proof's prior identity.
 
 | Profile | Qualified evaluator run | Correctness run | Three load runs (all attempt 1) |
 |---|---|---|---|
-| S3 CRUD | [36199381306](https://github.com/pedrosakuma/aws2azure/actions/runs/36199381306) | 36195150810 | 36197144355, 36198007158, 36198716959 |
-| SecretsManager lifecycle | [36186184015](https://github.com/pedrosakuma/aws2azure/actions/runs/36186184015) | 36177793170 | 36179784950, 36181994267, 36184140603 |
-| DynamoDB CRUD | [36195000993](https://github.com/pedrosakuma/aws2azure/actions/runs/36195000993) | 36186328240 | 36188477903, 36190722119, 36192822692 |
-| SQS standard | [36177603334](https://github.com/pedrosakuma/aws2azure/actions/runs/36177603334) | 36171434496 | 36173943214, 36175185313, 36176366164 |
+| S3 CRUD | [36368783013](https://github.com/pedrosakuma/aws2azure/actions/runs/36368783013) | 36292783112 | 36366800480, 36367441737, 36368133678 |
+| SecretsManager lifecycle | [36288126483](https://github.com/pedrosakuma/aws2azure/actions/runs/36288126483) | 36283772869 | 36284943737, 36286028409, 36287072545 |
+| DynamoDB CRUD | [36292709091](https://github.com/pedrosakuma/aws2azure/actions/runs/36292709091) | 36288199735 | 36289409134, 36290477218, 36291653513 |
+| SQS standard | [36283672084](https://github.com/pedrosakuma/aws2azure/actions/runs/36283672084) | 36280537667 | 36281869723, 36282465355, 36283122744 |
 
 SQS's three source load artifacts each retain one supplementary `rollback-rest`
 failure. The pre-existing policy excludes that REST counterpart; all required
@@ -98,11 +98,13 @@ AMQP rollback proofs passed. SecretsManager's successful rotation proof includes
 the intended revoked-identity denial, not an explanation of the historical #1016
 403. Neither caveat is waived or converted into a successful production operation.
 
-All four rollback proofs target the previously approved `d6619b09` runtime
-(sealed producer `35761930042/1`, artifact `10710381571`). That prior predates the
-cached-AMQP authorization-renewal fix in #1048. The short SQS rollback proof is
-not evidence that this prior is suitable for a long stable-cohort observation;
-that risk remains a separate review prerequisite. S3 correctness emitted
+All four rollback proofs target the previously approved `40c1ea99` runtime
+(sealed producer `36171044613/1`, artifact `10880620175`). Both this prior and the
+new candidate contain the cached-AMQP authorization-renewal fix in #1048.
+This supplies the baseline transition described in #1056 without rewriting RC4:
+RC4 remains bound to its historical `d6619b09` rollback target, which predates
+that fix. Short qualification is not proof of long stable-cohort behavior;
+a separately authorized observation is still required. S3 correctness emitted
 per-blob lease-cleanup warnings, but the resource group was confirmed absent
 before its load campaign. The historically failed SecretsManager correctness
 run `36147184976` remains ineligible and is not part of these qualifications.
@@ -113,8 +115,8 @@ The later approved-ledger/orchestration commit may differ from the candidate
 source: the new RC tag must identify the qualified source above, and packaging
 must reuse its sealed x64 bytes rather than rebuild the approval commit.
 Artifact availability, attestations and freshness are rechecked by consumers.
-Existing `v1.1.1-rc.1`, `v1.1.1-rc.2`, and `v1.1.1-rc.3` identities must not be
-moved or overwritten.
+Existing `v1.1.1-rc.1`, `v1.1.1-rc.2`, `v1.1.1-rc.3`, and `v1.1.1-rc.4`
+identities must not be moved or overwritten.
 
 The DynamoDB/SQS observation policy YAMLs already exist at concurrency `8/8`.
 They reference reviewed qualification throughput floors of 17 `GetItem`/s and
