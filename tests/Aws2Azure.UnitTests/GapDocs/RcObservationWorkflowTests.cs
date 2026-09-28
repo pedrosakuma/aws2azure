@@ -11,6 +11,25 @@ public sealed class RcObservationWorkflowTests
         "rc-observation-real-azure.yml"));
 
     [Fact]
+    public void Combined_capture_guard_requires_independent_window_schema()
+    {
+        var start = Workflow.IndexOf(
+            "- name: Combine cohort captures into one exact observation capture",
+            StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = Workflow.IndexOf("\n      - name:", start + 1, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var combineStep = Workflow[start..end];
+
+        Assert.Contains("merge-rc-observation-cohorts.py", combineStep, StringComparison.Ordinal);
+        Assert.Contains(".schema_version == 2 and", combineStep, StringComparison.Ordinal);
+        Assert.DoesNotContain(".schema_version == 1", combineStep, StringComparison.Ordinal);
+        Assert.Contains("(.cohorts | length) == 2", combineStep, StringComparison.Ordinal);
+        Assert.Contains("(.metrics | length) == 2", combineStep, StringComparison.Ordinal);
+        Assert.Contains(".restoration.verified == true", combineStep, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Readiness_is_live_same_job_current_attempt_and_not_a_guessed_start()
     {
         var action = File.ReadAllText(Path.Combine(FindRepositoryRoot(),
