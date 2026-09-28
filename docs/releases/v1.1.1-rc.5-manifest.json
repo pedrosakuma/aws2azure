@@ -1,0 +1,361 @@
+{
+  "candidate": {
+    "identifier": "v1.1.1-rc.5",
+    "source": {
+      "ref": "refs/tags/v1.1.1-rc.5",
+      "repository": "pedrosakuma/aws2azure",
+      "sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076"
+    }
+  },
+  "compatibility_policy": {
+    "digest": "sha256:7f1c5f7f94c24b716f09ff271863b94c8c88273f7db201d853f02f080881e673",
+    "identifier": "aws2azure-compatibility-policy-v1"
+  },
+  "container": {
+    "index_digest": "sha256:3c8e257883a783c1b33553d5cbf8792cbfb36ba2ffcb4f769e91a63a93e812e6",
+    "platforms": [
+      {
+        "digest": "sha256:4e3de5e2a20e43a4ca02b11f977f64d1eb57e0631ebbb3bfb62280b80552ef74",
+        "platform": "linux/amd64"
+      },
+      {
+        "digest": "sha256:5e1289f7790e6a1ead442a6eb7bc73196fcedcb65c8104f779c22d4a6c445232",
+        "platform": "linux/arm64"
+      }
+    ],
+    "repository": "ghcr.io/pedrosakuma/aws2azure"
+  },
+  "content_digest": "sha256:9537857c76f11639ce5f8ded87feb5902c914eea9b2dfe34457af0785a6d5b8a",
+  "identity_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+  "observation_evidence": [
+    {
+      "digest": "sha256:dd49c676927b8ff557d6396657b68dffccba52f830bb12b5e77c89ac9ff8e4e8",
+      "identifier": "github-actions:pedrosakuma/aws2azure:run-36463787285:attempt-1:artifact-10992547585:sha256:2d7e89a522d7588f9a8958756b77634271c5c4c5c9ffdcd31f0f322cf81c757b",
+      "profile": {
+        "id": "dynamodb-basic-crud",
+        "version": 1
+      },
+      "release_candidate_manifest_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+      "verdict": "pass"
+    },
+    {
+      "digest": "sha256:fbde4df17fd86f49b836d3de14a37542f0942626f3992974263913362f041aa2",
+      "identifier": "github-actions:pedrosakuma/aws2azure:run-36473482616:attempt-1:artifact-10995934183:sha256:064764db63d54aaca72dc624ef694e47aaf4acf9b5a1fa9c92ea678d798f2c7c",
+      "profile": {
+        "id": "s3-basic-object-crud",
+        "version": 1
+      },
+      "release_candidate_manifest_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+      "verdict": "pass"
+    },
+    {
+      "digest": "sha256:a9aeec2160ac2054131427b2f88a9186d73da5ee90e029a107ffa9e67c967e18",
+      "identifier": "github-actions:pedrosakuma/aws2azure:run-36455379008:attempt-1:artifact-10988338845:sha256:f62fa3c4f8993b457bab6aca2bb57f794bda76f53426eab69b83006da76ac495",
+      "profile": {
+        "id": "secretsmanager-basic-lifecycle",
+        "version": 1
+      },
+      "release_candidate_manifest_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+      "verdict": "pass"
+    },
+    {
+      "digest": "sha256:a9ca0e8177558ea85217fcc97312e245c432e0ab99600cc7cb5ed405e4b24af3",
+      "identifier": "github-actions:pedrosakuma/aws2azure:run-36426059230:attempt-1:artifact-10975825164:sha256:75be4c0b3b8b74e2dcd2b198b8888989a07d60c9ea787546278296edaa1d729c",
+      "profile": {
+        "id": "sqs-standard-messaging",
+        "version": 1
+      },
+      "release_candidate_manifest_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+      "verdict": "pass"
+    }
+  ],
+  "platforms": [
+    {
+      "archive": {
+        "executable_member": "aws2azure-v1.1.1-rc.5-linux-arm64/aws2azure",
+        "format": "tar.gz",
+        "members": [
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-arm64/LICENSE",
+            "sha256": "sha256:0e4e19b56ae73c9d9174ac5d61e69cf76082f281100862764ce950b986eb6b4a",
+            "size_bytes": 1069
+          },
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-arm64/README.md",
+            "sha256": "sha256:4ce3fbb9e6fc1d3a902037e2380aab013fa8f41674d8611bb398be6bbe9124d2",
+            "size_bytes": 235
+          },
+          {
+            "executable": true,
+            "path": "aws2azure-v1.1.1-rc.5-linux-arm64/aws2azure",
+            "sha256": "sha256:1fc22dc929fd817f2b9472f4d79da64b0470318e34f775229635a5d721bb2197",
+            "size_bytes": 26732632
+          },
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-arm64/config.example.json",
+            "sha256": "sha256:c82865c96e17ccc421bd5aef87dbb9f10ac687621e19b46a61e528895a3d9caf",
+            "size_bytes": 2003
+          }
+        ],
+        "path": "platforms/linux-arm64/aws2azure-v1.1.1-rc.5-linux-arm64-8dd2412e3c7daa9137b7a02821fb245cef9b04f66074e21da729d2372bd8175f.tar.gz",
+        "sha256": "sha256:8dd2412e3c7daa9137b7a02821fb245cef9b04f66074e21da729d2372bd8175f",
+        "size_bytes": 10648655
+      },
+      "executable": {
+        "path": "platforms/linux-arm64/Aws2Azure.Proxy",
+        "sha256": "sha256:1fc22dc929fd817f2b9472f4d79da64b0470318e34f775229635a5d721bb2197",
+        "size_bytes": 26732632
+      },
+      "provenance": {
+        "bundle_digest": "sha256:00e1ba9f3a14c86fa4a5ddcfe56a1ec6012b0a335eaad0e82c97dccf0aa45395",
+        "candidate_source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "producer_attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36373493710/attempts/1",
+        "producer_source_sha": "bd99630d5cafa32c3813eed015b35f0f32bc2183",
+        "subjects": [
+          {
+            "digest": "sha256:1fc22dc929fd817f2b9472f4d79da64b0470318e34f775229635a5d721bb2197",
+            "name": "platforms/linux-arm64/Aws2Azure.Proxy"
+          },
+          {
+            "digest": "sha256:8dd2412e3c7daa9137b7a02821fb245cef9b04f66074e21da729d2372bd8175f",
+            "name": "platforms/linux-arm64/aws2azure-v1.1.1-rc.5-linux-arm64-8dd2412e3c7daa9137b7a02821fb245cef9b04f66074e21da729d2372bd8175f.tar.gz"
+          }
+        ]
+      },
+      "sealed_runtime": null,
+      "target": {
+        "architecture": "arm64",
+        "operating_system": "linux",
+        "rid": "linux-arm64"
+      }
+    },
+    {
+      "archive": {
+        "executable_member": "aws2azure-v1.1.1-rc.5-linux-x64/aws2azure",
+        "format": "tar.gz",
+        "members": [
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-x64/LICENSE",
+            "sha256": "sha256:0e4e19b56ae73c9d9174ac5d61e69cf76082f281100862764ce950b986eb6b4a",
+            "size_bytes": 1069
+          },
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-x64/README.md",
+            "sha256": "sha256:edc60c95227d086882feff6e03e17a6dc91d8fadde4e0e58c948adf246ea2f51",
+            "size_bytes": 233
+          },
+          {
+            "executable": true,
+            "path": "aws2azure-v1.1.1-rc.5-linux-x64/aws2azure",
+            "sha256": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+            "size_bytes": 26138584
+          },
+          {
+            "executable": false,
+            "path": "aws2azure-v1.1.1-rc.5-linux-x64/config.example.json",
+            "sha256": "sha256:c82865c96e17ccc421bd5aef87dbb9f10ac687621e19b46a61e528895a3d9caf",
+            "size_bytes": 2003
+          }
+        ],
+        "path": "platforms/linux-x64/aws2azure-v1.1.1-rc.5-linux-x64-e0ec71d7253f3cf1b235282fff0da6a848c0f596ee5153f2fa5261a9424ecb39.tar.gz",
+        "sha256": "sha256:e0ec71d7253f3cf1b235282fff0da6a848c0f596ee5153f2fa5261a9424ecb39",
+        "size_bytes": 11288743
+      },
+      "executable": {
+        "path": "platforms/linux-x64/Aws2Azure.Proxy",
+        "sha256": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "size_bytes": 26138584
+      },
+      "provenance": {
+        "bundle_digest": "sha256:00e1ba9f3a14c86fa4a5ddcfe56a1ec6012b0a335eaad0e82c97dccf0aa45395",
+        "candidate_source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "producer_attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36373493710/attempts/1",
+        "producer_source_sha": "bd99630d5cafa32c3813eed015b35f0f32bc2183",
+        "subjects": [
+          {
+            "digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+            "name": "platforms/linux-x64/Aws2Azure.Proxy"
+          },
+          {
+            "digest": "sha256:e0ec71d7253f3cf1b235282fff0da6a848c0f596ee5153f2fa5261a9424ecb39",
+            "name": "platforms/linux-x64/aws2azure-v1.1.1-rc.5-linux-x64-e0ec71d7253f3cf1b235282fff0da6a848c0f596ee5153f2fa5261a9424ecb39.tar.gz"
+          }
+        ]
+      },
+      "sealed_runtime": {
+        "aggregate_digest": "sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322",
+        "artifact": {
+          "id": 10918950988,
+          "name": "aws2azure-sealed-linux-x64-32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322-run-36280313825-attempt-1",
+          "upload_digest": "sha256:4efc4d6b45de890726564815228d17fb451e94ba3791a280977386ccd6c6c758"
+        },
+        "executable_digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "manifest": {
+          "path": "sealed-runtime/sealed-runtime-manifest.json",
+          "sha256": "sha256:82f80022f00217e41c363d5acf03f642383028ffd3e0fc22fb3cd0957f5eca52",
+          "size_bytes": 3071
+        },
+        "producer": {
+          "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36280313825/attempts/1",
+          "event_name": "workflow_dispatch",
+          "run_attempt": 1,
+          "run_id": 36280313825,
+          "workflow": ".github/workflows/sealed-runtime.yml"
+        },
+        "source_ref": "refs/heads/main"
+      },
+      "target": {
+        "architecture": "x64",
+        "operating_system": "linux",
+        "rid": "linux-x64"
+      }
+    }
+  ],
+  "producer": {
+    "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36373493710/attempts/1",
+    "event_name": "workflow_dispatch",
+    "run_attempt": 1,
+    "run_id": 36373493710,
+    "source_ref": "refs/heads/main",
+    "source_sha": "bd99630d5cafa32c3813eed015b35f0f32bc2183",
+    "workflow": ".github/workflows/release-candidate.yml"
+  },
+  "schema_version": 1,
+  "workloads": [
+    {
+      "approved_runtime": {
+        "aggregate_digest": "sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322",
+        "artifact": {
+          "id": 10918950988,
+          "name": "aws2azure-sealed-linux-x64-32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322-run-36280313825-attempt-1",
+          "upload_digest": "sha256:4efc4d6b45de890726564815228d17fb451e94ba3791a280977386ccd6c6c758"
+        },
+        "executable_digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "ledger_record_digest": "sha256:e2a3866fead752fccd895610e08780aef7f403d25de4c839c3b68789dcf1e5bb",
+        "manifest_digest": "sha256:82f80022f00217e41c363d5acf03f642383028ffd3e0fc22fb3cd0957f5eca52",
+        "producer": {
+          "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36280313825/attempts/1",
+          "run_attempt": 1,
+          "run_id": 36280313825,
+          "workflow": ".github/workflows/sealed-runtime.yml"
+        },
+        "profile": {
+          "id": "dynamodb-basic-crud",
+          "version": 1
+        },
+        "source_ref": "refs/heads/main",
+        "source_repository": "pedrosakuma/aws2azure",
+        "source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "status": "approved"
+      },
+      "profile": {
+        "digest": "sha256:151379efa93da91f0c9fa99744e5acd095056d75952dd99fbe3a4c46109fa390",
+        "id": "dynamodb-basic-crud",
+        "version": 1
+      }
+    },
+    {
+      "approved_runtime": {
+        "aggregate_digest": "sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322",
+        "artifact": {
+          "id": 10918950988,
+          "name": "aws2azure-sealed-linux-x64-32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322-run-36280313825-attempt-1",
+          "upload_digest": "sha256:4efc4d6b45de890726564815228d17fb451e94ba3791a280977386ccd6c6c758"
+        },
+        "executable_digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "ledger_record_digest": "sha256:9b197ace0d71844096d6f5f5579669f15eef1ecc20a84bc134184eeda0ace4c5",
+        "manifest_digest": "sha256:82f80022f00217e41c363d5acf03f642383028ffd3e0fc22fb3cd0957f5eca52",
+        "producer": {
+          "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36280313825/attempts/1",
+          "run_attempt": 1,
+          "run_id": 36280313825,
+          "workflow": ".github/workflows/sealed-runtime.yml"
+        },
+        "profile": {
+          "id": "s3-basic-object-crud",
+          "version": 1
+        },
+        "source_ref": "refs/heads/main",
+        "source_repository": "pedrosakuma/aws2azure",
+        "source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "status": "approved"
+      },
+      "profile": {
+        "digest": "sha256:ab6d96071a13cdb4bb9bf9517cf6fcc048f7b103638c425d3305c106013997eb",
+        "id": "s3-basic-object-crud",
+        "version": 1
+      }
+    },
+    {
+      "approved_runtime": {
+        "aggregate_digest": "sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322",
+        "artifact": {
+          "id": 10918950988,
+          "name": "aws2azure-sealed-linux-x64-32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322-run-36280313825-attempt-1",
+          "upload_digest": "sha256:4efc4d6b45de890726564815228d17fb451e94ba3791a280977386ccd6c6c758"
+        },
+        "executable_digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "ledger_record_digest": "sha256:ab04a1f754578bce6d7c01a3912222889bf5fab9682db647c733d50a799b0f2b",
+        "manifest_digest": "sha256:82f80022f00217e41c363d5acf03f642383028ffd3e0fc22fb3cd0957f5eca52",
+        "producer": {
+          "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36280313825/attempts/1",
+          "run_attempt": 1,
+          "run_id": 36280313825,
+          "workflow": ".github/workflows/sealed-runtime.yml"
+        },
+        "profile": {
+          "id": "secretsmanager-basic-lifecycle",
+          "version": 1
+        },
+        "source_ref": "refs/heads/main",
+        "source_repository": "pedrosakuma/aws2azure",
+        "source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "status": "approved"
+      },
+      "profile": {
+        "digest": "sha256:101f4c5276eee6a71d5d3d394518f92e36bf4cee9061e1e3000051087ed81af7",
+        "id": "secretsmanager-basic-lifecycle",
+        "version": 1
+      }
+    },
+    {
+      "approved_runtime": {
+        "aggregate_digest": "sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322",
+        "artifact": {
+          "id": 10918950988,
+          "name": "aws2azure-sealed-linux-x64-32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322-run-36280313825-attempt-1",
+          "upload_digest": "sha256:4efc4d6b45de890726564815228d17fb451e94ba3791a280977386ccd6c6c758"
+        },
+        "executable_digest": "sha256:a383d5513731aefef39814a6967c3700e72398e583ca83cbf47ac73f94a8cffb",
+        "ledger_record_digest": "sha256:ff9f9ada18e7d70281ad3766415b807420e59ec4f4a6058c1f3bddc88fe712d9",
+        "manifest_digest": "sha256:82f80022f00217e41c363d5acf03f642383028ffd3e0fc22fb3cd0957f5eca52",
+        "producer": {
+          "attempt_url": "https://github.com/pedrosakuma/aws2azure/actions/runs/36280313825/attempts/1",
+          "run_attempt": 1,
+          "run_id": 36280313825,
+          "workflow": ".github/workflows/sealed-runtime.yml"
+        },
+        "profile": {
+          "id": "sqs-standard-messaging",
+          "version": 1
+        },
+        "source_ref": "refs/heads/main",
+        "source_repository": "pedrosakuma/aws2azure",
+        "source_sha": "bf2274dc6469ce2a8a0c2db4b956391f24c74076",
+        "status": "approved"
+      },
+      "profile": {
+        "digest": "sha256:5f7d62447ca3a6f93a93bc1d3e7a8c258282a090eb23c10aa38b8c641aba3352",
+        "id": "sqs-standard-messaging",
+        "version": 1
+      }
+    }
+  ]
+}
