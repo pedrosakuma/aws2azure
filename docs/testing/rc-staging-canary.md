@@ -167,6 +167,58 @@ uncontrolled A/B comparison. A same-runner/backend, counterbalanced exact-binary
 A/B and A/A experiment remains a separate, explicitly authorized Azure run.
 Offline instrumentation checks do not execute that experiment.
 
+### Controlled DynamoDB crossover
+
+`dynamodb-controlled-crossover.yml` is a **manual-only diagnostic**, restricted
+to protected `main` and explicit operator budget acknowledgement. It uses the
+current DynamoDB approved candidate and that approval's fixed rollback target,
+resolved through the existing sealed-artifact/attestation verifier. The supplied
+candidate/prior aggregate digests must match before Azure login or provisioning.
+It never rebuilds the selected proxies, updates a ledger, renews evidence or
+generates an observation verdict. Expired/unavailable inputs are not bypassed.
+
+One runner provisions one Strong-consistency serverless Cosmos account/database.
+The fixed order is **prior, candidate, candidate, prior, prior, prior**: the
+first four slots form counterbalanced A/B pairs, and the last two are a
+same-runtime A/A control. Every slot restarts its selected sealed proxy on the
+same port/configuration, then runs eight workers for a separate 30-second warmup
+and five-minute measurement. Each phase reuses the existing strict-observation
+CRUD worker, including fresh uniquely named worker tables, strongly consistent
+reads, value assertions and table deletion. Warmup counts never enter the
+measurement report. Nominal warmup/measurement time is 33 minutes, excluding
+startup, probes, drain and resource provisioning/teardown.
+
+The harness checks backend/configuration/AWS-binding digests and proxy liveness
+between phases. It aborts subsequent slots on failures, cancellation or binding
+drift and retains partial sanitized reports. There is a 45-minute harness
+deadline, a 30-minute provisioning-step limit and a 120-minute job limit.
+Provisioning and failed experiments are not automatically retried.
+
+Before warmup and after measurement, each slot makes 12 bounded anonymous
+Cosmos requests using the existing connectivity helper. These validate an
+authentication-denial response and measure response-header latency, including
+connection/TLS setup on the first request; **they are not pure network RTT,
+backend processing latency or retry counters**. They run outside measured
+workload windows. CPU/working-set fields still describe only the test harness.
+Runner geography comes from the Actions setup log, not inferred from the backend.
+
+The `diagnostic-dynamodb-crossover-<run>-<attempt>` artifact retains
+`report.json`, exact sealed-input provenance and per-slot warmup/measurement
+timing sidecars for 90 days. Only whitelisted JSON report paths are uploaded;
+private runtime/configuration paths and raw test logs are not uploaded. Reports
+are explicitly non-promotable even when all slots complete. The workflow shares
+the real-Azure integration concurrency lane, never cancels an existing run,
+always attempts teardown after successful Azure login, and uses the nightly
+orphan-reaper tags as a backstop. Confirm the owned group is absent independently
+before declaring cleanup complete.
+
+Interpret both A/B orders alongside the A/A variation and the operation/time
+windows. A disparity that disappears here supports an environmental explanation
+but does not prove the original cause. This single bounded run is not a
+statistical equivalence test or permission to raise thresholds or promote RC5.
+Authorizing another profile, longer/repeated trials or stable promotion remains
+a separate operator decision.
+
 ## DynamoDB and SQS cohort contracts
 
 Both new producers require the split-cohort mode, actual real backend
