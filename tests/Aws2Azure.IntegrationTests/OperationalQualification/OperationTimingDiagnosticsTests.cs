@@ -10,6 +10,37 @@ public sealed class OperationTimingDiagnosticsTests
     private static readonly DateTimeOffset Start = new(2026, 9, 19, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Cohort_metadata_is_explicit_and_resource_scope_cannot_be_mistaken_for_proxy_cpu()
+    {
+        var schedule = new[] { "PutItem", "GetItem", "GetItem" };
+        var diagnostics = new OperationTimingDiagnostics(
+            ["PutItem", "GetItem"], new Stopwatch(), Start, TimeSpan.FromMinutes(60), 8,
+            "stable", "prior-bytes", Start.AddSeconds(-1),
+            "dynamodb", "dynamodb-basic-crud", schedule);
+        schedule[0] = "changed-after-construction";
+        diagnostics.RecordAt("GetItem", 20, false, false, null, false, 1);
+        diagnostics.StopResourceMeasurement();
+        var first = diagnostics.Snapshot(2, false);
+        var cpu = first.HarnessProcessCpuSeconds;
+        var workingSet = first.HarnessProcessWorkingSetBytes;
+        var report = diagnostics.Snapshot(3, true);
+        Assert.Equal(["PutItem", "GetItem", "GetItem"], report.OperationSchedule);
+        Assert.Equal("dynamodb", report.Service);
+        Assert.Equal("dynamodb-basic-crud", report.Workload);
+        Assert.Equal(Start.AddSeconds(-1), report.ScheduledStartUtc);
+        Assert.Equal("test_harness_process_not_proxy_or_backend", report.ResourceScope);
+        Assert.True(report.AvailableProcessorCount > 0);
+        Assert.False(string.IsNullOrEmpty(report.ProcessArchitecture));
+        Assert.True(cpu >= 0);
+        Assert.True(workingSet > 0);
+        Assert.Equal(cpu, report.HarnessProcessCpuSeconds);
+        Assert.Equal(workingSet, report.HarnessProcessWorkingSetBytes);
+        var json = JsonSerializer.Serialize(report, OperationTimingJsonContext.Default.OperationTimingReport);
+        Assert.DoesNotContain("changed-after-construction", json, StringComparison.Ordinal);
+        Assert.False(report.Promotable);
+    }
+
+    [Fact]
     public void Phase_denominators_counts_and_client_time_are_explicit()
     {
         var diagnostics = Create();

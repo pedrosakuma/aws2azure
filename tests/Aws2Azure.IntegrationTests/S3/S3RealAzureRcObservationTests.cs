@@ -113,6 +113,16 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
 
             var startedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
+            candidateTracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                Operations, stopwatch, startedAt, duration, candidateConcurrency, "candidate",
+                fixture.CandidateRuntimeIdentity.Runtime.AggregateDigest,
+                service: "s3", workload: "s3-basic-object-crud",
+                operationSchedule: LifecycleOperationSchedule);
+            stableTracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                Operations, stopwatch, startedAt, duration, stableConcurrency, "stable",
+                fixture.PriorRuntimeIdentity.Runtime.AggregateDigest,
+                service: "s3", workload: "s3-basic-object-crud",
+                operationSchedule: LifecycleOperationSchedule);
             var workers = new List<Task>(candidateConcurrency + stableConcurrency);
             for (var worker = 0; worker < candidateConcurrency; worker++)
             {
@@ -136,10 +146,24 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                     stopwatch,
                     timeout.Token));
             }
-            await Task.WhenAll(workers).ConfigureAwait(false);
-            stopwatch.Stop();
-            var measurementEndedAt = DateTimeOffset.UtcNow;
-
+            var workersCompleted = false;
+            var measurementEndedAt = default(DateTimeOffset);
+            try
+            {
+                await Task.WhenAll(workers).ConfigureAwait(false);
+                workersCompleted = true;
+            }
+            finally
+            {
+                stopwatch.Stop();
+                measurementEndedAt = DateTimeOffset.UtcNow;
+                candidateTracker.TimingDiagnostics.StopResourceMeasurement();
+                stableTracker.TimingDiagnostics.StopResourceMeasurement();
+                await candidateTracker.TimingDiagnostics.PublishAsync(fullCapturePath!, workersCompleted)
+                    .ConfigureAwait(false);
+                await stableTracker.TimingDiagnostics.PublishAsync(fullCapturePath!, workersCompleted)
+                    .ConfigureAwait(false);
+            }
             var restorationStartedAt = DateTimeOffset.UtcNow;
             await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
             await fixture.StartRuntimeAsync(SealedRuntimeRole.Prior).ConfigureAwait(false);
@@ -359,6 +383,10 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                     var concurrency = role == "candidate"
                         ? candidateConcurrency
                         : stableConcurrency;
+                    tracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                        Operations, stopwatch, actualStartedAt, duration, concurrency, role,
+                        startedRuntime.Runtime.AggregateDigest, startedAt,
+                        "s3", "s3-basic-object-crud", LifecycleOperationSchedule);
                     var workers = new List<Task>(concurrency);
                     for (var worker = 0; worker < concurrency; worker++)
                     {
@@ -371,10 +399,21 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                             stopwatch,
                             timeout.Token));
                     }
-                    await Task.WhenAll(workers).ConfigureAwait(false);
-
-                    stopwatch.Stop();
-                    var measurementEndedAt = DateTimeOffset.UtcNow;
+                    var workersCompleted = false;
+                    var measurementEndedAt = default(DateTimeOffset);
+                    try
+                    {
+                        await Task.WhenAll(workers).ConfigureAwait(false);
+                        workersCompleted = true;
+                    }
+                    finally
+                    {
+                        stopwatch.Stop();
+                        measurementEndedAt = DateTimeOffset.UtcNow;
+                        await tracker.TimingDiagnostics.PublishAsync(
+                            RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH"),
+                            workersCompleted).ConfigureAwait(false);
+                    }
                     RcObservationCaptureRestoration? restoration = null;
                     var observationEndedAt = measurementEndedAt;
                     if (role == "candidate")

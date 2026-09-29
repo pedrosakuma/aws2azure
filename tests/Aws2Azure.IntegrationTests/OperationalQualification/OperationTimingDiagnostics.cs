@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,6 +13,8 @@ internal sealed class OperationTimingDiagnostics
     private readonly OperationTimingReport _report;
     private readonly Dictionary<string, Dictionary<string, Accumulator>> _operations;
     private readonly double _windowSeconds;
+    private readonly TimeSpan? _startedHarnessCpu;
+    private bool _resourceWindowStopped;
 
     public OperationTimingDiagnostics(
         IEnumerable<string> operations,
@@ -21,10 +24,14 @@ internal sealed class OperationTimingDiagnostics
         int concurrency,
         string role,
         string runtimeDigest,
-        DateTimeOffset? scheduledStartUtc = null)
+        DateTimeOffset? scheduledStartUtc = null,
+        string service = "secretsmanager",
+        string workload = "secretsmanager-basic-lifecycle",
+        IReadOnlyList<string>? operationSchedule = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(requestedDuration.TotalSeconds, 0);
         _clock = clock;
+        _startedHarnessCpu = ReadProcessResources()?.Cpu;
         _windowSeconds = Math.Max(60, requestedDuration.TotalSeconds / 60);
         _report = new OperationTimingReport
         {
@@ -38,7 +45,11 @@ internal sealed class OperationTimingDiagnostics
             RunId = Environment.GetEnvironmentVariable("GITHUB_RUN_ID") ?? string.Empty,
             RunAttempt = Environment.GetEnvironmentVariable("GITHUB_RUN_ATTEMPT") ?? string.Empty,
             HarnessSourceSha = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? string.Empty,
+            Service = service,
+            Workload = workload,
         };
+        if (operationSchedule is not null)
+            _report.OperationSchedule = operationSchedule.ToArray();
         _operations = operations.ToDictionary(
             operation => operation,
             _ => new Dictionary<string, Accumulator>(StringComparer.Ordinal)
@@ -132,6 +143,7 @@ internal sealed class OperationTimingDiagnostics
         }
         lock (_sync)
         {
+            StopResourceMeasurement();
             _report.ElapsedSeconds = elapsedSeconds;
             _report.EndedAtUtc = _report.StartedAtUtc.AddSeconds(elapsedSeconds);
             _report.WorkersCompleted = workersCompleted;
@@ -154,6 +166,36 @@ internal sealed class OperationTimingDiagnostics
                 }
             }
             return _report;
+        }
+    }
+
+    internal void StopResourceMeasurement()
+    {
+        lock (_sync)
+        {
+            if (_resourceWindowStopped)
+                return;
+            if (_startedHarnessCpu is { } started && ReadProcessResources() is { } resources)
+            {
+                _report.HarnessProcessCpuSeconds = (resources.Cpu - started).TotalSeconds;
+                _report.HarnessProcessWorkingSetBytes = resources.WorkingSet;
+            }
+            _resourceWindowStopped = true;
+        }
+    }
+
+    private static (TimeSpan Cpu, long WorkingSet)? ReadProcessResources()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            return (process.TotalProcessorTime, process.WorkingSet64);
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
+            or InvalidOperationException or NotSupportedException)
+        {
+            Console.Error.WriteLine($"Operation timing process resources unavailable: {exception.GetType().Name}.");
+            return null;
         }
     }
 
@@ -278,6 +320,11 @@ internal sealed class OperationTimingReport
     public double WindowSeconds { get; set; }
     public double ElapsedSeconds { get; set; }
     public bool WorkersCompleted { get; set; }
+    public string ResourceScope { get; set; } = "test_harness_process_not_proxy_or_backend";
+    public string ProcessArchitecture { get; set; } = RuntimeInformation.ProcessArchitecture.ToString();
+    public int AvailableProcessorCount { get; set; } = Environment.ProcessorCount;
+    public double? HarnessProcessCpuSeconds { get; set; }
+    public long? HarnessProcessWorkingSetBytes { get; set; }
     public List<OperationTimingSummary> Operations { get; set; } = [];
 }
 
