@@ -130,6 +130,43 @@ rather than inventing floors or marking unperformed observations verified.
 The historical SecretsManager 403 limitation and #1016's pending manual
 readiness observation remain unresolved.
 
+## Diagnostic sidecars (not release evidence)
+
+All four RC observation profiles write
+`<capture-file>.<candidate|stable>.operation-timings.json` beside the canonical
+capture. The split-cohort workflow already retains these files in each role's
+capture artifact, including failed attempts when reporting can complete.
+Inspect **both role artifacts**, not only the assembled observation artifact.
+Preparation failures before measurement do not produce operation timings.
+
+These reports have `promotable: false`. They record the exact runtime digest,
+harness source, workload, operation schedule (including repeated operations),
+worker concurrency, scheduled/actual start and worker completion status.
+Per-operation summaries contain exact counts, cumulative/mean latency and
+approximate p50/p95/p99 using 512 histogram buckets; at most 60 time windows per
+operation bound additional storage. Measurement and drain are separate.
+Latency is measured by the AWS-client harness, including the proxy and backend
+round trip, **not** backend-only latency or a network RTT probe. Cleanup rows
+are populated only where the existing workload explicitly measures cleanup;
+an empty cleanup row is not evidence that cleanup took no time.
+
+Process context includes architecture, available processor count, cumulative
+test-harness CPU seconds during measurement/drain and working-set bytes sampled
+at its end. These are **not proxy/backend CPU or memory**, not peak memory and
+not per-worker attribution. In legacy dual-cohort mode, both roles share the
+same test process, so their resource measurements overlap; do not sum them.
+Unavailable process resource readings remain null and emit a sanitized warning.
+No endpoint, resource name, payload, credential or raw exception text is added.
+No additional network request, background sampler or proxy rebuild is used.
+
+Diagnostics neither alter thresholds nor establish performance parity, fresh
+qualification or release eligibility. Compare runner regions from the retained
+Actions setup logs and backend regions from canonical captures: this sidecar
+does not discover geography. Different runner/backend placements confound an
+uncontrolled A/B comparison. A same-runner/backend, counterbalanced exact-binary
+A/B and A/A experiment remains a separate, explicitly authorized Azure run.
+Offline instrumentation checks do not execute that experiment.
+
 ## DynamoDB and SQS cohort contracts
 
 Both new producers require the split-cohort mode, actual real backend

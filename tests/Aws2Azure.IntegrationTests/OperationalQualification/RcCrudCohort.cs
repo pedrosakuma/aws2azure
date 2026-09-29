@@ -13,7 +13,9 @@ internal sealed record RcCohortRuntime(
     string Endpoint, Func<bool> IsRunning, Func<RcCohortBinding> Binding,
     Func<CancellationToken, Task> RestorePrior);
 
-internal sealed record RcCrudCohortResult(RcObservationCohortCapture Capture, Exception? Failure)
+internal sealed record RcCrudCohortResult(
+    RcObservationCohortCapture Capture, Exception? Failure,
+    OperationTimingDiagnostics? TimingDiagnostics, bool WorkersCompleted)
 {
     public void ThrowIfFailed()
     {
@@ -62,9 +64,11 @@ internal static class RcCrudCohort
             },
             workerIndex => RcObservationCaptureWriter.MemberDigest(profile, role, workerIndex, runtime.Endpoint),
             RcObservationCaptureWriter.CohortId(role),
-            timeout.Token).ConfigureAwait(false);
+            timeout.Token, operationSchedule).ConfigureAwait(false);
 
         var path = RequiredEnvironment("AWS2AZURE_RC_OBSERVATION_COHORT_CAPTURE_PATH");
+        if (result.TimingDiagnostics is not null)
+            await result.TimingDiagnostics.PublishAsync(path, result.WorkersCompleted).ConfigureAwait(false);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         await File.WriteAllTextAsync(path + ".diagnostics.json", JsonSerializer.Serialize(
             result.Capture, RcObservationCaptureJsonContext.Default.RcObservationCohortCapture))
@@ -84,7 +88,8 @@ internal static class RcCrudCohort
         Func<CancellationToken, Task> verifyRestored, Func<CancellationToken, Task> cleanup,
         Func<int, RealAzureWorkloadLoadTracker, TimeSpan, Stopwatch, CancellationToken, Task> worker,
         Func<CancellationToken, Task<DateTimeOffset>> ready,
-        Func<int, string> memberDigest, string cohortId, CancellationToken token)
+        Func<int, string> memberDigest, string cohortId, CancellationToken token,
+        IReadOnlyList<string>? operationSchedule = null)
     {
         if (role is not ("candidate" or "stable") || concurrency <= 0)
             throw new InvalidDataException("Invalid RC cohort role or concurrency.");
@@ -98,6 +103,7 @@ internal static class RcCrudCohort
         var stopwatch = new Stopwatch();
         RcObservationCaptureRestoration? restoration = null;
         Exception? failure = null;
+        var workersCompleted = false;
         try
         {
             using var preparation = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -107,11 +113,16 @@ internal static class RcCrudCohort
             started = await ready(token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             stopwatch.Start();
+            tracker.TimingDiagnostics = new OperationTimingDiagnostics(
+                operations, stopwatch, DateTimeOffset.UtcNow, duration, concurrency, role,
+                role == "candidate" ? runtime.CandidateDigest : runtime.PriorDigest,
+                started, service, profile, operationSchedule ?? operations);
             try
             {
                 await Task.WhenAll(Enumerable.Range(0, concurrency)
                     .Select(index => worker(index, tracker, duration, stopwatch, token)))
                     .ConfigureAwait(false);
+                workersCompleted = true;
             }
             catch (Exception error)
             {
@@ -119,6 +130,7 @@ internal static class RcCrudCohort
             }
             stopwatch.Stop();
             measuredUntil = DateTimeOffset.UtcNow;
+            tracker.TimingDiagnostics.StopResourceMeasurement();
             token.ThrowIfCancellationRequested();
             RequireBinding();
             if (role == "candidate")
@@ -211,7 +223,7 @@ internal static class RcCrudCohort
             ],
             Restoration = restoration,
         };
-        return new(capture, failure);
+        return new(capture, failure, tracker.TimingDiagnostics, workersCompleted);
 
         void RequireBinding()
         {

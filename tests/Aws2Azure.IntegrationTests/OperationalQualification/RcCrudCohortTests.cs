@@ -118,6 +118,25 @@ public sealed class RcCrudCohortTests
         Assert.Equal(role == "candidate" ? "candidate-id" : "prior-id",
             result.Capture.Cohort.RuntimeIdentityDigest);
         Assert.Equal(8, result.Capture.Cohort.MemberDigests.Distinct().Count());
+        if (fault == "prepare")
+        {
+            Assert.Null(result.TimingDiagnostics);
+            Assert.False(result.WorkersCompleted);
+        }
+        else
+        {
+            Assert.NotNull(result.TimingDiagnostics);
+            var timing = result.TimingDiagnostics.Snapshot(60, result.WorkersCompleted);
+            Assert.Equal(profile, timing.Workload);
+            Assert.Equal(ddb ? "dynamodb" : "sqs", timing.Service);
+            Assert.Equal(operations, timing.OperationSchedule);
+            Assert.Equal(role, timing.Role);
+            Assert.Equal(role == "candidate" ? "candidate-bytes" : "prior-bytes", timing.RuntimeDigest);
+            Assert.Equal(fault != "worker", timing.WorkersCompleted);
+            Assert.Equal(fault == "worker" ? 8 : 0,
+                timing.Operations.Where(row => row.Phase == "lifecycle").Sum(row => row.Errors));
+            Assert.False(timing.Promotable);
+        }
         if (fault is "prepare" or "cancel") Assert.Equal(0, switched);
         if (fault is "restore" or "binding" or "prepare" or "cancel") Assert.Equal(0, verified);
         var restored = role == "candidate" && fault is "" or "worker" or "cleanup";
