@@ -688,32 +688,17 @@ jobs:
             echo "AZURE_EVENTGRID_EVIDENCE_QUEUE_NAME=$EG_QUEUE"
           } >> "$GITHUB_ENV"
 
-      - name: Mint federated token for workload identity scenarios
+      - name: Configure projected token for workload identity scenarios
         if: steps.gate.outputs.wi_enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true'
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail
-          # Request a GitHub Actions OIDC token for the Azure AD exchange audience
-          # and write it to a file the proxy's WorkloadIdentityTokenSource reads
-          # (mirroring the AKS projected service-account token contract). The
-          # token's `sub` claim matches the same federated credentials
-          # azure/login already uses, so no extra Entra federation is needed. The
-          # ACTIONS_ID_TOKEN_REQUEST_* vars are injected because the job has
-          # `id-token: write`.
+          # Each test process gets a fresh assertion and supervised rotation,
+          # mirroring the AKS projected service-account token contract (#1066).
           install -d -m 0700 "$PRIVATE_DIR/tokens"
           TOKEN_FILE="$GITHUB_WORKSPACE/$PRIVATE_DIR/tokens/azure-federated-token.jwt"
-          RESPONSE="$(curl -fsS \
-            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange")"
-          ASSERTION="$(printf '%s' "$RESPONSE" | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])')"
-          if [ -z "$ASSERTION" ]; then
-            echo "::error::Failed to obtain a GitHub OIDC token for the Workload Identity scenario."
-            exit 1
-          fi
-          echo "::add-mask::$ASSERTION"
-          ( umask 077; printf '%s' "$ASSERTION" > "$TOKEN_FILE" )
           {
             echo "AZURE_FEDERATED_TOKEN_FILE=$TOKEN_FILE"
             echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
@@ -725,38 +710,19 @@ jobs:
         if: always()
         env:
           FILTER: ${{ steps.filters.outputs.integration }}
+          AWS2AZURE_CI_WORKLOAD_IDENTITY: ${{ steps.gate.outputs.wi_enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true' }}
         run: |
           set -euo pipefail
-          retryable_pattern='Entra ID token request failed with HTTP 401.'
-          run_with_entra_401_retry() {
-            local log_file=$1
-            shift
-            local attempt status
-            for attempt in 1 2; do
-              rm -f "$log_file"
-              set +e
-              "$@" 2>&1 | tee "$log_file"
-              status=${PIPESTATUS[0]}
-              if [ "$status" -eq 0 ]; then
-                return 0
-              fi
-              if [ "$attempt" -ge 2 ] || ! grep -Fq "$retryable_pattern" "$log_file"; then
-                return "$status"
-              fi
-              echo "::warning::Retrying planned integration tests after transient Entra token-endpoint 401 (issue #922)."
-              sleep 1
-            done
-          }
-
           # AZURE_KEYVAULT_URL is exported from the ephemeral deployment output by
           # the "Export connection info" step (Secrets Manager -> Key Vault). When
           # provisioning is skipped (no OIDC) it stays unset and the SecretsManager
-          # smoke skips. Workload-Identity auth uses the OIDC token minted above.
+          # smoke skips. The supervisor keeps Workload-Identity assertions fresh.
           status=0
           if [ -n "$FILTER" ]; then
             set +e
-            run_with_entra_401_retry \
-              "$TEST_RESULTS_DIR/matrix-integration-attempt.log" \
+            python3 .github/scripts/run-with-projected-oidc.py \
+              --log-file "$TEST_RESULTS_DIR/matrix-integration-attempt.log" \
+              --diagnostics "$TEST_RESULTS_DIR/oidc-matrix.jsonl" -- \
               dotnet test tests/Aws2Azure.IntegrationTests \
                 -c Release --no-build --nologo \
                 --filter "$FILTER" \
@@ -774,29 +740,9 @@ jobs:
         if: always()
         env:
           SELECTED_SERVICE: ${{ inputs.service || 'all' }}
+          AWS2AZURE_CI_WORKLOAD_IDENTITY: ${{ steps.gate.outputs.wi_enabled == 'true' && steps.plan.outputs.requires_real_azure == 'true' }}
         run: |
           set -euo pipefail
-          retryable_pattern='Entra ID token request failed with HTTP 401.'
-          run_with_entra_401_retry() {
-            local log_file=$1
-            shift
-            local attempt status
-            for attempt in 1 2; do
-              rm -f "$log_file"
-              set +e
-              "$@" 2>&1 | tee "$log_file"
-              status=${PIPESTATUS[0]}
-              if [ "$status" -eq 0 ]; then
-                return 0
-              fi
-              if [ "$attempt" -ge 2 ] || ! grep -Fq "$retryable_pattern" "$log_file"; then
-                return "$status"
-              fi
-              echo "::warning::Retrying conformance evidence tests after transient Entra token-endpoint 401 (issue #922)."
-              sleep 1
-            done
-          }
-
           status=0
           filter=
           case "$SELECTED_SERVICE" in
@@ -814,8 +760,9 @@ jobs:
               ;;
           esac
           set +e
-          run_with_entra_401_retry \
-            "$TEST_RESULTS_DIR/conformance-case-evidence-attempt.log" \
+          python3 .github/scripts/run-with-projected-oidc.py \
+            --log-file "$TEST_RESULTS_DIR/conformance-case-evidence-attempt.log" \
+            --diagnostics "$TEST_RESULTS_DIR/oidc-conformance.jsonl" -- \
             dotnet test tests/Aws2Azure.IntegrationTests \
               -c Release --no-build --nologo \
               --filter "$filter" \
@@ -958,6 +905,7 @@ jobs:
           path: |
             TestResults/real-azure-conformance-plan.json
             TestResults/real-azure/*.trx
+            TestResults/real-azure/oidc-*.jsonl
             TestResults/real-azure-conformance/**
             artifacts/real-azure-qualification/runtime-sha256.txt
             artifacts/real-azure-qualification/config-manifest.json
@@ -973,6 +921,7 @@ jobs:
           path: |
             TestResults/real-azure-conformance-plan.json
             TestResults/real-azure/*.trx
+            TestResults/real-azure/oidc-*.jsonl
             TestResults/real-azure-conformance/**
           if-no-files-found: error
           retention-days: 14
