@@ -15,7 +15,7 @@ namespace Aws2Azure.IntegrationTests.SecretsManager;
 public sealed class SecretsManagerRealAzureRcObservationTests(
     SecretsManagerRealAzureProxyFixture fixture)
 {
-    private static readonly string[] Operations =
+    internal static readonly string[] Operations =
     [
         "CreateSecret",
         "DescribeSecret",
@@ -747,14 +747,15 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
         VerifiedAtUtc = verifiedAt,
     };
 
-    private static async Task RunWorkerAsync(
+    internal static async Task RunWorkerAsync(
         IAmazonSecretsManager client,
         RealAzureWorkloadLoadTracker tracker,
         string role,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool strictDiagnostic = false)
     {
         var iteration = 0;
         while (stopwatch.Elapsed < duration)
@@ -863,12 +864,12 @@ public sealed class SecretsManagerRealAzureRcObservationTests(
                     IsThrottle).ConfigureAwait(false);
                 created = false;
             }
-            catch when (!cancellationToken.IsCancellationRequested)
+            catch when (!strictDiagnostic && !cancellationToken.IsCancellationRequested)
             {
             }
             finally
             {
-                if (created)
+                if (created && !strictDiagnostic)
                 {
                     try
                     {

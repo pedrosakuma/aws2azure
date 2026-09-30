@@ -167,6 +167,69 @@ uncontrolled A/B comparison. A same-runner/backend, counterbalanced exact-binary
 A/B and A/A experiment remains a separate, explicitly authorized Azure run.
 Offline instrumentation checks do not execute that experiment.
 
+### Controlled SecretsManager worker-concurrency diagnostic
+
+`secretsmanager-concurrency-diagnostic.yml` is a manual-only, non-promotable
+diagnostic for #1016/#1062. It requires protected `main`, an exact candidate
+aggregate digest and explicit cumulative-budget acknowledgement. Implementation
+and offline validation do **not** authorize its paid PR gates or dispatch.
+It resolves the current approved candidate with the existing sealed-artifact
+verifier before Azure login, rejects a digest mismatch, and never rebuilds the
+proxy, changes a policy/ledger, or renews qualification. The `reaffirm` launcher
+mode selects historical bytes; this diagnostic produces no reaffirmation
+evidence or promotion eligibility.
+
+One runner and one dedicated Standard Key Vault execute **5, 8, 8, 5, 5, 5**
+workers in sequence, always using the same candidate. Each slot restarts the
+sealed proxy with unchanged configuration, binding and backend, then runs a
+separate 30-second warmup and 300-second measurement with the observation
+worker's exact lifecycle, payloads, value assertions and SDK retry setting.
+Qualification's stale-value polling delays differ from observation's fixed
+500 ms delay, so the diagnostic does not mix those workers. The last two slots
+are a 5/5 control; they are excluded from pooled 5-versus-8 rates.
+
+The initial vault must have no active **or deleted** secrets. Before every
+phase, paginated authenticated inventory must be empty, followed by a fixed
+60-second quiet interval and another empty-inventory check. After workers drain,
+the proxy stays alive while a read-only barrier waits at most 120 seconds for
+both inventories to become empty. This matters because force deletion can
+return before background purge completes. A nonempty initial vault, failed
+inventory request, incomplete purge, repair cleanup, invalid lifecycle ratios,
+operation failure or binding drift aborts subsequent phases; it is not a clean
+comparison. The diagnostic never repairs a phase by deleting secrets itself.
+The quiet interval reduces carryover but does not prove all quota windows reset.
+
+Nominal workload time is 33 minutes **plus** 12 quiet intervals, probes, drain,
+purge barriers, provisioning and teardown. The harness deadline is 80 minutes,
+each phase gets its requested duration plus at most 120 seconds to drain, and
+the workflow has an 85-minute measurement-step / 150-minute job bound. There
+are no automatic experiment retries. OIDC assertions refresh every four
+minutes with a 30-second request deadline; refresh failure cancels the workload
+and invalidates the report. Only refresh timestamps, not tokens, are retained.
+
+Each slot makes 12 anonymous Key Vault response-header probes before warmup
+and after measurement. They must return 401; timings include connection effects
+and are neither pure RTT nor backend processing latency. Inventory and probes
+run outside the measured phase. The combined `report.json` retains all bounded
+phase timings, inventory counts, barrier durations and partial failure state.
+`sealed-inputs.json` records immutable provenance. Both have `promotable: false`;
+private harness output, endpoint names, config files and assertions are not
+uploaded. The fixture's operation timings describe logical client actions,
+including consistency polling and SDK retries, not physical backend requests.
+CPU/working-set fields describe only the test harness. Runner geography must
+be read from the Actions setup log, not inferred from the backend region.
+
+The report calculates forward/reverse 8/5 ratios, rates pooled by actual
+workload-plus-drain duration, per-worker rates, scaling efficiency relative to
+the ideal 8/5 ratio, and 5/5 control drift. These are descriptive diagnostics,
+not pass thresholds, proof of statistical equivalence or causal attribution.
+Even an 8-worker rate above 9/s does not justify a 9/s floor for the committed
+5-worker observation. Changes to load shape or the existing 4.5 override require
+separate review and comparable canonical evidence. A short diagnostic does not
+replace long observation, rotation/rollback proofs or qualification freshness.
+Workflow cleanup confirms deletion of the owned resource group and checks that
+its vault no longer has a soft-deleted reservation.
+
 ### Controlled DynamoDB crossover
 
 `dynamodb-controlled-crossover.yml` is a **manual-only diagnostic**, restricted
