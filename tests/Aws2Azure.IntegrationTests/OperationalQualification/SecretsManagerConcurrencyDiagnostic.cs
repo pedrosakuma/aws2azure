@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Aws2Azure.IntegrationTests.SecretsManager;
@@ -22,8 +21,10 @@ internal static class SecretsManagerConcurrencyDiagnostic
         Func<RcCohortBinding> binding,
         Func<TimeSpan, CancellationToken, Task> delay,
         Func<SecretsConcurrencyReport, Task> publish,
-        CancellationToken token)
+        CancellationToken token,
+        TimeProvider? timeProvider = null)
     {
+        var clock = timeProvider ?? TimeProvider.System;
         Exception? failure = null;
         try
         {
@@ -50,9 +51,9 @@ internal static class SecretsManagerConcurrencyDiagnostic
                 {
                     phase.Before = await inventory(token).ConfigureAwait(false);
                     RequireEmpty(phase.Before);
-                    var quiet = Stopwatch.StartNew();
+                    var quiet = clock.GetTimestamp();
                     await delay(QuietInterval, token).ConfigureAwait(false);
-                    phase.QuietSeconds = quiet.Elapsed.TotalSeconds;
+                    phase.QuietSeconds = clock.GetElapsedTime(quiet).TotalSeconds;
                     phase.AfterQuiet = await inventory(token).ConfigureAwait(false);
                     RequireEmpty(phase.AfterQuiet);
                     RequireBinding();
@@ -60,7 +61,7 @@ internal static class SecretsManagerConcurrencyDiagnostic
                     ValidatePhase(phase, slot.Concurrency, report.CandidateDigest,
                         warmup ? WarmupDuration : MeasurementDuration);
                     RequireBinding();
-                    await WaitForEmptyAsync(phase, inventory, delay, token).ConfigureAwait(false);
+                    await WaitForStableEmptyAsync(phase, inventory, delay, token, clock).ConfigureAwait(false);
                     RequireBinding();
                     phase.Completed = true;
                     await publish(report).ConfigureAwait(false);
@@ -96,15 +97,18 @@ internal static class SecretsManagerConcurrencyDiagnostic
         }
     }
 
-    internal static async Task WaitForEmptyAsync(
+    internal static async Task WaitForStableEmptyAsync(
         SecretsConcurrencyPhase phase,
         Func<CancellationToken, Task<VaultInventory>> inventory,
         Func<TimeSpan, CancellationToken, Task> delay,
-        CancellationToken token)
+        CancellationToken token,
+        TimeProvider? timeProvider = null)
     {
+        var clock = timeProvider ?? TimeProvider.System;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(BarrierTimeout);
-        var clock = Stopwatch.StartNew();
+        var started = clock.GetTimestamp();
+        long? emptySince = null;
         try
         {
             // The count also bounds a fake-clock/offline execution; the CTS bounds slow HTTP.
@@ -112,17 +116,38 @@ internal static class SecretsManagerConcurrencyDiagnostic
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 phase.After = await inventory(deadline.Token).ConfigureAwait(false);
+                deadline.Token.ThrowIfCancellationRequested();
+                var now = clock.GetTimestamp();
+                var elapsed = clock.GetElapsedTime(started, now);
                 phase.BarrierPolls++;
+                phase.BarrierSamples.Add(new(elapsed.TotalSeconds, phase.After.Active, phase.After.Deleted));
                 if (phase.After.Active == 0 && phase.After.Deleted == 0)
+                {
+                    emptySince ??= now;
+                    phase.BarrierEmptySeconds = clock.GetElapsedTime(emptySince.Value, now).TotalSeconds;
+                }
+                else
+                {
+                    emptySince = null;
+                    phase.BarrierEmptySeconds = 0;
+                }
+
+                if (elapsed > BarrierTimeout)
+                    throw new TimeoutException("Key Vault did not reach a stable empty baseline within the barrier budget.");
+                if (phase.BarrierEmptySeconds >= QuietInterval.TotalSeconds)
                     return;
                 if (poll < 24)
                     await delay(TimeSpan.FromSeconds(5), deadline.Token).ConfigureAwait(false);
             }
-            throw new TimeoutException("Key Vault did not return to its empty baseline.");
+            throw new TimeoutException("Key Vault did not reach a stable empty baseline within the inventory read limit.");
+        }
+        catch (OperationCanceledException exception) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Key Vault did not reach a stable empty baseline within the barrier budget.", exception);
         }
         finally
         {
-            phase.BarrierSeconds = clock.Elapsed.TotalSeconds;
+            phase.BarrierSeconds = clock.GetElapsedTime(started).TotalSeconds;
         }
     }
 
@@ -186,6 +211,8 @@ internal static class SecretsManagerConcurrencyDiagnostic
 
 internal sealed record VaultInventory(long Active, long Deleted);
 
+internal sealed record VaultInventorySample(double ElapsedSeconds, long Active, long Deleted);
+
 internal sealed class SecretsConcurrencyReport
 {
     public int SchemaVersion => 1;
@@ -233,6 +260,8 @@ internal sealed class SecretsConcurrencyPhase
     public double QuietSeconds { get; set; }
     public int BarrierPolls { get; set; }
     public double BarrierSeconds { get; set; }
+    public double BarrierEmptySeconds { get; set; }
+    public List<VaultInventorySample> BarrierSamples { get; set; } = [];
     public OperationTimingReport? Timing { get; set; }
     public long CompletedIterations { get; set; }
     public double GetSecretValuePerSecond { get; set; }

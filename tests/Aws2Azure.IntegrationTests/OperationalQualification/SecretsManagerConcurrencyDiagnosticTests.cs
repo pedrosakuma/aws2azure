@@ -35,6 +35,7 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
     public async Task Fixed_shape_sequence_keeps_one_runtime_and_checks_cleanliness_around_every_phase()
     {
         var report = Report();
+        var clock = new Clock();
         var events = new List<string>();
         var publications = new List<string>();
         await SecretsManagerConcurrencyDiagnostic.RunAsync(report,
@@ -48,22 +49,26 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             _ => { events.Add("inventory"); return Task.FromResult(new VaultInventory(0, 0)); },
             _ => { events.Add("probe"); return Task.FromResult(new[] { 1.0 }); },
             () => report.Binding,
-            (duration, _) =>
+            (duration, token) =>
             {
-                Assert.Equal(TimeSpan.FromSeconds(60), duration);
-                events.Add("quiet");
-                return Task.CompletedTask;
+                Assert.Contains(duration, new[] { TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(5) });
+                events.Add(duration.TotalSeconds == 60 ? "quiet" : "settle");
+                return clock.Delay(duration, token);
             },
             value =>
             {
                 publications.Add(JsonSerializer.Serialize(value, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport));
                 return Task.CompletedTask;
-            }, CancellationToken.None);
+            }, CancellationToken.None, clock);
 
         Assert.Equal(new[] { 5, 8, 8, 5, 5, 5 }, report.Slots.Select(slot => slot.Concurrency));
-        var perSlot = new[] { "restart", "probe",
-            "inventory", "quiet", "inventory", "warmup", "inventory",
-            "inventory", "quiet", "inventory", "measurement", "inventory", "probe" };
+        var barrier = new[] { "inventory" }.Concat(
+            Enumerable.Range(0, 12).SelectMany(_ => new[] { "settle", "inventory" })).ToArray();
+        var perSlot = new[] { "restart", "probe", "inventory", "quiet", "inventory", "warmup" }
+            .Concat(barrier)
+            .Concat(["inventory", "quiet", "inventory", "measurement"])
+            .Concat(barrier)
+            .Concat(["probe"]);
         Assert.Equal(new[] { "inventory" }.Concat(Enumerable.Range(0, 6).SelectMany(_ => perSlot)), events);
         Assert.True(report.Completed);
         Assert.False(report.Promotable);
@@ -81,6 +86,10 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             Assert.True(slot.Measurement.Completed);
             Assert.Equal(new VaultInventory(0, 0), slot.Measurement.After);
             Assert.Equal("candidate-digest", slot.Measurement.Timing!.RuntimeDigest);
+            Assert.Equal(60, slot.Measurement.BarrierEmptySeconds);
+            Assert.Equal(13, slot.Measurement.BarrierSamples.Count);
+            Assert.Equal(60, slot.Measurement.BarrierSeconds);
+            Assert.Equal(60, slot.Measurement.QuietSeconds);
         });
     }
 
@@ -97,6 +106,7 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
     public async Task Failure_aborts_later_slots_and_preserves_sanitized_partial_report(string failure)
     {
         var report = Report();
+        var clock = new Clock();
         using var cts = new CancellationTokenSource();
         if (failure == "cancel") cts.Cancel();
         var calls = 0;
@@ -126,16 +136,16 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             },
             _ => failure == "probe" ? throw original : Task.FromResult(Array.Empty<double>()),
             () => drift ? report.Binding with { Config = "changed" } : report.Binding,
-            (_, _) =>
+            (duration, token) =>
             {
                 dirtyAfterQuiet = failure == "dirty-after-quiet";
-                return Task.CompletedTask;
+                return clock.Delay(duration, token);
             },
             value =>
             {
                 published = JsonSerializer.Serialize(value, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport);
                 return Task.CompletedTask;
-            }, cts.Token));
+            }, cts.Token, clock));
         Assert.NotNull(error);
         Assert.InRange(report.Slots.Count, 0, 1);
         Assert.InRange(calls, 0, 2);
@@ -148,6 +158,62 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
         Assert.NotEmpty(published);
         if (failure == "measurement")
             Assert.NotNull(report.Slots[0].Measurement.Timing);
+    }
+
+    [Theory]
+    [InlineData(2, false)]
+    [InlineData(14, true)]
+    public async Task Empty_then_deleted_transition_recovers_only_inside_the_barrier(int dirtyRead, bool afterBarrier)
+    {
+        var report = Report();
+        var clock = new Clock();
+        var postWarmupReads = 0;
+        var warmupFinished = false;
+        var measurementStarted = false;
+        var task = SecretsManagerConcurrencyDiagnostic.RunAsync(report,
+                _ => Task.CompletedTask,
+                (_, concurrency, warmup, phase, _) =>
+                {
+                    measurementStarted |= !warmup;
+                    phase.Timing = Timing(concurrency, warmup, 114);
+                    warmupFinished = true;
+                    return Task.CompletedTask;
+                },
+                _ => Task.FromResult(new VaultInventory(0,
+                    warmupFinished && ++postWarmupReads == dirtyRead ? 2 : 0)),
+                _ => Task.FromResult(Array.Empty<double>()),
+                () => report.Binding,
+                clock.Delay,
+                _ => Task.CompletedTask,
+                CancellationToken.None, clock);
+
+        if (afterBarrier)
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => task);
+            Assert.False(measurementStarted);
+            var partial = Assert.Single(report.Slots);
+            Assert.True(partial.Warmup.Completed);
+            Assert.Equal(60, partial.Warmup.BarrierEmptySeconds);
+            Assert.Equal(new VaultInventory(0, 2), partial.Measurement.Before);
+            Assert.Null(report.Comparison);
+            return;
+        }
+
+        await task;
+        Assert.True(measurementStarted);
+        var slot = report.Slots[0];
+        Assert.True(slot.Warmup.Completed);
+        Assert.Equal(114, slot.Warmup.CompletedIterations);
+        Assert.Equal(15, slot.Warmup.BarrierPolls);
+        Assert.Equal(new VaultInventorySample(0, 0, 0), slot.Warmup.BarrierSamples[0]);
+        Assert.Equal(new VaultInventorySample(5, 0, 2), slot.Warmup.BarrierSamples[1]);
+        Assert.Equal(new VaultInventorySample(70, 0, 0), slot.Warmup.BarrierSamples[^1]);
+        Assert.Equal(60, slot.Warmup.BarrierEmptySeconds);
+        Assert.Equal(new VaultInventory(0, 0), slot.Warmup.After);
+        Assert.Equal(new VaultInventory(0, 0), slot.Measurement.Before);
+        Assert.True(slot.Measurement.Completed);
+        Assert.True(report.Completed);
+        Assert.NotNull(report.Comparison);
     }
 
     [Fact]
@@ -170,20 +236,27 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
     public async Task Purge_barrier_is_bounded_and_does_not_clean_or_ignore_deleted_inventory(bool converges)
     {
         var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
         var reads = 0;
         var delays = 0;
-        var task = SecretsManagerConcurrencyDiagnostic.WaitForEmptyAsync(phase,
-            _ => Task.FromResult(new VaultInventory(0, converges && ++reads > 2 ? 0 : 1)),
-            (duration, _) =>
+        var task = SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+            _ =>
+            {
+                reads++;
+                return Task.FromResult(new VaultInventory(0, converges && reads > 2 ? 0 : 1));
+            },
+            (duration, token) =>
             {
                 Assert.Equal(TimeSpan.FromSeconds(5), duration);
                 delays++;
-                return Task.CompletedTask;
-            }, CancellationToken.None);
+                return clock.Delay(duration, token);
+            }, CancellationToken.None, clock);
         if (converges)
         {
             await task;
-            Assert.Equal(3, phase.BarrierPolls);
+            Assert.Equal(15, phase.BarrierPolls);
+            Assert.Equal(60, phase.BarrierEmptySeconds);
+            Assert.Equal(70, phase.BarrierSeconds);
             Assert.Equal(new VaultInventory(0, 0), phase.After);
         }
         else
@@ -191,8 +264,147 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             await Assert.ThrowsAsync<TimeoutException>(() => task);
             Assert.Equal(25, phase.BarrierPolls);
             Assert.Equal(24, delays);
+            Assert.Equal(120, phase.BarrierSeconds);
+            Assert.Equal(0, phase.BarrierEmptySeconds);
             Assert.Equal(new VaultInventory(0, 1), phase.After);
         }
+        Assert.Equal(reads, phase.BarrierSamples.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Reappearing_active_or_deleted_inventory_resets_stability_not_total_deadline(bool active)
+    {
+        var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
+        var reads = 0;
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+                _ =>
+                {
+                    var dirty = ++reads == 13;
+                    return Task.FromResult(new VaultInventory(dirty && active ? 1 : 0, dirty && !active ? 2 : 0));
+                }, clock.Delay, CancellationToken.None, clock));
+        Assert.Equal(25, reads);
+        Assert.Equal(120, phase.BarrierSeconds);
+        Assert.Equal(55, phase.BarrierEmptySeconds);
+        Assert.Equal(25, phase.BarrierSamples.Count);
+        Assert.False(phase.Completed);
+    }
+
+    [Fact]
+    public async Task Full_empty_window_completed_exactly_at_deadline_is_accepted()
+    {
+        var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
+        var reads = 0;
+        await SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+            _ => Task.FromResult(new VaultInventory(0, ++reads <= 12 ? 1 : 0)),
+            clock.Delay, CancellationToken.None, clock);
+        Assert.Equal(25, reads);
+        Assert.Equal(120, phase.BarrierSeconds);
+        Assert.Equal(60, phase.BarrierEmptySeconds);
+    }
+
+    [Fact]
+    public async Task Empty_reads_without_elapsed_time_cannot_satisfy_stability()
+    {
+        var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+                _ => Task.FromResult(new VaultInventory(0, 0)),
+                (_, _) => Task.CompletedTask, CancellationToken.None, clock));
+        Assert.Equal(25, phase.BarrierPolls);
+        Assert.Equal(0, phase.BarrierEmptySeconds);
+    }
+
+    [Fact]
+    public async Task Slow_final_empty_read_cannot_succeed_after_the_total_deadline()
+    {
+        var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
+        var reads = 0;
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+                _ =>
+                {
+                    if (++reads == 2) clock.Advance(TimeSpan.FromSeconds(120));
+                    return Task.FromResult(new VaultInventory(0, 0));
+                }, clock.Delay, CancellationToken.None, clock));
+        Assert.Equal(2, reads);
+        Assert.Equal(125, phase.BarrierSeconds);
+        Assert.False(phase.Completed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Inventory_failure_or_cancellation_is_not_retried_or_hidden(bool cancel)
+    {
+        var phase = new SecretsConcurrencyPhase();
+        var clock = new Clock();
+        using var cts = new CancellationTokenSource();
+        var reads = 0;
+        var failure = new HttpRequestException("private inventory failure", null, HttpStatusCode.Forbidden);
+        var result = await Record.ExceptionAsync(() =>
+            SecretsManagerConcurrencyDiagnostic.WaitForStableEmptyAsync(phase,
+                _ =>
+                {
+                    if (++reads == 2)
+                    {
+                        if (!cancel) throw failure;
+                        cts.Cancel();
+                    }
+                    return Task.FromResult(new VaultInventory(0, 0));
+                }, clock.Delay, cts.Token, clock));
+        if (cancel)
+            Assert.IsAssignableFrom<OperationCanceledException>(result);
+        else
+            Assert.Same(failure, result);
+        Assert.Equal(2, reads);
+        Assert.Single(phase.BarrierSamples);
+        Assert.False(phase.Completed);
+    }
+
+    [Fact]
+    public async Task Failed_stability_barrier_preserves_samples_and_never_starts_measurement()
+    {
+        var report = Report();
+        var clock = new Clock();
+        var measures = 0;
+        var reads = 0;
+        var published = "";
+        await Assert.ThrowsAsync<TimeoutException>(() =>
+            SecretsManagerConcurrencyDiagnostic.RunAsync(report,
+                _ => Task.CompletedTask,
+                (_, concurrency, warmup, phase, _) =>
+                {
+                    measures++;
+                    Assert.True(warmup);
+                    phase.Timing = Timing(concurrency, warmup);
+                    return Task.CompletedTask;
+                },
+                _ => Task.FromResult(new VaultInventory(0, measures > 0 && ++reads % 2 == 0 ? 2 : 0)),
+                _ => Task.FromResult(Array.Empty<double>()), () => report.Binding,
+                clock.Delay,
+                value =>
+                {
+                    published = JsonSerializer.Serialize(value, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport);
+                    return Task.CompletedTask;
+                }, CancellationToken.None, clock));
+
+        var retained = JsonSerializer.Deserialize(published, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport)!;
+        Assert.False(retained.Completed);
+        Assert.Null(retained.Comparison);
+        Assert.NotNull(retained.Failure);
+        var slot = Assert.Single(retained.Slots);
+        Assert.False(slot.Warmup.Completed);
+        Assert.Equal(25, slot.Warmup.BarrierSamples.Count);
+        Assert.Equal(120, slot.Warmup.BarrierSeconds);
+        Assert.Null(slot.Measurement.Before);
+        Assert.Equal(1, measures);
     }
 
     [Theory]
@@ -401,6 +613,22 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
     }
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+
+    private sealed class Clock : TimeProvider
+    {
+        private long _timestamp;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _timestamp;
+
+        internal void Advance(TimeSpan duration) => _timestamp += duration.Ticks;
+
+        internal Task Delay(TimeSpan duration, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            Advance(duration);
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
