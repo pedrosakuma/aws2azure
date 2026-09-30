@@ -274,12 +274,37 @@ This reuses the workload-identity federation the job already relies on for
    OIDC SP the data-plane roles (Event Hubs / Service Bus Data Owner, Cosmos DB
    Built-in Data Contributor), and the SP holds **Role Based Access Control
    Administrator** so it can create those assignments.
-2. The job requests a **second** GitHub OIDC token (audience
+2. Before each test invocation, the job requests a **separate** GitHub OIDC token (audience
    `api://AzureADTokenExchange`, same `sub` as the login token, so the existing
    federated credentials validate it), writes it to
-   `$RUNNER_TEMP/azure-federated-token.jwt`, and exports
+   the job's private `tokens/azure-federated-token.jwt` file, and exports
    `AZURE_FEDERATED_TOKEN_FILE` / `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` — exactly
    the projected-token contract `WorkloadIdentityTokenSource` reads.
+
+The [projected-token supervisor](../../.github/scripts/run-with-projected-oidc.py)
+rotates that file atomically with owner-only permissions before **each** matrix
+or shared-evidence invocation, including the existing single test retry after
+an Entra HTTP 401. While tests run, it refreshes at most every four minutes,
+or earlier to leave a sixty-second expiry margin. Acquisition has a thirty-second
+budget; malformed, not-yet-valid, or near-expiry assertions fail closed.
+An acquisition/rotation failure stops the test process group and fails the
+step; it cannot become a successful test result. Cancellation stops the group
+and removes the assertion. The workflow's unconditional Azure teardown is unchanged.
+
+The `oidc-*.jsonl` files in the correctness artifact retain only assertion
+`iat`/`nbf`/`exp`, remaining lifetime, and observation timestamps. Decoded claims
+are **unverified scheduling hints**, not authentication evidence. After an
+Entra-401 test failure, a bounded, separate exchange probe uses the current
+projected assertion **before** the retry refresh. It retains only HTTP status
+and numeric `error_codes`, never the token, identity claims, access token,
+request headers, or provider response body. A probe success does not clear the
+failed test; a probe failure is not necessarily the original proxy failure.
+The final test exit code remains authoritative.
+
+This addresses the unrotated-assertion exposure found in #1066 following #1065;
+it does **not** retrospectively prove that the original 401 was expiry.
+Offline supervisor checks run with
+`PYTHONDONTWRITEBYTECODE=1 python3 eng/test-projected-oidc.py`.
 
 Both are gated: when `AZURE_CLIENT_OBJECT_ID` is unset the
 `steps.gate.outputs.wi_enabled` flag is false, the token file is never minted,
