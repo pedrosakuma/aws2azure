@@ -260,7 +260,17 @@ Even an 8-worker rate above 9/s does not justify a 9/s floor for the committed
 separate review and comparable canonical evidence. A short diagnostic does not
 replace long observation, rotation/rollback proofs or qualification freshness.
 Workflow cleanup confirms deletion of the owned resource group and checks that
-its vault no longer has a soft-deleted reservation.
+its vault no longer has a soft-deleted reservation. Immediately before cleanup,
+the workflow obtains a fresh Azure CLI OIDC login using the original identity
+and subscription, with a five-minute timeout. The harness's projected-assertion
+rotation does not refresh the separate Azure CLI session: run `36875986895/1`
+completed all measurements but failed cleanup with `AADSTS700024` when that
+session reused an expired assertion (#1072).
+Both reauthentication and cleanup run after success, failure or cancellation
+when the initial Azure login succeeded, including partial provisioning failures.
+Cleanup is still attempted if reauthentication fails; neither failure is
+suppressed, and report upload remains unconditional. This renewal does not
+retry the experiment or make a failed workflow eligible for promotion.
 
 ### Controlled DynamoDB crossover
 
