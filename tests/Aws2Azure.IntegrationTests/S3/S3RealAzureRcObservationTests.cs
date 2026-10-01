@@ -14,7 +14,7 @@ namespace Aws2Azure.IntegrationTests.S3;
 [Collection(RealAzureCollection.Name)]
 public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
 {
-    private static readonly string[] Operations =
+    internal static readonly string[] Operations =
     [
         "CreateBucket",
         "PutObject",
@@ -582,14 +582,16 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
         OperationDiagnostics = RcObservationCaptureWriter.OperationDiagnostics(tracker),
     };
 
-    private static async Task RunWorkerAsync(
+    internal static async Task RunWorkerAsync(
         IAmazonS3 client,
         RealAzureWorkloadLoadTracker tracker,
         string role,
         int worker,
         TimeSpan duration,
         Stopwatch stopwatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool strictDiagnostic = false,
+        CompletedIterationCounter? completedIterations = null)
     {
         var bucket = $"a2a-rc-{role[..1]}-{worker:x2}-{Guid.NewGuid():N}"[..40];
         var bucketCreated = false;
@@ -607,6 +609,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
 
             while (stopwatch.Elapsed < duration)
             {
+                completedIterations?.RecordStarted();
                 var key = $"objects/{worker:D2}/{iteration++:D8}.txt";
                 var payload =
                     $"aws2azure RC {role} S3 observation {key} {new string('x', 65_536)}";
@@ -781,7 +784,7 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                             cancellationToken),
                         IsThrottle).ConfigureAwait(false);
                     objectCreated = false;
-                    await MeasureAsync(
+                    var finalDelete = MeasureAsync(
                         tracker,
                         "DeleteObject",
                         () => client.DeleteObjectAsync(
@@ -791,14 +794,16 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                                 Key = key,
                             },
                             cancellationToken),
-                        IsThrottle).ConfigureAwait(false);
+                        IsThrottle);
+                    await (completedIterations is null ? finalDelete
+                        : completedIterations.CompleteAfterAsync(() => finalDelete)).ConfigureAwait(false);
                 }
-                catch when (!cancellationToken.IsCancellationRequested)
+                catch when (!strictDiagnostic && !cancellationToken.IsCancellationRequested)
                 {
                 }
                 finally
                 {
-                    if (objectCreated)
+                    if (objectCreated && !strictDiagnostic)
                     {
                         try
                         {
@@ -826,12 +831,12 @@ public sealed class S3RealAzureRcObservationTests(RealAzureProxyFixture fixture)
                 IsThrottle).ConfigureAwait(false);
             bucketCreated = false;
         }
-        catch when (!cancellationToken.IsCancellationRequested)
+        catch when (!strictDiagnostic && !cancellationToken.IsCancellationRequested)
         {
         }
         finally
         {
-            if (bucketCreated)
+            if (bucketCreated && !strictDiagnostic)
             {
                 try
                 {
