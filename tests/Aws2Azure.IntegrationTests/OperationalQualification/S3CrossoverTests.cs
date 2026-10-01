@@ -82,6 +82,7 @@ public sealed class S3CrossoverTests
                 "inventory", "quiet", "inventory", "measurement", "inventory" });
         Assert.Equal(expected, events);
         Assert.True(report.Completed);
+        Assert.Equal("completed", report.Stage);
         Assert.False(report.Promotable);
         Assert.Equal(19, publications.Count);
         Assert.DoesNotContain("\"completed\": true", publications[0].Split("\"slots\"")[0], StringComparison.Ordinal);
@@ -101,14 +102,18 @@ public sealed class S3CrossoverTests
     }
 
     [Theory]
-    [InlineData("restart")]
-    [InlineData("inventory")]
-    [InlineData("quiet")]
-    [InlineData("warmup")]
-    [InlineData("measurement")]
-    [InlineData("binding")]
-    [InlineData("cancel")]
-    public async Task Failures_stop_slots_and_publish_partial_sanitized_report(string failure)
+    [InlineData("restart", "runtime_restart")]
+    [InlineData("management_settings", "management_settings")]
+    [InlineData("blob_settings", "blob_settings")]
+    [InlineData("runtime_stop", "runtime_stop")]
+    [InlineData("runtime_start", "runtime_start")]
+    [InlineData("inventory", "warmup.inventory_before")]
+    [InlineData("quiet", "warmup.quiet")]
+    [InlineData("warmup", "warmup.workload")]
+    [InlineData("measurement", "measurement.workload")]
+    [InlineData("binding", "initial_binding")]
+    [InlineData("cancel", "initial_binding")]
+    public async Task Failures_stop_slots_and_publish_partial_sanitized_report(string failure, string expectedStage)
     {
         var report = Report();
         var original = new TimeoutException("private-key https://private.example/payload");
@@ -121,6 +126,11 @@ public sealed class S3CrossoverTests
             {
                 restarts++;
                 if (failure == "restart") throw original;
+                if (failure is "management_settings" or "blob_settings" or "runtime_stop" or "runtime_start")
+                {
+                    report.Stage = failure;
+                    throw original;
+                }
                 return Task.CompletedTask;
             },
             (role, warmup, phase, _) =>
@@ -142,6 +152,8 @@ public sealed class S3CrossoverTests
         Assert.False(report.Completed);
         Assert.Null(report.Comparison);
         Assert.NotNull(report.Failure);
+        Assert.Equal(expectedStage, report.Stage);
+        Assert.Contains($"\"stage\": \"{expectedStage}\"", published, StringComparison.Ordinal);
         Assert.All(report.Slots, slot => Assert.False(slot.Completed));
         Assert.DoesNotContain("private-key", published, StringComparison.Ordinal);
         Assert.DoesNotContain("private.example", published, StringComparison.Ordinal);
@@ -165,6 +177,12 @@ public sealed class S3CrossoverTests
         Assert.Equal(dirtyRead == 3 ? 1 : 0, phases);
         Assert.Single(report.Slots);
         Assert.False(report.Completed);
+        Assert.Equal(dirtyRead switch
+        {
+            1 => "warmup.inventory_before",
+            2 => "warmup.inventory_after_quiet",
+            _ => "warmup.inventory_after",
+        }, report.Stage);
     }
 
     [Fact]
@@ -183,6 +201,7 @@ public sealed class S3CrossoverTests
             () => drift ? report.Binding with { Backend = "changed" } : report.Binding,
             (_, _) => Task.CompletedTask, _ => Task.CompletedTask, CancellationToken.None));
         Assert.Equal(1, phases);
+        Assert.Equal("warmup.binding_after", report.Stage);
     }
 
     [Theory]
@@ -335,6 +354,8 @@ public sealed class S3CrossoverTests
         Assert.Contains("if: always() && steps.azure.outcome == 'success'", workflow[cleanup..], StringComparison.Ordinal);
         Assert.Contains("cleanup-real-azure-resource-groups.sh \"$RG_NAME\"", workflow, StringComparison.Ordinal);
         Assert.Contains("az group exists -n \"$RG_NAME\"", workflow, StringComparison.Ordinal);
+        var deployment = File.ReadAllText(Path.Combine(root.FullName, "deploy/realazure/s3-load.bicep"));
+        Assert.Contains("isVersioningEnabled: false", deployment, StringComparison.Ordinal);
     }
 
     private sealed class Clock : TimeProvider

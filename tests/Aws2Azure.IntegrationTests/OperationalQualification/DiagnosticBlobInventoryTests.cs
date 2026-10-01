@@ -11,6 +11,28 @@ public sealed class DiagnosticBlobInventoryTests
         new(http, new Uri("https://diagnostic.blob.core.windows.net/"), "diagnostic", Key);
 
     [Fact]
+    public async Task Documented_data_plane_response_does_not_require_management_plane_fields()
+    {
+        using var http = new HttpClient(new Handler(_ => Xml("""
+            <StorageServiceProperties>
+              <Logging><Version>1.0</Version><Delete>false</Delete><Read>false</Read><Write>false</Write>
+                <RetentionPolicy><Enabled>false</Enabled></RetentionPolicy>
+              </Logging>
+              <HourMetrics><Version>1.0</Version><Enabled>false</Enabled>
+                <RetentionPolicy><Enabled>false</Enabled></RetentionPolicy>
+              </HourMetrics>
+              <MinuteMetrics><Version>1.0</Version><Enabled>false</Enabled>
+                <RetentionPolicy><Enabled>false</Enabled></RetentionPolicy>
+              </MinuteMetrics>
+              <Cors />
+              <DeleteRetentionPolicy><Enabled>false</Enabled></DeleteRetentionPolicy>
+              <StaticWebsite><Enabled>false</Enabled></StaticWebsite>
+            </StorageServiceProperties>
+            """)));
+        await Inventory(http).VerifyBlobSettingsAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Counts_all_pages_and_encodes_markers_without_following_urls()
     {
         var calls = 0;
@@ -65,21 +87,20 @@ public sealed class DiagnosticBlobInventoryTests
     }
 
     [Theory]
-    [InlineData("false", "false", false)]
-    [InlineData("true", "false", true)]
-    [InlineData("false", "true", true)]
-    [InlineData("", "", true)]
-    public async Task Soft_delete_settings_are_explicitly_checked(string blob, string container, bool invalid)
+    [InlineData("false", false)]
+    [InlineData("true", true)]
+    [InlineData("", true)]
+    public async Task Blob_soft_delete_is_explicitly_checked_in_the_data_plane(string blob, bool invalid)
     {
         using var http = new HttpClient(new Handler(request =>
         {
             Assert.Equal("?restype=service&comp=properties", request.RequestUri!.Query);
-            return Xml($"<StorageServiceProperties><DeleteRetentionPolicy><Enabled>{blob}</Enabled></DeleteRetentionPolicy><ContainerDeleteRetentionPolicy><Enabled>{container}</Enabled></ContainerDeleteRetentionPolicy></StorageServiceProperties>");
+            return Xml($"<StorageServiceProperties><DeleteRetentionPolicy><Enabled>{blob}</Enabled></DeleteRetentionPolicy></StorageServiceProperties>");
         }));
         if (invalid)
-            await Assert.ThrowsAsync<InvalidDataException>(() => Inventory(http).VerifySettingsAsync(CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidDataException>(() => Inventory(http).VerifyBlobSettingsAsync(CancellationToken.None));
         else
-            await Inventory(http).VerifySettingsAsync(CancellationToken.None);
+            await Inventory(http).VerifyBlobSettingsAsync(CancellationToken.None);
     }
 
     [Fact]

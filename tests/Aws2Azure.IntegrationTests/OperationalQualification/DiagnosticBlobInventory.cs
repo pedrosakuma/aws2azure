@@ -20,14 +20,12 @@ internal sealed class DiagnosticBlobInventory
         _auth = new SharedKeyAuthenticator(account, key);
     }
 
-    internal async Task VerifySettingsAsync(CancellationToken token)
+    internal async Task VerifyBlobSettingsAsync(CancellationToken token)
     {
         var root = await ReadAsync("?restype=service&comp=properties", token).ConfigureAwait(false);
         if (root.Name != "StorageServiceProperties"
-            || root.Element("DeleteRetentionPolicy")?.Element("Enabled")?.Value != "false"
-            || root.Element("ContainerDeleteRetentionPolicy")?.Element("Enabled")?.Value != "false"
-            || root.Element("IsVersioningEnabled")?.Value == "true")
-            throw new InvalidDataException("Diagnostic requires blob/container soft delete and versioning disabled.");
+            || root.Element("DeleteRetentionPolicy")?.Element("Enabled")?.Value != "false")
+            throw new InvalidDataException("Diagnostic requires blob soft delete explicitly disabled.");
     }
 
     internal async Task<long> CountAsync(CancellationToken token)

@@ -20,6 +20,7 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01
   parent: storage
   name: 'default'
   properties: {
+    isVersioningEnabled: false
     deleteRetentionPolicy: {
       enabled: false
     }

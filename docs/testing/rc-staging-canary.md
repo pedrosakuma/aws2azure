@@ -362,9 +362,15 @@ One job/runner, one dedicated `StorageV2` / `Standard_LRS` account in `eastus2`
 using `deploy/realazure/s3-load.bicep`, unchanged shared-key configuration and
 AWS binding. Record actual runner region/image/resources separately from the
 backend region; unknown geography stays unknown. No other workloads/cohorts
-share the diagnostic account. Authenticated Blob service-property checks require
-blob/container soft delete disabled and reject enabled versioning before each
-slot. Use the same SDK build, path-style addressing,
+share the diagnostic account. Before each slot, a read-only Azure CLI
+`az storage account blob-service-properties show` checks the owned account and
+resource group through the management plane, with a 60-second deadline.
+Blob/container soft delete and versioning must all be explicitly `false`;
+missing, null, malformed or failed reads abort. The Bicep deployment explicitly
+disables all three. A separate signed data-plane check confirms blob soft delete
+is disabled. Container retention and versioning are not inferred from missing
+fields in the data-plane XML. These checks run outside measured workload time.
+Use the same SDK build, path-style addressing,
 streaming/checksum defaults and `MaxErrorRetry=2` in every arm.
 
 **One six-slot schedule.** Prior, candidate, candidate, prior, prior, prior:
@@ -427,6 +433,14 @@ The minimal implementation does not add network probes, proxy CPU sampling or
 backend latency instrumentation; these remain unavailable, not zero.
 SDK/internal retry counts also remain unknown. Upload allowlisted sanitized JSON only, not configurations,
 credentials, endpoints, names, payloads or raw logs; retain partial failures.
+The report's `stage` identifies the failed management/data-plane settings read,
+runtime switch, phase boundary, workload or validation without retaining raw
+exception messages. Run `36930800624/1` stopped before warmup with no comparison;
+its older report lacked this stage. Offline reproduction confirmed that the old
+guard rejected the documented Blob XML because it required a management-plane
+container-retention field; the run did not retain the XML to prove that exact
+trigger. See the [data-plane response contract](https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob-service-properties)
+and [management-plane properties](https://learn.microsoft.com/en-us/rest/api/storagerp/blob-services/get-service-properties?view=rest-storagerp-2023-05-01).
 
 Interpret both candidate/prior pair ratios, pooled count/duration rates and the
 separate A/A drift. A stable A/A with a consistent difference in both A/B orders

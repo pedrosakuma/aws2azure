@@ -41,9 +41,11 @@ internal static class S3Crossover
         Exception? failure = null;
         try
         {
+            report.Stage = "inputs";
             if (!IsDigest(report.CandidateDigest) || !IsDigest(report.PriorDigest)
                 || report.CandidateDigest == report.PriorDigest || report.Slots.Count != 0)
                 throw new InvalidDataException("Crossover requires two distinct exact sealed digests and a new report.");
+            report.Stage = "initial_binding";
             RequireBinding();
             for (var index = 0; index < Roles.Length; index++)
             {
@@ -57,31 +59,43 @@ internal static class S3Crossover
                         ? report.CandidateDigest : report.PriorDigest,
                 };
                 report.Slots.Add(slot);
+                report.Stage = "runtime_restart";
                 await restart(role, token).ConfigureAwait(false);
+                report.Stage = "runtime_binding";
                 RequireBinding();
                 await PhaseAsync(slot.Warmup, true).ConfigureAwait(false);
                 await PhaseAsync(slot.Measurement, false).ConfigureAwait(false);
                 slot.Completed = true;
+                report.Stage = "publish";
                 await publish(report).ConfigureAwait(false);
 
                 async Task PhaseAsync(S3CrossoverPhase phase, bool warmup)
                 {
+                    var prefix = warmup ? "warmup" : "measurement";
+                    report.Stage = prefix + ".inventory_before";
                     phase.Before = await ReadInventoryAsync(token).ConfigureAwait(false);
                     RequireEmpty(phase.Before.Value);
+                    report.Stage = prefix + ".quiet";
                     var quiet = clock.GetTimestamp();
                     await delay(QuietInterval, token).ConfigureAwait(false);
                     phase.QuietSeconds = clock.GetElapsedTime(quiet).TotalSeconds;
+                    report.Stage = prefix + ".inventory_after_quiet";
                     phase.AfterQuiet = await ReadInventoryAsync(token).ConfigureAwait(false);
                     RequireEmpty(phase.AfterQuiet.Value);
+                    report.Stage = prefix + ".binding_before";
                     RequireBinding();
+                    report.Stage = prefix + ".workload";
                     await measure(role, warmup, phase, token).ConfigureAwait(false);
+                    report.Stage = prefix + ".validation";
                     ValidatePhase(phase, slot.RuntimeDigest, slot.Role,
                         warmup ? WarmupDuration : MeasurementDuration);
+                    report.Stage = prefix + ".binding_after";
                     RequireBinding();
                     var started = clock.GetTimestamp();
                     try
                     {
                         // A separate token from the measured phase's drain deadline.
+                        report.Stage = prefix + ".inventory_after";
                         phase.After = await ReadInventoryAsync(token).ConfigureAwait(false);
                         RequireEmpty(phase.After.Value);
                     }
@@ -89,13 +103,17 @@ internal static class S3Crossover
                     {
                         phase.InventorySeconds = clock.GetElapsedTime(started).TotalSeconds;
                     }
+                    report.Stage = prefix + ".binding_final";
                     RequireBinding();
                     phase.Completed = true;
+                    report.Stage = "publish";
                     await publish(report).ConfigureAwait(false);
                 }
             }
+            report.Stage = "comparison";
             report.Comparison = Compare(report.Slots);
             report.Completed = true;
+            report.Stage = "completed";
         }
         catch (Exception exception)
         {
@@ -222,6 +240,7 @@ internal sealed class S3CrossoverReport
     public DateTimeOffset StartedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? EndedAtUtc { get; set; }
     public bool Completed { get; set; }
+    public string Stage { get; set; } = "initializing";
     public RealAzureWorkloadFirstFailure? Failure { get; set; }
     public S3CrossoverComparison? Comparison { get; set; }
     public List<S3CrossoverSlot> Slots { get; set; } = [];

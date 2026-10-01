@@ -50,9 +50,15 @@ public sealed class S3RealAzureCrossoverTests(RealAzureProxyFixture fixture)
         await S3Crossover.RunAsync(report,
             async (role, token) =>
             {
-                await inventory.VerifySettingsAsync(token).ConfigureAwait(false);
+                report.Stage = "management_settings";
+                await DiagnosticBlobSettings.VerifyAsync(DiagnosticBlobSettings.CreateReadStartInfo(
+                    fixture.StorageAccountName, RequiredEnvironment("RG_NAME")), token).ConfigureAwait(false);
+                report.Stage = "blob_settings";
+                await inventory.VerifyBlobSettingsAsync(token).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
+                report.Stage = "runtime_stop";
                 await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                report.Stage = "runtime_start";
                 await fixture.StartRuntimeAsync(role).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
             },
