@@ -628,12 +628,7 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
     [Fact]
     public void Workflow_is_manual_budget_guarded_single_candidate_and_always_cleans_owned_resources()
     {
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "aws2azure.slnx")))
-            root = root.Parent;
-        Assert.NotNull(root);
-        var workflow = File.ReadAllText(Path.Combine(root.FullName,
-            ".github", "workflows", "secretsmanager-concurrency-diagnostic.yml"));
+        var workflow = ReadDiagnosticWorkflow();
         foreach (var required in new[]
         {
             "workflow_dispatch:", "[ \"$REF\" != refs/heads/main ]", "[ \"$REF_PROTECTED\" != true ]",
@@ -658,6 +653,57 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             Assert.DoesNotContain(prohibited, workflow, StringComparison.Ordinal);
         Assert.True(workflow.IndexOf("Resolve and pin the exact sealed candidate", StringComparison.Ordinal)
             < workflow.IndexOf("Azure login (OIDC)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Cleanup_refreshes_cli_login_after_measurement_even_when_prior_steps_fail()
+    {
+        var workflow = ReadDiagnosticWorkflow();
+        const string stepPrefix = "      - name: ";
+        var steps = workflow.Split(stepPrefix, StringSplitOptions.None);
+        var measurement = Array.FindIndex(steps, step =>
+            step.StartsWith("Run five-eight-eight-five and five-five control\n", StringComparison.Ordinal));
+        var refresh = Array.FindIndex(steps, step =>
+            step.StartsWith("Refresh Azure login for cleanup (OIDC)\n", StringComparison.Ordinal));
+        var cleanup = Array.FindIndex(steps, step =>
+            step.StartsWith("Deallocate the owned backend\n", StringComparison.Ordinal));
+        Assert.True(measurement >= 0);
+        Assert.Equal(measurement + 1, refresh);
+        Assert.Equal(refresh + 1, cleanup);
+
+        var login = Assert.Single(steps, step => step.StartsWith("Azure login (OIDC)\n", StringComparison.Ordinal));
+        Assert.Contains("        id: azure\n", login, StringComparison.Ordinal);
+        foreach (var required in new[]
+        {
+            "        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2\n",
+            "          client-id: ${{ secrets.AZURE_CLIENT_ID }}\n",
+            "          tenant-id: ${{ secrets.AZURE_TENANT_ID }}\n",
+            "          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}\n",
+        })
+        {
+            Assert.Contains(required, login, StringComparison.Ordinal);
+            Assert.Contains(required, steps[refresh], StringComparison.Ordinal);
+        }
+        Assert.Contains("        timeout-minutes: 5\n", steps[refresh], StringComparison.Ordinal);
+        foreach (var step in new[] { steps[refresh], steps[cleanup] })
+        {
+            Assert.Contains("        if: always() && steps.azure.outcome == 'success'\n", step, StringComparison.Ordinal);
+            Assert.DoesNotContain("continue-on-error:", step, StringComparison.Ordinal);
+        }
+        Assert.Contains("cleanup-real-azure-resource-groups.sh \"$RG_NAME\"", steps[cleanup], StringComparison.Ordinal);
+        Assert.Contains("az keyvault list-deleted", steps[cleanup], StringComparison.Ordinal);
+        Assert.Contains("        if: always()\n", Assert.Single(steps,
+            step => step.StartsWith("Retain non-promotable reports only\n", StringComparison.Ordinal)), StringComparison.Ordinal);
+    }
+
+    private static string ReadDiagnosticWorkflow()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "aws2azure.slnx")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        return File.ReadAllText(Path.Combine(root.FullName,
+            ".github", "workflows", "secretsmanager-concurrency-diagnostic.yml")).ReplaceLineEndings("\n");
     }
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
