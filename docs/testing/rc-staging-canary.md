@@ -331,11 +331,14 @@ statistical equivalence test or permission to raise thresholds or promote RC5.
 Authorizing another profile, longer/repeated trials or stable promotion remains
 a separate operator decision.
 
-### Proposed S3 controlled crossover (design only)
+### Controlled S3 crossover
 
 This is the minimal follow-up for
-[#1062](https://github.com/pedrosakuma/aws2azure/issues/1062), **not an implemented
-S3 diagnostic or authorization for paid gates/dispatch**. The historical
+[#1062](https://github.com/pedrosakuma/aws2azure/issues/1062), implemented in the
+manual-only `s3-controlled-crossover.yml` and
+`S3RealAzureCrossoverTests.Exact_sealed_ABBA_and_AA_share_one_runner_and_backend`.
+**Implementation and offline validation do not authorize paid gates or dispatch.**
+The historical
 real-Azure `S3RealAzureRcObservationTests` run `36473482616/1` measured candidate
 53.348 versus prior 75.416 logical GetObject/s on separate runners/backends.
 A controlled comparison has a concrete purpose: test whether that roughly
@@ -359,8 +362,9 @@ One job/runner, one dedicated `StorageV2` / `Standard_LRS` account in `eastus2`
 using `deploy/realazure/s3-load.bicep`, unchanged shared-key configuration and
 AWS binding. Record actual runner region/image/resources separately from the
 backend region; unknown geography stays unknown. No other workloads/cohorts
-share the diagnostic account. Verify blob/container soft delete settings rather
-than relying on names alone. Use the same SDK build, path-style addressing,
+share the diagnostic account. Authenticated Blob service-property checks require
+blob/container soft delete disabled and reject enabled versioning before each
+slot. Use the same SDK build, path-style addressing,
 streaming/checksum defaults and `MaxErrorRetry=2` in every arm.
 
 **One six-slot schedule.** Prior, candidate, candidate, prior, prior, prior:
@@ -370,12 +374,12 @@ worker containers for each phase. Use the same fixed diagnostic workload label
 and equal payload/metadata lengths in both arms; runtime role belongs in the
 report, not in a different-sized payload. Warmup counts never enter measurement.
 This is 33 minutes of requested workload, not a billed-runtime estimate.
-Proposed limits: 60-minute harness, 65-minute measurement step, 20-minute
+Limits: 60-minute harness, 65-minute measurement step, 20-minute
 provisioning step and 120-minute whole job including cleanup headroom.
 No automatic provisioning/experiment retry or additional duration/profile matrix.
 
 **Preserve the observation workload, not merely its operation names.**
-Reuse/extract `S3RealAzureRcObservationTests.RunWorkerAsync` semantics: one
+The diagnostic reuses `S3RealAzureRcObservationTests.RunWorkerAsync`: one
 container created/deleted per worker/phase; each completed object iteration
 performs PutObject with the 65,536-character filler plus fixed prefix, two
 HeadObject assertions, three GetObject variants (full body, bytes 17..80, and
@@ -384,13 +388,13 @@ calls (including idempotent deletion). The main metric counts all three logical
 GetObject variants, not full-object downloads or physical Blob requests.
 Keep ETag, metadata, payload, range and list-content assertions.
 
-Two source details at `51e4aa9f` must be covered offline before implementation
-can be considered execution-ready: the published `LifecycleOperationSchedule`
-lists only one DeleteObject although the worker performs two; worker catches
-can swallow failures after the tracker records them. Do not silently relabel
-historical captures or equate task completion with a clean phase. Add a strict
-diagnostic path with completed-iteration accounting and actual schedule/count
-checks, preserving existing canonical observation behavior. Require, after
+Two source details at `51e4aa9f` are covered by the offline tests: the historical
+`LifecycleOperationSchedule` lists only one DeleteObject although the worker
+performs two, and legacy catches can swallow tracked worker failures. Historical
+captures and the canonical observation schedule remain unchanged. The diagnostic
+uses its own accurate schedule and opts into strict worker failure propagation,
+without best-effort repair, plus started/completed-iteration accounting.
+`S3Crossover.ValidatePhase` requires, after
 successful drain, Put/List = N, Head/DeleteObject = 2N, GetObject = 3N and
 CreateBucket/DeleteBucket = 8. Expected 304 is successful only after its
 assertion; any actual error/throttle, incomplete worker, empty sample set or
@@ -400,11 +404,16 @@ binding drift invalidates the comparison and stops later slots.
 phase. Stop new iterations at the requested boundary and allow at most 60
 additional seconds to drain, including the normal measured worker deletions.
 Then independently confirm the owned account returned to the empty baseline
-with a bounded 60-second check and separate cleanup token. Use a fixed
-30-second quiet interval and recheck before the next phase. Probes, inventory,
-repair and quiet time are outside throughput; record their durations. A required
-repair invalidates the phase and aborts subsequent slots, even if cleanup
-succeeds. Unique containers prevent namespace collisions but do not by
+with a bounded 60-second paginated inventory check and a token independent of
+the measurement deadline. Each read uses signed REST with a 15-second HTTP
+timeout, one-MiB response limit and bounded opaque-marker pagination. A nonempty,
+malformed or failed inventory aborts immediately; there is no repair or polling
+to conceal contamination. A fixed 30-second quiet interval and second empty
+check precede every phase. Inventory and quiet time are outside throughput;
+the post-phase inventory and pre-phase quiet durations are recorded. This adds
+six minutes of quiet intervals to the
+33 requested workload minutes, excluding inventory, startup, drain and teardown.
+Unique containers prevent namespace collisions but do not by
 themselves rule out carryover traffic or service-side state.
 
 **Bounded report.** Keep `promotable: false`, exact runtime and
@@ -414,11 +423,9 @@ per-operation means/approximate percentiles and bounded time windows. Separate
 warmup, measurement, drain and cleanup; aggregate lifecycle rows once, never
 sum their duplicate time-window rows. Reuse `OperationTimingDiagnostics`;
 its CPU/working-set fields describe the harness, not proxy CPU or peak memory.
-Record proxy resources separately only if actually measured. Optional bounded
-anonymous Blob response-header probes must use a Blob-specific expected
-response, not Cosmos/Key Vault assumptions; they are not pure RTT/backend
-latency. SDK/internal retry counts and backend latency stay explicitly unknown
-unless measured. Upload allowlisted sanitized JSON only, not configurations,
+The minimal implementation does not add network probes, proxy CPU sampling or
+backend latency instrumentation; these remain unavailable, not zero.
+SDK/internal retry counts also remain unknown. Upload allowlisted sanitized JSON only, not configurations,
 credentials, endpoints, names, payloads or raw logs; retain partial failures.
 
 Interpret both candidate/prior pair ratios, pooled count/duration rates and the
@@ -429,18 +436,18 @@ disappears, report non-reproduction under these conditions, not equivalence or
 proof of the historical cause. Predeclare these interpretations rather than
 adding a new numeric pass threshold after seeing results.
 
-**Execution prerequisites.** Offline tests must cover exact order and digests,
+**Execution prerequisites.** The `RcObservationOffline` tests cover exact order and digests,
 counter/denominator invariants, warmup exclusion, conditional-304 handling,
 failure/cancellation/timeout propagation, dirty baselines, binding drift and
 sanitized partial reports. Review independently and classify paid PR gates
-before requesting their separate authorization/budget. A future workflow must
-share `integration-real-azure` concurrency with `cancel-in-progress: false`,
-require protected `main` and explicit one-run budget confirmation, and use
+before requesting their separate authorization/budget. The workflow shares
+`integration-real-azure` concurrency with `cancel-in-progress: false`,
+requires protected `main` and explicit one-run budget confirmation, and uses
 owned-resource tags plus scoped teardown. Fresh Azure CLI OIDC login immediately
-before cleanup is required (lesson from #1072/#1073); always attempt cleanup
+before cleanup is required (lesson from #1072/#1073); it always attempts cleanup
 after partial provisioning/failure/cancellation and independently confirm the
-exact owned group is absent. Do not copy DynamoDB's older cleanup sequence
-unchanged. Diagnostic completion, workflow outcome and cleanup outcome are
+exact owned group is absent. Report upload is unconditional; raw harness logs
+stay private. Diagnostic completion, workflow outcome and cleanup outcome are
 distinct. None renews qualification/observation or authorizes stable promotion.
 
 ## DynamoDB and SQS cohort contracts

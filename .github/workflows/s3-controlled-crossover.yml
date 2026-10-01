@@ -1,0 +1,196 @@
+name: s3-controlled-crossover
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_digest:
+        description: Exact approved RC5 candidate aggregate digest
+        required: true
+        default: sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322
+        type: string
+      prior_digest:
+        description: Exact fixed rollback-target aggregate digest
+        required: true
+        default: sha256:7d8b3c21181f246c8746e39454a5b22a1fc0dc73ee339279e97d6b997e417d6d
+        type: string
+      budget_confirmed:
+        description: Operator confirmed budget for this one paid diagnostic
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+  id-token: write
+
+concurrency:
+  group: integration-real-azure
+  cancel-in-progress: false
+
+jobs:
+  crossover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PROFILE: s3-basic-object-crud
+      AZURE_LOCATION: eastus2
+      RG_NAME: aws2azure-s3-crossover-${{ github.run_id }}-${{ github.run_attempt }}
+      OUTPUT_DIR: artifacts/s3-controlled-crossover
+      AWS2AZURE_S3_CROSSOVER_REPORT_PATH: artifacts/s3-controlled-crossover/report.json
+      AWS2AZURE_S3_CROSSOVER_CANDIDATE_DIGEST: ${{ inputs.candidate_digest }}
+      AWS2AZURE_S3_CROSSOVER_PRIOR_DIGEST: ${{ inputs.prior_digest }}
+      AWS2AZURE_SEALED_RUNTIME_MODE: rollback
+      AWS2AZURE_QUALIFICATION_MODE: reaffirm
+      AWS2AZURE_QUALIFICATION_PROFILE: s3-basic-object-crud
+      AWS2AZURE_QUALIFICATION_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - name: Require protected main and explicit budget acknowledgement
+        env:
+          REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+          BUDGET_CONFIRMED: ${{ inputs.budget_confirmed }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != refs/heads/main ] || [ "$REF_PROTECTED" != true ] ||
+             [ "$BUDGET_CONFIRMED" != true ]; then
+            echo "::error::This billed diagnostic requires protected main and explicit budget acknowledgement."
+            exit 1
+          fi
+          if [ "$AWS2AZURE_S3_CROSSOVER_CANDIDATE_DIGEST" != sha256:32767e07b62b1e0f1bfa1b05500efa4e008bb93ec2fc6e85f59521f2f443e322 ] ||
+             [ "$AWS2AZURE_S3_CROSSOVER_PRIOR_DIGEST" != sha256:7d8b3c21181f246c8746e39454a5b22a1fc0dc73ee339279e97d6b997e417d6d ]; then
+            echo "::error::This investigation pins the exact RC5 candidate and prior; other runtime pairs need review."
+            exit 1
+          fi
+          echo "PRIVATE_DIR=$RUNNER_TEMP/aws2azure-s3-crossover-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/dotnet-setup
+      - name: Build harness and validate authoritative inputs before provisioning
+        run: |
+          dotnet build -c Release --nologo
+          dotnet exec tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll --validate
+      - name: Resolve and pin both exact sealed runtimes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$PRIVATE_DIR"
+          mkdir -p "$OUTPUT_DIR"
+          gap_docs=tools/Aws2Azure.GapDocs/bin/Release/net10.0/Aws2Azure.GapDocs.dll
+          dotnet exec "$gap_docs" export-approved-runtime \
+            --profile "$PROFILE" --output "$PRIVATE_DIR/current-ledger.json"
+          jq -e --arg expected "$AWS2AZURE_S3_CROSSOVER_CANDIDATE_DIGEST" \
+            '.record.runtime.aggregate_digest == $expected and
+             .record.runtime.source_sha == "bf2274dc6469ce2a8a0c2db4b956391f24c74076" and
+             (.record.producer.run_id | tostring) == "36280313825" and
+             .record.producer.run_attempt == 1 and (.record.artifact.id | tostring) == "10918950988"' \
+            "$PRIVATE_DIR/current-ledger.json" >/dev/null
+          candidate_run="$(jq -er '.record.producer.run_id' "$PRIVATE_DIR/current-ledger.json")"
+          candidate_attempt="$(jq -er '.record.producer.run_attempt' "$PRIVATE_DIR/current-ledger.json")"
+          candidate_sha="$(jq -er '.record.runtime.source_sha' "$PRIVATE_DIR/current-ledger.json")"
+          candidate_ref="$(jq -er '.record.attestation.source_ref' "$PRIVATE_DIR/current-ledger.json")"
+          candidate_artifact="$(jq -er '.record.artifact.id' "$PRIVATE_DIR/current-ledger.json")"
+          bash eng/resolve-sealed-runtime.sh \
+            --repository "$GITHUB_REPOSITORY" --run-id "$candidate_run" --run-attempt "$candidate_attempt" \
+            --expected-sha "$candidate_sha" --expected-ref "$candidate_ref" \
+            --profile "$PROFILE" --profile-version 1 --role candidate --artifact-id "$candidate_artifact" \
+            --destination "$PRIVATE_DIR/candidate" --identity-output "$PRIVATE_DIR/candidate.json" \
+            --github-env "$GITHUB_ENV"
+          dotnet exec "$gap_docs" export-approved-runtime --profile "$PROFILE" --rollback-target \
+            --candidate "$PRIVATE_DIR/candidate.json" --ledger-json "$PRIVATE_DIR/current-ledger.json" \
+            --output "$PRIVATE_DIR/prior-ledger.json"
+          jq -e --arg expected "$AWS2AZURE_S3_CROSSOVER_PRIOR_DIGEST" \
+            '.record.runtime.aggregate_digest == $expected and
+             .record.runtime.source_sha == "40c1ea996ec8d971dd4bb2aeda5de904d123f5c5" and
+             (.record.producer.run_id | tostring) == "36171044613" and
+             .record.producer.run_attempt == 1 and (.record.artifact.id | tostring) == "10880620175"' \
+            "$PRIVATE_DIR/prior-ledger.json" >/dev/null
+          prior_run="$(jq -er '.record.producer.run_id' "$PRIVATE_DIR/prior-ledger.json")"
+          prior_attempt="$(jq -er '.record.producer.run_attempt' "$PRIVATE_DIR/prior-ledger.json")"
+          prior_sha="$(jq -er '.record.runtime.source_sha' "$PRIVATE_DIR/prior-ledger.json")"
+          prior_ref="$(jq -er '.record.attestation.source_ref' "$PRIVATE_DIR/prior-ledger.json")"
+          prior_artifact="$(jq -er '.record.artifact.id' "$PRIVATE_DIR/prior-ledger.json")"
+          bash eng/resolve-sealed-runtime.sh \
+            --repository "$GITHUB_REPOSITORY" --run-id "$prior_run" --run-attempt "$prior_attempt" \
+            --expected-sha "$prior_sha" --expected-ref "$prior_ref" \
+            --profile "$PROFILE" --profile-version 1 --role prior --artifact-id "$prior_artifact" \
+            --ledger-json "$PRIVATE_DIR/prior-ledger.json" \
+            --destination "$PRIVATE_DIR/prior" --identity-output "$PRIVATE_DIR/prior.json" \
+            --github-env "$GITHUB_ENV"
+          jq -e --arg expected "$AWS2AZURE_S3_CROSSOVER_CANDIDATE_DIGEST" \
+            '.runtime.aggregate_digest == $expected' "$PRIVATE_DIR/candidate.json" >/dev/null
+          jq -e --arg expected "$AWS2AZURE_S3_CROSSOVER_PRIOR_DIGEST" \
+            '.runtime.aggregate_digest == $expected' "$PRIVATE_DIR/prior.json" >/dev/null
+          jq -n --arg source "$GITHUB_SHA" \
+            --slurpfile candidate "$PRIVATE_DIR/candidate.json" --slurpfile prior "$PRIVATE_DIR/prior.json" \
+            '{schema_version:1, promotable:false, harness_source_sha:$source,
+              candidate:$candidate[0], prior:$prior[0]}' > "$OUTPUT_DIR/sealed-inputs.json"
+      - name: Azure login (OIDC)
+        id: azure
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Provision one dedicated Blob backend without provisioning retries
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          az group create -n "$RG_NAME" -l "$AZURE_LOCATION" \
+            --tags purpose=aws2azure-nightly diagnostic=s3-controlled-crossover \
+              run-id="$GITHUB_RUN_ID" created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o none
+          az deployment group create -g "$RG_NAME" -n crossover \
+            -f deploy/realazure/s3-load.bicep -o none
+          account="$(az deployment group show -g "$RG_NAME" -n crossover \
+            --query properties.outputs.storageAccountName.value -o tsv)"
+          endpoint="$(az deployment group show -g "$RG_NAME" -n crossover \
+            --query properties.outputs.blobEndpoint.value -o tsv)"
+          key="$(az storage account keys list -g "$RG_NAME" -n "$account" --query '[0].value' -o tsv)"
+          if [ -z "$account" ] || [ -z "$endpoint" ] || [ -z "$key" ]; then
+            echo "::error::Incomplete Blob configuration; no fallback backend is allowed."
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          {
+            echo "AZURE_BLOB_ACCOUNT=$account"
+            echo "AZURE_BLOB_KEY=$key"
+            echo "AZURE_BLOB_ENDPOINT=$endpoint"
+          } >> "$GITHUB_ENV"
+      - name: Run six sequential slots on this runner and backend
+        timeout-minutes: 65
+        run: |
+          set -euo pipefail
+          if ! dotnet test tests/Aws2Azure.IntegrationTests -c Release --no-build --nologo \
+            --filter 'Category=S3ControlledCrossover' > "$PRIVATE_DIR/harness.log" 2>&1; then
+            echo "::error::S3 crossover failed. Inspect sanitized partial report; raw harness output remains private."
+            exit 1
+          fi
+          jq -e '.schema_version == 1 and .promotable == false and .completed == true and
+            .concurrency == 8 and (.slots | length) == 6 and
+            ([.slots[].role] == ["prior","candidate","candidate","prior","prior","prior"]) and
+            all(.slots[]; .completed and .warmup.completed and .measurement.completed)' \
+            "$AWS2AZURE_S3_CROSSOVER_REPORT_PATH" >/dev/null
+      - name: Refresh Azure login for cleanup (OIDC)
+        if: always() && steps.azure.outcome == 'success'
+        timeout-minutes: 5
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deallocate the owned backend
+        if: always() && steps.azure.outcome == 'success'
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          bash .github/scripts/cleanup-real-azure-resource-groups.sh "$RG_NAME"
+          [[ "$(az group exists -n "$RG_NAME" -o tsv)" == false ]]
+      - name: Retain non-promotable diagnostic reports only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diagnostic-s3-crossover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/s3-controlled-crossover/*.json
+          if-no-files-found: warn
+          retention-days: 90
