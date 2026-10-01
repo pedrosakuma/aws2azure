@@ -51,6 +51,7 @@ public sealed class SecretsManagerRealAzureConcurrencyTests(SecretsManagerRealAz
             token => identity.GetTokenAsync("https://vault.azure.net/.default", token));
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(80));
         var refreshes = new ConcurrentQueue<DateTimeOffset>();
+        var authorizationCaptures = new List<(SecretsConcurrencySlot Slot, SecretsAuthorizationCapture Capture)>();
         Exception? failure = null;
         try
         {
@@ -60,6 +61,9 @@ public sealed class SecretsManagerRealAzureConcurrencyTests(SecretsManagerRealAz
                     {
                         cancellation.ThrowIfCancellationRequested();
                         await fixture.StopForRuntimeSwitchAsync().ConfigureAwait(false);
+                        var capture = new SecretsAuthorizationCapture();
+                        fixture.AuthorizationCapture = capture;
+                        authorizationCaptures.Add((report.Slots[^1], capture));
                         await fixture.StartRuntimeAsync(SealedRuntimeRole.Candidate).ConfigureAwait(false);
                         cancellation.ThrowIfCancellationRequested();
                     },
@@ -86,7 +90,28 @@ public sealed class SecretsManagerRealAzureConcurrencyTests(SecretsManagerRealAz
         finally
         {
             report.EndedAtUtc = DateTimeOffset.UtcNow;
-            try { await PublishAsync(report).ConfigureAwait(false); }
+            try
+            {
+                // Stop the final slot before the final snapshot so redirected
+                // output readers can deliver the authorization failure and EOF.
+                try
+                {
+                    if (fixture.HasDefaultInstance)
+                        await fixture.StopProxyInstanceAsync(fixture.DefaultInstance).ConfigureAwait(false);
+                }
+                catch (Exception shutdownFailure)
+                {
+                    report.Completed = false;
+                    report.Comparison = null;
+                    report.Failure ??= RealAzureWorkloadFirstFailure.FromException(shutdownFailure, false);
+                    throw;
+                }
+                finally
+                {
+                    fixture.AuthorizationCapture = null;
+                    await PublishAsync(report).ConfigureAwait(false);
+                }
+            }
             catch (Exception publishing) when (failure is not null)
             {
                 throw new AggregateException("Diagnostic and publication failed.", failure, publishing);
@@ -147,6 +172,8 @@ public sealed class SecretsManagerRealAzureConcurrencyTests(SecretsManagerRealAz
 
         async Task PublishAsync(SecretsConcurrencyReport value)
         {
+            foreach (var (slot, capture) in authorizationCaptures)
+                slot.AuthorizationEvidence = capture.Snapshot();
             value.OidcRefreshesAtUtc = refreshes.ToList();
             await File.WriteAllTextAsync(path + ".pending",
                 JsonSerializer.Serialize(value, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport))

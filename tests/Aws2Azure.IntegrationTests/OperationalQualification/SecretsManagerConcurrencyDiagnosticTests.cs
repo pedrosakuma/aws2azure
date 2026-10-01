@@ -160,6 +160,54 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
             Assert.NotNull(report.Slots[0].Measurement.Timing);
     }
 
+    [Fact]
+    public async Task Authorization_failure_preserves_slot_evidence_without_promoting_partial_results()
+    {
+        var report = Report();
+        var clock = new Clock();
+        var capture = new SecretsAuthorizationCapture();
+        var published = "";
+        var failure = new Amazon.SecretsManager.AmazonSecretsManagerException("credential-secret")
+        {
+            StatusCode = HttpStatusCode.Forbidden,
+            ErrorCode = "AccessDeniedException",
+        };
+        var error = await Assert.ThrowsAsync<Amazon.SecretsManager.AmazonSecretsManagerException>(() =>
+            SecretsManagerConcurrencyDiagnostic.RunAsync(report,
+                _ => Task.CompletedTask,
+                (_, concurrency, warmup, phase, _) =>
+                {
+                    phase.Timing = Timing(concurrency, warmup);
+                    if (!warmup)
+                    {
+                        capture.Observe("warn: " + SecretsAuthorizationCapture.Category + "[6]", false);
+                        capture.Observe("      Secrets Manager Key Vault authorization failed. Operation=UpdateSecret RequestId=unavailable UpstreamStatus=401 UpstreamRequestId=unavailable", false);
+                        throw failure;
+                    }
+                    return Task.CompletedTask;
+                },
+                _ => Task.FromResult(new VaultInventory(0, 0)),
+                _ => Task.FromResult(Array.Empty<double>()),
+                () => report.Binding, clock.Delay,
+                value =>
+                {
+                    value.Slots[0].AuthorizationEvidence = capture.Snapshot();
+                    published = JsonSerializer.Serialize(value, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport);
+                    return Task.CompletedTask;
+                }, CancellationToken.None, clock));
+        Assert.Same(failure, error);
+        var final = JsonSerializer.Deserialize(published, SecretsConcurrencyJsonContext.Default.SecretsConcurrencyReport)!;
+        Assert.False(final.Completed);
+        Assert.False(final.Promotable);
+        Assert.Null(final.Comparison);
+        Assert.Equal(403, final.Failure!.StatusCode);
+        var slot = Assert.Single(final.Slots);
+        Assert.True(slot.Warmup.Completed);
+        Assert.False(slot.Measurement.Completed);
+        Assert.Equal(401, Assert.Single(slot.AuthorizationEvidence!.Events).UpstreamStatus);
+        Assert.DoesNotContain("credential-secret", published, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(2, false)]
     [InlineData(14, true)]

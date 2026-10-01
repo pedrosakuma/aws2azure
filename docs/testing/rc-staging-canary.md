@@ -228,6 +228,22 @@ Each phase's `barrier_samples` retains at most 25 elapsed-time/active/deleted
 count observations, including reappearances; `barrier_empty_seconds` records
 the final uninterrupted observed-empty window. Samples remain in failed
 reports, without secret names, tokens or endpoint URLs.
+Each slot also retains `authorization_evidence`: at most 64 validated warning
+events from the sealed proxy's existing SecretsManager logger (event 5: Entra
+token acquisition; event 6: Key Vault authorization). Only the exact logger
+header and message shape are accepted, with allowlisted operations, status codes
+and bounded request identifiers. Unrelated or malformed text is not exported.
+The snapshot exposes rejected-candidate and dropped-event counts, a truncation
+flag and whether both process output streams reached EOF. Final publication
+requests graceful termination of the last proxy on Linux and drains redirected
+output before taking its snapshot (15-second bound; a forced-stop fallback is
+reported as failure, not a successful comparison);
+earlier publications can have `streams_closed: false`.
+Event timestamps are harness observation times, not provider timestamps or
+proof of the failed downstream HTTP method. Empty evidence, especially with
+unclosed streams or rejected events, does not prove absence of authorization
+failures. The capture expects the existing default simple-console format and
+does not change logging configuration, sealed runtime bytes or failure policy.
 `sealed-inputs.json` records immutable provenance. Both have `promotable: false`;
 private harness output, endpoint names, config files and assertions are not
 uploaded. The fixture's operation timings describe logical client actions,
