@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Amazon;
 using Amazon.SecretsManager;
+using Aws2Azure.IntegrationTests.OperationalQualification;
 using Aws2Azure.TestSupport.OperationalQualification;
 using Xunit;
 
@@ -45,6 +46,7 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     private string? _switchClientId;
     private string? _switchFederatedTokenFile;
     private int _switchPort;
+    internal SecretsAuthorizationCapture? AuthorizationCapture { get; set; }
 
     public bool Configured { get; private set; }
     public string? SkipReason { get; private set; }
@@ -260,7 +262,8 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             $"http://{ProxyHostName}:{selectedPort}",
             clientId,
             federatedTokenFile,
-            runtimeRole);
+            runtimeRole,
+            AuthorizationCapture);
         _instances.Add(instance);
         try
         {
@@ -278,15 +281,24 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
     public async Task StopProxyInstanceAsync(ProxyInstance instance)
     {
         ArgumentNullException.ThrowIfNull(instance);
-        await StopProcessAsync(instance.Process).ConfigureAwait(false);
-        lock (_completedOutput)
+        try
         {
-            _completedOutput.Append(instance.Output);
+            if (instance.AuthorizationCapture is null)
+                await StopProcessAsync(instance.Process).ConfigureAwait(false);
+            else
+                await StopDiagnosticProcessAsync(instance.Process).ConfigureAwait(false);
         }
-        _instances.Remove(instance);
-        if (ReferenceEquals(_defaultInstance, instance))
+        finally
         {
-            _defaultInstance = null;
+            lock (_completedOutput)
+            {
+                _completedOutput.Append(instance.Output);
+            }
+            _instances.Remove(instance);
+            if (ReferenceEquals(_defaultInstance, instance))
+            {
+                _defaultInstance = null;
+            }
         }
     }
 
@@ -406,6 +418,43 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
         }
 
         process.Dispose();
+    }
+
+    internal static async Task StopDiagnosticProcessAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                if (!OperatingSystem.IsLinux())
+                    throw new PlatformNotSupportedException("Controlled diagnostic shutdown requires Linux.");
+                var signal = new ProcessStartInfo("/bin/kill") { UseShellExecute = false };
+                signal.ArgumentList.Add("-TERM");
+                signal.ArgumentList.Add(process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                using var sender = Process.Start(signal)
+                    ?? throw new InvalidOperationException("Could not signal the diagnostic proxy.");
+                await sender.WaitForExitAsync().ConfigureAwait(false);
+                if (sender.ExitCode != 0 && !process.HasExited)
+                    throw new InvalidOperationException("Could not stop the diagnostic proxy gracefully.");
+            }
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            // WaitForExitAsync also drains asynchronous stdout/stderr readers.
+            await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+            }
+            throw;
+        }
+        finally
+        {
+            process.Dispose();
+        }
     }
 
     private Process StartProxyProcess(
@@ -568,20 +617,31 @@ public sealed class SecretsManagerRealAzureProxyFixture : IAsyncLifetime
             string serviceUrl,
             string clientId,
             string federatedTokenFile,
-            SealedRuntimeRole runtimeRole)
+            SealedRuntimeRole runtimeRole,
+            SecretsAuthorizationCapture? authorizationCapture = null)
         {
             Process = process;
             ServiceUrl = serviceUrl;
             ClientId = clientId;
             FederatedTokenFile = federatedTokenFile;
             RuntimeRole = runtimeRole;
-            process.OutputDataReceived += (_, args) => AppendOutput(args.Data);
-            process.ErrorDataReceived += (_, args) => AppendOutput(args.Data);
+            AuthorizationCapture = authorizationCapture;
+            process.OutputDataReceived += (_, args) =>
+            {
+                authorizationCapture?.Observe(args.Data, standardError: false);
+                AppendOutput(args.Data);
+            };
+            process.ErrorDataReceived += (_, args) =>
+            {
+                authorizationCapture?.Observe(args.Data, standardError: true);
+                AppendOutput(args.Data);
+            };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
         }
 
         internal Process Process { get; }
+        internal SecretsAuthorizationCapture? AuthorizationCapture { get; }
         internal string ClientId { get; }
         internal string FederatedTokenFile { get; }
         public SealedRuntimeRole RuntimeRole { get; }

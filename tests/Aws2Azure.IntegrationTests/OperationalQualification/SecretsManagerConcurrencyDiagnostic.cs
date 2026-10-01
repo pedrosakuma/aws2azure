@@ -247,6 +247,7 @@ internal sealed class SecretsConcurrencySlot
     public int Concurrency { get; set; }
     public bool Completed { get; set; }
     public double[] NetworkBeforeMilliseconds { get; set; } = [];
+    public SecretsAuthorizationEvidence? AuthorizationEvidence { get; set; }
     public double[] NetworkAfterMilliseconds { get; set; } = [];
     public SecretsConcurrencyPhase Warmup { get; set; } = new();
     public SecretsConcurrencyPhase Measurement { get; set; } = new();
