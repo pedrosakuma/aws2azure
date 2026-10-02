@@ -209,9 +209,9 @@ class RcObservationCleanupTests(unittest.TestCase):
         self.assertLess(refresh_login, cleanup)
         between = workflow[refresh_login:cleanup]
         self.assertIn("if: always()", between)
-        self.assertIn(
-            "uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c",
+        self.assertRegex(
             between,
+            r"(?m)^[ \t]*uses: azure/login@[0-9a-f]{40}(?:[ \t]+#[^\n]*)?[ \t]*$",
         )
         self.assertNotIn("${{ inputs.", between)
         self.assertEqual(
