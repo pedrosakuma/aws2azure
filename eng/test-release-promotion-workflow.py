@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import pathlib
+import os
+import subprocess
+import textwrap
 import unittest
 
 
@@ -47,8 +50,43 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         self.assertIn("actions: read", gate)
         self.assertNotIn("contents: write", gate)
         self.assertNotIn("packages: write", gate)
-        self.assertIn("contents: write", promote)
+        self.assertIn("contents: read", promote)
+        self.assertNotIn("contents: write", promote)
         self.assertIn("packages: write", promote)
+
+    def test_dedicated_token_is_confined_to_release_publication(self) -> None:
+        workflow = PROMOTION.read_text(encoding="utf-8")
+        gate, promote = workflow.split("\n  promote:", 1)
+        self.assertNotIn("RELEASE_PUBLISH_TOKEN", gate)
+        privileged = (
+            "Require dedicated release publication token",
+            "Create draft release from exact RC archives",
+            "Publish stable release",
+        )
+        for step in promote.split("      - name: ")[1:]:
+            name = step.splitlines()[0]
+            if name in privileged:
+                self.assertIn("GH_TOKEN: ${{ secrets.RELEASE_PUBLISH_TOKEN }}", step)
+                self.assertNotIn("GH_TOKEN: ${{ github.token }}", step)
+            else:
+                self.assertNotIn("secrets.RELEASE_PUBLISH_TOKEN", step)
+        self.assertEqual(3, workflow.count("secrets.RELEASE_PUBLISH_TOKEN"))
+        self.assertNotIn("secrets.RELEASE_PUBLISH_TOKEN ||", workflow)
+        self.assertIn("persist-credentials: false", promote)
+
+    def test_missing_publication_token_fails_before_checkout_or_writes(self) -> None:
+        promote = PROMOTION.read_text(encoding="utf-8").split("\n  promote:", 1)[1]
+        guard = promote.split("      - name: Require dedicated release publication token", 1)[1]
+        guard = guard.split("\n      - uses:", 1)[0]
+        script = textwrap.dedent(guard.split("        run: |\n", 1)[1])
+        result = subprocess.run(
+            ["bash", "-c", script], env={**os.environ, "GH_TOKEN": ""},
+            text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Configure RELEASE_PUBLISH_TOKEN", result.stdout)
+        self.assertLess(promote.index("Require dedicated release publication token"),
+                        promote.index("uses: actions/checkout"))
 
     def test_explicit_decision_is_required_before_history_and_rechecked_before_writes(self) -> None:
         workflow = PROMOTION.read_text(encoding="utf-8")
