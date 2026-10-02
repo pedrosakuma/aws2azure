@@ -321,9 +321,25 @@ jobs:
     timeout-minutes: 20
     permissions:
       actions: read
-      contents: write
+      contents: read
       packages: write
     steps:
+      - name: Require dedicated release publication token
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || {
+            echo "::error::Configure RELEASE_PUBLISH_TOKEN: repository-scoped fine-grained PAT with Contents and Workflows write permissions. GITHUB_TOKEN cannot create this release on the historical candidate commit."
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY" |
+            jq -e --arg repository "$GITHUB_REPOSITORY" \
+              '.full_name == $repository and .permissions.push == true' >/dev/null || {
+              echo "::error::RELEASE_PUBLISH_TOKEN cannot verify write access to this repository."
+              exit 1
+            }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           ref: ${{ inputs.orchestration_sha }}
@@ -399,7 +415,7 @@ jobs:
 
       - name: Create draft release from exact RC archives
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PUBLISH_TOKEN }}
           STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
           CANDIDATE_SHA: ${{ needs.gate.outputs.candidate_sha }}
         run: |
@@ -458,7 +474,7 @@ jobs:
 
       - name: Publish stable release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PUBLISH_TOKEN }}
           STABLE_TAG: ${{ needs.gate.outputs.stable_tag }}
           CANDIDATE_SHA: ${{ needs.gate.outputs.candidate_sha }}
         run: |

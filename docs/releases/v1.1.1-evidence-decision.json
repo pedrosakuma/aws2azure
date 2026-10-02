@@ -3,13 +3,13 @@
   "policy": "release-evidence-reuse-v1",
   "status": "approved",
   "candidate_identity_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
-  "reviewed_inputs_digest": "sha256:c9ae0093b60d9c43dcb6a3750e16cc4b7b88eb32a935770ed45c85f1781c27a3",
-  "reviewed_at_utc": "2026-10-02T12:35:52Z",
+  "reviewed_inputs_digest": "sha256:8bcc8a10ade5ecb162910cc83faf1148d7b946b284fa3b50cc19474033396a3f",
+  "reviewed_at_utc": "2026-10-02T13:58:24Z",
   "owner": "Copilot, preparing the RC5 evidence assessment requested by @pedrosakuma",
   "review_url": "https://github.com/pedrosakuma/aws2azure/issues/1062#issuecomment-5952468350",
   "changes": {
     "status": "no_invalidating_changes",
-    "rationale": "Reviewed bf2274dc..f8c7ac87: no shipping source or root build/dependency changes. From archive approval bd99630d onward, the four ledgers, qualification artifacts, observation policies and gap contracts are unchanged; only the authority implementation hash changed, not its evaluation instant. The exact archive/GHCR inputs and four observation bundles reproduce the committed RC5 identity and final manifest. Later changes concern diagnostic instrumentation, OIDC assertion rotation/cleanup and promotion tooling, not the sealed bytes. S3 provisioning now explicitly disables versioning for future runs; it neither rewrites nor invalidates the original basic-CRUD evidence. The selected rollback target and persisted-format inventory remain unchanged. Review of this decision does not approve a different runtime or topology.",
+    "rationale": "Reviewed bf2274dc..f8c7ac87: no shipping source or root build/dependency changes. From archive approval bd99630d onward, the four ledgers, qualification artifacts, observation policies and gap contracts are unchanged; only the authority implementation hash changed, not its evaluation instant. The exact archive/GHCR inputs and four observation bundles reproduce the committed RC5 identity and final manifest. Later changes concern diagnostic instrumentation, OIDC assertion rotation/cleanup and promotion tooling, not the sealed bytes. S3 provisioning now explicitly disables versioning for future runs; it neither rewrites nor invalidates the original basic-CRUD evidence. The selected rollback target and persisted-format inventory remain unchanged. Review of this decision does not approve a different runtime or topology. Publication follow-up: run 37013616548/1 passed the gate but GitHub refused draft creation with its workflow token. The dedicated RELEASE_PUBLISH_TOKEN fix changes publication authentication only, not evidence or Azure authentication; GITHUB_TOKEN keeps read access and GHCR package writes. The exact candidate's tag-triggered workflows were inspected to exclude a stable source rebuild. This input review accepts that scoped workflow change without renewing canonical measurements.",
     "references": [
       "https://github.com/pedrosakuma/aws2azure/compare/bf2274dc6469ce2a8a0c2db4b956391f24c74076...f8c7ac8798e7608d03b0ec3a483bb18180996a55",
       "https://github.com/pedrosakuma/aws2azure/pull/1058",

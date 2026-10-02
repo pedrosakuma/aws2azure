@@ -95,3 +95,34 @@ revocation decision. The workflow retains the historical report, decision and
 eligibility result alongside unchanged evidence. The result records
 `canonical_evidence_renewed: false`. Promotion still requires separate explicit
 authorization and never rebuilds the sealed payload.
+
+## Publication authentication
+
+The sealed candidate commit predates the orchestration commit. Creating its
+stable release/tag can be refused with `403 Resource not accessible by
+integration` when using `GITHUB_TOKEN`, even with `contents: write`
+([GitHub CLI report](https://github.com/cli/cli/issues/9514)).
+RC5 attempt `37013616548/1` passed the read-only gate and failed at draft
+creation; no stable release/tag or image alias was created.
+
+Before dispatch, configure the repository Actions secret `RELEASE_PUBLISH_TOKEN`
+directly in GitHub settings. Use a dedicated fine-grained PAT restricted to
+`pedrosakuma/aws2azure` with **Contents: read and write** and **Workflows: read
+and write**, an explicit expiry and any required organization approval.
+Do not paste the credential into issues, chat, source or logs, or copy a
+developer's CLI token into the workflow. Revoke/rotate it when no longer needed.
+
+The token is exposed only to its access preflight and the draft/publication
+steps. Absence or inaccessible repository fails before checkout/publication;
+there is no fallback to a more broadly scoped personal session. The access
+probe verifies repository write access, not the Workflows permission itself;
+an insufficient or expired token still fails at the operation, never silently
+switching credentials. `GITHUB_TOKEN` retains read-only repository access and
+packages write solely for the existing exact GHCR alias operation. No branch
+or tag protection is relaxed.
+
+A PAT can trigger workflows on tag/release events, unlike `GITHUB_TOKEN`.
+Check the **candidate commit's** workflow definitions too: RC5's legacy
+release trigger accepts only `v0.*.*`, and its container workflow does not
+subscribe to stable tag/release events, so this publication does not rebuild
+the sealed artifacts.
