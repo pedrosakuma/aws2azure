@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "status": "pending",
+  "gate": "real-azure",
+  "mode": "reuse",
+  "binding": {
+    "toolVersion": "validation-evidence-v1",
+    "baseCommit": "69fec38ab9201c17721ca5697a1ec53cb082d258",
+    "mergeBase": "c7e56c980cb1c762f5a5692af30086194ea65d54",
+    "headCommit": "6790ab6483a84bf58c7673a321d6db38da703191",
+    "diffSha256": "ee744559eb044880b46d496e711f8c9fbba6551b6bad3fec1f12fae328f429a6",
+    "originalPlanSha256": "c4dcd6266c5165cca2403bc898ccfa067e08a345ad4159a97c72ad8e94b9651c",
+    "evidenceSourceCommit": "04f0ba585f58714cd863e220251ffbf9aad06ae8",
+    "evidenceDeltaSha256": "9daae33605513ed2fdaa3b8354b698f65f47204f4ee0b5704e14b7642bbb6a07"
+  },
+  "originalReasons": [
+    ".github/workflows/integration-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/perf-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/rc-observation-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/real-azure-reaper.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/workload-load-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    "tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerConcurrencyDiagnosticTests.cs: authentication or transport behavior needs live-Azure coverage"
+  ],
+  "rationale": "PENDING owner approval of final accepted bytes and digest. The operator accepted the narrow reuse rationale at https://github.com/pedrosakuma/aws2azure/pull/1017#issuecomment-5961974861, not an arbitrary future head. Successful run 37054680583/1 covers source 04f0ba585f58714cd863e220251ffbf9aad06ae8; its delta to the exact target is only the four-line immutable-SHA assertion in eng/test-rc-observation-cleanup.py, with runtime and workflows unchanged. Parent verification retained source-validation artifact 11248617803 and matched its published archive digest; this is not canonical workload qualification or renewed Azure evidence. Proposed validity ends 2026-10-03T23:59:59Z solely to finish this frozen maintenance wave, well before artifact expiry 2026-10-16T19:46:31Z; this is not a universal TTL or a claim of current Azure health. Changed head/base/scope, withdrawn approval, unavailable or revoked evidence invalidates immediately. All other required gates and branch protection remain unchanged. reviewedAtUtc records proposal/evidence review, not completed owner acceptance.",
+  "approvedBy": "PENDING repository-owner approval; proposal prepared by Copilot coordinator",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1017#issuecomment-5961974861",
+  "reviewedAtUtc": "2026-10-02T22:44:00Z",
+  "validUntilUtc": "2026-10-03T23:59:59Z",
+  "evidencePath": "pr-1017/evidence.json",
+  "evidenceSha256": "32bda42f8f5fa594867446847340778e5ea3cd74b4a3822924f44a98094324bc"
+}

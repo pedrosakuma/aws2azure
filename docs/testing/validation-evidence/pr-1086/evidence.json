@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "offline-covered",
+  "repository": "pedrosakuma/aws2azure",
+  "sourceCommit": "eb03638bd0de4d2204c04f18ed05423f2eafc4ae",
+  "scope": "Deterministic event-selection coverage only: actual paid-workflow authorization expressions are evaluated, including regression detection of the previous conditions. The Copilot coordinator ran the exact frozen-head script with PYTHONDONTWRITEBYTECODE=1, observed 10/10 tests pass and confirmed the target worktree remained clean. CI run 37067906488/1 at this same source, workflow .github/workflows/ci.yml, also completed successfully; job 111040529352 step Validate paid workflow authorization succeeded. No Azure provisioning or live-Azure behavior is established by this offline report or CI receipt.",
+  "verifiedBy": "Copilot coordinator (exact-head offline execution and CI receipt inspection; not owner approval)",
+  "verificationReference": "https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962352578",
+  "verifiedAtUtc": "2026-10-02T22:44:00Z",
+  "revoked": false,
+  "offline": {
+    "verifier": "eng/test-paid-workflow-authorization.py",
+    "verifierVersion": "eb03638bd0de4d2204c04f18ed05423f2eafc4ae",
+    "command": "PYTHONDONTWRITEBYTECODE=1 python3 eng/test-paid-workflow-authorization.py",
+    "result": "pass",
+    "report": {
+      "path": "trigger-authorization-report.txt",
+      "sha256": "420876df99331a88bd2b5ae333928bb60befba8f8dca87872e3c6adb8ed391e2"
+    }
+  },
+  "run": null
+}

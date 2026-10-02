@@ -1,0 +1,15 @@
+test_deliberate_own_label_readdition_is_not_suppressed (__main__.PaidWorkflowAuthorizationTests.test_deliberate_own_label_readdition_is_not_suppressed) ... ok
+test_each_paid_scope_accepts_only_its_own_label_event_and_current_opt_in (__main__.PaidWorkflowAuthorizationTests.test_each_paid_scope_accepts_only_its_own_label_event_and_current_opt_in) ... ok
+test_existing_paid_label_trigger_set_and_events_are_bounded (__main__.PaidWorkflowAuthorizationTests.test_existing_paid_label_trigger_set_and_events_are_bounded) ... ok
+test_forks_without_secrets_keep_existing_provisioning_guards (__main__.PaidWorkflowAuthorizationTests.test_forks_without_secrets_keep_existing_provisioning_guards) ... ok
+test_label_batch_selects_each_authorized_scope_once_not_once_per_label (__main__.PaidWorkflowAuthorizationTests.test_label_batch_selects_each_authorized_scope_once_not_once_per_label) ... ok
+test_load_profile_selection_is_unchanged (__main__.PaidWorkflowAuthorizationTests.test_load_profile_selection_is_unchanged) ... ok
+test_load_source_validation_and_sealed_modes_remain_separate (__main__.PaidWorkflowAuthorizationTests.test_load_source_validation_and_sealed_modes_remain_separate) ... ok
+test_required_integration_and_perf_labels_never_select_load (__main__.PaidWorkflowAuthorizationTests.test_required_integration_and_perf_labels_never_select_load) ... ok
+test_schedule_and_manual_do_not_need_pr_labels_and_push_does_not_select (__main__.PaidWorkflowAuthorizationTests.test_schedule_and_manual_do_not_need_pr_labels_and_push_does_not_select) ... ok
+test_synchronize_and_reopened_keep_each_explicit_opt_in (__main__.PaidWorkflowAuthorizationTests.test_synchronize_and_reopened_keep_each_explicit_opt_in) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.772s
+
+OK

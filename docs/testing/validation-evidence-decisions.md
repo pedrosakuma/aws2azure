@@ -207,9 +207,15 @@ qualification.
 
 ## Frozen cases and merge order
 
-No accepted record is issued by this implementation. The rationale approvals
-below predate the final bindings/metadata package and must not be misrepresented
-as approvals of an as-yet-unreviewed final digest.
+No accepted record is issued by this implementation. Versioned **pending**
+proposals and evidence snapshots now exist at the paths below, with the
+coordinator's exact-head offline report retained in the #1086 package. The
+rationale approvals below predate the final bindings/metadata package and must
+not be misrepresented as approvals of an as-yet-unreviewed final digest.
+`approvedBy` explicitly says owner approval is pending, and `reviewedAtUtc`
+records proposal/evidence review, not completed acceptance. The proposed
+deadline `2026-10-03T23:59:59Z` bounds this particular frozen maintenance wave
+and is not a universal evidence TTL.
 
 | Record/package location to finalize | Exact target | Decision |
 | --- | --- | --- |
@@ -221,6 +227,39 @@ The second #1017 artifact reported during operator review was
 `6c62895bbc71c3840540f78e9e026dec7bf0ba66312142efc3db0a33dc161df2`,
 expiry `2026-10-16T19:46:31Z`. These are historical identities, not a claim
 that archives remain available now; verify and retain the bytes before approval.
+
+The committed #1017 proposal uses **only artifact `11248617803`**, whose ZIP
+was independently downloaded and digest-verified by the coordinator. It does
+not use the canonical artifact illustrated in the generic schema above.
+The reviewed source-validation results are 21/21 matrix-unit tests passed,
+97 total matrix-integration tests with **95 executed, 95 passed, 0 failed**,
+and 6/6 conformance-case-evidence tests passed. These remain source-validation
+records, not renewed canonical qualification. The #1086 report records 10/10
+offline authorization tests passed at the exact frozen head. See the
+[evidence review](https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962352578).
+
+To assemble a local package without dirtying either frozen target or committing
+the ZIP, copy the versioned proposal tree to a separate evidence directory:
+
+```bash
+# Run from the policy checkout. Keep this directory outside the frozen target.
+package="$PWD/tools/Aws2Azure.ChangeAwareValidation/bin/evidence-package"
+mkdir -p "$package"
+cp -R docs/testing/validation-evidence/. "$package/"
+cp /absolute/path/to/verified/reuse-azure-source-validation.zip \
+  "$package/pr-1017/source-validation-real-azure-conformance.zip"
+sha256sum "$package/pr-1017/source-validation-real-azure-conformance.zip"
+# Expected: 6c62895bbc71c3840540f78e9e026dec7bf0ba66312142efc3db0a33dc161df2
+```
+
+Supply `--decision "$package/pr-1017.json"` (or `pr-1086.json`) from the frozen
+target cwd with the matching externally approved digest. The current pending
+proposals deliberately exit 2 even with their correct proposal hashes.
+Owner acceptance requires finalizing the versioned record's status, actual
+approver, final review timestamp/reference and rationale, then approving the
+SHA256 of those **final bytes**. Recopy the finalized records unchanged into
+the package; proposal digests cannot authorize the later accepted bytes.
+Do not change status in an unreviewed local copy to make validation pass.
 
 The parent/coordinator independently reviews this policy PR, verifies final
 evidence, supplies/versions decisions for the exact frozen targets and records

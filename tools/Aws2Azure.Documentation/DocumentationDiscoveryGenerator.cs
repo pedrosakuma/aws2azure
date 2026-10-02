@@ -535,6 +535,22 @@ public static class DocumentationDiscoveryGenerator
                 Immutable(version));
         }
 
+        foreach (var path in EnumerateRelativeFiles(
+                     fullRepoRoot, "docs/testing/validation-evidence", "*.json", true)
+                 .Concat(EnumerateRelativeFiles(
+                     fullRepoRoot, "docs/testing/validation-evidence", "*.txt", true)))
+        {
+            Add(
+                $"documentation:{DocumentationLinks.Anchor(path.Replace('/', ' '))}",
+                path,
+                "documentation-artifact",
+                "validation-policy",
+                "explanatory",
+                "source",
+                Current(),
+                canonicalId: "documentation:docs-testing-validation-evidence-decisions");
+        }
+
         var indexedPaths = documents
             .Select(document => document.Path)
             .ToHashSet(StringComparer.Ordinal);

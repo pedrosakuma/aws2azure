@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "status": "pending",
+  "gate": "real-azure",
+  "mode": "offline-covered",
+  "binding": {
+    "toolVersion": "validation-evidence-v1",
+    "baseCommit": "69fec38ab9201c17721ca5697a1ec53cb082d258",
+    "mergeBase": "69fec38ab9201c17721ca5697a1ec53cb082d258",
+    "headCommit": "eb03638bd0de4d2204c04f18ed05423f2eafc4ae",
+    "diffSha256": "eebfc7cbfce64052bb573793a7591269f3c2470e8cbfa22bac7e29a6ab9a6341",
+    "originalPlanSha256": "9310be2926b6f94f5b62dad388e4b0b0aebc50cd347da8701d0269517a3ad03b",
+    "evidenceSourceCommit": null,
+    "evidenceDeltaSha256": null
+  },
+  "originalReasons": [
+    ".github/workflows/integration-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/perf-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/workload-load-real-azure.yml: authentication or transport behavior needs live-Azure coverage"
+  ],
+  "rationale": "PENDING owner approval of final accepted bytes and digest. The operator accepted the narrow offline-coverage rationale at https://github.com/pedrosakuma/aws2azure/pull/1086#issuecomment-5961974706. The exact target changes paid-workflow event-selection conditions and adds deterministic tests evaluating the actual expressions, detecting the previous conditions; it does not change Azure runtime behavior. The Copilot coordinator ran PYTHONDONTWRITEBYTECODE=1 python3 eng/test-paid-workflow-authorization.py at frozen head eb03638bd0de4d2204c04f18ed05423f2eafc4ae: 10/10 passed and worktree remained clean. CI run 37067906488/1 also reports the authorization step successful. This accepts only the event-selection scope and makes no live-Azure or provisioning claim. Proposed validity ends 2026-10-03T23:59:59Z solely to finish this frozen maintenance wave; it is not a universal TTL. Changed head/base/scope, withdrawn approval, missing or revoked evidence invalidates immediately. All other required gates and branch protection remain unchanged. reviewedAtUtc records proposal/evidence review, not completed owner acceptance.",
+  "approvedBy": "PENDING repository-owner approval; proposal prepared by Copilot coordinator",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1086#issuecomment-5961974706",
+  "reviewedAtUtc": "2026-10-02T22:44:00Z",
+  "validUntilUtc": "2026-10-03T23:59:59Z",
+  "evidencePath": "pr-1086/evidence.json",
+  "evidenceSha256": "c72c71b9e41181fedb23f87f038d0c371c586759de17fe09fd5c623ba3bdd7cb"
+}

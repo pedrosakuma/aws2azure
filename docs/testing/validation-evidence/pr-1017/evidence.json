@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "reuse",
+  "repository": "pedrosakuma/aws2azure",
+  "sourceCommit": "04f0ba585f58714cd863e220251ffbf9aad06ae8",
+  "scope": "Retained source-validation evidence from integration-real-azure run 37054680583/1: matrix-unit 21/21 passed; matrix-integration 97 total, 95 executed, 95 passed, 0 failed; conformance-case-evidence 6/6 passed. The Copilot coordinator independently downloaded artifact 11248617803, matched its archive SHA256 to the published digest and inspected its TRX records. This is not canonical workload qualification, a new execution, a renewed measurement, or current Azure health verification. The reviewed source-to-target delta is only the four-line immutable-SHA assertion change in eng/test-rc-observation-cleanup.py.",
+  "verifiedBy": "Copilot coordinator (artifact download, digest and TRX inspection; not owner approval)",
+  "verificationReference": "https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962352578",
+  "verifiedAtUtc": "2026-10-02T22:44:00Z",
+  "revoked": false,
+  "offline": null,
+  "run": {
+    "runId": 37054680583,
+    "attempt": 1,
+    "workflowPath": ".github/workflows/integration-real-azure.yml",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "success",
+    "createdAtUtc": "2026-10-02T19:31:35Z",
+    "completedAtUtc": "2026-10-02T20:00:17Z",
+    "artifacts": [
+      {
+        "id": 11248617803,
+        "name": "source-validation-real-azure-conformance",
+        "expiresAtUtc": "2026-10-16T19:46:31Z",
+        "expired": false,
+        "archive": {
+          "path": "source-validation-real-azure-conformance.zip",
+          "sha256": "6c62895bbc71c3840540f78e9e026dec7bf0ba66312142efc3db0a33dc161df2"
+        }
+      }
+    ]
+  }
+}
