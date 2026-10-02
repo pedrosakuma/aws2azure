@@ -25,7 +25,12 @@ After fetching `main`, run:
 dotnet run --project tools/Aws2Azure.ChangeAwareValidation -- --base main --pretty
 ```
 
-Apply every required label in its JSON plan. Hot paths require `run-perf`;
+Apply every effective `requiredLabels` entry in its JSON plan. Defaults remain
+strict; only an explicitly selected, externally digest-pinned, owner-reviewed
+`real-azure` evidence decision may accept that gate without a new run. Follow
+[`docs/testing/validation-evidence-decisions.md`](../docs/testing/validation-evidence-decisions.md);
+acceptance is not a passed check or permission to spend and cannot bypass branch
+protection. Hot paths require `run-perf`;
 authentication/transport require `run-integration` and `run-real-azure`;
 startup/build-graph changes require `run-footprint`. Compare failures with
 `main` under equivalent conditions before declaring a regression. Never

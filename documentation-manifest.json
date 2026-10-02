@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:ebb53d62eeb9f86f4ac5d25ebce2e90149969777f1fcae5bb89213f8ec0e753d",
+  "manifest_revision": "sha256:0b5f5dbb88792e79c420e531221b24ad8d51f5a2fd9f753689c557a7ff247d2f",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1895,6 +1895,18 @@
       "authority": "explanatory",
       "provenance": "source",
       "revision": "sha256:70062ab3278299f3ac547fb9b1d9044c68d2e3a0e43efec4413ab89a1ac7d4d4",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence-decisions.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:3ed29e7d4bc82ca29b53517dd448410d77a197def75db856046ebc777d289a42",
       "freshness": {
         "mode": "current"
       }

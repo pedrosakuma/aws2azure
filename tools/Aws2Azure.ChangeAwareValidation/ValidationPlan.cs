@@ -9,7 +9,14 @@ public sealed record ValidationPlan(
     GateDecision[] Gates,
     string[] RequiredLabels,
     string[] Warnings,
-    string[] FailurePolicy);
+    string[] FailurePolicy)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ReviewBinding? ReviewBinding { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EvidenceAcceptance? EvidenceAcceptance { get; init; }
+}
 
 public sealed record BaseComparison(
     string RequestedRef,
@@ -28,4 +35,10 @@ public sealed record GateDecision(
     string[] Labels);
 
 [JsonSerializable(typeof(ValidationPlan))]
+[JsonSerializable(typeof(EvidenceDecision))]
+[JsonSerializable(typeof(EvidenceSnapshot))]
+[JsonSerializable(typeof(ReviewBinding))]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+    RespectRequiredConstructorParameters = true)]
 internal sealed partial class ValidationJsonContext : JsonSerializerContext;

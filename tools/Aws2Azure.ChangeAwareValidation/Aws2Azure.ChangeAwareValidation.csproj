@@ -6,5 +6,8 @@
     <RootNamespace>Aws2Azure.ChangeAwareValidation</RootNamespace>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aws2Azure.UnitTests" />
+  </ItemGroup>
 
 </Project>
