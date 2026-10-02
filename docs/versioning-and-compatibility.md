@@ -96,6 +96,11 @@ supported workload has a distinct `pass` verdict.
 Stable `v1+` publication uses
 `.github/workflows/release-candidate-promote.yml`. Its first job is a read-only
 gate over exact successful workflow runs and immutable artifact identities. The
+gate also requires a schema-v2 plan and an approved
+[per-release evidence decision](testing/release-evidence-decisions.md), separately
+from historical validity. Pending reviews or required checks block publication;
+elapsed time alone does not mandate another full qualification/observation.
+The
 write-scoped job attaches the already-produced archives to a GitHub Release and
 copies the exact existing GHCR index bytes to the stable tag. It contains no
 `dotnet publish`, archive creation, or container build path, rejects existing

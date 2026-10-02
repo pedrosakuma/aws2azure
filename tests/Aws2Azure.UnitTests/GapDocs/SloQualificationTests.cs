@@ -99,6 +99,48 @@ public sealed class SloQualificationTests
     }
 
     [Fact]
+    public void Historical_qualification_preserves_issuance_without_refreshing_live_eligibility()
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        var issued = document.Provenance.GeneratedAtUtc;
+        var later = Now.AddDays(8);
+        Assert.NotEmpty(SloQualificationValidator.Validate(document, later));
+        Assert.Empty(HistoricalReleaseEvidence.ValidateQualification(document, later));
+        Assert.Equal(issued, document.Provenance.GeneratedAtUtc);
+        Assert.Equal(72, document.Rules.MaxArtifactAgeHours);
+    }
+
+    [Theory]
+    [InlineData("stale-at-issuance")]
+    [InlineData("future")]
+    [InlineData("failed")]
+    [InlineData("missing-provenance")]
+    [InlineData("threshold")]
+    public void Historical_qualification_does_not_waive_original_requirements(string fault)
+    {
+        var document = Valid("real_azure_workload_qualification", "qualified");
+        switch (fault)
+        {
+            case "stale-at-issuance":
+                document.Provenance.GeneratedAtUtc = Now.AddDays(4);
+                break;
+            case "future":
+                document.Scenarios[0].CapturedAtUtc = Now.AddDays(10);
+                break;
+            case "failed":
+                document.Verdict = "blocked";
+                break;
+            case "missing-provenance":
+                document.Provenance.CorrectnessRun = null;
+                break;
+            case "threshold":
+                document.Signals[0].MeasuredValue = 1001;
+                break;
+        }
+        Assert.NotEmpty(HistoricalReleaseEvidence.ValidateQualification(document, Now.AddDays(8)));
+    }
+
+    [Fact]
     public void Validate_allows_real_azure_candidate_without_numeric_signals()
     {
         var document = Valid("real_azure_workload_qualification", "candidate");

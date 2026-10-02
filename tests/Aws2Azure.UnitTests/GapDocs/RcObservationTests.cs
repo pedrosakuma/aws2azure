@@ -17,6 +17,50 @@ public sealed class RcObservationTests
     }
 
     [Fact]
+    public void Historical_observation_does_not_mutate_evidence_or_claim_live_freshness()
+    {
+        var (evidence, context) = ValidEvidence();
+        var originalDigest = evidence.EvidenceDigest;
+        Assert.NotEmpty(RcObservationValidator.Validate(evidence, context, Now.AddDays(8)));
+        Assert.Empty(HistoricalReleaseEvidence.ValidateObservation(evidence, context, Now.AddDays(8)));
+        Assert.Equal(originalDigest, evidence.EvidenceDigest);
+    }
+
+    [Theory]
+    [InlineData("expired-at-issuance")]
+    [InlineData("future")]
+    [InlineData("tampered")]
+    [InlineData("wrong-prior")]
+    [InlineData("rollback")]
+    public void Historical_observation_rejects_invalid_original_claims(string fault)
+    {
+        var (evidence, context) = ValidEvidence();
+        switch (fault)
+        {
+            case "expired-at-issuance":
+                evidence = evidence with { Observation = evidence.Observation with { GeneratedAtUtc = Now.AddDays(4) } };
+                (evidence, context) = Reseal(evidence, context);
+                break;
+            case "future":
+                evidence = evidence with { Observation = evidence.Observation with { GeneratedAtUtc = Now.AddDays(10) } };
+                (evidence, context) = Reseal(evidence, context);
+                break;
+            case "tampered":
+                evidence = evidence with { EvidenceDigest = Digest('0') };
+                break;
+            case "wrong-prior":
+                evidence = evidence with { Prior = evidence.Prior with { RuntimeDigest = Digest('0') } };
+                (evidence, context) = Reseal(evidence, context);
+                break;
+            case "rollback":
+                evidence = MakeRollback(evidence, context);
+                (evidence, context) = Reseal(evidence, context);
+                break;
+        }
+        Assert.NotEmpty(HistoricalReleaseEvidence.ValidateObservation(evidence, context, Now.AddDays(8)));
+    }
+
+    [Fact]
     public void Valid_triggered_rollback_with_exact_prior_restoration_is_accepted()
     {
         var (evidence, context) = ValidEvidence();

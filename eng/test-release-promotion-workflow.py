@@ -50,6 +50,21 @@ class ReleasePromotionWorkflowTests(unittest.TestCase):
         self.assertIn("contents: write", promote)
         self.assertIn("packages: write", promote)
 
+    def test_explicit_decision_is_required_before_history_and_rechecked_before_writes(self) -> None:
+        workflow = PROMOTION.read_text(encoding="utf-8")
+        self.assertIn('REF_PROTECTED: ${{ github.ref_protected }}', workflow)
+        self.assertIn('release-promotion.py "$PLAN_PATH" --require-decision', workflow)
+        self.assertIn("validate-historical-release-evidence", workflow)
+        self.assertNotIn("validate-rc-observation \\", workflow)
+        self.assertIn('sha256sum "$zip"', workflow)
+        self.assertLess(workflow.index("--require-decision"), workflow.index("Download exact immutable inputs"))
+        self.assertLess(workflow.index("validate-historical-release-evidence"), workflow.index("--gate-history"))
+        self.assertIn('cp "$(jq -r .evidence_decision "$PLAN_PATH")"', workflow)
+        promote = workflow.split("\n  promote:", 1)[1]
+        self.assertLess(promote.index("--gate-history"), promote.index("Preflight non-clobbering"))
+        self.assertIn("ref: ${{ inputs.orchestration_sha }}", promote)
+        self.assertEqual(2, workflow.count('git/ref/heads/main" --jq .object.sha'))
+
     def test_legacy_release_rejects_v1_rebuilds(self) -> None:
         workflow = LEGACY_RELEASE.read_text(encoding="utf-8")
         self.assertIn("Reject promotion-managed stable tags", workflow)
