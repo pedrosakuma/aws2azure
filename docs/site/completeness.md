@@ -131,8 +131,8 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
-- Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
+- Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
 
 ### Workload maturity
 
@@ -317,8 +317,8 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
-- Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- Operation [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md) — [#1082](https://github.com/pedrosakuma/aws2azure/issues/1082)
+- Sub-feature [SetSubscriptionAttributes](operations/sns/setsubscriptionattributes.md#sub-feature-service-bus-rule-translation-for-supported-filter-policies) / Service Bus rule translation for supported filter policies — [#1082](https://github.com/pedrosakuma/aws2azure/issues/1082)
 
 ### Workload maturity
 
@@ -359,10 +359,10 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Operation [ListQueueTags](operations/sqs/listqueuetags.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
-- Operation [TagQueue](operations/sqs/tagqueue.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
-- Operation [UntagQueue](operations/sqs/untagqueue.md) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
-- Sub-feature [PurgeQueue](operations/sqs/purgequeue.md#sub-feature-60s-cool-down--purgequeueinprogress) / 60s cool-down (PurgeQueueInProgress) — [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
+- Operation [ListQueueTags](operations/sqs/listqueuetags.md) — [#1083](https://github.com/pedrosakuma/aws2azure/issues/1083)
+- Operation [TagQueue](operations/sqs/tagqueue.md) — [#1083](https://github.com/pedrosakuma/aws2azure/issues/1083)
+- Operation [UntagQueue](operations/sqs/untagqueue.md) — [#1083](https://github.com/pedrosakuma/aws2azure/issues/1083)
+- Sub-feature [PurgeQueue](operations/sqs/purgequeue.md#sub-feature-60s-cool-down--purgequeueinprogress) / 60s cool-down (PurgeQueueInProgress) — [#1083](https://github.com/pedrosakuma/aws2azure/issues/1083)
 
 ### Workload maturity
 

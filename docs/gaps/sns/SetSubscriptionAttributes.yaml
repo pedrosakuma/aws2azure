@@ -13,7 +13,7 @@ sub_features:
 - name: Service Bus rule translation for supported filter policies
   status: partial
   disposition: feasible_backlog
-  tracking_issue: '#800'
+  tracking_issue: '#1082'
   notes: 'MessageAttributes scope translates supported SNS operators onto Service Bus SQL filters over mirrored application properties. MessageBody scope translates supported nested JSON object paths, including flat string-array leaves, onto reserved application properties stamped during Publish / PublishBatch. Beyond the original exact/prefix/exists/anything-but/numeric-range subset, this slice now also translates: (1) suffix matching, via a companion reversed LIKE clause plus the existing array-guard fallback; (2) equals-ignore-case matching, by stamping a lower-invariant companion property at publish time (Service Bus SQL filters have no UPPER/LOWER function, so case-folding happens at publish time rather than in the SQL expression); (3) IPv4 CIDR matching, by stamping a companion 32-bit-integer property for any string attribute or body leaf that parses as a dotted-quad IPv4 address, then translating the CIDR range into a numeric >=/<= comparison (Service Bus SQL has no bitwise operators, so this only works for IPv4 -- IPv6 CIDR is rejected as structurally unsupported); (4) MessageBody array matching for flat string arrays, by extending the same publish-time stamping used for MessageAttributes String.Array values to JSON body array fields (previously such fields were silently dropped and could never match).'
   gap: 'Genuinely inexpressible SNS operators remain rejected with InvalidParameter rather than silently accepted as unenforced: the nested anything-but-prefix form ({"anything-but": {"prefix": "..."}}), IPv6 CIDR matching (no 128-bit arithmetic in Service Bus SQL filters), and MessageBody arrays containing non-string elements (numbers, booleans, nested objects, or nested arrays) because there is no portable per-element numeric/boolean SQL comparison for JSON-array membership. Equals-ignore-case and IPv4 CIDR support are new in this slice and have unit-level coverage only; they are not yet verified against real Azure Service Bus (see the emulator caveat in AGENTS.md).'
 - name: Compatibility no-ops
@@ -34,4 +34,4 @@ references:
 - https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html
 - https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest
 disposition: feasible_backlog
-tracking_issue: '#800'
+tracking_issue: '#1082'

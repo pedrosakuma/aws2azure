@@ -5,7 +5,7 @@
 - **Capability ID:** `operation:sqs:untagqueue`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#801](https://github.com/pedrosakuma/aws2azure/issues/801)
+- **Tracking issue:** [#1083](https://github.com/pedrosakuma/aws2azure/issues/1083)
 - **Azure equivalent:** `GET + PUT QueueDescription with aws2azure's compact metadata envelope stored in UserMetadata.`
 
 ## Sub-features
