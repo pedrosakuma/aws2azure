@@ -116,8 +116,9 @@
     }
   ],
   "readiness_plan": "docs/releases/v1.1.1-readiness.json",
+  "evidence_decision": "docs/releases/v1.1.1-evidence-decision.json",
   "release_notes": "docs/releases/v1.1.1.md",
   "repository": "pedrosakuma/aws2azure",
-  "schema_version": 1,
+  "schema_version": 2,
   "stable_tag": "v1.1.1"
 }

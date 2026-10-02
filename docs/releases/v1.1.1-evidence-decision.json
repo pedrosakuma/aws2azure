@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "policy": "release-evidence-reuse-v1",
+  "status": "pending",
+  "candidate_identity_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
+  "reviewed_inputs_digest": null,
+  "reviewed_at_utc": null,
+  "owner": null,
+  "review_url": null,
+  "changes": {
+    "status": "pending",
+    "rationale": "Review code, configuration, contracts, rollback target and harness changes against the exact evidence before accepting reuse.",
+    "references": ["https://github.com/pedrosakuma/aws2azure/issues/1062"]
+  },
+  "incidents": {
+    "status": "pending",
+    "rationale": "Review known incidents and the completed diagnostic conclusions; policy migration does not approve RC5.",
+    "references": ["https://github.com/pedrosakuma/aws2azure/issues/1062"]
+  },
+  "profiles": [
+    {
+      "profile": "dynamodb-basic-crud",
+      "decision": "pending",
+      "rationale": "Decide whether retained canonical evidence is sufficient or identify specific current-health checks.",
+      "checks": []
+    },
+    {
+      "profile": "s3-basic-object-crud",
+      "decision": "pending",
+      "rationale": "Review the original canonical observation separately from the controlled diagnostic and its timing caveat.",
+      "checks": []
+    },
+    {
+      "profile": "secretsmanager-basic-lifecycle",
+      "decision": "pending",
+      "rationale": "Review the documented floor rationale, rotation evidence and unresolved historical-auth attribution without repeating the diagnostic automatically.",
+      "checks": []
+    },
+    {
+      "profile": "sqs-standard-messaging",
+      "decision": "pending",
+      "rationale": "Decide whether retained canonical evidence is sufficient or identify specific current-health checks.",
+      "checks": []
+    }
+  ]
+}

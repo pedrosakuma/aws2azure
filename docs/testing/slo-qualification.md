@@ -19,6 +19,12 @@ dotnet run --project tools/Aws2Azure.GapDocs -- \
   validate-qualification qualification.yaml
 ```
 
+This command evaluates **current** freshness and remains unchanged. For stable
+promotion of an already-observed, exact sealed RC, the
+[per-release evidence policy](release-evidence-decisions.md) separately validates
+historical qualification at its original issuance and requires an explicit
+impact/incident review. It does not refresh this artifact or the GA authority.
+
 Generate an emulator regression artifact from the committed perf contract and a
 machine-readable run snapshot with:
 

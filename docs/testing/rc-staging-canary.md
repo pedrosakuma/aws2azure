@@ -24,8 +24,10 @@ Each observation gate uses `candidate_receipt` to select its immutable
 artifact and `observation-upload-identity.json`. The gate verifies the ZIP
 digest, profile, candidate identity, producer attempt/source, passing verdict,
 manifest descriptor and the referenced evidence artifact's metadata.
-Promotion still downloads and strictly validates the actual YAML/binding,
-including freshness; this receipt check does not replace that validation.
+Promotion still downloads and strictly validates the actual YAML/binding.
+Under the [per-release evidence policy](release-evidence-decisions.md), freshness
+is checked at original issuance, then a separate reviewed decision determines
+release eligibility. This receipt check replaces neither validation.
 Offline gate fixtures place receipts beneath
 `artifact-<artifact_id>/<receipt_name>` to keep identical basenames separate.
 

@@ -53,6 +53,11 @@ if (args.Length > 0 && args[0] == "validate-qualification")
     return ValidateQualification(args[1..]);
 }
 
+if (args.Length > 0 && args[0] == "validate-historical-release-evidence")
+{
+    return HistoricalReleaseEvidence.Run(args[1..], repoRoot);
+}
+
 if (args.Length > 0 && args[0] == "generate-emulator-qualification")
 {
     return GenerateEmulatorQualification(args[1..]);

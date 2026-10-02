@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:d787493c766f3afd9dabbd86ec06dc2b09dd16cf2a273c2a7c5b9536a9243d53",
+  "manifest_revision": "sha256:e83ebc816344b556173e5d255a2dbe8ad3e1478b0fe192e4e02d37235396df4c",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -39,7 +39,7 @@
     "canonical_inputs_revision": "sha256:59c8e46d226bc6e6ad0b1539cbf3b1c30ad1114f8dfe6af4cf4317299ea817bf",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
-    "evaluator_implementation_revision": "sha256:5921e7bb8e3a623a8eaf0cad12f8aee2c3b4271985e0e86f12e4dc3be1e708a8"
+    "evaluator_implementation_revision": "sha256:aad9659791e020426483f63c90f479d2f50f7a1e511d60c9c34415bbbbfef7af"
   },
   "authority_precedence": [
     {
@@ -1834,7 +1834,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:dfbe9e49c0f49cf49b8bb0e4b65ed3ad325e8ec3e561c596d48d25ec4eb5dbf2",
+      "revision": "sha256:2ad921ed1ae43eaaac1a0dc645d9d9a5727a6b9b2036a6ecd1e1c4dca186f1a5",
       "freshness": {
         "mode": "current"
       }
@@ -1864,6 +1864,18 @@
       }
     },
     {
+      "id": "documentation:docs-testing-release-evidence-decisions",
+      "path": "docs/testing/release-evidence-decisions.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:e14225dfe9aa49e8a720c41777322fb61256152538ea9c1bd324d0e418853edd",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "documentation:docs-testing-retrieval-eval",
       "path": "docs/testing/retrieval-eval.md",
       "type": "documentation-guide",
@@ -1882,7 +1894,7 @@
       "scope": "testing",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:7a23fc02811bfaa3423cbefa30619230665361653d763568bdd4248e064c8a8a",
+      "revision": "sha256:70062ab3278299f3ac547fb9b1d9044c68d2e3a0e43efec4413ab89a1ac7d4d4",
       "freshness": {
         "mode": "current"
       }
@@ -1906,7 +1918,7 @@
       "scope": "project",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:7f1c5f7f94c24b716f09ff271863b94c8c88273f7db201d853f02f080881e673",
+      "revision": "sha256:05aef590bcade514b20a056c6c836779832c8706f76f0097bd42b7b23dd11ee3",
       "freshness": {
         "mode": "current"
       }
@@ -7346,13 +7358,26 @@
       }
     },
     {
+      "id": "release:v1.1.1:evidence-decision",
+      "path": "docs/releases/v1.1.1-evidence-decision.json",
+      "type": "release-evidence",
+      "scope": "release",
+      "authority": "historical",
+      "provenance": "source",
+      "revision": "sha256:ea197015dbe1b8870c60ef75d719aff1b98e75784e51c55f565326c766dd6846",
+      "freshness": {
+        "mode": "immutable",
+        "version": "v1.1.1"
+      }
+    },
+    {
       "id": "release:v1.1.1:notes",
       "path": "docs/releases/v1.1.1.md",
       "type": "release-notes",
       "scope": "release",
       "authority": "historical",
       "provenance": "source",
-      "revision": "sha256:003450c711e5512adfd5b8587790d0173c28fe5725c0cc844082aaa76d0f8700",
+      "revision": "sha256:4b750657d7513c53c5c40844733d560ddc258834e04870bae5da9546ef669fc6",
       "freshness": {
         "mode": "immutable",
         "version": "v1.1.1"
@@ -7365,7 +7390,7 @@
       "scope": "release",
       "authority": "historical",
       "provenance": "source",
-      "revision": "sha256:a5ca62bd648a9c84e83dc869dfa0342607d27c0ade9042c00509f8fe9ab13e94",
+      "revision": "sha256:8846f2ba59680b7660f55dab771e6440462ca53323484dab4f1c87d21721f275",
       "freshness": {
         "mode": "immutable",
         "version": "v1.1.1"
@@ -7378,7 +7403,7 @@
       "scope": "release",
       "authority": "historical",
       "provenance": "source",
-      "revision": "sha256:255b6d3ec618756763062164ee32caa5f89506e701bd0b5621688b33c592059d",
+      "revision": "sha256:467c8aa7380e2ae6c3930bb40c06a480d79f9634dde5caa7b2b06fe3b300ef8a",
       "freshness": {
         "mode": "immutable",
         "version": "v1.1.1"
@@ -7585,7 +7610,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:e43287ab5c9a52d46d8a20cc710af2a59fa89a52ddf90966fe90ff7d4781fc94",
+      "revision": "sha256:274c6eec0bc6ccd054fde86012de967c845f891b45d2628fae4344dfdf63ecab",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7599,7 +7624,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:1f3d764c4afe7265dd9741e210961152bf1df35ebf8368e5df69ec0235c22435",
+      "revision": "sha256:2a8720ce5d7836a319ad4c52ec3edaeded66f525127603d7d3e7ef787a08e21b",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7613,7 +7638,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:175c299cc56da51e8ad26a53ad2b90543e3c688d5b6227579fbc5a01b4ac70e8",
+      "revision": "sha256:dbd6c4f3694e21a1cf0246467e316ddd719559752ce39cafaea775d3066388dd",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
