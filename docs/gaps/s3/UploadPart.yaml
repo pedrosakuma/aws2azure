@@ -20,7 +20,7 @@ sub_features:
   status: partial
   gap: Algorithm-specific flexible-checksum request headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK multipart uploads succeed, but the proxy does not re-validate or persist them. The UploadPart response ETag remains the streamed MD5 hex of the part body.
   disposition: feasible_backlog
-  tracking_issue: '#894'
+  tracking_issue: '#1081'
 - name: server-side-encryption-customer
   status: unsupported
   disposition: by_design

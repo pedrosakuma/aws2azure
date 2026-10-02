@@ -29,7 +29,7 @@ sub_features:
   status: partial
   gap: Content-MD5 is forwarded. Algorithm-specific flexible-checksum headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK uploads succeed, but the proxy does not re-validate or persist those checksum values beyond the normal Azure integrity checks.
   disposition: feasible_backlog
-  tracking_issue: '#894'
+  tracking_issue: '#1081'
 - name: versioning (x-amz-version-id)
   status: partial
   gap: When account-level Blob versioning is enabled, the created Azure x-ms-version-id is reversibly encoded before being surfaced as x-amz-version-id so the token round-trips through S3 ?versionId without leaking Azure's raw timestamp format.

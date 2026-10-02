@@ -55,7 +55,7 @@
 - **Capability ID:** `sub-feature:s3:putobject:flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+- **Tracking issue:** [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
 
 **Gap.** Content-MD5 is forwarded. Algorithm-specific flexible-checksum headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK uploads succeed, but the proxy does not re-validate or persist those checksum values beyond the normal Azure integrity checks.
 

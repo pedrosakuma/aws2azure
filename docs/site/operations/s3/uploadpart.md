@@ -35,7 +35,7 @@ All STREAMING-* chunked payload variants already supported by the proxy are deco
 - **Capability ID:** `sub-feature:s3:uploadpart:flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#894](https://github.com/pedrosakuma/aws2azure/issues/894)
+- **Tracking issue:** [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
 
 **Gap.** Algorithm-specific flexible-checksum request headers/trailers (CRC32, CRC32C, SHA1, SHA256) are accepted so modern SDK multipart uploads succeed, but the proxy does not re-validate or persist them. The UploadPart response ETag remains the streamed MD5 hex of the part body.
 

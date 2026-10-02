@@ -5,7 +5,7 @@
 - **Capability ID:** `operation:sns:setsubscriptionattributes`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- **Tracking issue:** [#1082](https://github.com/pedrosakuma/aws2azure/issues/1082)
 - **Azure equivalent:** `Azure Service Bus subscription description`
 - **Real-Azure verified:** ✅ 2026-07-22 · [evidence](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719) · [workflow run](https://github.com/pedrosakuma/aws2azure/actions/runs/29941293719)
 
@@ -23,7 +23,7 @@ Performs a GET → merge → conditional PUT cycle against the Service Bus subsc
 - **Capability ID:** `sub-feature:sns:setsubscriptionattributes:service-bus-rule-translation-for-supported-filter-policies`
 - **Status:** 🟡 partial
 - **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#800](https://github.com/pedrosakuma/aws2azure/issues/800)
+- **Tracking issue:** [#1082](https://github.com/pedrosakuma/aws2azure/issues/1082)
 
 MessageAttributes scope translates supported SNS operators onto Service Bus SQL filters over mirrored application properties. MessageBody scope translates supported nested JSON object paths, including flat string-array leaves, onto reserved application properties stamped during Publish / PublishBatch. Beyond the original exact/prefix/exists/anything-but/numeric-range subset, this slice now also translates: (1) suffix matching, via a companion reversed LIKE clause plus the existing array-guard fallback; (2) equals-ignore-case matching, by stamping a lower-invariant companion property at publish time (Service Bus SQL filters have no UPPER/LOWER function, so case-folding happens at publish time rather than in the SQL expression); (3) IPv4 CIDR matching, by stamping a companion 32-bit-integer property for any string attribute or body leaf that parses as a dotted-quad IPv4 address, then translating the CIDR range into a numeric >=/<= comparison (Service Bus SQL has no bitwise operators, so this only works for IPv4 -- IPv6 CIDR is rejected as structurally unsupported); (4) MessageBody array matching for flat string arrays, by extending the same publish-time stamping used for MessageAttributes String.Array values to JSON body array fields (previously such fields were silently dropped and could never match).
 
