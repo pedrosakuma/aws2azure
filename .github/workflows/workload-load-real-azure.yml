@@ -66,12 +66,13 @@ permissions:
 
 jobs:
   select:
+    # Explicit paid opt-in persists across commits; other label events are not authorization.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-real-azure') &&
-       contains(github.event.pull_request.labels.*.name, 'run-perf'))
+       contains(github.event.pull_request.labels.*.name, 'run-workload-load') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'run-workload-load'))
     runs-on: ubuntu-latest
     outputs:
       profiles: ${{ steps.profiles.outputs.profiles }}

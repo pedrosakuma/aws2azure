@@ -296,9 +296,24 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   stale. Applying the label speculatively serializes behind (or blocks) every
   other PR and nightly run that actually needs the slot, and multiplies
   exposure to external Azure flakiness (subscription/billing issues, SDK/base
-  image drift) for no added signal. Apply `run-real-azure` (and the other
-  `run-*` labels) only when `ChangeAwareValidation` reports it as `required`
-  for the diff — never "just in case."
+  image drift) for no added signal. Apply required validation labels only when
+  `ChangeAwareValidation` reports them as `required` for the diff, and obtain
+  operator budget authorization before applying a paid label. A required gate
+  is not itself spending approval; report it as blocked if approval is absent.
+- **Paid workload load requires a separate opt-in.** `run-workload-load` is
+  optional explicit spending authorization for all six PR workload-load
+  profiles. Required integration/perf labels (`run-real-azure` + `run-perf`)
+  do not authorize load. The opt-in remains valid on new commits
+  (`synchronize`) and `reopened` while applied; remove it to stop future PR
+  selection (removal does not cancel existing runs). Each paid workflow
+  accepts `labeled` only for its own authorization label still present on the
+  PR: `run-real-azure`, `run-perf-real-azure`, or `run-workload-load`.
+  Unrelated label additions, including other labels in the same batch, do
+  not retrigger it. Explicit removal/readdition of its own label and manual
+  reruns remain deliberate operator actions, not globally deduplicated runs.
+  Schedules/manual dispatch retain their existing spending scope and
+  source-validation versus sealed-qualification boundaries. See
+  [paid PR authorization](docs/testing/real-azure-nightly.md#paid-pr-authorization).
 - **Diagnose regressions against `main`.** Reproduce a failed gate on the
   merge-base/current `main` under the same runner, dependencies, configuration,
   and backend before calling it a PR regression. Never automatically raise a

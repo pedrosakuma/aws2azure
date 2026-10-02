@@ -47,11 +47,13 @@ jobs:
     # `run-perf-real-azure` label. Apply the label when changing the
     # DynamoDB->Cosmos hot path or the CosmosBinary encode/decode paths to
     # validate the optimization against real Azure before merge.
+    # Other label events must not duplicate paid runs while this opt-in is applied.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'run-perf-real-azure'))
+       contains(github.event.pull_request.labels.*.name, 'run-perf-real-azure') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'run-perf-real-azure'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Never run two real-Azure perf jobs in parallel (cost + the reaper's age

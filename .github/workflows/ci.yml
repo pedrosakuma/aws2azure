@@ -38,6 +38,9 @@ jobs:
       - name: Validate Key Vault RBAC stability gate
         shell: bash
         run: PYTHONDONTWRITEBYTECODE=1 python3 ./.github/scripts/test_keyvault_rbac_stability.py
+      - name: Validate paid workflow authorization
+        shell: bash
+        run: PYTHONDONTWRITEBYTECODE=1 python3 ./eng/test-paid-workflow-authorization.py
       - name: Validate offline RC readiness protocol
         shell: bash
         run: |
