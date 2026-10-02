@@ -245,16 +245,15 @@ def review_inputs_digest(root: pathlib.Path, plan_path: pathlib.Path, plan: dict
     result = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root, check=True, stdout=subprocess.PIPE,
     )
-    prefixes = ("src/", "tests/", "tools/", "eng/", ".github/", "deploy/",
-                "docs/gaps/", "docs/workloads/", "docker/")
+    prefixes = ("src/", "tests/", "tools/", "eng/", ".github/", "deploy/", "docs/", "docker/")
     files = {
         name for name in result.stdout.decode("utf-8").split("\0") if name
         and (name.startswith(prefixes) or "/" not in name)
     }
     files.update((plan_path.resolve().relative_to(root.resolve()).as_posix(),
                   plan["readiness_plan"], plan["release_notes"]))
-    # The decision is a statement about the inputs, not an input to its own hash.
-    files.discard(plan["evidence_decision"])
+    # Discovery outputs embed the decision's digest; hash their sources instead.
+    files.difference_update((plan["evidence_decision"], "documentation-manifest.json", "llms.txt"))
     rows = [
         [name, digest_bytes(repository_path(root, name).read_bytes())]
         for name in sorted(files)

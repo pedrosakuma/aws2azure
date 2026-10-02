@@ -1,45 +1,61 @@
 {
   "schema_version": 1,
   "policy": "release-evidence-reuse-v1",
-  "status": "pending",
+  "status": "approved",
   "candidate_identity_digest": "sha256:be6d16fcc5a544711682fe6a770c4d79d730ef7613766115b121354b17b30674",
-  "reviewed_inputs_digest": null,
-  "reviewed_at_utc": null,
-  "owner": null,
-  "review_url": null,
+  "reviewed_inputs_digest": "sha256:c9ae0093b60d9c43dcb6a3750e16cc4b7b88eb32a935770ed45c85f1781c27a3",
+  "reviewed_at_utc": "2026-10-02T12:35:52Z",
+  "owner": "Copilot, preparing the RC5 evidence assessment requested by @pedrosakuma",
+  "review_url": "https://github.com/pedrosakuma/aws2azure/issues/1062#issuecomment-5952468350",
   "changes": {
-    "status": "pending",
-    "rationale": "Review code, configuration, contracts, rollback target and harness changes against the exact evidence before accepting reuse.",
-    "references": ["https://github.com/pedrosakuma/aws2azure/issues/1062"]
+    "status": "no_invalidating_changes",
+    "rationale": "Reviewed bf2274dc..f8c7ac87: no shipping source or root build/dependency changes. From archive approval bd99630d onward, the four ledgers, qualification artifacts, observation policies and gap contracts are unchanged; only the authority implementation hash changed, not its evaluation instant. The exact archive/GHCR inputs and four observation bundles reproduce the committed RC5 identity and final manifest. Later changes concern diagnostic instrumentation, OIDC assertion rotation/cleanup and promotion tooling, not the sealed bytes. S3 provisioning now explicitly disables versioning for future runs; it neither rewrites nor invalidates the original basic-CRUD evidence. The selected rollback target and persisted-format inventory remain unchanged. Review of this decision does not approve a different runtime or topology.",
+    "references": [
+      "https://github.com/pedrosakuma/aws2azure/compare/bf2274dc6469ce2a8a0c2db4b956391f24c74076...f8c7ac8798e7608d03b0ec3a483bb18180996a55",
+      "https://github.com/pedrosakuma/aws2azure/pull/1058",
+      "https://github.com/pedrosakuma/aws2azure/pull/1059",
+      "https://github.com/pedrosakuma/aws2azure/pull/1067",
+      "https://github.com/pedrosakuma/aws2azure/pull/1076",
+      "https://github.com/pedrosakuma/aws2azure/pull/1077"
+    ]
   },
   "incidents": {
-    "status": "pending",
-    "rationale": "Review known incidents and the completed diagnostic conclusions; policy migration does not approve RC5.",
-    "references": ["https://github.com/pedrosakuma/aws2azure/issues/1062"]
+    "status": "no_unresolved_incidents",
+    "rationale": "No unresolved evidence-invalidating incident identified in the repository issues and retained results reviewed on 2026-10-02. This is not a claim that every incident is resolved or that Azure is healthy everywhere. #1049 is closed test isolation; #1066/#1072 are closed runner/cleanup authentication defects, not proof of a fix for the historical SecretsManager workload 403. #1016 remains an accepted floor-calibration follow-up; the historical 403 cause remains unknown and is explicitly accepted for this release on the strength of the exact candidate's passing canonical lifecycle/credential-rotation evidence, not absence of recurrence alone. #1062's large DynamoDB/S3 gaps did not recur under controlled conditions, with diagnostic limitations retained. #1024 is report-only batch-cost research; #1025 is a preview watch, neither an identified basic-CRUD defect. No current capacity or universal health claim is being added, so no additional paid health/load check is selected solely for age. Any newly reported relevant defect, authentication recurrence, contract/config change or revocation requires reassessment before publication.",
+    "references": [
+      "https://github.com/pedrosakuma/aws2azure/issues/1049",
+      "https://github.com/pedrosakuma/aws2azure/issues/1066",
+      "https://github.com/pedrosakuma/aws2azure/issues/1072",
+      "https://github.com/pedrosakuma/aws2azure/issues/1016",
+      "https://github.com/pedrosakuma/aws2azure/issues/1062#issuecomment-5943191098",
+      "https://github.com/pedrosakuma/aws2azure/issues/1062#issuecomment-5943369935",
+      "https://github.com/pedrosakuma/aws2azure/issues/1024",
+      "https://github.com/pedrosakuma/aws2azure/issues/1025"
+    ]
   },
   "profiles": [
     {
       "profile": "dynamodb-basic-crud",
-      "decision": "pending",
-      "rationale": "Decide whether retained canonical evidence is sufficient or identify specific current-health checks.",
+      "decision": "reuse",
+      "rationale": "Reuse the unchanged basic-CRUD qualification and passing 60-minute observation 36463787285/1, with original thresholds, exact runtime/prior and provenance. The controlled ABBA+A/A diagnostic 36637714583/1 did not reproduce the historical large gap; it is supporting attribution evidence, not a new qualification, parity proof or current capacity guarantee. No shipping/persisted-format/profile change or known basic-CRUD-invalidating defect was found. BatchWriteItem attribution research #1024 and distributed-transactions preview #1025 do not require repeating this scope. No new paid check is justified solely by the old 72-hour boundary.",
       "checks": []
     },
     {
       "profile": "s3-basic-object-crud",
-      "decision": "pending",
-      "rationale": "Review the original canonical observation separately from the controlled diagnostic and its timing caveat.",
+      "decision": "reuse",
+      "rationale": "Reuse the unchanged basic-object-CRUD qualification and passing 60-minute observation 36473482616/1. Controlled diagnostic 36941305177/1 did not reproduce the historical roughly 29% deficit on the same runner/backend. Accept its descriptive comparison only: four nominal 30-second waits were short by at most 1.0362 ms, so it does not prove a strict minimum-wait invariant, equivalence or historical causality. The failed first diagnostic 36930800624/1 produced no measurement; #1076 fixed diagnostic preflight rather than shipping behavior. Neither diagnostic substitutes for canonical evidence. No new code/config claim or evidence-invalidating defect requires a new paid run.",
       "checks": []
     },
     {
       "profile": "secretsmanager-basic-lifecycle",
-      "decision": "pending",
-      "rationale": "Review the documented floor rationale, rotation evidence and unresolved historical-auth attribution without repeating the diagnostic automatically.",
+      "decision": "reuse",
+      "rationale": "Reuse the unchanged lifecycle qualification, including its real-Azure credential-rotation scenario (three completions, zero failures), and passing 60-minute observation 36455379008/1. Accept 4.5 as the existing observation override only; do not call the old runner-contention explanation established or require five workers to exceed the eight-worker qualification floor of 9. The completed 5/8 comparison 36875986895/1 supports scaling, not recalibration; its overall workflow remains failed due to cleanup. Historical workload 403 causality is unknown, not claimed fixed. That residual uncertainty and #1016 calibration follow-up are accepted for this workload-scoped release; renewed auth failures invalidate reuse. No repeat diagnostic or automatic floor change is required.",
       "checks": []
     },
     {
       "profile": "sqs-standard-messaging",
-      "decision": "pending",
-      "rationale": "Decide whether retained canonical evidence is sufficient or identify specific current-health checks.",
+      "decision": "reuse",
+      "rationale": "Reuse the unchanged standard-messaging qualification and passing 60-minute observation 36426059230/1. The earlier failed assembly run 36407354825/1 remains ineligible; #1059 fixed the schema-2 assembler guard and the selected successful run is a distinct execution. #1049 was resolved test-fixture isolation, not a shipping cache regression. Exact candidate, attested prior, messaging scope and policies are unchanged and no relevant unresolved defect was identified. Repeating qualification/observation merely for elapsed time would add no targeted evidence for an identified risk.",
       "checks": []
     }
   ]

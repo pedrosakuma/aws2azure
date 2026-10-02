@@ -244,7 +244,7 @@ class EvidenceDecisionTests(unittest.TestCase):
         self.decision["profiles"][0]["checks"] = [check]
         return check
 
-    def test_pending_rc5_and_legacy_plans_cannot_promote(self):
+    def test_pending_and_legacy_plans_cannot_promote(self):
         for value in ("pending", "blocked"):
             with self.subTest(status=value):
                 self.decision["status"] = value
@@ -253,10 +253,14 @@ class EvidenceDecisionTests(unittest.TestCase):
         self.plan["schema_version"] = 1
         with self.assertRaises(SystemExit):
             self.validate()
-        rc5 = REPO_ROOT / "docs/releases/v1.1.1-promotion.json"
-        plan = promotion.validate_plan(rc5)
-        with self.assertRaisesRegex(SystemExit, "pending"):
-            promotion.validate_decision(REPO_ROOT, rc5, plan, self.now)
+    def test_pending_committed_candidate_cannot_promote(self):
+        candidate_plan_path = REPO_ROOT / "docs/releases/v1.1.1-promotion.json"
+        candidate_plan = promotion.validate_plan(candidate_plan_path)
+        pending = promotion.load_json(REPO_ROOT / candidate_plan["evidence_decision"])
+        pending["status"] = "pending"
+        with mock.patch.object(promotion, "load_json", return_value=pending):
+            with self.assertRaisesRegex(SystemExit, "pending"):
+                promotion.validate_decision(REPO_ROOT, candidate_plan_path, candidate_plan, self.now)
 
     def test_historical_age_alone_does_not_trigger_renewal(self):
         with mock.patch.object(promotion, "verify_live_source") as verify:
@@ -282,6 +286,22 @@ class EvidenceDecisionTests(unittest.TestCase):
         added.unlink()
         self.plan["ghcr"]["index_digest"] = "sha256:" + "b" * 64
         write_json(self.plan_path, self.plan)
+        with self.assertRaisesRegex(SystemExit, "inputs changed"):
+            self.validate()
+
+    def test_discovery_regeneration_does_not_create_a_circular_review_hash(self):
+        original = self.decision["reviewed_inputs_digest"]
+        for name in ("documentation-manifest.json", "llms.txt"):
+            (self.root / name).write_text("generated index of the pending decision")
+        self.assertEqual(original, promotion.review_inputs_digest(self.root, self.plan_path, self.plan))
+        self.validate()
+        for name in ("documentation-manifest.json", "llms.txt"):
+            (self.root / name).write_text("regenerated index of the approved decision")
+        self.assertEqual(original, promotion.review_inputs_digest(self.root, self.plan_path, self.plan))
+        self.validate()
+        policy = self.root / "docs/testing/policy.md"
+        policy.parent.mkdir(parents=True)
+        policy.write_text("New source policy must invalidate approval")
         with self.assertRaisesRegex(SystemExit, "inputs changed"):
             self.validate()
 

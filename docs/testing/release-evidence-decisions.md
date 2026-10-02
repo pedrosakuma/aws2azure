@@ -49,7 +49,9 @@ mandatory; unavailable, expired or revoked evidence fails closed.
 ## Explicit decision, no automatic approval
 
 The promotion plan's `evidence_decision` points to a committed JSON record.
-Start with [the pending RC5 record](../releases/v1.1.1-evidence-decision.json).
+Use [the RC5 record](../releases/v1.1.1-evidence-decision.json) as a schema
+example, not as transferable approval for another release; start new decisions
+with `status: pending`.
 An owner must review relevant changes since the evidence was issued, unresolved
 incidents, external-service/configuration changes and the applicable scope of
 each profile. Record references, rationale, reviewer identity and review time.
@@ -79,9 +81,12 @@ python3 eng/release-promotion.py <plan.json> --gate-history <historical-report.j
 
 Compute the digest after finishing the reviewed inputs and store it as
 `reviewed_inputs_digest`. It covers the plan, readiness plan, release notes,
-implementation, tests, tooling, workflows, deployment files, workload/gap policy
-and root build/discovery files; the decision itself is excluded to avoid a
-circular hash. A relevant edit invalidates approval. Merge/rebase changes can
+implementation, tests, tooling, workflows, deployment files, all documentation
+sources and root build files. The decision itself and the generated
+`documentation-manifest.json` / `llms.txt` discovery indexes are excluded:
+those indexes contain the decision's digest, so including them would create a
+circular hash. Their source files and generator remain covered, and CI checks
+discovery drift independently. A relevant edit invalidates approval. Merge/rebase changes can
 require recomputing and reviewing it; do not copy a digest to bypass review.
 
 Dispatch must use current protected main, which is checked again immediately
