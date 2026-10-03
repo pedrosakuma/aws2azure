@@ -5,7 +5,7 @@
   "mode": "reuse",
   "binding": {
     "toolVersion": "validation-evidence-v1",
-    "baseCommit": "69fec38ab9201c17721ca5697a1ec53cb082d258",
+    "baseCommit": "6b10c4233b953e59880a3824f8be80bc8ac71bcf",
     "mergeBase": "c7e56c980cb1c762f5a5692af30086194ea65d54",
     "headCommit": "6790ab6483a84bf58c7673a321d6db38da703191",
     "diffSha256": "ee744559eb044880b46d496e711f8c9fbba6551b6bad3fec1f12fae328f429a6",
