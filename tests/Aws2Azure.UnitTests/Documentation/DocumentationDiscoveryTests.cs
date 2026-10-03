@@ -98,6 +98,39 @@ public sealed class DocumentationDiscoveryTests
     }
 
     [Fact]
+    public void Validation_evidence_records_and_reports_are_indexed_without_granting_acceptance()
+    {
+        var manifest = DocumentationDiscoveryGenerator.Build(RepoRoot);
+        string[] evidencePaths =
+        [
+            "docs/testing/validation-evidence/pr-1017.json",
+            "docs/testing/validation-evidence/pr-1017/evidence.json",
+            "docs/testing/validation-evidence/pr-1086.json",
+            "docs/testing/validation-evidence/pr-1086/evidence.json",
+            "docs/testing/validation-evidence/pr-1086/trigger-authorization-report.txt"
+        ];
+        foreach (var path in evidencePaths)
+        {
+            var entry = Assert.Single(manifest.Documents, entry => entry.Path == path);
+            Assert.StartsWith("documentation:", entry.Id);
+            Assert.Equal("documentation-artifact", entry.Type);
+            Assert.Equal("validation-policy", entry.Scope);
+            Assert.Equal("explanatory", entry.Authority);
+            Assert.Equal("source", entry.Provenance);
+            Assert.Equal("current", entry.Freshness.Mode);
+            Assert.Equal("documentation:docs-testing-validation-evidence-decisions", entry.CanonicalId);
+            Assert.StartsWith("sha256:", entry.Revision);
+            Assert.Equal(71, entry.Revision.Length);
+        }
+
+        var record = Assert.Single(manifest.Documents, entry => entry.Path == evidencePaths[0]);
+        manifest.Documents.Remove(record);
+        Assert.Contains(
+            DocumentationDiscoveryGenerator.Validate(RepoRoot, manifest),
+            error => error == $"required canonical documentation path is not indexed: {record.Path}");
+    }
+
+    [Fact]
     public void Current_verdict_wins_over_v1_release_history()
     {
         var manifest = DocumentationDiscoveryGenerator.Build(RepoRoot);

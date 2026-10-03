@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "status": "accepted",
+  "gate": "real-azure",
+  "mode": "reuse",
+  "binding": {
+    "toolVersion": "validation-evidence-v1",
+    "baseCommit": "6b10c4233b953e59880a3824f8be80bc8ac71bcf",
+    "mergeBase": "c7e56c980cb1c762f5a5692af30086194ea65d54",
+    "headCommit": "6790ab6483a84bf58c7673a321d6db38da703191",
+    "diffSha256": "ee744559eb044880b46d496e711f8c9fbba6551b6bad3fec1f12fae328f429a6",
+    "originalPlanSha256": "c4dcd6266c5165cca2403bc898ccfa067e08a345ad4159a97c72ad8e94b9651c",
+    "evidenceSourceCommit": "04f0ba585f58714cd863e220251ffbf9aad06ae8",
+    "evidenceDeltaSha256": "9daae33605513ed2fdaa3b8354b698f65f47204f4ee0b5704e14b7642bbb6a07"
+  },
+  "originalReasons": [
+    ".github/workflows/integration-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/perf-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/rc-observation-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/real-azure-reaper.yml: authentication or transport behavior needs live-Azure coverage",
+    ".github/workflows/workload-load-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
+    "tests/Aws2Azure.IntegrationTests/OperationalQualification/SecretsManagerConcurrencyDiagnosticTests.cs: authentication or transport behavior needs live-Azure coverage"
+  ],
+  "rationale": "Accept reuse only for the exact frozen maintenance target and reviewed base. Successful integration run 37054680583/1 covers source 04f0ba585f58714cd863e220251ffbf9aad06ae8; the complete source-to-target delta is only the four-line immutable-SHA assertion in eng/test-rc-observation-cleanup.py. Runtime, authentication configuration and workflows are unchanged from that successful source. The coordinator downloaded source-validation artifact 11248617803, verified its published SHA256 and inspected retained TRX outcomes. This is reuse of historical source validation, not a new execution, canonical workload qualification, renewed evidence or current Azure health claim. Acceptance expires 2026-10-03T23:59:59Z solely to finish this frozen maintenance wave, before archive expiry; this is not a universal evidence TTL. Changed head/base/diff, withdrawn approval, revoked or unavailable evidence invalidates this decision immediately. Other required gates and branch protections remain unchanged.",
+  "approvedBy": "pedrosakuma",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962684052",
+  "reviewedAtUtc": "2026-10-02T22:48:31Z",
+  "validUntilUtc": "2026-10-03T23:59:59Z",
+  "evidencePath": "pr-1017/evidence.json",
+  "evidenceSha256": "32bda42f8f5fa594867446847340778e5ea3cd74b4a3822924f44a98094324bc"
+}

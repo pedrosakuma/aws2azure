@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:ebb53d62eeb9f86f4ac5d25ebce2e90149969777f1fcae5bb89213f8ec0e753d",
+  "manifest_revision": "sha256:e08301654cdf2e96722a458ef92c7ce64fe3a2e8954432c4acc516f1211694a1",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1895,6 +1895,83 @@
       "authority": "explanatory",
       "provenance": "source",
       "revision": "sha256:70062ab3278299f3ac547fb9b1d9044c68d2e3a0e43efec4413ab89a1ac7d4d4",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence-decisions.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:21e00c24929a7448bbbcdb15d94b5492e094134a86794d0a9cc2238167cba01e",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1017-evidencejson",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1017/evidence.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:32bda42f8f5fa594867446847340778e5ea3cd74b4a3822924f44a98094324bc",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1017json",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1017.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:5724df604658632bb5dcaec3e55d224118bf575e60cc043552ebeabdf96a547d",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1086-evidencejson",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1086/evidence.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:c72c71b9e41181fedb23f87f038d0c371c586759de17fe09fd5c623ba3bdd7cb",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1086-trigger-authorization-reporttxt",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1086/trigger-authorization-report.txt",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:420876df99331a88bd2b5ae333928bb60befba8f8dca87872e3c6adb8ed391e2",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1086json",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1086.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:9d94efe2af56607acc03af0c387e60d0230546e48ca1115f1d264b2c16c6803d",
       "freshness": {
         "mode": "current"
       }

@@ -286,7 +286,15 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   returns the labels required by the diff. Hot request paths require
   `run-perf`; authentication and transport require `run-integration` plus
   `run-real-azure`; startup, packaging, and build-graph changes require
-  `run-footprint`. Apply every returned required label before merge.
+  `run-footprint`. Apply every effective `requiredLabels` entry before merge.
+  Default classification remains strict. The sole narrow exception is an
+  explicitly selected, externally digest-pinned, owner-reviewed `real-azure`
+  evidence decision under
+  [validation evidence decisions](docs/testing/validation-evidence-decisions.md).
+  Original required status/reasons remain visible; attributable acceptance or
+  evidence reuse is not a newly passed check, renewed qualification, spending
+  authorization, or a branch-protection override. Pending, stale, missing,
+  expired or revoked evidence fails closed. Other gates remain required.
 - **`run-real-azure` is nightly-first; apply it to a PR only when required.**
   `integration-real-azure.yml` provisions real, billed Azure resources (Cosmos
   DB, Service Bus, Event Hubs, Key Vault, Blob Storage) via Bicep and enforces
@@ -297,9 +305,11 @@ task is genuinely trivial (typo fix, one-line config, doc-only).
   other PR and nightly run that actually needs the slot, and multiplies
   exposure to external Azure flakiness (subscription/billing issues, SDK/base
   image drift) for no added signal. Apply required validation labels only when
-  `ChangeAwareValidation` reports them as `required` for the diff, and obtain
+  included in the classifier's effective `requiredLabels` for the diff, and obtain
   operator budget authorization before applying a paid label. A required gate
   is not itself spending approval; report it as blocked if approval is absent.
+  An accepted evidence disposition affects new-run labels only, not required
+  GitHub checks or the independent authorization required to spend on Azure.
 - **Paid workload load requires a separate opt-in.** `run-workload-load` is
   optional explicit spending authorization for all six PR workload-load
   profiles. Required integration/perf labels (`run-real-azure` + `run-perf`)

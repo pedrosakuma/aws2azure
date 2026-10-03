@@ -117,6 +117,7 @@ nav:
       - Troubleshooting: troubleshooting.md
       - Release-candidate canary: testing/rc-staging-canary.md
       - Per-release evidence decisions: testing/release-evidence-decisions.md
+      - PR validation evidence decisions: testing/validation-evidence-decisions.md
       - Operational qualification: testing/operational-qualification.md
       - SLO qualification: testing/slo-qualification.md
       - Real-Azure validation: testing/real-azure-nightly.md

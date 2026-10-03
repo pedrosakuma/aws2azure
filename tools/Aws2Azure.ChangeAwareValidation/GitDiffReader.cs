@@ -4,9 +4,9 @@ namespace Aws2Azure.ChangeAwareValidation;
 
 internal static class GitDiffReader
 {
-    public static GitDiff Read(string requestedBaseRef)
+    public static GitDiff Read(string requestedBaseRef, string? workingDirectory = null)
     {
-        var repoRoot = RunGitFromCurrentDirectory("rev-parse", "--show-toplevel");
+        var repoRoot = RunGit(workingDirectory ?? Directory.GetCurrentDirectory(), "rev-parse", "--show-toplevel");
         var resolvedBaseRef = ResolveBaseRef(repoRoot, requestedBaseRef);
         var baseCommit = RunGit(repoRoot, "rev-parse", $"{resolvedBaseRef}^{{commit}}");
         var headCommit = RunGit(repoRoot, "rev-parse", "HEAD^{commit}");
@@ -14,20 +14,23 @@ internal static class GitDiffReader
         var trackedPathsOutput = RunGit(
             repoRoot,
             "diff",
+            "--no-renames",
             "--name-only",
+            "-z",
             "--diff-filter=ACDMRTUXB",
             mergeBase);
         var untrackedPathsOutput = RunGit(
             repoRoot,
             "ls-files",
+            "-z",
             "--others",
             "--exclude-standard");
         var trackedPaths = trackedPathsOutput.Length == 0
             ? []
-            : trackedPathsOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            : trackedPathsOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var untrackedPaths = untrackedPathsOutput.Length == 0
             ? []
-            : untrackedPathsOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            : untrackedPathsOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         var changedPaths = trackedPaths
             .Concat(untrackedPaths)
             .Distinct(StringComparer.Ordinal)
@@ -69,12 +72,7 @@ internal static class GitDiffReader
             $"Cannot resolve base ref '{requestedBaseRef}' or '{remoteRef}'. Fetch main before classifying the diff.");
     }
 
-    private static string RunGitFromCurrentDirectory(params string[] arguments)
-    {
-        return RunGit(Directory.GetCurrentDirectory(), arguments);
-    }
-
-    private static string RunGit(string workingDirectory, params string[] arguments)
+    internal static string RunGit(string workingDirectory, params string[] arguments)
     {
         if (TryRunGit(workingDirectory, out var output, arguments))
         {
@@ -103,7 +101,7 @@ internal static class GitDiffReader
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Unable to start git.");
-        output = process.StandardOutput.ReadToEnd().Trim();
+        output = process.StandardOutput.ReadToEnd().TrimEnd('\r', '\n');
         var error = process.StandardError.ReadToEnd().Trim();
         process.WaitForExit();
         if (process.ExitCode == 0)
