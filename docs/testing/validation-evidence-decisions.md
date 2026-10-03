@@ -207,17 +207,17 @@ qualification.
 
 ## Frozen cases and merge order
 
-No accepted record is issued by this implementation. Versioned **pending**
-proposals and evidence snapshots now exist at the paths below, with the
-coordinator's exact-head offline report retained in the #1086 package. The
-rationale approvals below predate the final bindings/metadata package and must
-not be misrepresented as approvals of an as-yet-unreviewed final digest.
-`approvedBy` explicitly says owner approval is pending, and `reviewedAtUtc`
-records proposal/evidence review, not completed acceptance. The proposed
-deadline `2026-10-03T23:59:59Z` bounds this particular frozen maintenance wave
-and is not a universal evidence TTL.
+The owner [approved the final records and their SHA256 pins](https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962684052).
+The versioned accepted records below cover only the frozen targets, with the
+coordinator's exact-head offline report retained in the #1086 package.
+The owner also delegated base-only revalidation for merges in this sequence,
+provided the target diffs and evidence remain identical. Each such revalidation
+must record its new binding and pin; any scope change stops for new review.
+The deadline `2026-10-03T23:59:59Z` bounds this particular maintenance wave
+and is not a universal evidence TTL. Later invocations must reject these records
+when their bindings, validity or evidence no longer match.
 
-| Record/package location to finalize | Exact target | Decision |
+| Versioned record/package | Exact target | Decision |
 | --- | --- | --- |
 | `docs/testing/validation-evidence/pr-1017.json` and `pr-1017/evidence.json` | `6790ab6483a84bf58c7673a321d6db38da703191` | Reuse run `37054680583/1` at `04f0ba585f58714cd863e220251ffbf9aad06ae8`; only subsequent change is the four-line immutable-SHA assertion in `eng/test-rc-observation-cleanup.py`. [Operator rationale](https://github.com/pedrosakuma/aws2azure/pull/1017#issuecomment-5961974861). |
 | `docs/testing/validation-evidence/pr-1086.json` and `pr-1086/evidence.json` | `eb03638bd0de4d2204c04f18ed05423f2eafc4ae` | Offline event-selection expression tests, not live Azure. Reviewed base `69fec38ab9201c17721ca5697a1ec53cb082d258`. [Operator rationale](https://github.com/pedrosakuma/aws2azure/pull/1086#issuecomment-5961974706). |
@@ -228,7 +228,7 @@ The second #1017 artifact reported during operator review was
 expiry `2026-10-16T19:46:31Z`. These are historical identities, not a claim
 that archives remain available now; verify and retain the bytes before approval.
 
-The committed #1017 proposal uses **only artifact `11248617803`**, whose ZIP
+The committed #1017 record uses **only artifact `11248617803`**, whose ZIP
 was independently downloaded and digest-verified by the coordinator. It does
 not use the canonical artifact illustrated in the generic schema above.
 The reviewed source-validation results are 21/21 matrix-unit tests passed,
@@ -239,7 +239,7 @@ offline authorization tests passed at the exact frozen head. See the
 [evidence review](https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962352578).
 
 To assemble a local package without dirtying either frozen target or committing
-the ZIP, copy the versioned proposal tree to a separate evidence directory:
+the ZIP, copy the versioned record tree to a separate evidence directory:
 
 ```bash
 # Run from the policy checkout. Keep this directory outside the frozen target.
@@ -253,13 +253,12 @@ sha256sum "$package/pr-1017/source-validation-real-azure-conformance.zip"
 ```
 
 Supply `--decision "$package/pr-1017.json"` (or `pr-1086.json`) from the frozen
-target cwd with the matching externally approved digest. The current pending
-proposals deliberately exit 2 even with their correct proposal hashes.
-Owner acceptance requires finalizing the versioned record's status, actual
-approver, final review timestamp/reference and rationale, then approving the
-SHA256 of those **final bytes**. Recopy the finalized records unchanged into
-the package; proposal digests cannot authorize the later accepted bytes.
-Do not change status in an unreviewed local copy to make validation pass.
+target cwd with the matching externally approved digest. Pending proposals
+deliberately exit 2 even with their correct proposal hashes. Approval applies
+to the SHA256 of the **final bytes**, not merely a rationale or filename.
+Recopy finalized records unchanged into the package; a previous proposal or
+base-binding digest cannot authorize different accepted bytes.
+Do not change status or bindings in an unreviewed local copy to make validation pass.
 
 The parent/coordinator independently reviews this policy PR, verifies final
 evidence, supplies/versions decisions for the exact frozen targets and records

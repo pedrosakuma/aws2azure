@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "pending",
+  "status": "accepted",
   "gate": "real-azure",
   "mode": "offline-covered",
   "binding": {
@@ -18,10 +18,10 @@
     ".github/workflows/perf-real-azure.yml: authentication or transport behavior needs live-Azure coverage",
     ".github/workflows/workload-load-real-azure.yml: authentication or transport behavior needs live-Azure coverage"
   ],
-  "rationale": "PENDING owner approval of final accepted bytes and digest. The operator accepted the narrow offline-coverage rationale at https://github.com/pedrosakuma/aws2azure/pull/1086#issuecomment-5961974706. The exact target changes paid-workflow event-selection conditions and adds deterministic tests evaluating the actual expressions, detecting the previous conditions; it does not change Azure runtime behavior. The Copilot coordinator ran PYTHONDONTWRITEBYTECODE=1 python3 eng/test-paid-workflow-authorization.py at frozen head eb03638bd0de4d2204c04f18ed05423f2eafc4ae: 10/10 passed and worktree remained clean. CI run 37067906488/1 also reports the authorization step successful. This accepts only the event-selection scope and makes no live-Azure or provisioning claim. Proposed validity ends 2026-10-03T23:59:59Z solely to finish this frozen maintenance wave; it is not a universal TTL. Changed head/base/scope, withdrawn approval, missing or revoked evidence invalidates immediately. All other required gates and branch protection remain unchanged. reviewedAtUtc records proposal/evidence review, not completed owner acceptance.",
-  "approvedBy": "PENDING repository-owner approval; proposal prepared by Copilot coordinator",
-  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1086#issuecomment-5961974706",
-  "reviewedAtUtc": "2026-10-02T22:44:00Z",
+  "rationale": "Accept offline coverage only for the exact frozen event-selection change and reviewed base. Deterministic tests evaluate the actual workflow expressions, cover exclusive load opt-in and own-label filtering, preserve schedule/manual and new-commit semantics, and detect the previous conditions. The coordinator executed the frozen-head script: 10/10 passed with a clean worktree. Exact-head CI run 37067906488/1 also passed its paid-workflow authorization step. No Azure runtime or authentication behavior is changed by this trigger-only scope, and this decision makes no live-Azure, provisioning or current-health claim. Acceptance expires 2026-10-03T23:59:59Z solely to finish this frozen maintenance wave, not as a universal evidence TTL. Changed head/base/diff, withdrawn approval, revoked or unavailable evidence invalidates immediately. Other required gates and branch protections remain unchanged.",
+  "approvedBy": "pedrosakuma",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/issues/1087#issuecomment-5962684052",
+  "reviewedAtUtc": "2026-10-02T22:48:31Z",
   "validUntilUtc": "2026-10-03T23:59:59Z",
   "evidencePath": "pr-1086/evidence.json",
   "evidenceSha256": "c72c71b9e41181fedb23f87f038d0c371c586759de17fe09fd5c623ba3bdd7cb"
