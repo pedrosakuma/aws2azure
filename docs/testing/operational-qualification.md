@@ -3,6 +3,15 @@
 Operational qualification is separate from emulator regression and from
 feature-specific A/B experiments.
 
+PR workload-load requires the optional **`run-workload-load`** spending opt-in;
+mandatory integration/perf labels do not authorize it. The label selects all
+six load profiles and remains valid for new commits and reopened PRs while
+applied. Unrelated label additions do not retrigger load. These PR runs are
+source validation, not sealed qualification; the nightly schedule remains
+SecretsManager-only, and manual profile selection and `promote`/`reaffirm`
+requirements are unchanged. Obtain operator budget approval before opting in;
+see [paid PR authorization](real-azure-nightly.md#paid-pr-authorization).
+
 ## Evidence classes
 
 | Evidence | Used for | Never claims |

@@ -161,7 +161,9 @@ When no backend at all is configured the proxy process is never started.
   selector. `require_real_azure` defaults to true and rejects a run that
   produces no passing live-Azure scenario eligible to establish verification.
 - On PRs labelled **`run-real-azure`** (apply the label to validate a change
-  against real Azure before merge).
+  against real Azure before merge with operator budget approval): when that
+  label is added, and on `synchronize`/`reopened` while it remains applied.
+  Unrelated `labeled` events do not retrigger the paid job.
 
 A concurrency guard (`group: integration-real-azure`,
 `cancel-in-progress: false`) prevents two runs from racing.
@@ -173,6 +175,47 @@ if a matrix identity matches no test; this prevents VSTest's zero-match
 success behavior from hiding stale references. Nightly runs also require
 positive real-Azure verification evidence. Labelled PR runs keep the gate off
 so forks without secrets remain truthful, green non-evidence runs.
+
+### Paid PR authorization
+
+Required validation and permission to spend are separate decisions. Follow the
+ChangeAwareValidation plan without dropping mandatory gates, but obtain
+operator budget approval before applying a paid label. If approval is absent,
+the required paid gate remains a merge blocker.
+
+| PR label | Authorized paid scope |
+|---|---|
+| `run-real-azure` | Full integration conformance matrix, source validation |
+| `run-perf-real-azure` | Real Cosmos DB performance A/B experiment, not workload qualification |
+| `run-workload-load` | Optional explicit opt-in to all six workload-load profiles, source validation |
+
+Mandatory integration/perf labels, including **`run-real-azure` plus
+`run-perf`**, do **not** authorize workload-load. `run-perf` selects the separate
+emulator performance gate, not real-Azure performance or workload load.
+
+Each paid workflow requires its own label to be present. On `labeled`, the
+triggering `event.label.name` must also be that exact authorization label.
+Adding several labels in one API batch therefore does not cause unrelated
+label events to duplicate the same paid job. This is event-specific gating,
+not global exactly-once execution across event races. Explicitly removing and
+readding the workflow's own label, or manually rerunning a run, remains a
+deliberate operator action with spending implications.
+
+All three opt-ins persist across new commits (`synchronize`) and `reopened`
+while applied. In particular, `run-workload-load` authorizes another six-profile
+source-validation campaign on each such event; remove it to stop future PR
+selection. Removing a label does not cancel runs already selected or queued.
+Existing fork protections are unchanged: integration/perf without OIDC secrets
+skip provisioning, and workload-load fails its required-credentials preflight
+rather than producing fallback evidence.
+
+Schedules and manual dispatch are unchanged: integration remains nightly,
+real-Azure performance weekly, and workload-load nightly remains
+SecretsManager-only. Manual workload-load still selects a single profile or
+`all`; sealed `promote`/`reaffirm` runs retain their producer, protected-ref,
+and evidence requirements. Paid PR source validation does not renew sealed
+qualification or release evidence. See the
+[operational qualification runbook](operational-qualification.md).
 
 ## One-time operator setup (OIDC)
 
