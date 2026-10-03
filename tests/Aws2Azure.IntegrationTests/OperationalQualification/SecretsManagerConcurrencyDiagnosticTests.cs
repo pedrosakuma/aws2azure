@@ -673,9 +673,11 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
 
         var login = Assert.Single(steps, step => step.StartsWith("Azure login (OIDC)\n", StringComparison.Ordinal));
         Assert.Contains("        id: azure\n", login, StringComparison.Ordinal);
+        var loginAction = ReadActionReference(login);
+        Assert.Matches("^azure/login@[0-9a-f]{40}$", loginAction);
+        Assert.Equal(loginAction, ReadActionReference(steps[refresh]));
         foreach (var required in new[]
         {
-            "        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v2\n",
             "          client-id: ${{ secrets.AZURE_CLIENT_ID }}\n",
             "          tenant-id: ${{ secrets.AZURE_TENANT_ID }}\n",
             "          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}\n",
@@ -694,6 +696,13 @@ public sealed class SecretsManagerConcurrencyDiagnosticTests
         Assert.Contains("az keyvault list-deleted", steps[cleanup], StringComparison.Ordinal);
         Assert.Contains("        if: always()\n", Assert.Single(steps,
             step => step.StartsWith("Retain non-promotable reports only\n", StringComparison.Ordinal)), StringComparison.Ordinal);
+    }
+
+    private static string ReadActionReference(string step)
+    {
+        var line = Assert.Single(step.Split('\n'),
+            line => line.StartsWith("        uses: ", StringComparison.Ordinal));
+        return line["        uses: ".Length..].Split('#', 2)[0].Trim();
     }
 
     private static string ReadDiagnosticWorkflow()
