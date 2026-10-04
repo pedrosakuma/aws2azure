@@ -197,6 +197,41 @@ public sealed class ConformancePlanTests
             discovered);
     }
 
+    [Theory]
+    [InlineData("filter-equals-ignore-case", "Equals_ignore_case_routes_only_matching_messages_against_real_service_bus")]
+    [InlineData("filter-ipv4-cidr", "Ipv4_cidr_routes_only_matching_messages_against_real_service_bus")]
+    public void Sns_filter_scenarios_are_selectable_and_require_execution(string scenarioId, string method)
+    {
+        var matrix = ConformanceMatrixLoader.Load(Path.Combine(
+            RepositoryRoot(), "docs", "testing", "real-azure-conformance.yaml"));
+        var plan = ConformancePlanGenerator.Generate(matrix, service: "sns", scenario: scenarioId);
+        var scenario = Assert.Single(plan.Scenarios);
+        var identity = $"Aws2Azure.IntegrationTests.Sns.SnsFilterRealAzureConformanceTests.{method}";
+        Assert.Equal([identity], scenario.Tests);
+        Assert.Equal("real_azure", scenario.EvidenceSource);
+        Assert.True(scenario.EstablishesVerification);
+        Assert.False(scenario.OptionalCoverage);
+        Assert.Equal(
+            new[] { "Publish", "PublishBatch", "SetSubscriptionAttributes" },
+            scenario.Operations.Order(StringComparer.Ordinal));
+        var project = Assert.Single(plan.TestProjects);
+        Assert.Equal("tests/Aws2Azure.IntegrationTests", project.Project);
+        Assert.Equal([identity], project.Tests);
+        Assert.Contains(
+            ConformancePlanGenerator.Generate(matrix, service: "sns").Scenarios,
+            entry => entry.Id == scenarioId);
+        Assert.Contains(
+            ConformancePlanGenerator.Generate(matrix).Scenarios,
+            entry => entry.Service == "sns" && entry.Id == scenarioId);
+
+        var evidence = ConformanceEvidenceGenerator.Generate(
+            ConformancePlanGenerator.SelectPlannedMatrix(matrix, plan),
+            [], "offline-no-execution", "https://example.invalid/no-execution");
+        var service = Assert.Single(evidence.Services);
+        Assert.Equal("not_run", Assert.Single(service.Scenarios).Outcome);
+        Assert.All(service.Operations, operation => Assert.False(operation.EligibleForVerifiedRealAzure));
+    }
+
     [Fact]
     public void DynamoDb_profiles_have_distinct_pinned_sets_hashes_and_configuration()
     {
