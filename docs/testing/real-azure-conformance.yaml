@@ -912,6 +912,24 @@ services:
         operations: [Subscribe, ConfirmSubscription, GetSubscriptionAttributes, SetSubscriptionAttributes, Unsubscribe]
         tests:
           - Aws2Azure.IntegrationTests.Sns.SnsRealAzureConformanceTests.Subscription_metadata_and_unrelated_azure_properties_survive_restart
+      - id: filter-equals-ignore-case
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Scalar ASCII equals-ignore-case routing for MessageAttributes and nested MessageBody through both Publish and PublishBatch. Requires exact matching deliveries, an unfiltered control receiving every input, and a bounded quiet window excluding nonmatching or missing values. Prepared under issue 1082; registration is not execution evidence.
+        operations: [SetSubscriptionAttributes, Publish, PublishBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsFilterRealAzureConformanceTests.Equals_ignore_case_routes_only_matching_messages_against_real_service_bus
+      - id: filter-ipv4-cidr
+        priority: p1
+        category: core
+        evidence_source: real_azure
+        establishes_verification: true
+        description: Scalar IPv4 CIDR routing for MessageAttributes and nested MessageBody through both Publish and PublishBatch. Checks both inclusive /24 boundaries, an interior address, adjacent outside addresses, non-IP and missing values with an unfiltered control and bounded quiet window. Prepared under issue 1082; registration is not execution evidence.
+        operations: [SetSubscriptionAttributes, Publish, PublishBatch]
+        tests:
+          - Aws2Azure.IntegrationTests.Sns.SnsFilterRealAzureConformanceTests.Ipv4_cidr_routes_only_matching_messages_against_real_service_bus
       - id: topic-list-pagination
         priority: p1
         category: pagination
