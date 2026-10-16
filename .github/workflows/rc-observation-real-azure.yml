@@ -1166,7 +1166,7 @@ jobs:
       - name: Upload immutable raw capture and selected identities
         id: capture_upload
         if: always() && env.MODE == 'observation'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.CAPTURE_ARTIFACT_NAME }}
           path: artifacts/rc-observation-capture/${{ matrix.profile }}/**
@@ -1234,7 +1234,7 @@ jobs:
       - name: Upload non-promotable calibration report
         id: calibration_upload
         if: always() && env.MODE == 'secretsmanager-calibration' && steps.calibration_validate.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.CALIBRATION_ARTIFACT_NAME }}
           path: artifacts/rc-observation-capture/${{ matrix.profile }}/calibration-report.json
@@ -1297,7 +1297,7 @@ jobs:
       - name: Upload immutable RC observation evidence
         id: evidence_upload
         if: always() && env.MODE == 'observation' && steps.strict_validate.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
           path: artifacts/rc-observation/${{ matrix.profile }}/**
@@ -1390,7 +1390,7 @@ jobs:
       - name: Upload evidence selection receipt
         id: receipt_upload
         if: always() && env.MODE == 'observation' && steps.evidence_upload.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SELECTION_ARTIFACT_NAME }}
           path: artifacts/rc-observation/${{ matrix.profile }}/upload-identity/**
@@ -1570,7 +1570,7 @@ jobs:
       - name: Upload immutable cohort capture
         id: cohort_upload
         if: always() && hashFiles(format('{0}/**', env.CAPTURE_ROOT)) != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.COHORT_CAPTURE_ARTIFACT_NAME }}
           path: artifacts/rc-observation-capture/${{ matrix.profile }}/${{ matrix.cohort }}
@@ -1689,13 +1689,13 @@ jobs:
           --validate
 
       - name: Download candidate cohort capture
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.CANDIDATE_COHORT_ARTIFACT_NAME }}
           path: ${{ env.PRIVATE_ROOT }}/candidate
 
       - name: Download stable cohort capture
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.STABLE_COHORT_ARTIFACT_NAME }}
           path: ${{ env.PRIVATE_ROOT }}/stable
@@ -1717,7 +1717,7 @@ jobs:
 
       - name: Upload immutable raw capture and selected identities
         id: capture_upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.CAPTURE_ARTIFACT_NAME }}
           path: artifacts/rc-observation-capture/${{ matrix.profile }}/**
@@ -1791,7 +1791,7 @@ jobs:
       - name: Upload immutable RC observation evidence
         id: evidence_upload
         if: always() && steps.strict_validate.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
           path: artifacts/rc-observation/${{ matrix.profile }}/**
@@ -1864,7 +1864,7 @@ jobs:
       - name: Upload evidence selection receipt
         id: receipt_upload
         if: always() && steps.evidence_upload.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SELECTION_ARTIFACT_NAME }}
           path: artifacts/rc-observation/${{ matrix.profile }}/upload-identity/**
