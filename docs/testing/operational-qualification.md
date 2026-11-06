@@ -8,9 +8,15 @@ mandatory integration/perf labels do not authorize it. The label selects all
 six load profiles and remains valid for new commits and reopened PRs while
 applied. Unrelated label additions do not retrigger load. These PR runs are
 source validation, not sealed qualification; the nightly schedule remains
-SecretsManager-only, and manual profile selection and `promote`/`reaffirm`
-requirements are unchanged. Obtain operator budget approval before opting in;
-see [paid PR authorization](real-azure-nightly.md#paid-pr-authorization).
+SecretsManager-only. Manual dispatch can select one profile (or all) and now
+offers an explicit `source-validation` mode for non-qualifying source-built
+evidence. That mode rejects candidate run/artifact inputs, never resolves
+sealed runtimes, and uploads only the 14-day
+`source-validation-workload-load-<profile>` artifact. Existing `promote` and
+`reaffirm` modes retain their sealed-candidate, protected-ref, and immutable
+qualification-evidence requirements. Obtain operator budget approval before
+any paid run; see
+[paid PR authorization](real-azure-nightly.md#paid-pr-authorization).
 
 ## Evidence classes
 

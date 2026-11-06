@@ -1,8 +1,9 @@
 name: workload-load-real-azure
 
 # Produces immutable production-shaped workload evidence against ephemeral real
-# Azure resources. Only manual runs with an exact sealed producer are qualifying;
-# scheduled/PR runs remain explicit source validation. Manual runs can select S3,
+# Azure resources. Manual promote/reaffirm runs are qualifying only with their
+# required sealed runtime identity; scheduled/PR runs and explicit manual
+# source-validation runs remain non-qualifying. Manual runs can select S3,
 # Secrets Manager, SQS, DynamoDB, DynamoDB transactions, Kinesis, or all
 # profiles. Emulator and A/B artifacts are never consumed.
 #
@@ -15,7 +16,9 @@ name: workload-load-real-azure
 # any supplied candidate_* inputs, resolves the candidate directly from the
 # current approved-runtime ledger, and resolves the rollback baseline from the
 # ledger's trusted qualification.rollback_target (not the current ledger, which
-# would equal the candidate itself) -- see #803.
+# would equal the candidate itself) -- see #803. mode: source-validation runs
+# the selected source-built profile without resolving any sealed candidate or
+# emitting qualification evidence.
 on:
   schedule:
     - cron: '15 6 * * *'
@@ -35,13 +38,14 @@ on:
           - kinesis-single-consumer-per-shard
           - all
       mode:
-        description: promote a new sealed candidate, or reaffirm the already-approved runtime
+        description: promote/reaffirm sealed evidence, or run non-qualifying source validation
         required: true
         default: promote
         type: choice
         options:
           - promote
           - reaffirm
+          - source-validation
       candidate_run_id:
         description: Exact successful sealed-runtime producer run id (promote mode only)
         required: false
@@ -156,30 +160,58 @@ jobs:
         run: |
           set -euo pipefail
           qualification_sha="$(git rev-parse HEAD)"
-          requalification_mode="${REQUALIFICATION_MODE:-promote}"
+          requested_mode="${REQUALIFICATION_MODE:-promote}"
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            if [ "$requalification_mode" = reaffirm ]; then
-              if [ -n "$CANDIDATE_RUN_ID" ] || [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
-                echo "::error::mode=reaffirm resolves the candidate from the approved-runtime ledger; candidate_* inputs must be left blank."
+            case "$requested_mode" in
+              source-validation)
+                if [ -n "$CANDIDATE_RUN_ID" ] || [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+                  echo "::error::mode=source-validation never resolves a sealed candidate; candidate_run_id and candidate_artifact_id must be left blank."
+                  exit 1
+                fi
+                qualifying=false
+                runtime_mode=source_validation
+                requalification_mode=source_validation
+                ;;
+              reaffirm)
+                if [ -n "$CANDIDATE_RUN_ID" ] || [ -n "$CANDIDATE_ARTIFACT_ID" ]; then
+                  echo "::error::mode=reaffirm resolves the candidate from the approved-runtime ledger; candidate_* inputs must be left blank."
+                  exit 1
+                fi
+                if [ "$REF_PROTECTED" != true ] ||
+                   { [ "$REF" != refs/heads/main ] &&
+                     [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
+                  echo "::error::Sealed qualification must run from protected main or an allowed protected RC tag."
+                  exit 1
+                fi
+                qualifying=true
+                runtime_mode=rollback
+                requalification_mode=reaffirm
+                ;;
+              promote)
+                if [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+                   [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+                  echo "::error::Manual qualification requires numeric candidate run id and attempt."
+                  exit 1
+                fi
+                if [ "$REF_PROTECTED" != true ] ||
+                   { [ "$REF" != refs/heads/main ] &&
+                     [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
+                  echo "::error::Sealed qualification must run from protected main or an allowed protected RC tag."
+                  exit 1
+                fi
+                qualifying=true
+                runtime_mode=rollback
+                requalification_mode=promote
+                ;;
+              *)
+                echo "::error::Unsupported workload qualification mode: $requested_mode"
                 exit 1
-              fi
-            elif [[ ! "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-                 [[ ! "$CANDIDATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-              echo "::error::Manual qualification requires numeric candidate run id and attempt."
-              exit 1
-            fi
-            if [ "$REF_PROTECTED" != true ] ||
-               { [ "$REF" != refs/heads/main ] &&
-                 [[ ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-rc([.-]?[0-9A-Za-z]+)*$ ]]; }; then
-              echo "::error::Sealed qualification must run from protected main or an allowed protected RC tag."
-              exit 1
-            fi
-            qualifying=true
-            runtime_mode=rollback
+                ;;
+            esac
           else
             qualifying=false
             runtime_mode=source_validation
-            requalification_mode=promote
+            requalification_mode=source_validation
           fi
           {
             echo "qualifying=$qualifying"
