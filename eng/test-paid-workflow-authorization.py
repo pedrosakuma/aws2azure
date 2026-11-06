@@ -162,7 +162,7 @@ class PaidWorkflowAuthorizationTests(unittest.TestCase):
         ):
             self.assertIn(f"- cron: '{cron}'", workflow(name))
 
-    def test_load_profile_selection_is_unchanged(self):
+    def test_load_profile_selection_supports_one_manual_source_validation_profile(self):
         cases = [("schedule", "", PROFILES[:1]), ("pull_request", "", PROFILES),
                  ("workflow_dispatch", "all", PROFILES)]
         cases += [("workflow_dispatch", profile, [profile]) for profile in PROFILES]
@@ -183,6 +183,8 @@ class PaidWorkflowAuthorizationTests(unittest.TestCase):
         self.assertIn("::error::Unsupported workload profile", result.stdout)
         self.assertIn("needs: select", workflow("workload-load-real-azure"))
         self.assertIn("profile: ${{ fromJSON(needs.select.outputs.profiles) }}", workflow("workload-load-real-azure"))
+        self.assertIn("default: promote", workflow("workload-load-real-azure"))
+        self.assertIn("          - source-validation", workflow("workload-load-real-azure"))
 
     def test_forks_without_secrets_keep_existing_provisioning_guards(self):
         for name in ("integration-real-azure", "perf-real-azure"):
@@ -203,19 +205,29 @@ class PaidWorkflowAuthorizationTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("::error::Azure OIDC secrets are required", result.stdout)
 
-    def test_load_source_validation_and_sealed_modes_remain_separate(self):
+    def test_load_manual_source_validation_and_sealed_modes_remain_separate(self):
         settings = {
             "EVENT_NAME": "workflow_dispatch", "REF": "refs/heads/main", "REF_PROTECTED": "true",
             "REQUALIFICATION_MODE": "promote", "CANDIDATE_RUN_ID": "123",
             "CANDIDATE_RUN_ATTEMPT": "1", "CANDIDATE_ARTIFACT_ID": "", "PROFILE": PROFILES[0],
         }
         cases = [
-            ({}, True, "rollback"),
-            ({"REQUALIFICATION_MODE": "reaffirm", "CANDIDATE_RUN_ID": ""}, True, "rollback"),
-            ({"EVENT_NAME": "pull_request", "REF": "refs/pull/1/merge", "REF_PROTECTED": "false"}, False, "source_validation"),
-            ({"EVENT_NAME": "schedule"}, False, "source_validation"),
+            ({}, True, "rollback", "promote"),
+            ({"REQUALIFICATION_MODE": "reaffirm", "CANDIDATE_RUN_ID": ""}, True, "rollback", "reaffirm"),
+            ({
+                "REQUALIFICATION_MODE": "source-validation",
+                "CANDIDATE_RUN_ID": "",
+                "REF": "refs/heads/feature",
+                "REF_PROTECTED": "false",
+            }, False, "source_validation", "source_validation"),
+            ({
+                "EVENT_NAME": "pull_request",
+                "REF": "refs/pull/1/merge",
+                "REF_PROTECTED": "false",
+            }, False, "source_validation", "source_validation"),
+            ({"EVENT_NAME": "schedule"}, False, "source_validation", "source_validation"),
         ]
-        for overrides, qualifying, mode in cases:
+        for overrides, qualifying, runtime_mode, qualification_mode in cases:
             with self.subTest(overrides=overrides):
                 result, outputs, environment = run_step(
                     "workload-load-real-azure", "Select qualifying or source-validation mode",
@@ -223,8 +235,27 @@ class PaidWorkflowAuthorizationTests(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(str(qualifying).lower(), outputs["qualifying"])
-                self.assertEqual(overrides.get("REQUALIFICATION_MODE", "promote"), outputs["requalification_mode"])
-                self.assertIn(f"AWS2AZURE_SEALED_RUNTIME_MODE={mode}\n", environment)
+                self.assertEqual(qualification_mode, outputs["requalification_mode"])
+                self.assertIn(f"AWS2AZURE_SEALED_RUNTIME_MODE={runtime_mode}\n", environment)
+                self.assertIn(f"AWS2AZURE_QUALIFICATION_MODE={qualification_mode}\n", environment)
+
+        source_validation = {
+            **settings,
+            "REQUALIFICATION_MODE": "source-validation",
+            "CANDIDATE_RUN_ID": "",
+        }
+        for overrides in (
+            {"CANDIDATE_RUN_ID": "123"},
+            {"CANDIDATE_ARTIFACT_ID": "456"},
+        ):
+            result, outputs, _ = run_step(
+                "workload-load-real-azure", "Select qualifying or source-validation mode",
+                {**source_validation, **overrides},
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("::error::mode=source-validation", result.stdout)
+            self.assertNotIn("qualifying", outputs)
+
         for overrides in (
             {"CANDIDATE_RUN_ID": ""},
             {"REF_PROTECTED": "false"},
@@ -238,6 +269,41 @@ class PaidWorkflowAuthorizationTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("::error::", result.stdout)
             self.assertNotIn("qualifying", outputs)
+
+        workflow_text = workflow("workload-load-real-azure")
+        self.assertIn(
+            "if: steps.mode.outputs.qualifying == 'true'\n"
+            "        env:\n"
+            "          GH_TOKEN:",
+            workflow_text,
+        )
+        self.assertIn(
+            "if: always() && steps.mode.outputs.qualifying == 'true'\n"
+            "        uses: actions/upload-artifact@",
+            workflow_text,
+        )
+        self.assertIn(
+            "name: real-azure-workload-load-${{ matrix.profile }}",
+            workflow_text,
+        )
+        self.assertIn(
+            "if: always() && steps.mode.outputs.qualifying != 'true'\n"
+            "        uses: actions/upload-artifact@",
+            workflow_text,
+        )
+        self.assertIn(
+            "name: source-validation-workload-load-${{ matrix.profile }}",
+            workflow_text,
+        )
+        qualification_workflow = workflow("qualification-real-azure")
+        self.assertIn(
+            '--artifact-name "real-azure-workload-load-$PROFILE"',
+            qualification_workflow,
+        )
+        self.assertNotIn(
+            "source-validation-workload-load",
+            qualification_workflow,
+        )
 
 
 if __name__ == "__main__":

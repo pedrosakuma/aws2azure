@@ -209,12 +209,15 @@ Existing fork protections are unchanged: integration/perf without OIDC secrets
 skip provisioning, and workload-load fails its required-credentials preflight
 rather than producing fallback evidence.
 
-Schedules and manual dispatch are unchanged: integration remains nightly,
-real-Azure performance weekly, and workload-load nightly remains
-SecretsManager-only. Manual workload-load still selects a single profile or
-`all`; sealed `promote`/`reaffirm` runs retain their producer, protected-ref,
-and evidence requirements. Paid PR source validation does not renew sealed
-qualification or release evidence. See the
+Schedules remain unchanged: integration remains nightly, real-Azure
+performance weekly, and workload-load nightly remains SecretsManager-only.
+Manual workload-load selects a single profile or `all`. Its explicit
+`source-validation` mode rejects candidate run/artifact inputs, uses the
+source-built runtime, and uploads only non-qualifying 14-day source-validation
+evidence. It cannot renew certification or feed the qualification workflow.
+Sealed `promote`/`reaffirm` runs retain their producer, protected-ref, and
+evidence requirements. Paid PR source validation likewise does not renew
+sealed qualification or release evidence. See the
 [operational qualification runbook](operational-qualification.md).
 
 ## One-time operator setup (OIDC)
