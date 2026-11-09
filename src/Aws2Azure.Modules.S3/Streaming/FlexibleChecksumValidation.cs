@@ -31,6 +31,7 @@ internal sealed class FlexibleChecksumValidation
     private readonly byte[]? _headerDigest;
     private readonly string? _trailerHeader;
     private readonly AwsChunkedDecoder? _decoder;
+    private byte[]? _validatedDigest;
 
     private FlexibleChecksumValidation(
         FlexibleChecksumAlgorithm algorithm,
@@ -45,13 +46,28 @@ internal sealed class FlexibleChecksumValidation
     }
 
     public Stream CreateStream(Stream body) =>
-        new ValidatingStream(body, _algorithm, _headerDigest, _trailerHeader, _decoder);
+        new ValidatingStream(body, _algorithm, _headerDigest, _trailerHeader, _decoder, CaptureValidatedDigest);
+
+    public FlexibleChecksumAlgorithm Algorithm => _algorithm;
+
+    public bool TryGetValidatedDigest(out string digest)
+    {
+        if (_validatedDigest is null)
+        {
+            digest = string.Empty;
+            return false;
+        }
+
+        digest = Convert.ToBase64String(_validatedDigest);
+        return true;
+    }
 
     public static bool TryCreate(
         HttpRequest request,
         AwsChunkedDecoder? decoder,
         out FlexibleChecksumValidation? validation,
-        out FlexibleChecksumError error)
+        out FlexibleChecksumError error,
+        string operationName = "PutObject")
     {
         validation = null;
         error = default;
@@ -85,7 +101,7 @@ internal sealed class FlexibleChecksumValidation
 
             if (selectedByHeader is not null)
             {
-                error = InvalidArgument("Only one x-amz-checksum-* value may be supplied for PutObject.");
+                error = InvalidArgument($"Only one x-amz-checksum-* value may be supplied for {operationName}.");
                 return false;
             }
 
@@ -232,7 +248,7 @@ internal sealed class FlexibleChecksumValidation
 
                 if (algorithm is not null)
                 {
-                    error = InvalidArgument("Only one x-amz-checksum-* trailer may be supplied for PutObject.");
+                    error = InvalidArgument("Only one x-amz-checksum-* trailer may be supplied.");
                     return false;
                 }
 
@@ -277,7 +293,7 @@ internal sealed class FlexibleChecksumValidation
         return found;
     }
 
-    private static bool TryParseAlgorithm(string value, out FlexibleChecksumAlgorithm algorithm)
+    internal static bool TryParseAlgorithm(string value, out FlexibleChecksumAlgorithm algorithm)
     {
         if (value.Equals("CRC32", StringComparison.OrdinalIgnoreCase))
         {
@@ -340,7 +356,7 @@ internal sealed class FlexibleChecksumValidation
         return true;
     }
 
-    private static string GetToken(FlexibleChecksumAlgorithm algorithm) => algorithm switch
+    internal static string GetToken(FlexibleChecksumAlgorithm algorithm) => algorithm switch
     {
         FlexibleChecksumAlgorithm.Crc32 => "CRC32",
         FlexibleChecksumAlgorithm.Crc32C => "CRC32C",
@@ -350,7 +366,7 @@ internal sealed class FlexibleChecksumValidation
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
     };
 
-    private static string GetHeaderName(FlexibleChecksumAlgorithm algorithm) => algorithm switch
+    internal static string GetHeaderName(FlexibleChecksumAlgorithm algorithm) => algorithm switch
     {
         FlexibleChecksumAlgorithm.Crc32 => "x-amz-checksum-crc32",
         FlexibleChecksumAlgorithm.Crc32C => "x-amz-checksum-crc32c",
@@ -360,7 +376,7 @@ internal sealed class FlexibleChecksumValidation
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
     };
 
-    private static int GetDigestLength(FlexibleChecksumAlgorithm algorithm) => algorithm switch
+    internal static int GetDigestLength(FlexibleChecksumAlgorithm algorithm) => algorithm switch
     {
         FlexibleChecksumAlgorithm.Crc32 or FlexibleChecksumAlgorithm.Crc32C => 4,
         FlexibleChecksumAlgorithm.Crc64Nvme => 8,
@@ -372,6 +388,11 @@ internal sealed class FlexibleChecksumValidation
     private static FlexibleChecksumError InvalidArgument(string message) => new("InvalidArgument", message);
     private static FlexibleChecksumError BadDigest(string message) => new("BadDigest", message);
 
+    private void CaptureValidatedDigest(byte[] digest)
+    {
+        _validatedDigest = digest;
+    }
+
     private sealed class ValidatingStream : Stream
     {
         private readonly Stream _inner;
@@ -379,6 +400,7 @@ internal sealed class FlexibleChecksumValidation
         private readonly byte[]? _headerDigest;
         private readonly string? _trailerHeader;
         private readonly AwsChunkedDecoder? _decoder;
+        private readonly Action<byte[]> _onValidated;
         private readonly byte[] _lookahead = new byte[1];
         private byte _pendingByte;
         private bool _hasPendingByte;
@@ -390,13 +412,15 @@ internal sealed class FlexibleChecksumValidation
             FlexibleChecksumAlgorithm algorithm,
             byte[]? headerDigest,
             string? trailerHeader,
-            AwsChunkedDecoder? decoder)
+            AwsChunkedDecoder? decoder,
+            Action<byte[]> onValidated)
         {
             _inner = inner;
             _accumulator = new FlexibleChecksumAccumulator(algorithm);
             _headerDigest = headerDigest;
             _trailerHeader = trailerHeader;
             _decoder = decoder;
+            _onValidated = onValidated;
         }
 
         public override bool CanRead => !_disposed && _inner.CanRead;
@@ -557,6 +581,8 @@ internal sealed class FlexibleChecksumValidation
                 throw new FlexibleChecksumException(BadDigest(
                     "The checksum you specified did not match what the proxy received."));
             }
+
+            _onValidated(actual);
         }
 
         protected override void Dispose(bool disposing)

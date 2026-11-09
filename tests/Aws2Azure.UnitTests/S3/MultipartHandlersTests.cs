@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -86,14 +87,17 @@ public sealed class MultipartHandlersTests
     }
 
     [Fact]
-    public async Task UploadPart_ignores_algorithm_specific_checksum_headers_and_returns_md5_etag()
+    public async Task UploadPart_validates_algorithm_specific_checksum_and_returns_md5_etag()
     {
         var handler = new ScriptedHandler();
         using var http = new AzureHttpClient(handler, ownsHandler: false);
         var blob = NewBlobClient(http);
 
         var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
-
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
         handler.Enqueue(StateHead(upload));
         handler.Enqueue(ContainerHead());
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
@@ -109,15 +113,245 @@ public sealed class MultipartHandlersTests
             headers:
             [
                 new KeyValuePair<string, string>("x-amz-sdk-checksum-algorithm", "SHA256"),
-                new KeyValuePair<string, string>("x-amz-checksum-sha256", "c2hhMjU2")
+                new KeyValuePair<string, string>(
+                    "x-amz-checksum-sha256",
+                    Convert.ToBase64String(SHA256.HashData("hello multipart"u8.ToArray())))
             ]);
         await MultipartHandlers.HandleAsync(uploadPart, Route(S3Operation.UploadPart, "bucket", "object.txt"), blob, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, uploadPart.Response.StatusCode);
         Assert.Equal(QuotedMd5("hello multipart"), uploadPart.Response.Headers.ETag.ToString());
-        var request = handler.Requests[4];
+        var request = handler.Requests[8];
         Assert.False(request.Headers.ContainsKey("x-amz-sdk-checksum-algorithm"));
         Assert.False(request.Headers.ContainsKey("x-amz-checksum-sha256"));
+        Assert.Contains(".parts/00001", handler.Requests[12].RequestUri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("SHA256", Assert.Single(handler.Requests[12].Headers["x-ms-meta-aws2azurechecksumalgorithm"]));
+    }
+
+    [Fact]
+    public async Task UploadPart_returns_bad_digest_before_accepting_mismatched_part()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+
+        var context = TestHttpContext.CreateContext(
+            body: "hello multipart",
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1",
+            headers:
+            [
+                new("x-amz-sdk-checksum-algorithm", "SHA256"),
+                new("x-amz-checksum-sha256", Convert.ToBase64String(new byte[32])),
+            ]);
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.UploadPart, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains("BadDigest", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+        Assert.DoesNotContain(handler.Requests, request =>
+            request.RequestUri!.AbsolutePath.Contains(".parts/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UploadPart_accepts_matching_aws_chunked_checksum_trailer()
+    {
+        var payload = "streamed multipart checksum"u8.ToArray();
+        var checksum = Convert.ToBase64String(Crc32(payload));
+        var framed = BuildAwsChunked(payload, $"x-amz-checksum-crc32:{checksum}");
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt", "CRC32", "COMPOSITE");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+        handler.Enqueue(ContainerHead());
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1",
+            headers:
+            [
+                new("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER"),
+                new("x-amz-decoded-content-length", payload.Length.ToString(CultureInfo.InvariantCulture)),
+                new("Content-Encoding", "aws-chunked"),
+                new("x-amz-sdk-checksum-algorithm", "CRC32"),
+                new("x-amz-trailer", "x-amz-checksum-crc32"),
+            ]);
+        context.Request.Body = new MemoryStream(framed);
+        context.Request.ContentLength = framed.LongLength;
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.UploadPart, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("\"" + Convert.ToHexString(MD5.HashData(payload)).ToLowerInvariant() + "\"", context.Response.Headers.ETag);
+        var checksumWrite = Assert.Single(handler.Requests, request =>
+            request.RequestUri!.AbsolutePath.Contains(".parts/00001", StringComparison.Ordinal));
+        Assert.Equal("CRC32", Assert.Single(checksumWrite.Headers["x-ms-meta-aws2azurechecksumalgorithm"]));
+        Assert.Equal(checksum, Assert.Single(checksumWrite.Headers["x-ms-meta-aws2azurechecksumdigest"]));
+    }
+
+    [Fact]
+    public async Task UploadPart_retry_replaces_checksum_metadata_for_same_part()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt", "SHA256", "COMPOSITE");
+
+        foreach (var payload in new[] { "first", "second" })
+        {
+            handler.Enqueue(StateHead(upload));
+            handler.Enqueue(ContainerHead());
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+            handler.Enqueue(ContainerHead());
+            handler.Enqueue(StateHead(upload));
+            handler.Enqueue(ContainerHead());
+            handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
+            handler.Enqueue(ContainerHead());
+            handler.Enqueue(StateHead(upload));
+            handler.Enqueue(ContainerHead());
+
+            var digest = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+            var context = TestHttpContext.CreateContext(
+                body: payload,
+                method: HttpMethods.Put,
+                path: "/bucket/object.txt",
+                queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=1",
+                headers:
+                [
+                    new("x-amz-sdk-checksum-algorithm", "SHA256"),
+                    new("x-amz-checksum-sha256", digest),
+                ]);
+            await MultipartHandlers.HandleAsync(
+                context,
+                Route(S3Operation.UploadPart, "bucket", "object.txt"),
+                blob,
+                CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        }
+
+        var checksumWrites = handler.Requests
+            .Where(request => request.RequestUri!.AbsolutePath.Contains(".parts/00001", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, checksumWrites.Length);
+        Assert.Equal(checksumWrites[0].RequestUri, checksumWrites[1].RequestUri);
+        Assert.Equal(
+            Convert.ToBase64String(SHA256.HashData("second"u8.ToArray())),
+            Assert.Single(checksumWrites[1].Headers["x-ms-meta-aws2azurechecksumdigest"]));
+    }
+
+    [Fact]
+    public async Task CompleteMultipartUpload_accepts_matching_persisted_part_checksum()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt", "SHA256", "COMPOSITE");
+        var digest = Convert.ToBase64String(SHA256.HashData("part"u8.ToArray()));
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(BlobList(PartChecksumBlob(upload, 1, "SHA256", digest)));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xABCD\""));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(StateInvalidated());
+        handler.Enqueue(BlobList());
+
+        var context = TestHttpContext.CreateContext(
+            body: $$"""
+                   <CompleteMultipartUpload>
+                     <Part>
+                       <PartNumber>1</PartNumber>
+                       <ETag>"etag"</ETag>
+                       <ChecksumSHA256>{{digest}}</ChecksumSHA256>
+                     </Part>
+                   </CompleteMultipartUpload>
+                   """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.DoesNotContain("ChecksumSHA256", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SHA256", null, "InvalidPart")]
+    [InlineData("CRC32", "AAAAAA==", "InvalidArgument")]
+    public async Task CompleteMultipartUpload_rejects_missing_or_mixed_part_checksums(
+        string storedAlgorithm,
+        string? suppliedDigest,
+        string expectedCode)
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt", "SHA256", "COMPOSITE");
+        var storedDigest = storedAlgorithm == "SHA256"
+            ? Convert.ToBase64String(SHA256.HashData("part"u8.ToArray()))
+            : "AAAAAA==";
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(BlobList(PartChecksumBlob(upload, 1, storedAlgorithm, storedDigest)));
+        handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK));
+
+        var checksumElement = suppliedDigest is null
+            ? string.Empty
+            : $"<ChecksumSHA256>{suppliedDigest}</ChecksumSHA256>";
+        var context = TestHttpContext.CreateContext(
+            body: $"""
+                  <CompleteMultipartUpload>
+                    <Part><PartNumber>1</PartNumber><ETag>"etag"</ETag>{checksumElement}</Part>
+                  </CompleteMultipartUpload>
+                  """,
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.CompleteMultipartUpload, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains(expectedCode, await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
     }
 
     // ── B5: CompleteMultipartUpload <Location> must be S3-shaped (echo the
@@ -393,6 +627,37 @@ public sealed class MultipartHandlersTests
         Assert.False(string.IsNullOrEmpty(create.Response.Headers["x-amz-request-id"]));
     }
 
+    [Theory]
+    [InlineData("CRC64NVME", "COMPOSITE")]
+    [InlineData("SHA256", "FULL_OBJECT")]
+    public async Task CreateMultipartUpload_rejects_unreproducible_checksum_result_modes(
+        string algorithm,
+        string checksumType)
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var create = TestHttpContext.CreateContext(
+            method: HttpMethods.Post,
+            path: "/bucket/object.txt",
+            queryString: "?uploads",
+            headers:
+            [
+                new("x-amz-checksum-algorithm", algorithm),
+                new("x-amz-checksum-type", checksumType),
+            ]);
+
+        await MultipartHandlers.HandleAsync(
+            create,
+            Route(S3Operation.CreateMultipartUpload, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, create.Response.StatusCode);
+        Assert.Contains("NotImplemented", await TestHttpContext.ReadBodyAsync(create), StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
     [Fact]
     public async Task CompleteMultipartUpload_response_still_emits_content_type_application_xml()
     {
@@ -478,6 +743,34 @@ public sealed class MultipartHandlersTests
         Assert.Equal("bytes=1-3", Assert.Single(request.Headers["x-ms-source-range"]));
         Assert.StartsWith("https://acct.blob.core.windows.net/source-bucket/source.txt?sv=", Assert.Single(request.Headers["x-ms-copy-source"]), StringComparison.Ordinal);
         Assert.EndsWith("/dest-bucket/dest.txt?comp=block&blockid=" + Uri.EscapeDataString(blockId), request.RequestUri!.PathAndQuery, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Upload_part_copy_is_rejected_for_checksum_enabled_upload()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "dest-bucket", "dest.txt", "SHA256", "COMPOSITE");
+
+        handler.Enqueue(StateHead(upload));
+        handler.Enqueue(ContainerHead());
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Put,
+            path: "/dest-bucket/dest.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId) + "&partNumber=3",
+            headers: [new("x-amz-copy-source", "/source-bucket/source.txt")]);
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.UploadPartCopy, "dest-bucket", "dest.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        Assert.Contains("NotImplemented", await TestHttpContext.ReadBodyAsync(context), StringComparison.Ordinal);
+        Assert.DoesNotContain(handler.Requests, request => request.Headers.ContainsKey("x-ms-copy-source"));
     }
 
     [Fact]
@@ -630,6 +923,43 @@ public sealed class MultipartHandlersTests
         var copyRequest = Assert.Single(handler.Requests, static request => request.Headers.ContainsKey("x-ms-copy-source"));
         Assert.Contains("versionid=ver-1", Assert.Single(copyRequest.Headers["x-ms-copy-source"]), StringComparison.Ordinal);
         Assert.DoesNotContain("x-ms-source-if-match", copyRequest.Headers.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Abort_checksum_enabled_upload_retires_bounded_part_metadata_immediately()
+    {
+        var handler = new ScriptedHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var blob = NewBlobClient(http);
+        var upload = await InitiateAsync(handler, blob, "bucket", "object.txt", "SHA256", "COMPOSITE");
+        var partState = PartChecksumBlob(
+            upload,
+            1,
+            "SHA256",
+            Convert.ToBase64String(SHA256.HashData("part"u8.ToArray())));
+
+        handler.Enqueue(StateGet(upload));
+        handler.Enqueue(ContainerHead());
+        handler.Enqueue(LeaseAcquired());
+        handler.Enqueue(StateInvalidated());
+        handler.Enqueue(BlobList(partState));
+        handler.Enqueue(StateDeleted());
+
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Delete,
+            path: "/bucket/object.txt",
+            queryString: "?uploadId=" + Uri.EscapeDataString(upload.UploadId));
+
+        await MultipartHandlers.HandleAsync(
+            context,
+            Route(S3Operation.AbortMultipartUpload, "bucket", "object.txt"),
+            blob,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        Assert.Contains(handler.Requests, request =>
+            request.Method == HttpMethod.Delete &&
+            request.RequestUri!.AbsolutePath.Contains(".parts/00001", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1294,7 +1624,13 @@ public sealed class MultipartHandlersTests
     private static S3RouteResult Route(S3Operation operation, string? bucket, string? key, bool virtualHosted) =>
         new(operation, bucket, key, VirtualHosted: virtualHosted);
 
-    private static async Task<CapturedUpload> InitiateAsync(ScriptedHandler handler, BlobClient blob, string bucket, string key)
+    private static async Task<CapturedUpload> InitiateAsync(
+        ScriptedHandler handler,
+        BlobClient blob,
+        string bucket,
+        string key,
+        string? checksumAlgorithm = null,
+        string? checksumType = null)
     {
         handler.Enqueue(ContainerHead());
         handler.Enqueue(StateContainerCreated());
@@ -1303,15 +1639,25 @@ public sealed class MultipartHandlersTests
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.Created));
         handler.Enqueue(ContainerHead());
 
+        var headers = new List<KeyValuePair<string, string>>
+        {
+            new("Content-Type", "application/octet-stream"),
+            new("x-amz-meta-owner", "pedro"),
+        };
+        if (checksumAlgorithm is not null)
+        {
+            headers.Add(new("x-amz-checksum-algorithm", checksumAlgorithm));
+        }
+        if (checksumType is not null)
+        {
+            headers.Add(new("x-amz-checksum-type", checksumType));
+        }
+
         var create = TestHttpContext.CreateContext(
             method: HttpMethods.Post,
             path: "/" + bucket + "/" + key,
             queryString: "?uploads",
-            headers:
-            [
-                new KeyValuePair<string, string>("Content-Type", "application/octet-stream"),
-                new KeyValuePair<string, string>("x-amz-meta-owner", "pedro")
-            ]);
+            headers: headers);
         await MultipartHandlers.HandleAsync(create, Route(S3Operation.CreateMultipartUpload, bucket, key), blob, CancellationToken.None);
         Assert.Equal(StatusCodes.Status200OK, create.Response.StatusCode);
         var uploadId = ElementValue(await TestHttpContext.ReadBodyAsync(create), "UploadId");
@@ -1322,7 +1668,8 @@ public sealed class MultipartHandlersTests
             key,
             uploadId,
             token,
-            blob.MultipartStateContainerName);
+            blob.MultipartStateContainerName,
+            checksumAlgorithm);
     }
 
     private static async Task<CapturedUpload> CaptureUploadAsync(string bucket, string key)
@@ -1437,6 +1784,20 @@ public sealed class MultipartHandlersTests
     private static BlobListEntry StateBlob(CapturedUpload upload, string? generation = null) =>
         new(upload.RecordName, BuildStateMetadata(upload, generation));
 
+    private static BlobListEntry PartChecksumBlob(
+        CapturedUpload upload,
+        int partNumber,
+        string algorithm,
+        string digest) =>
+        new(
+            upload.RecordName + ".parts/" + partNumber.ToString("D5", CultureInfo.InvariantCulture),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["aws2azurechecksumalgorithm"] = algorithm,
+                ["aws2azurechecksumdigest"] = digest,
+                ["aws2azurecontaineretag"] = Generation,
+            });
+
     private static BlobListEntry OldStateBlob(string bucket, string uploadId, DateTimeOffset createdAt)
     {
         var name = $"{bucket}/{createdAt.ToUnixTimeMilliseconds():D13}-{uploadId}";
@@ -1450,14 +1811,22 @@ public sealed class MultipartHandlersTests
         return new BlobListEntry(name, metadata);
     }
 
-    private static Dictionary<string, string> BuildStateMetadata(CapturedUpload upload, string? generation = null) =>
-        new(StringComparer.Ordinal)
+    private static Dictionary<string, string> BuildStateMetadata(CapturedUpload upload, string? generation = null)
+    {
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["aws2azurekey"] = UploadIdCodec.Base64Url.Encode(Encoding.UTF8.GetBytes(upload.Key)),
             ["aws2azureuploadid"] = upload.UploadId,
             ["aws2azureinitiatedms"] = upload.Token.CreatedAt.ToUnixTimeMilliseconds().ToString(),
             ["aws2azurecontaineretag"] = generation ?? Generation,
         };
+        if (upload.ChecksumAlgorithm is not null)
+        {
+            metadata["aws2azurechecksumalgorithm"] = upload.ChecksumAlgorithm;
+        }
+
+        return metadata;
+    }
 
     private static byte[] SerializeStateBody()
     {
@@ -1539,6 +1908,34 @@ public sealed class MultipartHandlersTests
     private static string Md5Hex(string value) =>
         Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
+    private static byte[] BuildAwsChunked(byte[] payload, string trailer)
+    {
+        using var stream = new MemoryStream();
+        stream.Write(Encoding.ASCII.GetBytes($"{payload.Length:x}\r\n"));
+        stream.Write(payload);
+        stream.Write("\r\n0\r\n"u8);
+        stream.Write(Encoding.ASCII.GetBytes(trailer));
+        stream.Write("\r\n\r\n"u8);
+        return stream.ToArray();
+    }
+
+    private static byte[] Crc32(ReadOnlySpan<byte> payload)
+    {
+        var crc = uint.MaxValue;
+        foreach (var value in payload)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xEDB88320u);
+            }
+        }
+
+        var result = new byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(result, crc ^ uint.MaxValue);
+        return result;
+    }
+
     private static string SecurityElementEscape(string value) => System.Security.SecurityElement.Escape(value) ?? string.Empty;
 
     private readonly record struct CapturedUpload(
@@ -1546,7 +1943,8 @@ public sealed class MultipartHandlersTests
         string Key,
         string UploadId,
         UploadIdCodec.UploadToken Token,
-        string StateContainerName)
+        string StateContainerName,
+        string? ChecksumAlgorithm = null)
     {
         public string RecordName => $"{Bucket}/{Token.CreatedAt.ToUnixTimeMilliseconds():D13}-{UploadId}";
     }
