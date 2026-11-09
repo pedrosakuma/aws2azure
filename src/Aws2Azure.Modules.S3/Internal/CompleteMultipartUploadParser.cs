@@ -1,5 +1,6 @@
 using System.IO;
 using System.Xml;
+using Aws2Azure.Modules.S3.Streaming;
 
 namespace Aws2Azure.Modules.S3.Internal;
 
@@ -19,7 +20,32 @@ internal static class CompleteMultipartUploadParser
 {
     public const int MaxParts = 10_000;
 
-    public readonly record struct PartRef(int PartNumber, string? ETag);
+    public readonly record struct PartRef(
+        int PartNumber,
+        string? ETag,
+        string? ChecksumCrc32,
+        string? ChecksumCrc32C,
+        string? ChecksumCrc64Nvme,
+        string? ChecksumSha1,
+        string? ChecksumSha256)
+    {
+        public string? GetChecksum(FlexibleChecksumAlgorithm algorithm) => algorithm switch
+        {
+            FlexibleChecksumAlgorithm.Crc32 => ChecksumCrc32,
+            FlexibleChecksumAlgorithm.Crc32C => ChecksumCrc32C,
+            FlexibleChecksumAlgorithm.Crc64Nvme => ChecksumCrc64Nvme,
+            FlexibleChecksumAlgorithm.Sha1 => ChecksumSha1,
+            FlexibleChecksumAlgorithm.Sha256 => ChecksumSha256,
+            _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
+        };
+
+        public int ChecksumCount =>
+            (ChecksumCrc32 is null ? 0 : 1) +
+            (ChecksumCrc32C is null ? 0 : 1) +
+            (ChecksumCrc64Nvme is null ? 0 : 1) +
+            (ChecksumSha1 is null ? 0 : 1) +
+            (ChecksumSha256 is null ? 0 : 1);
+    }
 
     public readonly record struct ParseResult(
         bool Success,
@@ -100,6 +126,11 @@ internal static class CompleteMultipartUploadParser
         error = null;
         int? partNumber = null;
         string? etag = null;
+        string? checksumCrc32 = null;
+        string? checksumCrc32C = null;
+        string? checksumCrc64Nvme = null;
+        string? checksumSha1 = null;
+        string? checksumSha256 = null;
 
         if (reader.IsEmptyElement)
         {
@@ -144,6 +175,21 @@ internal static class CompleteMultipartUploadParser
                     case "ETag":
                         etag = value;
                         break;
+                    case "ChecksumCRC32":
+                        if (!TrySetChecksum(ref checksumCrc32, value, name, out error)) return false;
+                        break;
+                    case "ChecksumCRC32C":
+                        if (!TrySetChecksum(ref checksumCrc32C, value, name, out error)) return false;
+                        break;
+                    case "ChecksumCRC64NVME":
+                        if (!TrySetChecksum(ref checksumCrc64Nvme, value, name, out error)) return false;
+                        break;
+                    case "ChecksumSHA1":
+                        if (!TrySetChecksum(ref checksumSha1, value, name, out error)) return false;
+                        break;
+                    case "ChecksumSHA256":
+                        if (!TrySetChecksum(ref checksumSha256, value, name, out error)) return false;
+                        break;
                     default:
                         // Ignore unknown elements (forwards-compat).
                         break;
@@ -164,7 +210,31 @@ internal static class CompleteMultipartUploadParser
             error = "<Part> is missing <PartNumber>.";
             return false;
         }
-        part = new PartRef(partNumber.Value, etag);
+        part = new PartRef(
+            partNumber.Value,
+            etag,
+            checksumCrc32,
+            checksumCrc32C,
+            checksumCrc64Nvme,
+            checksumSha1,
+            checksumSha256);
+        return true;
+    }
+
+    private static bool TrySetChecksum(
+        ref string? destination,
+        string value,
+        string elementName,
+        out string? error)
+    {
+        if (destination is not null)
+        {
+            error = $"<{elementName}> may appear only once per <Part>.";
+            return false;
+        }
+
+        destination = value;
+        error = null;
         return true;
     }
 

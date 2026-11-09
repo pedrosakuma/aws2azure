@@ -36,6 +36,7 @@ internal static class MultipartHandlers
     private const int MaxCompleteBodyBytes = 4 * 1024 * 1024;
     private const long MinNonFinalPartBytes = 5L * 1024 * 1024;
     private const long MaxPartBytes = 5L * 1024 * 1024 * 1024;
+    private const int ImmediatePartChecksumCleanupLimit = 256;
     private static readonly TimeSpan LeaseOperationTimeout = TimeSpan.FromSeconds(45);
 
     public static Task HandleAsync(HttpContext context, S3RouteResult route, BlobClient blob, CancellationToken ct, ICredentialResolver? credentials = null) =>
@@ -66,6 +67,12 @@ internal static class MultipartHandlers
             return;
         }
 
+        if (!MultipartChecksumPolicy.TryReadInitiation(ctx.Request, out var checksumAlgorithm, out var checksumError))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, checksumError!.Value).ConfigureAwait(false);
+            return;
+        }
+
         var taggingHeader = HeaderForwarding.ReadFirstHeader(ctx.Request, "x-amz-tagging");
         var (tags, taggingError) = TaggingHeaderParser.Parse(taggingHeader);
         if (taggingError is { } parsedTaggingError)
@@ -92,7 +99,16 @@ internal static class MultipartHandlers
         }
         try
         {
-            if (await stateStore.CreateAsync(bucket, key, token.Encoded, token.CreatedAt, currentGeneration.Generation!, ctx.Request, tags!, ct).ConfigureAwait(false) is { } stateError)
+            if (await stateStore.CreateAsync(
+                    bucket,
+                    key,
+                    token.Encoded,
+                    token.CreatedAt,
+                    currentGeneration.Generation!,
+                    checksumAlgorithm,
+                    ctx.Request,
+                    tags!,
+                    ct).ConfigureAwait(false) is { } stateError)
             {
                 await S3ErrorMapping.WriteAsync(ctx, stateError).ConfigureAwait(false);
                 return;
@@ -166,13 +182,57 @@ internal static class MultipartHandlers
         var query   = "?comp=block&blockid=" + Uri.EscapeDataString(blockId);
 
         var body = AwsChunkedRequest.PrepareBodyStream(ctx.Request, credentials);
+        if (!FlexibleChecksumValidation.TryCreate(
+                ctx.Request,
+                body.Decoder,
+                out var checksumValidation,
+                out var checksumSetupError,
+                operationName: "UploadPart"))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
+                StatusCodes.Status400BadRequest,
+                checksumSetupError.Code,
+                checksumSetupError.Message)).ConfigureAwait(false);
+            body.Decoder?.Dispose();
+            return;
+        }
+
+        var initiatedAlgorithm = legacyMultipart ? null : stateRead.Summary!.Value.ChecksumAlgorithm;
+        if (initiatedAlgorithm is not null &&
+            (checksumValidation is null || checksumValidation.Algorithm != initiatedAlgorithm))
+        {
+            await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(
+                $"UploadPart must supply the {FlexibleChecksumValidation.GetToken(initiatedAlgorithm.Value)} checksum selected by CreateMultipartUpload."))
+                .ConfigureAwait(false);
+            body.Decoder?.Dispose();
+            return;
+        }
 
         try
         {
-            // Wrap the request body so we incrementally MD5-hash the part while
-            // it streams to Azure. The hex MD5 becomes the S3 part ETag the
-            // client echoes back in CompleteMultipartUpload.
-            using var hashing = new HashingStream(body.Body, HashAlgorithmName.MD5);
+            using var checksumBody = checksumValidation?.CreateStream(body.Body);
+            if (checksumBody is not null && body.ContentLength == 0)
+            {
+                try
+                {
+                    if (await checksumBody.ReadAsync(new byte[1], ct).ConfigureAwait(false) != 0)
+                    {
+                        await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.InvalidArgument(
+                            "x-amz-decoded-content-length declared an empty payload but the request body contained data."))
+                            .ConfigureAwait(false);
+                        return;
+                    }
+                }
+                catch (Exception ex) when (FlexibleChecksumValidation.TryFindFailure(ex, out var checksumFailure))
+                {
+                    await WriteChecksumFailureAsync(ctx, checksumFailure).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            // Flexible checksums and the classic part MD5 share one streaming
+            // path so checksum support does not change the established ETag.
+            using var hashing = new HashingStream(checksumBody ?? body.Body, HashAlgorithmName.MD5);
 
             using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key, query))
             {
@@ -184,7 +244,18 @@ internal static class MultipartHandlers
                 azureReq.Content.Headers.ContentLength = len;
             }
 
-            using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+            HttpResponseMessage azureResponse;
+            try
+            {
+                azureResponse = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (FlexibleChecksumValidation.TryFindFailure(ex, out var checksumFailure))
+            {
+                await WriteChecksumFailureAsync(ctx, checksumFailure).ConfigureAwait(false);
+                return;
+            }
+
+            using var azureResp = azureResponse;
             if (!azureResp.IsSuccessStatusCode)
             {
                 await S3ErrorMapping.WriteAsync(ctx, S3ErrorMapping.FromAzure(azureResp, S3Operation.UploadPart)).ConfigureAwait(false);
@@ -195,6 +266,40 @@ internal static class MultipartHandlers
                 !await VerifyMultipartBucketGenerationAfterWriteAsync(ctx, stateStore, bucket, uploadId, stateRead.Summary!.Value.ContainerGeneration, ct).ConfigureAwait(false))
             {
                 return;
+            }
+
+            if (!legacyMultipart && checksumValidation is not null)
+            {
+                if (!checksumValidation.TryGetValidatedDigest(out var validatedDigest))
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
+                        StatusCodes.Status500InternalServerError,
+                        "InternalError",
+                        "The multipart checksum stream completed without a validated digest.")).ConfigureAwait(false);
+                    return;
+                }
+
+                if (await stateStore.WritePartChecksumAsync(
+                        stateRead.Summary!.Value,
+                        partNumber,
+                        checksumValidation.Algorithm,
+                        validatedDigest,
+                        ct).ConfigureAwait(false) is { } checksumStateError)
+                {
+                    await S3ErrorMapping.WriteAsync(ctx, checksumStateError).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!await VerifyMultipartBucketGenerationAfterWriteAsync(
+                        ctx,
+                        stateStore,
+                        bucket,
+                        uploadId,
+                        stateRead.Summary.Value.ContainerGeneration,
+                        ct).ConfigureAwait(false))
+                {
+                    return;
+                }
             }
 
             var etag = "\"" + Convert.ToHexString(hashing.GetFinalHash()).ToLowerInvariant() + "\"";
@@ -293,6 +398,16 @@ internal static class MultipartHandlers
         }
         else if (!await TryHandleStateSummaryResultAsync(ctx, stateRead).ConfigureAwait(false))
         {
+            return;
+        }
+
+        if (!legacyMultipart && stateRead.Summary!.Value.ChecksumAlgorithm is not null)
+        {
+            await S3ErrorMapping.WriteAsync(ctx, new S3ErrorMapping.Mapping(
+                StatusCodes.Status501NotImplemented,
+                "NotImplemented",
+                "aws2azure: UploadPartCopy is not supported for checksum-enabled multipart uploads because Azure does not expose a reproducible per-part checksum."))
+                .ConfigureAwait(false);
             return;
         }
 
@@ -479,6 +594,17 @@ internal static class MultipartHandlers
                 return;
             }
 
+            if (!legacyMultipart &&
+                !await ValidateCompletionChecksumsAsync(
+                    ctx,
+                    stateStore,
+                    stateAcquire.Record!.Value.Summary,
+                    parsed.Parts,
+                    deadlineCts.Token).ConfigureAwait(false))
+            {
+                return;
+            }
+
             if (parsed.Parts.Count > 1)
             {
                 // Request "all" (not just "uncommitted") block state: on a
@@ -624,6 +750,14 @@ internal static class MultipartHandlers
                     return;
                 }
 
+                if (stateAcquire.Record.Value.Summary.ChecksumAlgorithm is not null)
+                {
+                    await stateStore.DeletePartChecksumsBestEffortAsync(
+                        stateAcquire.Record.Value.Summary,
+                        ImmediatePartChecksumCleanupLimit,
+                        deadlineCts.Token).ConfigureAwait(false);
+                }
+
                 if (!deletedState)
                 {
                     deletedState = true;
@@ -732,6 +866,14 @@ internal static class MultipartHandlers
                 return;
             }
             deletedState = true;
+
+            if (acquire.Record.Value.Summary.ChecksumAlgorithm is not null)
+            {
+                await stateStore.DeletePartChecksumsBestEffortAsync(
+                    acquire.Record.Value.Summary,
+                    ImmediatePartChecksumCleanupLimit,
+                    deadlineCts.Token).ConfigureAwait(false);
+            }
 
             ctx.Response.StatusCode = StatusCodes.Status204NoContent;
             HeaderForwarding.ApplyCommonS3ResponseHeaders(ctx.Response);
@@ -1140,6 +1282,94 @@ internal static class MultipartHandlers
 
     private static string? TranslateResponseEtagForS3(HttpResponseMessage response)
         => HeaderForwarding.TranslateAzureResponseEtagToS3(response);
+
+    private static Task WriteChecksumFailureAsync(HttpContext context, FlexibleChecksumError error) =>
+        S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+            StatusCodes.Status400BadRequest,
+            error.Code,
+            error.Message));
+
+    private static async Task<bool> ValidateCompletionChecksumsAsync(
+        HttpContext context,
+        MultipartUploadStateStore stateStore,
+        MultipartUploadStateStore.MultipartUploadStateSummary summary,
+        IReadOnlyList<CompleteMultipartUploadParser.PartRef> parts,
+        CancellationToken cancellationToken)
+    {
+        var manifestHasChecksums = false;
+        for (var i = 0; i < parts.Count; i++)
+        {
+            if (parts[i].ChecksumCrc64Nvme is not null)
+            {
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status501NotImplemented,
+                    "NotImplemented",
+                    "aws2azure: CRC64NVME multipart completion claims are not supported.")).ConfigureAwait(false);
+                return false;
+            }
+
+            if (parts[i].ChecksumCount > 1)
+            {
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                    "Each completed part may contain only one checksum value.")).ConfigureAwait(false);
+                return false;
+            }
+
+            manifestHasChecksums |= parts[i].ChecksumCount == 1;
+        }
+
+        if (summary.ChecksumAlgorithm is null && !manifestHasChecksums)
+        {
+            return true;
+        }
+
+        var checksumRead = await stateStore.ReadPartChecksumsAsync(summary, cancellationToken).ConfigureAwait(false);
+        if (checksumRead.Kind != MultipartUploadStateStore.ResultKind.Success)
+        {
+            await S3ErrorMapping.WriteAsync(context, checksumRead.Error ?? new S3ErrorMapping.Mapping(
+                StatusCodes.Status500InternalServerError,
+                "InternalError",
+                "Unable to read multipart checksum state.")).ConfigureAwait(false);
+            return false;
+        }
+
+        FlexibleChecksumAlgorithm? selectedAlgorithm = summary.ChecksumAlgorithm;
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var part = parts[i];
+            if (!checksumRead.Checksums.TryGetValue(part.PartNumber, out var stored))
+            {
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    "InvalidPart",
+                    $"Part {part.PartNumber} is missing the checksum metadata required for this multipart upload."))
+                    .ConfigureAwait(false);
+                return false;
+            }
+
+            selectedAlgorithm ??= stored.Algorithm;
+            if (stored.Algorithm != selectedAlgorithm)
+            {
+                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                    "All parts in a checksum-enabled multipart upload must use the same checksum algorithm."))
+                    .ConfigureAwait(false);
+                return false;
+            }
+
+            var supplied = part.GetChecksum(selectedAlgorithm.Value);
+            if (supplied is null || !string.Equals(supplied, stored.Digest, StringComparison.Ordinal))
+            {
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    "InvalidPart",
+                    $"Part {part.PartNumber} did not provide the validated {FlexibleChecksumValidation.GetToken(selectedAlgorithm.Value)} checksum."))
+                    .ConfigureAwait(false);
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private static S3ErrorMapping.Mapping NoSuchUpload() =>
         new(404, "NoSuchUpload",

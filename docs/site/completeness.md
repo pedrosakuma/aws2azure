@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 48 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 125 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 4 | 0 | 125 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 20 |
 | [sns](sns.md) | 3 | 11 | 0 | 0 | 1 | 9 | 1 | 1 | 0 | 21 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
@@ -131,8 +131,10 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
+- Sub-feature [CompleteMultipartUpload](operations/s3/completemultipartupload.md#sub-feature-multipart-checksum-result) / multipart-checksum-result — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
+- Sub-feature [CreateMultipartUpload](operations/s3/createmultipartupload.md#sub-feature-multipart-checksum-selection) / multipart-checksum-selection — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
-- Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
+- Sub-feature [UploadPartCopy](operations/s3/uploadpartcopy.md#sub-feature-checksum-enabled-multipart) / checksum-enabled-multipart — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 
 ### Workload maturity
 

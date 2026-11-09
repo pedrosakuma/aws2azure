@@ -91,4 +91,40 @@ public class CompleteMultipartUploadParserTests
         var xml = "<NotIt/>";
         Assert.False(CompleteMultipartUploadParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(xml))).Success);
     }
+
+    [Fact]
+    public void Parses_algorithm_specific_part_checksums()
+    {
+        var xml = """
+            <CompleteMultipartUpload>
+              <Part>
+                <PartNumber>1</PartNumber>
+                <ETag>"a"</ETag>
+                <ChecksumSHA256>YWJj</ChecksumSHA256>
+              </Part>
+            </CompleteMultipartUpload>
+            """;
+
+        var result = CompleteMultipartUploadParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(xml)));
+
+        Assert.True(result.Success);
+        Assert.Equal("YWJj", Assert.Single(result.Parts).ChecksumSha256);
+        Assert.Equal(1, result.Parts[0].ChecksumCount);
+    }
+
+    [Fact]
+    public void Rejects_duplicate_checksum_element()
+    {
+        var xml = """
+            <CompleteMultipartUpload>
+              <Part>
+                <PartNumber>1</PartNumber>
+                <ChecksumCRC32>AAAAAA==</ChecksumCRC32>
+                <ChecksumCRC32>AAAAAA==</ChecksumCRC32>
+              </Part>
+            </CompleteMultipartUpload>
+            """;
+
+        Assert.False(CompleteMultipartUploadParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(xml))).Success);
+    }
 }

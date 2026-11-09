@@ -57,6 +57,15 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 
 x-amz-copy-source?versionId maps to Azure's ?versionid selector when constructing the source SAS URL.
 
+### checksum-enabled-multipart {#sub-feature-checksum-enabled-multipart}
+
+- **Capability ID:** `sub-feature:s3:uploadpartcopy:checksum-enabled-multipart`
+- **Status:** ⛔ unsupported
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
+
+UploadPartCopy is rejected with NotImplemented when CreateMultipartUpload selected a checksum algorithm. Azure Put Block From URL does not expose a reproducible AWS per-part checksum, so accepting the copy would leave completion unable to validate the manifest. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.Upload_part_copy_is_rejected_for_checksum_enabled_upload]
+
 ## Behaviour differences
 
 - Per-part ETag is synthesised from the (uploadId, partNumber) pair when Azure omits Content-MD5. The value is stable for the upload flow but is NOT a content hash and does not equal the UploadPart ETag returned for an equivalent non-copy body. [conformance:multipart-upload-copy-complete-roundtrip::field-value:ETag]
@@ -65,6 +74,7 @@ x-amz-copy-source?versionId maps to Azure's ?versionid selector when constructin
 - x-amz-copy-source-version-id is not emitted on the UploadPartCopy response; Azure's Put Block From URL response does not surface the source blob's version id (Azure returns x-ms-copy-source but no source-version header), so the proxy has no equivalent value to translate back to S3's per-copy header. [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-copy-source-version-id]
 - x-amz-server-side-encryption is not emitted on the UploadPartCopy response; Azure Blob Storage's Put Block From URL response reports encryption state via x-ms-server-encrypted rather than an AWS-style header the proxy mirrors onto UploadPartCopy 200s. [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
 - LastModified reflects the Azure block's actual write time on the proxy side. When the offline Tier-3 diff compares captures recorded at different wall-clock times against separately seeded backends, the two timestamps will differ; the field itself round-trips correctly for each backend. [conformance:multipart-upload-copy-complete-roundtrip::field-value:LastModified]
+- UploadPartCopy returns NotImplemented for checksum-enabled multipart uploads instead of staging an unverifiable copied part. Non-checksum multipart copies keep their existing behavior. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.Upload_part_copy_is_rejected_for_checksum_enabled_upload]
 
 ## References
 

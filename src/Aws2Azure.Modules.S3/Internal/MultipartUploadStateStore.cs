@@ -6,6 +6,7 @@ using System.Text.Unicode;
 using System.Xml;
 using Aws2Azure.Core.Azure;
 using Aws2Azure.Modules.S3.Errors;
+using Aws2Azure.Modules.S3.Streaming;
 using Aws2Azure.Modules.S3.Xml;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
@@ -25,6 +26,8 @@ internal sealed class MultipartUploadStateStore
     private const string InitiatedMsMetadataName = "aws2azureinitiatedms";
     private const string ContainerGenerationMetadataName = "aws2azurecontaineretag";
     private const string ContainerGenerationMarkerMetadataName = "aws2azuregeneration";
+    private const string ChecksumAlgorithmMetadataName = "aws2azurechecksumalgorithm";
+    private const string PartChecksumDigestMetadataName = "aws2azurechecksumdigest";
     private const string StateContainerOwnerMetadataName = "aws2azureowner";
     private const string StateContainerOwnerMetadataValue = "multipart-state-v1";
     private const int ContainerGenerationMutationMaxAttempts = 4;
@@ -43,7 +46,8 @@ internal sealed class MultipartUploadStateStore
         string UploadId,
         DateTimeOffset Initiated,
         string ContainerGeneration,
-        string RecordName);
+        string RecordName,
+        FlexibleChecksumAlgorithm? ChecksumAlgorithm);
 
     public readonly record struct MultipartUploadStateRecord(
         MultipartUploadStateSummary Summary,
@@ -93,6 +97,16 @@ internal sealed class MultipartUploadStateStore
         string? ETag,
         S3ErrorMapping.Mapping? Error);
 
+    public readonly record struct PartChecksum(
+        int PartNumber,
+        FlexibleChecksumAlgorithm Algorithm,
+        string Digest);
+
+    public readonly record struct PartChecksumListResult(
+        ResultKind Kind,
+        IReadOnlyDictionary<int, PartChecksum> Checksums,
+        S3ErrorMapping.Mapping? Error);
+
     private readonly record struct VisibleSummariesResult(
         ResultKind Kind,
         List<MultipartUploadStateSummary> Summaries,
@@ -108,6 +122,7 @@ internal sealed class MultipartUploadStateStore
         string uploadId,
         DateTimeOffset initiated,
         string containerGeneration,
+        FlexibleChecksumAlgorithm? checksumAlgorithm,
         HttpRequest request,
         IReadOnlyList<S3XmlWriter.Tag> tags,
         CancellationToken cancellationToken)
@@ -131,6 +146,12 @@ internal sealed class MultipartUploadStateStore
         put.Headers.TryAddWithoutValidation("x-ms-meta-" + UploadIdMetadataName, uploadId);
         put.Headers.TryAddWithoutValidation("x-ms-meta-" + InitiatedMsMetadataName, initiated.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture));
         put.Headers.TryAddWithoutValidation("x-ms-meta-" + ContainerGenerationMetadataName, containerGeneration);
+        if (checksumAlgorithm is { } algorithm)
+        {
+            put.Headers.TryAddWithoutValidation(
+                "x-ms-meta-" + ChecksumAlgorithmMetadataName,
+                FlexibleChecksumValidation.GetToken(algorithm));
+        }
 
         using var response = await _blob.SendBlobRequestAsync(put, cancellationToken).ConfigureAwait(false);
         return response.IsSuccessStatusCode
@@ -326,6 +347,140 @@ internal sealed class MultipartUploadStateStore
         }
 
         return await DeleteRecordByNameAsync(recordName, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<S3ErrorMapping.Mapping?> WritePartChecksumAsync(
+        MultipartUploadStateSummary summary,
+        int partNumber,
+        FlexibleChecksumAlgorithm algorithm,
+        string digest,
+        CancellationToken cancellationToken)
+    {
+        var recordName = BuildPartChecksumRecordName(summary.RecordName, partNumber);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            _blob.BuildBlobUri(_blob.MultipartStateContainerName, recordName))
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>()),
+        };
+        request.Options.Set(AzureHttpClient.NoRetryOption, true);
+        request.Content.Headers.ContentLength = 0;
+        request.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob");
+        request.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + ChecksumAlgorithmMetadataName,
+            FlexibleChecksumValidation.GetToken(algorithm));
+        request.Headers.TryAddWithoutValidation("x-ms-meta-" + PartChecksumDigestMetadataName, digest);
+        request.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + ContainerGenerationMetadataName,
+            summary.ContainerGeneration);
+
+        using var response = await _blob.SendBlobRequestAsync(request, cancellationToken).ConfigureAwait(false);
+        return response.IsSuccessStatusCode
+            ? null
+            : S3ErrorMapping.FromAzure(response, S3Operation.UploadPart);
+    }
+
+    public async Task<PartChecksumListResult> ReadPartChecksumsAsync(
+        MultipartUploadStateSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var checksums = new Dictionary<int, PartChecksum>();
+        var prefix = summary.RecordName + ".parts/";
+        string? marker = null;
+        while (true)
+        {
+            using var response = await _blob.ListBlobsWithMetadataAsync(
+                _blob.MultipartStateContainerName,
+                prefix,
+                marker,
+                maxResults: 512,
+                cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return new PartChecksumListResult(ResultKind.Success, checksums, null);
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                return new PartChecksumListResult(
+                    ResultKind.Error,
+                    checksums,
+                    S3ErrorMapping.FromAzure(response, S3Operation.CompleteMultipartUpload));
+            }
+
+            var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var page = ParseBlobMetadataPage(xml);
+            for (var i = 0; i < page.Blobs.Count; i++)
+            {
+                var entry = page.Blobs[i];
+                if (!TryReadPartNumber(entry.Name, prefix, out var partNumber) ||
+                    !entry.Metadata.TryGetValue(ChecksumAlgorithmMetadataName, out var algorithmValue) ||
+                    !FlexibleChecksumValidation.TryParseAlgorithm(algorithmValue, out var algorithm) ||
+                    !entry.Metadata.TryGetValue(PartChecksumDigestMetadataName, out var digest) ||
+                    !entry.Metadata.TryGetValue(ContainerGenerationMetadataName, out var generation) ||
+                    !string.Equals(generation, summary.ContainerGeneration, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                checksums[partNumber] = new PartChecksum(partNumber, algorithm, digest);
+            }
+
+            if (string.IsNullOrEmpty(page.NextMarker))
+            {
+                return new PartChecksumListResult(ResultKind.Success, checksums, null);
+            }
+
+            marker = page.NextMarker;
+        }
+    }
+
+    public async Task DeletePartChecksumsBestEffortAsync(
+        MultipartUploadStateSummary summary,
+        int deleteLimit,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var prefix = summary.RecordName + ".parts/";
+            string? marker = null;
+            var deletes = 0;
+            while (deletes < deleteLimit)
+            {
+                using var response = await _blob.ListBlobsWithMetadataAsync(
+                    _blob.MultipartStateContainerName,
+                    prefix,
+                    marker,
+                    maxResults: Math.Min(deleteLimit - deletes, 256),
+                    cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return;
+                }
+
+                var xml = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var page = ParseBlobMetadataPage(xml);
+                for (var i = 0; i < page.Blobs.Count && deletes < deleteLimit; i++)
+                {
+                    _ = await DeleteRecordByNameAsync(page.Blobs[i].Name, cancellationToken).ConfigureAwait(false);
+                    deletes++;
+                }
+
+                if (string.IsNullOrEmpty(page.NextMarker))
+                {
+                    return;
+                }
+
+                marker = page.NextMarker;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Retirement is already durable; expiry cleanup remains the fallback.
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Retirement is already durable; expiry cleanup remains the fallback.
+        }
     }
 
     public async Task<ListResult> ListAsync(
@@ -931,6 +1086,31 @@ internal sealed class MultipartUploadStateStore
                 uploadId.AsSpan().CopyTo(span[index..]);
             });
 
+    private static string BuildPartChecksumRecordName(string recordName, int partNumber) =>
+        string.Create(
+            recordName.Length + ".parts/".Length + 5,
+            (recordName, partNumber),
+            static (span, state) =>
+            {
+                state.recordName.AsSpan().CopyTo(span);
+                var offset = state.recordName.Length;
+                ".parts/".AsSpan().CopyTo(span[offset..]);
+                offset += ".parts/".Length;
+                state.partNumber.TryFormat(span[offset..], out _, "D5", CultureInfo.InvariantCulture);
+            });
+
+    private static bool TryReadPartNumber(string recordName, string prefix, out int partNumber)
+    {
+        partNumber = 0;
+        return recordName.StartsWith(prefix, StringComparison.Ordinal) &&
+            int.TryParse(
+                recordName.AsSpan(prefix.Length),
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out partNumber) &&
+            partNumber is >= 1 and <= 10000;
+    }
+
     private static byte[] SerializeCapturedHeaders(HttpRequest request, IReadOnlyList<S3XmlWriter.Tag> tags)
     {
         var contentType = HeaderForwarding.ReadFirstHeader(request, HeaderNames.ContentType);
@@ -1099,13 +1279,25 @@ internal sealed class MultipartUploadStateStore
             return false;
         }
 
+        FlexibleChecksumAlgorithm? checksumAlgorithm = null;
+        if (metadata.TryGetValue(ChecksumAlgorithmMetadataName, out var checksumAlgorithmValue))
+        {
+            if (!FlexibleChecksumValidation.TryParseAlgorithm(checksumAlgorithmValue, out var parsedChecksumAlgorithm))
+            {
+                return false;
+            }
+
+            checksumAlgorithm = parsedChecksumAlgorithm;
+        }
+
         summary = new MultipartUploadStateSummary(
             bucket,
             key,
             uploadId,
             DateTimeOffset.FromUnixTimeMilliseconds(initiatedMs),
             generation,
-            recordName);
+            recordName,
+            checksumAlgorithm);
         return true;
     }
 

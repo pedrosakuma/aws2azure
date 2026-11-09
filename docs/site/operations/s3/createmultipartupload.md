@@ -14,7 +14,7 @@
 - **Capability ID:** `sub-feature:s3:createmultipartupload:durable-state-record`
 - **Status:** ✅ implemented
 
-The proxy writes one bounded state blob per active upload into its hidden aws2azure-mpu-<account-hash> container. The record captures Content-Type/Content-Encoding/Content-Language/Content-Disposition/Cache-Control and x-amz-meta-* headers (16 KiB cap) so CompleteMultipartUpload can apply them to the committed blob.
+The proxy writes one bounded state blob per active upload into its hidden aws2azure-mpu-<account-hash> container. The record captures Content-Type/Content-Encoding/Content-Language/Content-Disposition/Cache-Control and x-amz-meta-* headers (16 KiB cap), while the selected multipart checksum algorithm is stored in bounded blob metadata, so later UploadPart and CompleteMultipartUpload calls can enforce the initiation contract.
 
 ### bucket-generation-binding {#sub-feature-bucket-generation-binding}
 
@@ -52,6 +52,15 @@ x-amz-tagging on initiate is parsed as a URL-encoded query-string of key=value p
 
 x-amz-storage-class is ignored; Azure uses the account/container defaults.
 
+### multipart-checksum-selection {#sub-feature-multipart-checksum-selection}
+
+- **Capability ID:** `sub-feature:s3:createmultipartupload:multipart-checksum-selection`
+- **Status:** 🟡 partial
+- **Disposition:** 🛠️ feasible backlog
+- **Tracking issue:** [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
+
+CRC32, CRC32C, SHA1, and SHA256 are accepted with the COMPOSITE checksum type (explicit or default) and persisted in the upload state. FULL_OBJECT and CRC64NVME initiation are rejected with NotImplemented because this layer cannot reproduce the corresponding AWS completion result. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.CreateMultipartUpload_rejects_unreproducible_checksum_result_modes]
+
 ## Behaviour differences
 
 - UploadId remains a 32-byte base64url token HMAC-bound to (account, bucket, key) and expiring after 7 days, but multipart is no longer purely stateless: a proxy-owned durable index record is also created so in-progress uploads can be enumerated and later completed with the original metadata.
@@ -60,6 +69,7 @@ x-amz-storage-class is ignored; Azure uses the account/container defaults.
 - x-amz-server-side-encryption is not emitted on the CreateMultipartUpload response; Azure Blob Storage's HEAD container response reports encryption state via x-ms-server-encrypted rather than a header the proxy currently mirrors onto initiate 200s, and no request-time server-side-encryption headers are honoured (see sub_features). [conformance:multipart-upload-abort-roundtrip::missing-header:x-amz-server-side-encryption] [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
 - Echoed <Bucket> and <UploadId> in the initiate response are the destination container name and the proxy-issued opaque UploadId token; the offline Tier-3 diff compares captures against independently seeded buckets and independently issued upload ids, so those echoed values cannot match byte-for-byte across capture runs. [conformance:multipart-upload-abort-roundtrip::field-value:Bucket] [conformance:multipart-upload-abort-roundtrip::field-value:UploadId] [conformance:multipart-upload-copy-complete-roundtrip::field-value:Bucket] [conformance:multipart-upload-copy-complete-roundtrip::field-value:UploadId]
 - Applying x-amz-tagging (object-tagging sub-feature) is a second, non-atomic Azure call (Set Blob Tags) issued after CompleteMultipartUpload's block-list commit succeeds, unlike Content-Type/x-amz-meta-*, which ride along on the commit request itself. If Set Blob Tags fails, CompleteMultipartUpload returns an error even though the blob is already committed with its content and standard headers; the durable state record is left leased (not retired) rather than deleted, so the lease simply expires and a client retry of CompleteMultipartUpload can re-attempt tag application. The retry validates parts against both the committed and uncommitted block lists (not just uncommitted) so parts already committed by the prior attempt are recognized instead of spuriously failing with InvalidPart.
+- x-amz-checksum-type FULL_OBJECT and x-amz-checksum-algorithm CRC64NVME are rejected for multipart initiation; only COMPOSITE validation with CRC32, CRC32C, SHA1, or SHA256 is supported, and completion result checksum fields remain omitted. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.CreateMultipartUpload_rejects_unreproducible_checksum_result_modes]
 
 ## References
 
