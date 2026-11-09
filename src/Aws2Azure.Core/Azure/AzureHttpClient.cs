@@ -150,6 +150,15 @@ public sealed class AzureHttpClient : IDisposable
                         return response;
                     }
                 }
+                catch (HttpRequestException ex) when (IsRequestContentValidationFailure(ex))
+                {
+                    // The request body rejected caller-controlled content while
+                    // HttpClient was copying it to the wire. This is neither
+                    // retryable (the body is non-replayable) nor evidence that
+                    // the Azure endpoint is unhealthy. Leave outcomeReported
+                    // false so finally abandons the breaker admission.
+                    throw;
+                }
                 catch (HttpRequestException) when (attempt < maxAttempts)
                 {
                     category = RetryCategory.Transport;
@@ -205,6 +214,22 @@ public sealed class AzureHttpClient : IDisposable
             _breaker.OnSuccess(endpointKey, admission);
         else
             _breaker.OnFailure(endpointKey, admission);
+    }
+
+    private static bool IsRequestContentValidationFailure(Exception exception)
+    {
+        Exception? current = exception;
+        while (current is not null)
+        {
+            if (current is RequestContentValidationException)
+            {
+                return true;
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
     }
 
     /// <summary>

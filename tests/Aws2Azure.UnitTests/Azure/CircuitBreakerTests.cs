@@ -198,6 +198,24 @@ public class CircuitBreakerTests
     }
 
     [Fact]
+    public async Task RequestContentValidationExceptionsDoNotTripBreaker()
+    {
+        var handler = new InfiniteHandler(
+            () => throw new HttpRequestException(
+                "request content rejected",
+                new TestRequestContentValidationException()));
+        using var client = NewClient(handler, FastOpts(threshold: 2, maxAttempts: 1));
+
+        for (var i = 0; i < 5; i++)
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(
+                () => client.SendAsync(Req("https://example.test/x")));
+        }
+
+        Assert.Equal(5, handler.CallCount);
+    }
+
+    [Fact]
     public async Task DisabledBreakerNeverTrips()
     {
         var handler = new InfiniteHandler(() => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
@@ -217,6 +235,14 @@ public class CircuitBreakerTests
         var https = CircuitBreaker.TryBuildEndpointKey(new Uri("https://example.test:443/x"));
         Assert.NotEqual(http, https);
         Assert.Null(CircuitBreaker.TryBuildEndpointKey(null));
+    }
+
+    private sealed class TestRequestContentValidationException : RequestContentValidationException
+    {
+        public TestRequestContentValidationException()
+            : base("invalid request content")
+        {
+        }
     }
 
     [Fact]

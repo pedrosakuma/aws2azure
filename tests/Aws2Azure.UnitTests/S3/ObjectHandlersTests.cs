@@ -106,7 +106,7 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
-    public async Task PutObject_ignores_storage_class_and_algorithm_specific_checksum_headers()
+    public async Task PutObject_ignores_storage_class_and_does_not_forward_flexible_checksum_headers()
     {
         var handler = new ScriptedHandler();
         handler.Enqueue(AzureResponse(HttpStatusCode.Created, eTag: "\"0xPUT\""));
@@ -120,7 +120,9 @@ public sealed class ObjectHandlersTests
             [
                 new KeyValuePair<string, string>("x-amz-storage-class", "STANDARD_IA"),
                 new KeyValuePair<string, string>("x-amz-sdk-checksum-algorithm", "SHA256"),
-                new KeyValuePair<string, string>("x-amz-checksum-sha256", "c2hhMjU2")
+                new KeyValuePair<string, string>(
+                    "x-amz-checksum-sha256",
+                    Convert.ToBase64String(SHA256.HashData("hello"u8)))
             ]);
 
         await ObjectHandlers.HandleAsync(

@@ -131,7 +131,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
+- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 - Sub-feature [UploadPart](operations/s3/uploadpart.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1081](https://github.com/pedrosakuma/aws2azure/issues/1081)
 
 ### Workload maturity

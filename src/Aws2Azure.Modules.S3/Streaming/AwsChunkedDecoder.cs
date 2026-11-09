@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Text;
+using Aws2Azure.Core.Azure;
 using Aws2Azure.Core.SigV4;
 
 namespace Aws2Azure.Modules.S3.Streaming;
@@ -14,6 +15,14 @@ public sealed class ChunkSigningContext
     public required string AmzDate { get; init; }
     public required string CredentialScope { get; init; }
     public required string SeedSignature { get; init; }
+}
+
+internal sealed class AwsChunkedTrailerException : RequestContentValidationException
+{
+    public AwsChunkedTrailerException(string message)
+        : base(message)
+    {
+    }
 }
 
 /// <summary>
@@ -36,6 +45,7 @@ public sealed class AwsChunkedDecoder : Stream
 {
     private const int MaxChunkHeaderSize = 256; // generous for "hex;chunk-signature=64hex\r\n"
     private const int ReadAheadBufferSize = 1024;
+    private const int MaxTrailerHeaderCount = 8;
 
     // AWS SDK default chunk size is 64KB-128KB; S3 allows up to 5GB objects but
     // individual chunks are typically much smaller. We cap at 64MB to prevent
@@ -67,6 +77,7 @@ public sealed class AwsChunkedDecoder : Stream
 
     private string _previousSignature;
     private long _totalBytesRead;
+    private Dictionary<string, string>? _trailerHeaders;
 
     private static readonly string EmptySha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -85,6 +96,7 @@ public sealed class AwsChunkedDecoder : Stream
     public override bool CanRead => true;
     public override bool CanSeek => false;
     public override bool CanWrite => false;
+    internal bool ExpectsTrailer => _expectTrailer;
     public override long Length => throw new NotSupportedException();
     public override long Position
     {
@@ -302,17 +314,57 @@ public sealed class AwsChunkedDecoder : Stream
     /// <summary>
     /// Consumes the trailing header section that follows the terminal zero-size
     /// chunk in a <c>-TRAILER</c> stream: zero or more <c>name:value</c> lines
-    /// ended by a blank line. The values (checksums, trailer signature) are
-    /// discarded — Azure Blob validates content integrity independently.
+    /// ended by a blank line. A small bounded set is retained so the upload
+    /// checksum validator can compare the decoded payload with the advertised
+    /// digest after the body reaches EOF.
     /// </summary>
     private async ValueTask ConsumeTrailerAsync(CancellationToken cancellationToken)
     {
+        var count = 0;
         while (true)
         {
             var lineLen = await ReadCrlfLineAsync(cancellationToken).ConfigureAwait(false);
             if (lineLen == 0)
                 return; // blank line terminates the trailer
+
+            count++;
+            if (count > MaxTrailerHeaderCount)
+                throw new AwsChunkedTrailerException($"aws-chunked trailer contains more than {MaxTrailerHeaderCount} headers");
+
+            var line = _headerBuffer.AsSpan(0, lineLen);
+            var colon = line.IndexOf((byte)':');
+            if (colon <= 0)
+                throw new AwsChunkedTrailerException("Malformed aws-chunked trailer header");
+
+            var nameBytes = line[..colon];
+            foreach (var value in nameBytes)
+            {
+                var valid = value is >= (byte)'a' and <= (byte)'z'
+                    or >= (byte)'A' and <= (byte)'Z'
+                    or >= (byte)'0' and <= (byte)'9'
+                    or (byte)'-';
+                if (!valid)
+                    throw new AwsChunkedTrailerException("Malformed aws-chunked trailer header name");
+            }
+
+            var name = Encoding.ASCII.GetString(nameBytes);
+            var valueText = Encoding.ASCII.GetString(line[(colon + 1)..]).Trim(' ', '\t');
+            _trailerHeaders ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!_trailerHeaders.TryAdd(name, valueText))
+                throw new AwsChunkedTrailerException($"Duplicate aws-chunked trailer header: {name}");
         }
+    }
+
+    internal bool TryGetTrailerValue(string name, out string value)
+    {
+        if (_trailerHeaders is not null && _trailerHeaders.TryGetValue(name, out var found))
+        {
+            value = found;
+            return true;
+        }
+
+        value = string.Empty;
+        return false;
     }
 
     private void VerifyChunkSignature(ReadOnlySpan<byte> chunkData, string providedSignature)
