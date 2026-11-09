@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "reuse",
+  "repository": "pedrosakuma/aws2azure",
+  "sourceCommit": "541bb8853656fb2b614262d03b9026178dc66b5a",
+  "scope": "Retained source-validation evidence from integration-real-azure run 42660882106/1 covers the exact successful source, including positive real-Azure S3 PutObject evidence. The complete source-to-target delta changes only tests/Aws2Azure.IntegrationTests/S3/S3AwsChunkedTests.cs to compute a valid CRC32 trailer in the success fixture and add a separate BadDigest mismatch test; shipping code, runtime configuration and workflows are unchanged. The versioned inspection report pr-1112/evidence-review.md has SHA256 52b4b9687ddae5b18a24bc97906d5835b83fd55da7b6afe7ab38c1227a122bec over its committed LF bytes. The retained archive reports matrix-unit 21/21 passed, matrix-integration 95/95 executed tests passed with 2 not executed, conformance-case-evidence 6/6 passed, and 114 passed / 0 failed / 2 skipped scenario outcomes. The archive does not contain S3AwsChunkedTests by name; reuse relies on the independently reviewed test-fixture-only delta. This is not a new execution, renewed measurement, current Azure health assessment, or canonical workload qualification for the target.",
+  "verifiedBy": "Copilot policy session (metadata, archive digest and content inspection; not owner approval)",
+  "verificationReference": "https://github.com/pedrosakuma/aws2azure/pull/1112#issuecomment-6749513917",
+  "verifiedAtUtc": "2026-11-09T19:36:27Z",
+  "revoked": false,
+  "offline": null,
+  "run": {
+    "runId": 42660882106,
+    "attempt": 1,
+    "workflowPath": ".github/workflows/integration-real-azure.yml",
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "success",
+    "createdAtUtc": "2026-11-09T17:03:34Z",
+    "completedAtUtc": "2026-11-09T17:33:21Z",
+    "artifacts": [
+      {
+        "id": 13694678250,
+        "name": "source-validation-real-azure-conformance",
+        "expiresAtUtc": "2026-11-23T17:19:25Z",
+        "expired": false,
+        "archive": {
+          "path": "source-validation-real-azure-conformance.zip",
+          "sha256": "1a5f0c706645ed83b2a7cc2a4a368adf0b53317a36ac5799a1ab4c5a5211a96b"
+        }
+      }
+    ]
+  }
+}
