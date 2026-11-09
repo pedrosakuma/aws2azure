@@ -115,11 +115,36 @@ public class S3AwsChunkedTests
         Assert.Equal(body, retrieved);
     }
 
+    [SkippableFact]
+    public async Task PutObject_with_unsigned_chunked_checksum_mismatch_returns_BadDigest()
+    {
+        Skip.IfNot(_fx.DockerAvailable, "Docker not available; skipping S3 integration test.");
+
+        var bucket = "it-chunk-" + Guid.NewGuid().ToString("N")[..8];
+        var key = "chunked-unsigned-trailer-mismatch.bin";
+        var body = "checksum mismatch"u8.ToArray();
+
+        await PutBucket(bucket);
+
+        using var putResp = await SendUnsignedChunkedTrailerAsync(
+            bucket,
+            key,
+            body,
+            checksum: "AAAAAA==");
+
+        Assert.Equal(HttpStatusCode.BadRequest, putResp.StatusCode);
+        Assert.Contains(
+            "<Code>BadDigest</Code>",
+            await putResp.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+    }
+
     private async Task<HttpResponseMessage> SendUnsignedChunkedTrailerAsync(
         string bucket,
         string key,
         byte[] body,
-        int chunkSize = 64 * 1024)
+        int chunkSize = 64 * 1024,
+        string? checksum = null)
     {
         var path = $"/{bucket}/{key}";
         var absolute = new Uri(_fx.Client.BaseAddress!, path);
@@ -175,7 +200,7 @@ public class S3AwsChunkedTests
             $"Signature={seedSignature}";
         req.Headers.TryAddWithoutValidation("Authorization", auth);
 
-        var chunkedBody = BuildUnsignedChunkedTrailerBody(body, chunkSize);
+        var chunkedBody = BuildUnsignedChunkedTrailerBody(body, chunkSize, checksum);
 
         req.Content = new ByteArrayContent(chunkedBody);
         req.Content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
@@ -185,7 +210,10 @@ public class S3AwsChunkedTests
         return await _fx.Client.SendAsync(req);
     }
 
-    private static byte[] BuildUnsignedChunkedTrailerBody(byte[] data, int chunkSize)
+    private static byte[] BuildUnsignedChunkedTrailerBody(
+        byte[] data,
+        int chunkSize,
+        string? checksum = null)
     {
         using var ms = new MemoryStream();
         using var writer = new StreamWriter(ms, Encoding.ASCII, leaveOpen: true);
@@ -210,15 +238,33 @@ public class S3AwsChunkedTests
         }
 
         // Final zero-size chunk followed by the trailer section terminated by a
-        // blank line. The checksum value is not re-validated by the proxy.
+        // blank line.
         writer.Write("0");
         writer.WriteLine();
-        writer.Write("x-amz-checksum-crc32:AAAAAA==");
+        writer.Write("x-amz-checksum-crc32:");
+        writer.Write(checksum ?? ComputeCrc32Base64(data));
         writer.WriteLine();
         writer.WriteLine(); // blank line ends the trailer
         writer.Flush();
 
         return ms.ToArray();
+    }
+
+    private static string ComputeCrc32Base64(ReadOnlySpan<byte> data)
+    {
+        var crc = uint.MaxValue;
+        foreach (var value in data)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xEDB88320u);
+            }
+        }
+
+        Span<byte> checksum = stackalloc byte[sizeof(uint)];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(checksum, crc ^ uint.MaxValue);
+        return Convert.ToBase64String(checksum);
     }
 
     private async Task<HttpResponseMessage> SendAwsChunkedAsync(
