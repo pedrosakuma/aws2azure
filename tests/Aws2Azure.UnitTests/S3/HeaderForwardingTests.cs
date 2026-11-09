@@ -141,16 +141,20 @@ public class HeaderForwardingTests
     }
 
     [Fact]
-    public void ForwardMetadata_strips_reserved_internal_multipart_marker()
+    public void ForwardMetadata_strips_all_reserved_internal_metadata()
     {
         var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
         context.Request.Headers["x-amz-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName] = "7";
+        context.Request.Headers["x-amz-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName] = "SHA256";
+        context.Request.Headers["x-amz-meta-" + FlexibleChecksumMetadata.DigestMetadataName] = "forged";
         context.Request.Headers["x-amz-meta-user-visible"] = "yes";
         using var target = new System.Net.Http.HttpRequestMessage();
 
         HeaderForwarding.ForwardMetadata(context.Request, target);
 
         Assert.False(target.Headers.Contains("x-ms-meta-" + HeaderForwarding.InternalMultipartPartCountMetadataName));
+        Assert.False(target.Headers.Contains("x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName));
+        Assert.False(target.Headers.Contains("x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName));
         Assert.True(target.Headers.TryGetValues("x-ms-meta-user-visible", out var values));
         Assert.Equal("yes", Assert.Single(values));
     }

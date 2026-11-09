@@ -42,6 +42,10 @@ public sealed class PutObjectFlexibleChecksumTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         var request = Assert.Single(handler.Requests);
         Assert.Equal("123456789", request.Body);
+        Assert.Equal(algorithm, Assert.Single(request.Headers["x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName]));
+        Assert.Equal(checksum, Assert.Single(request.Headers["x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName]));
+        Assert.Equal(checksum, context.Response.Headers[checksumHeader].ToString());
+        Assert.Equal("FULL_OBJECT", context.Response.Headers["x-amz-checksum-type"].ToString());
         Assert.DoesNotContain(checksumHeader, request.Headers.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain(checksumHeader, request.ContentHeaders.Keys, StringComparer.OrdinalIgnoreCase);
     }
@@ -136,7 +140,12 @@ public sealed class PutObjectFlexibleChecksumTests
         await PutAsync(context, NewBlobClient(http), CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.Equal(Encoding.UTF8.GetString(payload), Assert.Single(handler.Requests).Body);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(Encoding.UTF8.GetString(payload), request.Body);
+        Assert.False(request.Headers.ContainsKey("x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName));
+        Assert.False(request.Headers.ContainsKey("x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName));
+        Assert.Equal(checksum, context.Response.Headers["x-amz-checksum-crc32"].ToString());
+        Assert.Equal("FULL_OBJECT", context.Response.Headers["x-amz-checksum-type"].ToString());
     }
 
     [Theory]

@@ -28,14 +28,14 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 - **Capability ID:** `sub-feature:s3:copyobject:x-amz-metadata-directivecopy--default`
 - **Status:** ✅ implemented
 
-**Gap.** Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics. The proxy strips its own hidden multipart part-count marker from the copied metadata so destination HEAD/GET/CopyObjectResult do not inherit a stale multipart-shaped ETag.
+**Gap.** Azure preserves source metadata when no x-ms-meta-* is sent, matching S3 COPY semantics. A complete validated single-part checksum metadata pair is therefore preserved with the copied bytes and remains eligible for later checksum-mode reads. The proxy validates the copied pair on its existing destination HEAD and fails closed if it is corrupt. It strips its own hidden multipart part-count marker from copied metadata so destination HEAD/GET/CopyObjectResult do not inherit a stale multipart-shaped ETag. [conformance:Aws2Azure.UnitTests.S3.CopyObjectHandlersTests.Copy_object_copy_directive_preserves_checksum_metadata_without_exposing_version_header]
 
 ### x-amz-metadata-directive=REPLACE {#sub-feature-x-amz-metadata-directivereplace}
 
 - **Capability ID:** `sub-feature:s3:copyobject:x-amz-metadata-directivereplace`
 - **Status:** ✅ implemented
 
-**Gap.** Request's metadata + Content-Type override source via standard header forwarding.
+**Gap.** Request's metadata + Content-Type override source via standard header forwarding. Reserved checksum metadata is deliberately invalidated because the request replaces metadata wholesale; CopyObjectResult continues to omit checksum fields, and later checksum-mode reads omit a checksum rather than claiming copied provenance through a caller-requested replacement.
 
 ### x-amz-tagging-directive=COPY (default) {#sub-feature-x-amz-tagging-directivecopy--default}
 
@@ -80,10 +80,12 @@ Date-based conditionals forward to Azure. Concrete-ETag if-match is evaluated pr
 - x-amz-copy-source-version-id is not emitted on the CopyObject response; Azure's Copy Blob response does not surface the source blob's version id (Azure returns x-ms-copy-source but no source-version header), so the proxy has no equivalent value to translate back to S3's per-copy header. [conformance:copy-object-roundtrip::missing-header:x-amz-copy-source-version-id]
 - x-amz-server-side-encryption is not emitted on the CopyObject response; Azure's Copy Blob response reports encryption state via x-ms-server-encrypted rather than a header the proxy currently mirrors onto CopyObject 200s. [conformance:copy-object-roundtrip::missing-header:x-amz-server-side-encryption]
 - ChecksumCRC64NVME / ChecksumType are omitted from CopyObjectResult; Azure Blob does not compute a CRC64NVME checksum or expose an AWS-shaped ChecksumType (FULL_OBJECT / COMPOSITE) for a copied blob. [conformance:copy-object-roundtrip::missing-field:ChecksumCRC64NVME] [conformance:copy-object-roundtrip::missing-field:ChecksumType]
+- COPY preserves a valid proxy-authored single-part checksum without hashing or an additional Azure request beyond the destination HEAD already required for ETag fidelity. REPLACE deliberately removes it. Copies of unmanaged blobs have no proxy checksum to expose.
 - CopyObjectResult.LastModified reflects the Azure blob's actual write time on the proxy side. When the offline Tier-3 diff compares captures recorded at different wall-clock times against separately seeded backends (real AWS golden vs real-Azure evidence), the two LastModified values will differ; the field itself round-trips correctly for each backend. [conformance:copy-object-roundtrip::field-value:LastModified]
 
 ## References
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html>
 - <https://learn.microsoft.com/rest/api/storageservices/copy-blob>
+- <https://github.com/pedrosakuma/aws2azure/issues/1106>
 

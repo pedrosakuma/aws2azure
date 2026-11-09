@@ -27,14 +27,19 @@ sub_features:
   status: partial
   gap: ?versionId selector reversibly decodes the client-facing x-amz-version-id token back to Azure ?versionid; responses re-encode x-ms-version-id before surfacing it to clients. Requires account-level Blob versioning enabled out-of-band; no delete markers in ListObjectVersions yet.
   disposition: by_design
+- name: flexible checksum readback (x-amz-checksum-mode)
+  status: partial
+  gap: x-amz-checksum-mode=ENABLED exposes a CRC32, CRC32C, CRC64NVME, SHA1, or SHA256 value only when the exact selected blob version carries the proxy's complete, valid reserved metadata pair from a validated header-based PutObject. Existing/unmanaged blobs and validated trailer-origin uploads have no such metadata and return no checksum header. Invalid mode values are rejected. Partial/range responses omit the whole-object checksum. [conformance:Aws2Azure.UnitTests.S3.ObjectHandlersTests.GetObject_checksum_mode_exposes_persisted_checksum] [conformance:Aws2Azure.UnitTests.S3.ObjectHandlersTests.GetObject_checksum_mode_fails_closed_before_streaming_corrupt_metadata]
+  disposition: by_design
 behavior_differences:
 - 'Streaming end-to-end: response body is forwarded without buffering.'
 - x-amz-id-2 carries the Azure x-ms-request-id for cross-system tracing.
 - The default object Content-Type when Azure has none is binary/octet-stream to match observed S3 behavior.
 - x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
 - Completed multipart objects carry a proxy-reserved hidden metadata marker recording the committed part count so later GetObject/HeadObject responses can keep the multipart-shaped ETag dash suffix, including one-part completes; the marker is not surfaced back as x-amz-meta-* and client writes using that reserved metadata name are ignored.
-- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not emitted on GetObject responses; Azure Blob exposes Content-MD5 but does not surface AWS's algorithm-specific flexible-checksum headers for reads, and the proxy does not synthesize them.
-- x-amz-checksum-crc64nvme is not emitted; Azure does not expose AWS's CRC64NVME checksum surface on GetObject responses. [conformance:missing-header:x-amz-checksum-crc64nvme]
+- Without x-amz-checksum-mode=ENABLED, algorithm-specific checksum headers are omitted. With it, only complete validated proxy metadata is exposed with x-amz-checksum-type=FULL_OBJECT; corrupt or partial internal metadata fails closed with InternalError before any object bytes are streamed. [conformance:Aws2Azure.UnitTests.S3.ObjectHandlersTests.GetObject_checksum_mode_exposes_persisted_checksum] [conformance:Aws2Azure.UnitTests.S3.ObjectHandlersTests.GetObject_checksum_mode_fails_closed_before_streaming_corrupt_metadata]
+- The read path never hashes or buffers the object and adds no Azure request. Unmanaged blobs, trailer-origin checksums, multipart objects, and range responses therefore omit flexible-checksum headers. Large-object recomputation is intentionally unsupported to preserve streaming latency and sidecar memory/CPU bounds.
+- Stored CRC64NVME is the AWS/NVMe digest validated by the proxy at write time. Azure x-ms-content-crc64 is never relabeled because Azure's checksum surface does not prove the AWS polynomial and whole-object semantics required by CRC64NVME.
 - Presigned URLs are accepted (see PresignedUrl.yaml); the client must sign against the proxy host.
 - Error responses omit the server-side x-amz-id-2 correlation header that real S3 emits. [conformance:missing-header:x-amz-id-2]
 - Error envelopes omit the <HostId> element that real S3 emits. [conformance:missing-field:HostId]
@@ -46,3 +51,4 @@ behavior_differences:
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
 - https://learn.microsoft.com/rest/api/storageservices/get-blob
+- https://github.com/pedrosakuma/aws2azure/issues/1106

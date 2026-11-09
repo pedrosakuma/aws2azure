@@ -11,7 +11,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 48 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
-| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 4 | 0 | 125 |
+| [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 129 |
 | [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 20 |
 | [sns](sns.md) | 3 | 11 | 0 | 0 | 1 | 9 | 1 | 1 | 0 | 21 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
@@ -131,9 +131,7 @@ _No remaining feasible backlog is documented for this service._
 
 ### Feasible backlog
 
-- Sub-feature [CompleteMultipartUpload](operations/s3/completemultipartupload.md#sub-feature-multipart-checksum-result) / multipart-checksum-result — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 - Sub-feature [CreateMultipartUpload](operations/s3/createmultipartupload.md#sub-feature-multipart-checksum-selection) / multipart-checksum-selection — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
-- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 - Sub-feature [UploadPartCopy](operations/s3/uploadpartcopy.md#sub-feature-checksum-enabled-multipart) / checksum-enabled-multipart — [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
 
 ### Workload maturity
@@ -197,6 +195,7 @@ _No remaining feasible backlog is documented for this service._
 - Operation [PutObjectLockConfiguration](operations/s3/putobjectlockconfiguration.md) — 🔵 by design
 - Operation [PutPublicAccessBlock](operations/s3/putpublicaccessblock.md) — 🔵 by design
 - Operation [RestoreObject](operations/s3/restoreobject.md) — 🔵 by design
+- Sub-feature [CompleteMultipartUpload](operations/s3/completemultipartupload.md#sub-feature-multipart-checksum-result) / multipart-checksum-result — 🔵 by design
 - Sub-feature [CompleteMultipartUpload](operations/s3/completemultipartupload.md#sub-feature-per-part-etag-validation) / per-part-etag-validation — 🔵 by design
 - Sub-feature [CopyObject](operations/s3/copyobject.md#sub-feature-arn-copy-source--s3-on-outposts) / ARN copy-source (S3-on-Outposts) — ⚫ non-goal
 - Sub-feature [CopyObject](operations/s3/copyobject.md#sub-feature-cross-account-copy--source-in-a-different-azure-storage-account) / cross-account copy (source in a different Azure storage account) — 🔵 by design
@@ -231,9 +230,11 @@ _No remaining feasible backlog is documented for this service._
 - Sub-feature [GetObjectAcl](operations/s3/getobjectacl.md#sub-feature-per-object-grants) / per-object grants — 🔵 by design
 - Sub-feature [GetObjectLockConfiguration](operations/s3/getobjectlockconfiguration.md#sub-feature-configuration-storage) / configuration storage — 🔵 by design
 - Sub-feature [GetObjectTorrent](operations/s3/getobjecttorrent.md#sub-feature-operation) / operation — ⚫ non-goal
+- Sub-feature [GetObject](operations/s3/getobject.md#sub-feature-flexible-checksum-readback--x-amz-checksum-mode) / flexible checksum readback (x-amz-checksum-mode) — 🔵 by design
 - Sub-feature [GetObject](operations/s3/getobject.md#sub-feature-server-side-encryption-customer-keys--sse-c) / server-side encryption customer keys (SSE-C) — 🔵 by design
 - Sub-feature [GetObject](operations/s3/getobject.md#sub-feature-versioning--versionid-query) / versioning (versionId query) — 🔵 by design
 - Sub-feature [GetPublicAccessBlock](operations/s3/getpublicaccessblock.md#sub-feature-public-access-enforcement) / public-access enforcement — 🔵 by design
+- Sub-feature [HeadObject](operations/s3/headobject.md#sub-feature-flexible-checksum-readback--x-amz-checksum-mode) / flexible checksum readback (x-amz-checksum-mode) — 🔵 by design
 - Sub-feature [ListBuckets](operations/s3/listbuckets.md#sub-feature-owner-identity) / owner-identity — 🔵 by design
 - Sub-feature [ListObjectVersions](operations/s3/listobjectversions.md#sub-feature-delete-markers) / delete markers — 🔵 by design
 - Sub-feature [ListObjectsV2](operations/s3/listobjectsv2.md#sub-feature-fetch-owner) / fetch-owner — 🔵 by design
@@ -259,6 +260,7 @@ _No remaining feasible backlog is documented for this service._
 - Sub-feature [PutObjectAcl](operations/s3/putobjectacl.md#sub-feature-other-canned-acls---x-amz-grant--headers---non-owner-grants) / other canned ACLs / x-amz-grant-* headers / non-owner grants — 🔵 by design
 - Sub-feature [PutObjectLockConfiguration](operations/s3/putobjectlockconfiguration.md#sub-feature-configuration-storage) / configuration storage — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-acls--x-amz-acl) / ACLs (x-amz-acl) — 🔵 by design
+- Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum) / flexible checksums (x-amz-sdk-checksum-algorithm / x-amz-checksum-*) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-object-lock---legal-hold---retention) / Object Lock / Legal Hold / Retention — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-server-side-encryption--sse-s3-sse-kms-sse-c) / server-side encryption (SSE-S3, SSE-KMS, SSE-C) — 🔵 by design
 - Sub-feature [PutObject](operations/s3/putobject.md#sub-feature-storage-class--x-amz-storage-class) / storage-class (x-amz-storage-class) — 🔵 by design

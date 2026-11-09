@@ -54,10 +54,9 @@
 
 - **Capability ID:** `sub-feature:s3:putobject:flexible-checksums--x-amz-sdk-checksum-algorithm---x-amz-checksum`
 - **Status:** 🟡 partial
-- **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
+- **Disposition:** 🔵 by design
 
-**Gap.** Header and decoded aws-chunked trailer values for CRC32, CRC32C, CRC64NVME, SHA1, and SHA256 are validated incrementally while the request body streams to Azure; malformed digest encodings and mismatches return BadDigest before the proxy reports success. CRC64NVME uses the AWS/NVMe polynomial and is never substituted with Azure's different CRC64 surface. Content-MD5 keeps its existing Azure validation path. Flexible checksum values are not persisted or surfaced on later reads; that separate contract is tracked by
+**Gap.** Header and decoded aws-chunked trailer values for CRC32, CRC32C, CRC64NVME, SHA1, and SHA256 are validated incrementally while the request body streams to Azure; malformed digest encodings and mismatches return BadDigest before the proxy reports success. CRC64NVME uses the AWS/NVMe polynomial and is never substituted with Azure's different CRC64 surface. A checksum supplied in a request header is persisted atomically with the blob as two reserved Azure metadata entries and is returned on the successful PutObject response. Trailer checksums are returned on that validated response but are not persisted because the trailer value becomes available only after Azure request headers have been committed; a follow-up metadata mutation would not be atomic and could target a racing overwrite or create a different Azure blob version. Content-MD5 keeps its existing Azure validation path. [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_accepts_matching_header_checksum] [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_accepts_matching_aws_chunked_checksum_trailer] [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_returns_bad_digest_for_header_checksum_mismatch]
 
 ### versioning (x-amz-version-id) {#sub-feature-versioning--x-amz-version-id}
 
@@ -95,7 +94,10 @@
 - x-amz-server-side-encryption is synthesized as AES256 to reflect Azure Storage's at-rest encryption baseline.
 - x-amz-tagging is applied via a second, non-atomic Azure Put Blob Tags call after the blob body is already committed. If the tag call fails, PutObject returns the Azure error even though the object bytes were already written.
 - x-amz-storage-class is ignored on write; Azure Blob uses its own account/container tiering model and the proxy does not persist the requested AWS storage class.
-- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-crc64nvme / x-amz-checksum-sha1 / x-amz-checksum-sha256 are validated on upload but are not persisted or surfaced on the PutObject response or later reads; only Content-MD5 participates in the classic S3 ETag flow for single-part uploads. [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_accepts_matching_header_checksum] [conformance:missing-header:x-amz-checksum-crc64nvme]
+- Header-supplied CRC32 / CRC32C / CRC64NVME / SHA1 / SHA256 values are validated, persisted, and returned with x-amz-checksum-type=FULL_OBJECT. The reserved metadata pair is bounded (two ASCII entries; the longest digest is 44 base64 characters) and counts against Azure Blob's 8 KiB metadata limit, so a request already at Azure's metadata ceiling can be rejected by Azure after adding the integrity metadata. No extra Azure request, whole-object buffer, cache, or background work is introduced. [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_accepts_matching_header_checksum]
+- Validated aws-chunked trailer checksums are returned on PutObject but intentionally not persisted: the digest is unavailable until end-of-stream, after Azure request metadata is immutable. Later GetObject/HeadObject calls therefore omit a trailer-origin checksum rather than inventing or recomputing one. [conformance:Aws2Azure.UnitTests.S3.PutObjectFlexibleChecksumTests.PutObject_accepts_matching_aws_chunked_checksum_trailer]
+- PutObject without a flexible checksum clears any checksum metadata from an overwritten current blob because Azure Put Blob replaces metadata wholesale. With Blob versioning enabled, older versions retain their own metadata and remain addressable by versionId. [conformance:Aws2Azure.UnitTests.S3.ObjectHandlersTests.PutObject_without_checksum_omits_bucket_and_checksum_headers]
+- Client x-amz-meta-* fields cannot forge the reserved checksum metadata names; the proxy strips those names before adding its validated values. [conformance:Aws2Azure.UnitTests.S3.HeaderForwardingTests.ForwardMetadata_strips_all_reserved_internal_metadata]
 - Concrete-ETag preconditions (If-Match / If-None-Match with a value other than '*') return 501 NotImplemented: proxy-translated S3 ETags do not round-trip back to Azure's raw ETag space, and supporting optimistic concurrency would require a HEAD-then-PUT cycle that is not yet implemented. The '*' sentinel is honored (forwarded to Azure).
 - Presigned PUT is accepted (see PresignedUrl.yaml). Body integrity is not signature-protected (UNSIGNED-PAYLOAD) — identical to AWS S3 semantics.
 
@@ -107,4 +109,5 @@
 - <https://github.com/pedrosakuma/aws2azure/issues/1104>
 - <https://github.com/pedrosakuma/aws2azure/issues/1106>
 - <https://learn.microsoft.com/rest/api/storageservices/put-blob>
+- <https://learn.microsoft.com/rest/api/storageservices/setting-and-retrieving-properties-and-metadata-for-blob-resources>
 

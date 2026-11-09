@@ -35,7 +35,7 @@ public sealed class CopyObjectHandlersTests
     }
 
     [Fact]
-    public async Task Copy_object_success_returns_copy_result_body_without_version_header()
+    public async Task Copy_object_copy_directive_preserves_checksum_metadata_without_exposing_version_header()
     {
         var handler = new ScriptedHandler();
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.OK)
@@ -43,7 +43,16 @@ public sealed class CopyObjectHandlersTests
             Content = new StringContent("""<?xml version="1.0" encoding="utf-8"?><Tags><TagSet /></Tags>""")
         });
         handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", versionId: "v-copy", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
-        handler.Enqueue(AzureResponse(HttpStatusCode.OK, eTag: "\"0xabc\"", versionId: "v-copy", lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero)));
+        handler.Enqueue(AzureResponse(
+            HttpStatusCode.OK,
+            eTag: "\"0xabc\"",
+            versionId: "v-copy",
+            lastModified: new DateTimeOffset(2026, 8, 1, 12, 30, 0, TimeSpan.Zero),
+            responseHeaders:
+            [
+                new KeyValuePair<string, string>("x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName, "SHA256"),
+                new KeyValuePair<string, string>("x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName, "FeKw08M4keuw8e9gnsQZQgwg4yDOlMZfvIwzEkSOsiU="),
+            ]));
         handler.Enqueue(AzureResponse(HttpStatusCode.NoContent));
 
         using var http = new AzureHttpClient(handler, ownsHandler: false);
@@ -66,6 +75,7 @@ public sealed class CopyObjectHandlersTests
         Assert.False(string.IsNullOrEmpty(doc.Root!.Element(S3Ns + "LastModified")?.Value));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-version-id"));
         Assert.Equal(4, handler.Requests.Count);
+        Assert.DoesNotContain(handler.Requests, request => request.RequestUri!.Query.Contains("comp=metadata", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -50,6 +50,18 @@ internal sealed class FlexibleChecksumValidation
 
     public FlexibleChecksumAlgorithm Algorithm => _algorithm;
 
+    public bool TryGetPersistableDigest(out string digest)
+    {
+        if (_headerDigest is null)
+        {
+            digest = string.Empty;
+            return false;
+        }
+
+        digest = Convert.ToBase64String(_headerDigest);
+        return true;
+    }
+
     public bool TryGetValidatedDigest(out string digest)
     {
         if (_validatedDigest is null)

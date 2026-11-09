@@ -739,5 +739,7 @@ internal static class HeaderForwarding
     }
 
     internal static bool IsInternalMetadataName(ReadOnlySpan<char> metadataName) =>
-        metadataName.Equals(InternalMultipartPartCountMetadataName, StringComparison.OrdinalIgnoreCase);
+        metadataName.Equals(InternalMultipartPartCountMetadataName, StringComparison.OrdinalIgnoreCase)
+        || metadataName.Equals(FlexibleChecksumMetadata.AlgorithmMetadataName, StringComparison.OrdinalIgnoreCase)
+        || metadataName.Equals(FlexibleChecksumMetadata.DigestMetadataName, StringComparison.OrdinalIgnoreCase);
 }

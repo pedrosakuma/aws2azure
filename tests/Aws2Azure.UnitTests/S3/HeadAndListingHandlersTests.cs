@@ -94,6 +94,74 @@ public sealed class HeadAndListingHandlersTests
         Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("ENABLED", true)]
+    public async Task HeadObject_exposes_persisted_checksum_only_when_enabled(string? checksumMode, bool expected)
+    {
+        var handler = new ScriptedHandler();
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>())
+        };
+        response.Headers.TryAddWithoutValidation("ETag", "\"azure-etag\"");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName,
+            "SHA256");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName,
+            "FeKw08M4keuw8e9gnsQZQgwg4yDOlMZfvIwzEkSOsiU=");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var headers = checksumMode is null
+            ? null
+            : new[] { new KeyValuePair<string, string>("x-amz-checksum-mode", checksumMode) };
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Head,
+            path: "/bucket/object.txt",
+            queryString: "?versionId=azv-2026-08-01T12%3A30%3A00.0000000Z",
+            headers: headers);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.HeadObject, "bucket", "object.txt", VirtualHosted: false),
+            NewBlobClient(http),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(expected, context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
+        Assert.Equal(expected, context.Response.Headers.ContainsKey("x-amz-checksum-type"));
+    }
+
+    [Fact]
+    public async Task HeadObject_fails_closed_for_corrupt_checksum_metadata()
+    {
+        var handler = new ScriptedHandler();
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Array.Empty<byte>())
+        };
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName,
+            "SHA256");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Head,
+            path: "/bucket/object.txt",
+            headers: [new KeyValuePair<string, string>("x-amz-checksum-mode", "ENABLED")]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.HeadObject, "bucket", "object.txt", VirtualHosted: false),
+            NewBlobClient(http),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Equal("InternalError", context.Response.Headers["x-amz-error-code"]);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
+    }
+
     [Fact]
     public async Task HeadObject_precondition_failed_clears_success_metadata_and_sets_error_header()
     {
