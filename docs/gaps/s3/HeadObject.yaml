@@ -14,11 +14,17 @@ sub_features:
   status: implemented
 - name: user metadata (x-amz-meta-*)
   status: implemented
+- name: flexible checksum readback (x-amz-checksum-mode)
+  status: partial
+  gap: x-amz-checksum-mode=ENABLED exposes a persisted CRC32, CRC32C, CRC64NVME, SHA1, or SHA256 value only when the exact selected blob version carries the proxy's complete validated metadata pair. Existing/unmanaged blobs, multipart objects, and trailer-origin uploads omit checksum headers. Corrupt internal metadata fails closed with a bodiless 500 InternalError. [conformance:Aws2Azure.UnitTests.S3.HeadAndListingHandlersTests.HeadObject_exposes_persisted_checksum_only_when_enabled] [conformance:Aws2Azure.UnitTests.S3.HeadAndListingHandlersTests.HeadObject_fails_closed_for_corrupt_checksum_metadata]
+  disposition: by_design
 behavior_differences:
 - '404 responses include x-amz-error-code: NoSuchKey and an empty body (HEAD spec).'
 - '412 PreconditionFailed (failed If-Match) responses include x-amz-error-code: PreconditionFailed and an empty body (HEAD spec).'
-- x-amz-checksum-crc32 / x-amz-checksum-crc32c / x-amz-checksum-sha1 / x-amz-checksum-sha256 are not emitted on HeadObject responses; Azure Blob exposes Content-MD5 but does not surface AWS's algorithm-specific flexible-checksum headers for reads, and the proxy does not synthesize them.
+- Algorithm-specific checksum headers are omitted unless x-amz-checksum-mode=ENABLED and the selected version has complete validated proxy metadata. The HEAD path performs no additional Azure request or checksum computation. [conformance:Aws2Azure.UnitTests.S3.HeadAndListingHandlersTests.HeadObject_exposes_persisted_checksum_only_when_enabled]
+- Azure x-ms-content-crc64 is never surfaced as x-amz-checksum-crc64nvme; only the AWS/NVMe value validated and stored by the proxy is eligible.
 - Presigned HEAD is accepted (see PresignedUrl.yaml).
 references:
 - https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
 - https://learn.microsoft.com/rest/api/storageservices/get-blob-properties
+- https://github.com/pedrosakuma/aws2azure/issues/1106

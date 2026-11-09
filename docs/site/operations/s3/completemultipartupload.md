@@ -56,10 +56,9 @@ For checksum-enabled uploads, each manifest Part must provide the algorithm sele
 
 - **Capability ID:** `sub-feature:s3:completemultipartupload:multipart-checksum-result`
 - **Status:** ⛔ unsupported
-- **Disposition:** 🛠️ feasible backlog
-- **Tracking issue:** [#1106](https://github.com/pedrosakuma/aws2azure/issues/1106)
+- **Disposition:** 🔵 by design
 
-CompleteMultipartUploadResult does not claim COMPOSITE, FULL_OBJECT, or CRC64NVME result fields. This layer validates supported per-part checksums but does not synthesize an AWS aggregate checksum without executable parity evidence.
+CompleteMultipartUploadResult does not claim COMPOSITE, FULL_OBJECT, or CRC64NVME result fields, and the committed blob receives no flexible-checksum metadata. Per-part CRC32, CRC32C, SHA1, and SHA256 values prove each uploaded part but do not by themselves justify an AWS aggregate result; CRC64NVME multipart initiation remains unsupported. The proxy does not reread or hash the committed object because that would add an unbounded full-object transfer, CPU cost, and completion latency to the sidecar.
 
 ## Behaviour differences
 
@@ -70,6 +69,7 @@ CompleteMultipartUploadResult does not claim COMPOSITE, FULL_OBJECT, or CRC64NVM
 - Lease-protected Put Block List + state delete are bounded to 45 seconds. On deadline expiry the proxy returns RequestTimeout and does not attempt a best-effort synchronous lease release.
 - x-amz-server-side-encryption is not emitted on the CompleteMultipartUpload response; Azure Blob Storage's Put Block List response reports encryption state via x-ms-server-encrypted rather than an AWS-style header the proxy mirrors onto CompleteMultipartUpload 200s. [conformance:multipart-upload-copy-complete-roundtrip::missing-header:x-amz-server-side-encryption]
 - ChecksumCRC32 / ChecksumCRC32C / ChecksumCRC64NVME / ChecksumSHA1 / ChecksumSHA256 / ChecksumType are omitted from CompleteMultipartUploadResult. Azure Blob Storage does not expose AWS aggregate checksum results, and this layer intentionally does not synthesize COMPOSITE, FULL_OBJECT, or CRC64NVME claims without executable parity evidence. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.CompleteMultipartUpload_accepts_matching_persisted_part_checksum] [conformance:multipart-upload-copy-complete-roundtrip::missing-field:ChecksumCRC64NVME] [conformance:multipart-upload-copy-complete-roundtrip::missing-field:ChecksumType]
+- Later GetObject/HeadObject checksum-mode requests also omit flexible-checksum headers for multipart objects. No whole-object recomputation is attempted; large-object rereads would violate the sidecar CPU, request-count, latency, and bounded-memory premise.
 - Checksum-enabled completion rejects missing per-part checksum metadata (including copied parts), missing manifest checksum values, digest mismatches, and algorithms that differ from the CreateMultipartUpload selection before committing Azure's block list. [conformance:Aws2Azure.UnitTests.S3.MultipartHandlersTests.CompleteMultipartUpload_rejects_missing_or_mixed_part_checksums]
 - After the durable upload state is retired, CompleteMultipartUpload best-effort deletes up to 256 hidden per-part checksum records immediately; larger uploads or transient cleanup failures rely on the existing seven-day multipart-state expiry sweep.
 - The <Location> element echoes the proxy's own inbound scheme+host+bucket+key (correctly percent-encoded, including internal '/' characters within the key, matching real S3's opaque-key encoding of this field) rather than an "s3.<region>.amazonaws.com"/"<bucket>.s3.<region>.amazonaws.com" domain. Because the proxy is not actually hosted on an AWS-owned domain, byte-identical parity with AWS's own domain is structurally unattainable regardless of deployment topology; only the URL *shape* (scheme, path/virtual-hosted addressing style, encoding) can match. [conformance:multipart-upload-copy-complete-roundtrip::field-value:Location]
@@ -78,4 +78,5 @@ CompleteMultipartUploadResult does not claim COMPOSITE, FULL_OBJECT, or CRC64NVM
 
 - <https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html>
 - <https://learn.microsoft.com/rest/api/storageservices/put-block-list>
+- <https://github.com/pedrosakuma/aws2azure/issues/1106>
 

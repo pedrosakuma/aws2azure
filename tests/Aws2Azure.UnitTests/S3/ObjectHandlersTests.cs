@@ -49,7 +49,7 @@ public sealed class ObjectHandlersTests
     }
 
     [Fact]
-    public async Task PutObject_does_not_emit_bucket_headers_and_keeps_checksum_type()
+    public async Task PutObject_without_checksum_omits_bucket_and_checksum_headers()
     {
         var handler = new ScriptedHandler();
         var putResponse = AzureResponse(HttpStatusCode.Created, eTag: "\"0xPUT\"");
@@ -68,7 +68,7 @@ public sealed class ObjectHandlersTests
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
         Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-region"));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-bucket-arn"));
-        Assert.Equal("FULL_OBJECT", context.Response.Headers["x-amz-checksum-type"]);
+        Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-type"));
         Assert.Equal("AES256", context.Response.Headers["x-amz-server-side-encryption"]);
         Assert.Equal(S3VersionIdCodec.Encode("2026-08-08T12:00:00.0000000Z"), context.Response.Headers["x-amz-version-id"]);
     }
@@ -182,6 +182,66 @@ public sealed class ObjectHandlersTests
         Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-crc32c"));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha1"));
         Assert.False(context.Response.Headers.ContainsKey("x-amz-checksum-sha256"));
+    }
+
+    [Fact]
+    public async Task GetObject_checksum_mode_exposes_persisted_checksum()
+    {
+        var handler = new ScriptedHandler();
+        var response = GetResponse("hello"u8.ToArray(), contentType: "application/octet-stream");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName,
+            "CRC32C");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName,
+            "mnG7TA==");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket/object.txt",
+            headers: [new KeyValuePair<string, string>("x-amz-checksum-mode", "ENABLED")]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.GetObject, "bucket", "object.txt", VirtualHosted: false),
+            NewBlobClient(http),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("mnG7TA==", context.Response.Headers["x-amz-checksum-crc32c"].ToString());
+        Assert.Equal("FULL_OBJECT", context.Response.Headers["x-amz-checksum-type"].ToString());
+        Assert.Equal("hello", await TestHttpContext.ReadBodyAsync(context));
+    }
+
+    [Fact]
+    public async Task GetObject_checksum_mode_fails_closed_before_streaming_corrupt_metadata()
+    {
+        var handler = new ScriptedHandler();
+        var response = GetResponse("must-not-stream"u8.ToArray(), contentType: "application/octet-stream");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.AlgorithmMetadataName,
+            "CRC32");
+        response.Headers.TryAddWithoutValidation(
+            "x-ms-meta-" + FlexibleChecksumMetadata.DigestMetadataName,
+            "not-base64");
+        handler.Enqueue(response);
+        using var http = new AzureHttpClient(handler, ownsHandler: false);
+        var context = TestHttpContext.CreateContext(
+            method: HttpMethods.Get,
+            path: "/bucket/object.txt",
+            headers: [new KeyValuePair<string, string>("x-amz-checksum-mode", "ENABLED")]);
+
+        await ObjectHandlers.HandleAsync(
+            context,
+            new S3RouteResult(S3Operation.GetObject, "bucket", "object.txt", VirtualHosted: false),
+            NewBlobClient(http),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        var body = await TestHttpContext.ReadBodyAsync(context);
+        Assert.Contains("<Code>InternalError</Code>", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("must-not-stream", body, StringComparison.Ordinal);
     }
 
     [Fact]

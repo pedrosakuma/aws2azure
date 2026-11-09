@@ -595,11 +595,26 @@ internal static class ObjectHandlers
         }
 
         using var headResp = await blob.SendBlobRequestAsync(head, ct).ConfigureAwait(false);
-        if (!headResp.IsSuccessStatusCode || !HeaderForwarding.HasInternalMultipartPartCountMetadata(headResp))
+        if (!headResp.IsSuccessStatusCode)
         {
             return (
                 null,
-                headResp.IsSuccessStatusCode ? HeaderForwarding.TranslateAzureResponseEtagToS3(headResp) : null,
+                null,
+                null,
+                headResp.Content.Headers.LastModified,
+                ReadHeader(headResp, "x-ms-version-id"));
+        }
+
+        if (FlexibleChecksumMetadata.Read(headResp, out _) == FlexibleChecksumMetadata.ReadKind.Corrupt)
+        {
+            return (CorruptChecksumMetadata(), null, null, null, null);
+        }
+
+        if (!HeaderForwarding.HasInternalMultipartPartCountMetadata(headResp))
+        {
+            return (
+                null,
+                HeaderForwarding.TranslateAzureResponseEtagToS3(headResp),
                 null,
                 headResp.Content.Headers.LastModified,
                 ReadHeader(headResp, "x-ms-version-id"));
@@ -751,6 +766,7 @@ internal static class ObjectHandlers
             azureReq.Options.Set(Aws2Azure.Core.Azure.AzureHttpClient.NoRetryOption, true);
             azureReq.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob");
             HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
+            FlexibleChecksumMetadata.AddToRequest(azureReq, checksumValidation);
 
             // If we decoded aws-chunked, remove that encoding from Content-Encoding
             // since the body is now decoded. Preserve any other encodings (e.g. gzip).
@@ -803,6 +819,14 @@ internal static class ObjectHandlers
                     }
                 }
 
+                string? validatedDigest = null;
+                if (checksumValidation is not null &&
+                    !checksumValidation.TryGetValidatedDigest(out validatedDigest))
+                {
+                    await S3ErrorMapping.WriteAsync(context, IncompleteChecksumValidation()).ConfigureAwait(false);
+                    return;
+                }
+
                 // S3 PUT object response is empty with ETag in the header.
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
@@ -810,7 +834,12 @@ internal static class ObjectHandlers
                 HeaderForwarding.ApplyObjectResponseHeaders(
                     context.Response,
                     serverSideEncryption: true,
-                    checksumType: true);
+                    checksumType: checksumValidation is not null);
+                if (checksumValidation is not null)
+                {
+                    context.Response.Headers[FlexibleChecksumValidation.GetHeaderName(checksumValidation.Algorithm)] =
+                        validatedDigest!;
+                }
                 context.Response.ContentLength = 0;
             }
         }
@@ -835,6 +864,12 @@ internal static class ObjectHandlers
 
     private static async Task GetAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (!TryReadChecksumMode(context.Request, out var checksumModeEnabled, out var checksumModeError))
+        {
+            await S3ErrorMapping.WriteAsync(context, checksumModeError!.Value).ConfigureAwait(false);
+            return;
+        }
+
         using var azureReq = new HttpRequestMessage(HttpMethod.Get, BuildObjectUri(blob, bucket, key, context.Request));
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
@@ -845,6 +880,17 @@ internal static class ObjectHandlers
             return;
         }
 
+        FlexibleChecksumMetadata.Value checksum = default;
+        var checksumRead = FlexibleChecksumMetadata.Read(azureResp, out checksum);
+        if (checksumRead == FlexibleChecksumMetadata.ReadKind.Corrupt)
+        {
+            await S3ErrorMapping.WriteAsync(context, CorruptChecksumMetadata()).ConfigureAwait(false);
+            return;
+        }
+        checksumModeEnabled = checksumModeEnabled
+            && azureResp.StatusCode == HttpStatusCode.OK
+            && checksumRead == FlexibleChecksumMetadata.ReadKind.Success;
+
         context.Response.StatusCode = (int)azureResp.StatusCode;
         HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
@@ -852,6 +898,10 @@ internal static class ObjectHandlers
             context.Response,
             defaultContentType: azureResp.StatusCode != System.Net.HttpStatusCode.NotModified,
             serverSideEncryption: true);
+        if (checksumModeEnabled)
+        {
+            FlexibleChecksumMetadata.ApplyToResponse(context.Response, checksum);
+        }
         ApplyGetResponseOverrides(context.Request, context.Response);
 
         if (azureResp.StatusCode == System.Net.HttpStatusCode.NotModified)
@@ -899,6 +949,12 @@ internal static class ObjectHandlers
 
     private static async Task HeadAsync(HttpContext context, BlobClient blob, string bucket, string key, CancellationToken ct)
     {
+        if (!TryReadChecksumMode(context.Request, out var checksumModeEnabled, out var checksumModeError))
+        {
+            await EmitHeadErrorAsync(context, checksumModeError!.Value).ConfigureAwait(false);
+            return;
+        }
+
         using var azureReq = new HttpRequestMessage(HttpMethod.Head, BuildObjectUri(blob, bucket, key, context.Request));
         HeaderForwarding.CopyToAzureRequest(context.Request, azureReq);
 
@@ -921,6 +977,16 @@ internal static class ObjectHandlers
             return;
         }
 
+        FlexibleChecksumMetadata.Value checksum = default;
+        var checksumRead = FlexibleChecksumMetadata.Read(azureResp, out checksum);
+        if (checksumRead == FlexibleChecksumMetadata.ReadKind.Corrupt)
+        {
+            await EmitHeadErrorAsync(context, CorruptChecksumMetadata()).ConfigureAwait(false);
+            return;
+        }
+        checksumModeEnabled = checksumModeEnabled
+            && checksumRead == FlexibleChecksumMetadata.ReadKind.Success;
+
         context.Response.StatusCode = StatusCodes.Status200OK;
         HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
         HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
@@ -928,6 +994,10 @@ internal static class ObjectHandlers
             context.Response,
             defaultContentType: true,
             serverSideEncryption: true);
+        if (checksumModeEnabled)
+        {
+            FlexibleChecksumMetadata.ApplyToResponse(context.Response, checksum);
+        }
 
         var translatedEtag = context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.ETag].ToString();
         if (!string.IsNullOrEmpty(translatedEtag))
@@ -1302,6 +1372,61 @@ internal static class ObjectHandlers
             response.Headers[headerName] = value;
         }
     }
+
+    private static bool TryReadChecksumMode(
+        HttpRequest request,
+        out bool enabled,
+        out S3ErrorMapping.Mapping? error)
+    {
+        enabled = false;
+        error = null;
+        if (!request.Headers.TryGetValue("x-amz-checksum-mode", out var values))
+        {
+            return true;
+        }
+
+        string? found = null;
+        foreach (var rawValue in values)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                continue;
+            }
+            if (found is not null)
+            {
+                error = S3ErrorMapping.InvalidArgument(
+                    "Header x-amz-checksum-mode must contain exactly one value.");
+                return false;
+            }
+            found = rawValue.Trim();
+        }
+
+        if (found is null)
+        {
+            return true;
+        }
+        if (!found.Equals("ENABLED", StringComparison.OrdinalIgnoreCase))
+        {
+            error = S3ErrorMapping.InvalidArgument(
+                "x-amz-checksum-mode must be ENABLED when supplied.");
+            return false;
+        }
+
+        enabled = true;
+        return true;
+    }
+
+    private static S3ErrorMapping.Mapping CorruptChecksumMetadata() =>
+        new(
+            StatusCodes.Status500InternalServerError,
+            "InternalError",
+            "aws2azure: stored flexible-checksum metadata is incomplete or corrupt.");
+
+    private static S3ErrorMapping.Mapping IncompleteChecksumValidation() =>
+        new(
+            StatusCodes.Status500InternalServerError,
+            "InternalError",
+            "aws2azure: upstream accepted the upload before flexible-checksum validation completed.");
 
     private static Task EmitErrorAsync(HttpContext context, S3ErrorMapping.Mapping mapping, S3Operation op) =>
         op == S3Operation.HeadObject
