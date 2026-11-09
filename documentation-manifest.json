@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:31b6bc6471121c12d46bcd64919a21c80c12b3686b67bca58a1b12640bff48ad",
+  "manifest_revision": "sha256:f1c66d7142f607f85ecb89803aa6868ec606b54a2cb01e0864160e322dc0fd79",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -1972,6 +1972,44 @@
       "authority": "explanatory",
       "provenance": "source",
       "revision": "sha256:9d94efe2af56607acc03af0c387e60d0230546e48ca1115f1d264b2c16c6803d",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1112-evidence-review",
+      "path": "docs/testing/validation-evidence/pr-1112/evidence-review.md",
+      "type": "documentation-guide",
+      "scope": "testing",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:52b4b9687ddae5b18a24bc97906d5835b83fd55da7b6afe7ab38c1227a122bec",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1112-evidencejson",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1112/evidence.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:72938b9c4bdae0dd68d242905206f82095fe39db0b0644c4c4133461808ca9b8",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
+      "id": "documentation:docs-testing-validation-evidence-pr-1112json",
+      "canonical_id": "documentation:docs-testing-validation-evidence-decisions",
+      "path": "docs/testing/validation-evidence/pr-1112.json",
+      "type": "documentation-artifact",
+      "scope": "validation-policy",
+      "authority": "explanatory",
+      "provenance": "source",
+      "revision": "sha256:9555ff2d099d533eb5f23312b30617eb621bbcc72041b6b47a8fd1efd3084d97",
       "freshness": {
         "mode": "current"
       }
