@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "status": "accepted",
+  "status": "pending",
   "gate": "real-azure",
   "mode": "reuse",
   "binding": {
     "toolVersion": "validation-evidence-v1",
-    "baseCommit": "1420803c497bacb2fe76579e1efa695283009402",
-    "mergeBase": "316df3187bda86c01aea23f881842d0e6b5d6ce3",
-    "headCommit": "b7ac40c20ca6167a8748f6716d542566230852d6",
-    "diffSha256": "724bc622f9a3e2d7582ddeaa0f8244f17064a0540d121abc1b9cebbe746140a2",
+    "baseCommit": "46309f6300f36ae0a868019cf33736a34b23586e",
+    "mergeBase": "46309f6300f36ae0a868019cf33736a34b23586e",
+    "headCommit": "bc333992e2afcef4e1839388baf3495f394a8902",
+    "diffSha256": "a6d9ff58076bde4e36934a8ad497beb05c5cb9d1c32acb89d6af4379ad4c9d30",
     "originalPlanSha256": "38cf8e255ee686fbd9f893991caf6d6ecb71eaad22db375dbae9d3ee613926f4",
     "evidenceSourceCommit": "541bb8853656fb2b614262d03b9026178dc66b5a",
-    "evidenceDeltaSha256": "ddd8d6b15b4b9b4e5aba861c64c4214ae19a688634ec7c1a22f4be5fd697d3c7"
+    "evidenceDeltaSha256": "e4adb87cb14cddaf3bf12662939873beb7072bda042fe2cb96ef883dcc96c2d6"
   },
   "originalReasons": [
     "src/Aws2Azure.Core/Azure/AzureHttpClient.cs: authentication or transport behavior needs live-Azure coverage",
@@ -21,11 +21,11 @@
     "src/Aws2Azure.Modules.S3/Streaming/FlexibleChecksumValidation.cs: authentication or transport behavior needs live-Azure coverage",
     "tests/Aws2Azure.IntegrationTests/S3/S3AwsChunkedTests.cs: backend behavior may differ from emulators"
   ],
-  "rationale": "Propose base-only revalidation of reuse for the exact PR #1112 target after the separately reviewed policy record merged through PR #1116. Fresh validation-evidence-v1 review inputs resolve the base to 1420803c497bacb2fe76579e1efa695283009402 while preserving the previous merge base, exact target, target diff SHA256, original plan SHA256, historical successful source and source-to-target delta SHA256 unchanged. Successful integration-real-azure run 42660882106/1 covers source 541bb8853656fb2b614262d03b9026178dc66b5a. The complete source-to-target delta still changes only tests/Aws2Azure.IntegrationTests/S3/S3AwsChunkedTests.cs: the success fixture computes the request body's valid CRC32 trailer and a separate negative test supplies an invalid checksum and expects BadDigest. Shipping code, runtime configuration, workflows and dependencies are unchanged. Artifact 13694678250 remains available and unexpired; its freshly downloaded archive bytes still match GitHub's published SHA256 and the previously retained archive, with no later withdrawal, incident or revocation found. The archive retains successful reports plus real-Azure S3 PutObject evidence but does not contain the changed emulator-backed tests by name, so reuse rests on the independently verified test-fixture-only delta. This is historical evidence reuse, not a new execution, renewed measurement, current Azure health assessment, or canonical workload qualification for the target. Base-only revalidation does not extend the previously approved validity window ending 2026-11-16T23:59:59Z. Changed head/base/diff, withdrawn approval, revoked or unavailable evidence invalidates it immediately. Other required gates and branch protections remain unchanged. Status remains pending until pedrosakuma explicitly approves the prospective final accepted record SHA256 at the attributable review reference.",
+  "rationale": "Propose evidence reuse for reconstructed PR #1112 after merging current policy main into a target history that retains the successful source as an ancestor. Fresh validation-evidence-v1 review inputs from a clean Linux checkout prove successful source 541bb8853656fb2b614262d03b9026178dc66b5a is a genuine ancestor of exact target bc333992e2afcef4e1839388baf3495f394a8902 and bind target tree 29435f58eca7e03e3b168c13c49dfae8508753a2. Successful integration-real-azure run 42660882106/1 covers that source. The complete source-to-target delta adds the previously reviewed PR #1112 evidence records and documentation indexes, corrects the S3 checksum integration fixture to compute a valid CRC32 trailer with a separate BadDigest negative case, and merges policy main. No additional shipping code, runtime configuration, workflow, dependency, or concealed scope appears after the successful source. Artifact 13694678250 remains available and unexpired; freshly downloaded archive bytes match GitHub's published SHA256 and the retained bytes, with no later withdrawal, incident, or revocation found. The archive retains successful source-validation reports plus positive real-Azure S3 PutObject evidence but does not contain the changed emulator-backed S3AwsChunkedTests by name, so reuse depends on the independently verified non-shipping delta. This is historical evidence reuse, not a new execution, renewed measurement, current Azure health assessment, or canonical workload qualification for the target. The validity window remains bounded by 2026-11-16T23:59:59Z, before artifact expiry. Changed head/base/diff, withdrawn approval, revoked or unavailable evidence invalidates it immediately. Other required gates and branch protections remain unchanged. Status remains pending until pedrosakuma explicitly approves the prospective final accepted record SHA256 at the attributable review reference.",
   "approvedBy": "pedrosakuma",
-  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1112#issuecomment-6751430636",
-  "reviewedAtUtc": "2026-11-09T21:04:56Z",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1112#issuecomment-6768241159",
+  "reviewedAtUtc": "2026-11-10T13:12:45Z",
   "validUntilUtc": "2026-11-16T23:59:59Z",
   "evidencePath": "pr-1112/evidence.json",
-  "evidenceSha256": "10966bd83fe81c8439902913ecb64cd86936941ff783db86e38fb869a0387728"
+  "evidenceSha256": "7a583c65b5c72e5a35b6b2b5c75d498e9bef5735eb990741eef73f8361c9dc97"
 }
