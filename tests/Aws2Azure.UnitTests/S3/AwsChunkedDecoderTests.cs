@@ -221,6 +221,41 @@ public class AwsChunkedDecoderTests
         Assert.Empty(output.ToArray());
     }
 
+    [Fact]
+    public async Task Retains_bounded_trailer_values_for_checksum_validation()
+    {
+        var chunked = Encoding.ASCII.GetBytes(
+            "0\r\nx-amz-checksum-crc32:AAAAAA==\r\nx-amz-trailer-signature:deadbeef\r\n\r\n");
+
+        using var inputStream = new MemoryStream(chunked);
+        using var decoder = new AwsChunkedDecoder(
+            inputStream,
+            signingContext: null,
+            leaveOpen: false,
+            expectTrailer: true);
+
+        await decoder.CopyToAsync(Stream.Null);
+        Assert.True(decoder.TryGetTrailerValue("X-Amz-Checksum-Crc32", out var checksum));
+        Assert.Equal("AAAAAA==", checksum);
+    }
+
+    [Fact]
+    public async Task Rejects_duplicate_trailer_headers()
+    {
+        var chunked = Encoding.ASCII.GetBytes(
+            "0\r\nx-amz-checksum-crc32:AAAAAA==\r\nx-amz-checksum-crc32:BBBBBB==\r\n\r\n");
+
+        using var inputStream = new MemoryStream(chunked);
+        using var decoder = new AwsChunkedDecoder(
+            inputStream,
+            signingContext: null,
+            leaveOpen: false,
+            expectTrailer: true);
+
+        await Assert.ThrowsAsync<AwsChunkedTrailerException>(
+            () => decoder.CopyToAsync(Stream.Null));
+    }
+
     private static byte[] BuildChunkedPayload(byte[] payload, int chunkSize, Func<byte[], string> signatureFunc)
     {
         using var ms = new MemoryStream();

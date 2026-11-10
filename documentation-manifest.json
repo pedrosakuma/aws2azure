@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:3bab6eda013ffe6a6a1b931a6c8bbc66671cd2acee493cdc6d713fb97e33e8c4",
+  "manifest_revision": "sha256:c1d25a0b00048b29e799ef636bd4d38d772cc6163e48d385e3357b945b7bbaa2",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-09-28T02:13:05Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:394dd16ecd6ab9f224413a1317a041f0b2d9f5963d2f66bcc8e2fb8b47df14dc",
+    "canonical_inputs_revision": "sha256:9fa69d3874e4ff929468bfd18615dabc7f4be719bceb63f1273b0e8b6b546417",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b"
@@ -1630,7 +1630,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:a7b116cec63fae7831824d4baf8ffa0b595a65ea9461e9b35a8850a7bc1f0d31",
+      "revision": "sha256:f54e22a2703b1b6a0becb4264531a26c543323e3f35023f709bbcaf62c8c0d04",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1666,7 +1666,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:cc7c72033f1e551bba632b7302cf66f27a9af9c842527524d01d4a321d8183d0",
+      "revision": "sha256:90e2bad94411a4355ac737466e5a0dccc062bbace0e88bc492fc717e414317ab",
       "freshness": {
         "mode": "derived-current"
       }
@@ -4922,7 +4922,7 @@
       "provenance": "generated",
       "service": "s3",
       "operation": "PutObject",
-      "revision": "sha256:d55c7354ecc7c0e8b5e84e950ecfb8c383537bba8e14111c72b0e2f26931b8f9",
+      "revision": "sha256:3ae347e44e4675ff2225ee4499e20877f27e45c9032188db497f2128cfc4ae67",
       "freshness": {
         "mode": "derived-current",
         "verified_real_azure_date": "2026-07-16"
@@ -4938,7 +4938,7 @@
       "provenance": "source",
       "service": "s3",
       "operation": "PutObject",
-      "revision": "sha256:738503bcec7f7acd667f16147d31f4e4423e3dc985caae7ed70db5e9ba5f630a",
+      "revision": "sha256:5366697048d845f1f4c9f496f7f99fbe04c6cfc3f0321ec15b4d31b28dcf28ba",
       "freshness": {
         "mode": "current",
         "verified_real_azure_date": "2026-07-16"
@@ -7725,7 +7725,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:a955999e37232ec44fc49d8bd506a0dc73b446c60c808ac3c7531657df7bc182",
+      "revision": "sha256:fbf9d51b67e600de1ae4a94c4a4497989b3f040e1cc0930863071bb33fc915ec",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7739,7 +7739,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:8753adf571118395e79f39ebcd2926ac0c293653e31cbfb6a169c3f11fce2a62",
+      "revision": "sha256:d43bc9c43699524823f14d911f2f760593090632814c74e503c387f57ca0626f",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7753,7 +7753,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:3aeefcb7b5a9d9c244c5c5facb65ce8df2cb0ce9515370884aa4310e2949333c",
+      "revision": "sha256:80c9488b9af00c6a6bcf77a6eeb5f9eb8b6c7a583ca20de079ba3acda75bfff9",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"

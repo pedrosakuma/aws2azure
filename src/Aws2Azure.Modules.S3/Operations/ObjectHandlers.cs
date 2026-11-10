@@ -703,12 +703,48 @@ internal static class ObjectHandlers
         }
 
         var body = AwsChunkedRequest.PrepareBodyStream(context.Request, credentials);
+        if (!FlexibleChecksumValidation.TryCreate(
+            context.Request,
+            body.Decoder,
+            out var checksumValidation,
+            out var checksumSetupError))
+        {
+            await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                StatusCodes.Status400BadRequest,
+                checksumSetupError.Code,
+                checksumSetupError.Message)).ConfigureAwait(false);
+            body.Decoder?.Dispose();
+            return;
+        }
 
         try
         {
+            using var checksumBody = checksumValidation?.CreateStream(body.Body);
+            if (checksumBody is not null && body.ContentLength == 0)
+            {
+                try
+                {
+                    if (await checksumBody.ReadAsync(new byte[1], ct).ConfigureAwait(false) != 0)
+                    {
+                        await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.InvalidArgument(
+                            "x-amz-decoded-content-length declared an empty payload but the request body contained data."))
+                            .ConfigureAwait(false);
+                        return;
+                    }
+                }
+                catch (Exception ex) when (FlexibleChecksumValidation.TryFindFailure(ex, out var checksumFailure))
+                {
+                    await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                        StatusCodes.Status400BadRequest,
+                        checksumFailure.Code,
+                        checksumFailure.Message)).ConfigureAwait(false);
+                    return;
+                }
+            }
+
             using var azureReq = new HttpRequestMessage(HttpMethod.Put, blob.BuildBlobUri(bucket, key))
             {
-                Content = new StreamContent(body.Body),
+                Content = new StreamContent(checksumBody ?? body.Body),
             };
             // The request body is a non-replayable client stream; the Azure client's
             // retry loop would otherwise have to buffer the entire upload.
@@ -734,34 +770,49 @@ internal static class ObjectHandlers
                 azureReq.Content.Headers.ContentLength = len;
             }
 
-            using var azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
-            if (!azureResp.IsSuccessStatusCode)
+            HttpResponseMessage azureResp;
+            try
             {
-                await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
+                azureResp = await blob.SendBlobRequestAsync(azureReq, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (FlexibleChecksumValidation.TryFindFailure(ex, out var checksumFailure))
+            {
+                await S3ErrorMapping.WriteAsync(context, new S3ErrorMapping.Mapping(
+                    StatusCodes.Status400BadRequest,
+                    checksumFailure.Code,
+                    checksumFailure.Message)).ConfigureAwait(false);
                 return;
             }
-
-            if (tags!.Count > 0)
+            using (azureResp)
             {
-                var versionId = ReadHeader(azureResp, "x-ms-version-id");
-                var tagsBody = Aws2Azure.Modules.S3.Xml.S3XmlWriter.AzureBlobTagsBody(tags);
-                using var tagsResponse = await blob.PutBlobTagsAsync(bucket, key, tagsBody, versionId, ct).ConfigureAwait(false);
-                if (!tagsResponse.IsSuccessStatusCode)
+                if (!azureResp.IsSuccessStatusCode)
                 {
-                    await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(tagsResponse, S3Operation.PutObject)).ConfigureAwait(false);
+                    await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(azureResp, S3Operation.PutObject)).ConfigureAwait(false);
                     return;
                 }
-            }
 
-            // S3 PUT object response is empty with ETag in the header.
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
-            HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
-            HeaderForwarding.ApplyObjectResponseHeaders(
-                context.Response,
-                serverSideEncryption: true,
-                checksumType: true);
-            context.Response.ContentLength = 0;
+                if (tags!.Count > 0)
+                {
+                    var versionId = ReadHeader(azureResp, "x-ms-version-id");
+                    var tagsBody = Aws2Azure.Modules.S3.Xml.S3XmlWriter.AzureBlobTagsBody(tags);
+                    using var tagsResponse = await blob.PutBlobTagsAsync(bucket, key, tagsBody, versionId, ct).ConfigureAwait(false);
+                    if (!tagsResponse.IsSuccessStatusCode)
+                    {
+                        await S3ErrorMapping.WriteAsync(context, S3ErrorMapping.FromAzure(tagsResponse, S3Operation.PutObject)).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                // S3 PUT object response is empty with ETag in the header.
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                HeaderForwarding.ApplyCommonS3ResponseHeaders(context.Response);
+                HeaderForwarding.CopyFromAzureResponse(azureResp, context.Response);
+                HeaderForwarding.ApplyObjectResponseHeaders(
+                    context.Response,
+                    serverSideEncryption: true,
+                    checksumType: true);
+                context.Response.ContentLength = 0;
+            }
         }
         finally
         {
