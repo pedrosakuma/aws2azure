@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "pending",
+  "status": "accepted",
   "gate": "real-azure",
   "mode": "reuse",
   "binding": {
