@@ -177,10 +177,13 @@ reverse.
   behavior (for example an inline `[conformance:...]` tag or a fully-qualified
   test name).
 
-Regenerate after editing any YAML:
+After editing `docs/gaps/**/*.yaml` or `docs/workloads/**/*.yaml`, update
+`docs/workloads/certification/authority.yaml`
+`expected_canonical_inputs_revision` to the new canonical-input hash, then run:
 
 ```
 dotnet run --project tools/Aws2Azure.GapDocs
+dotnet run --project tools/Aws2Azure.Documentation
 ```
 
 CI (`.github/workflows/gap-docs.yml`) runs the tool with `--validate` and
@@ -250,6 +253,25 @@ projects.
   `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
 - Keep PRs scoped to one phase task. Update / add gap-doc YAML in the same PR
   as the code that implements the operation.
+
+## Agent customization layers
+
+Keep always-on context small. Each layer has one responsibility:
+
+| Layer | Responsibility |
+|---|---|
+| `AGENTS.md` | Canonical repository decisions, invariants, and contributor policy |
+| `.github/copilot-instructions.md` | Short Copilot bootstrap that points back to this contract |
+| `.github/skills/*` | Task-specific procedures loaded only when their description matches the work |
+| Agents and sub-agents | Bounded judgment, research, implementation, or independent review |
+| Repository tools and CI | Mechanical validation and authoritative pass/fail evidence |
+
+Do not duplicate detailed procedures across layers or preload unrelated skills.
+For non-trivial or initially fuzzy multi-file work, use the
+`aws2azure-context-map` skill before editing. Once the diff is stable, use the
+`aws2azure-validation-plan` skill to select focused checks and interpret the
+change-aware validation plan. Record only durable decisions, constraints,
+evidence, and next actions; discard exploratory narration.
 
 ## Agent workflow conventions
 
