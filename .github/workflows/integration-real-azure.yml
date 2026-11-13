@@ -782,7 +782,7 @@ jobs:
       # without re-provisioning any live Azure resources.
       - name: Upload canonical real-Azure evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: real-azure-canonical-evidence
           path: ${{ env.AWS2AZURE_CONFORMANCE_EVIDENCE_DIR }}
@@ -901,7 +901,7 @@ jobs:
 
       - name: Upload conformance evidence
         if: always() && steps.mode.outputs.qualifying == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: real-azure-conformance
           path: |
@@ -917,7 +917,7 @@ jobs:
 
       - name: Upload explicitly non-qualifying correctness validation
         if: always() && steps.mode.outputs.qualifying != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: source-validation-real-azure-conformance
           path: |
@@ -930,7 +930,7 @@ jobs:
 
       - name: Upload divergence report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: real-azure-divergences
           path: docs/site/divergences.md
