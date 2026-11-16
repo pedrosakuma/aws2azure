@@ -47,14 +47,7 @@ internal static class SecretsManagerOperationSupport
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        if (response.StatusCode != HttpStatusCode.Forbidden)
-        {
-            return false;
-        }
-
-        var error = await TryReadKeyVaultErrorAsync(response.Content, cancellationToken).ConfigureAwait(false);
-        if (!string.Equals(error?.Code, "Forbidden", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(error?.Message?.Trim(), "Operation is disabled for this secret version.", StringComparison.OrdinalIgnoreCase))
+        if (!await IsDisabledSecretVersionAsync(response, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
@@ -65,6 +58,20 @@ internal static class SecretsManagerOperationSupport
             "ResourceNotFoundException",
             "Secrets Manager can't find the specified secret value because the requested Key Vault secret version is disabled.").ConfigureAwait(false);
         return true;
+    }
+
+    public static async Task<bool> IsDisabledSecretVersionAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.StatusCode != HttpStatusCode.Forbidden)
+        {
+            return false;
+        }
+
+        var error = await TryReadKeyVaultErrorAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        return string.Equals(error?.Code, "Forbidden", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(error?.Message?.Trim(), "Operation is disabled for this secret version.", StringComparison.OrdinalIgnoreCase);
     }
 
     public static string? ReadString(JsonDocument document, string propertyName)

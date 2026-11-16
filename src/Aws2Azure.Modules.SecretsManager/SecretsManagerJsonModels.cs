@@ -13,6 +13,15 @@ internal sealed record GetSecretValueResponse(
     [property: JsonPropertyName("VersionStages")] IReadOnlyList<string>? VersionStages,
     [property: JsonPropertyName("CreatedDate")][property: JsonConverter(typeof(EpochDateTimeOffsetConverter))] DateTimeOffset? CreatedDate);
 
+internal sealed record BatchGetSecretValueResponse(
+    [property: JsonPropertyName("Errors")] IReadOnlyList<BatchGetSecretValueError> Errors,
+    [property: JsonPropertyName("SecretValues")] IReadOnlyList<GetSecretValueResponse> SecretValues);
+
+internal sealed record BatchGetSecretValueError(
+    [property: JsonPropertyName("ErrorCode")] string ErrorCode,
+    [property: JsonPropertyName("Message")] string Message,
+    [property: JsonPropertyName("SecretId")] string SecretId);
+
 internal sealed record CreateSecretResponse(
     [property: JsonPropertyName("ARN")] string Arn,
     [property: JsonPropertyName("Name")] string Name,
@@ -102,6 +111,8 @@ internal sealed record KeyVaultSecretTagsRequest(
     [property: JsonPropertyName("tags")] IReadOnlyDictionary<string, string>? Tags);
 
 [JsonSerializable(typeof(GetSecretValueResponse))]
+[JsonSerializable(typeof(BatchGetSecretValueResponse))]
+[JsonSerializable(typeof(BatchGetSecretValueError))]
 [JsonSerializable(typeof(CreateSecretResponse))]
 [JsonSerializable(typeof(DeleteSecretResponse))]
 [JsonSerializable(typeof(DescribeSecretResponse))]

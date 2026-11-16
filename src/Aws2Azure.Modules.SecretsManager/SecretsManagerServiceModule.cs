@@ -128,6 +128,9 @@ public sealed class SecretsManagerServiceModule : IServiceModule
                 case SecretsManagerOperation.GetSecretValue:
                     await GetSecretValueHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;
+                case SecretsManagerOperation.BatchGetSecretValue:
+                    await BatchGetSecretValueHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
+                    return;
                 case SecretsManagerOperation.CreateSecret:
                     await CreateSecretHandler.HandleAsync(context, client, document, context.RequestAborted).ConfigureAwait(false);
                     return;

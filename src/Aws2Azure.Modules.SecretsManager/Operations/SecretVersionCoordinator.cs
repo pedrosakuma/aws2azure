@@ -100,7 +100,7 @@ internal static class SecretVersionCoordinator
             : KeyVaultSecretClient.GetUserTags(current.Tags);
     }
 
-    private static async Task<VersionListResult> ListVersionsCoreAsync(
+    internal static async Task<VersionListResult> ListVersionsCoreAsync(
         KeyVaultSecretClient client,
         string token,
         string name,
@@ -900,7 +900,7 @@ internal static class SecretVersionCoordinator
     internal readonly record struct TokenResolution(SecretVersionMetadata? Version, bool Conflict);
     internal readonly record struct SecretInventoryLookup(bool Exists, IReadOnlyList<SecretVersionMetadata> Versions);
     internal readonly record struct PublishedVersionResult(string VersionId, IReadOnlyList<string> VersionStages);
-    private readonly record struct VersionListResult(HttpStatusCode? StatusCode, List<SecretVersionMetadata>? Versions);
+    internal readonly record struct VersionListResult(HttpStatusCode? StatusCode, List<SecretVersionMetadata>? Versions);
     private readonly record struct StageUpdateResult(bool Success, bool Fatal, HttpStatusCode? StatusCode)
     {
         public static StageUpdateResult Succeeded => new(true, false, null);

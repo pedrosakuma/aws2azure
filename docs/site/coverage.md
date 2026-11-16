@@ -104,6 +104,7 @@ For adoption decisions, start with the generated [workload compatibility](worklo
 | s3 | [RestoreObject](operations/s3/restoreobject.md) | ⛔ unsupported | 🔵 by design | — | — | `(no equivalent — proxy returns 501 NotImplemented)` |
 | s3 | [UploadPart](operations/s3/uploadpart.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Put Block (?comp=block&blockid=…)` |
 | s3 | [UploadPartCopy](operations/s3/uploadpartcopy.md) | ✅ implemented | — | — | ✅ | `Proxy state HEAD/verification + Put Block From URL (?comp=block&blockid=…)` |
+| secretsmanager | [BatchGetSecretValue](operations/secretsmanager/batchgetsecretvalue.md) | 🟡 partial | 🛠️ feasible backlog | [#1107](https://github.com/pedrosakuma/aws2azure/issues/1107) | — | `Bounded fan-out of GET https://{vault}.vault.azure.net/secrets/{name} and version inventory requests` |
 | secretsmanager | [CreateSecret](operations/secretsmanager/createsecret.md) | ✅ implemented | — | — | ✅ | `PUT https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DeleteSecret](operations/secretsmanager/deletesecret.md) | ✅ implemented | — | — | ✅ | `DELETE https://{vault}.vault.azure.net/secrets/{name}` |
 | secretsmanager | [DescribeSecret](operations/secretsmanager/describesecret.md) | ✅ implemented | — | — | ✅ | `GET https://{vault}.vault.azure.net/secrets/{name}?api-version=7.6` |
