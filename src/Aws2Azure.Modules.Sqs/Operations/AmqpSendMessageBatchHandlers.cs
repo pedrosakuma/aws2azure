@@ -174,7 +174,8 @@ internal static class AmqpSendMessageBatchHandlers
             for (var i = 0; i < entries.Count; i++)
             {
                 sendTasks[i] = SendOneAsync(
-                    sender, entries[i], idempotencyKeys[i], entryErrors, transportFailures, i, ct);
+                    sender, entries[i], idempotencyKeys[i], batchIsFifoQueue,
+                    entryErrors, transportFailures, i, ct);
                 await sendTasks[i].ConfigureAwait(false);
             }
         }
@@ -183,7 +184,8 @@ internal static class AmqpSendMessageBatchHandlers
             for (var i = 0; i < entries.Count; i++)
             {
                 sendTasks[i] = SendOneAsync(
-                    sender, entries[i], idempotencyKeys[i], entryErrors, transportFailures, i, ct);
+                    sender, entries[i], idempotencyKeys[i], batchIsFifoQueue,
+                    entryErrors, transportFailures, i, ct);
             }
             await Task.WhenAll(sendTasks).ConfigureAwait(false);
         }
@@ -224,6 +226,7 @@ internal static class AmqpSendMessageBatchHandlers
         ServiceBusAmqpSender sender,
         SendMessageHandlers.BatchEntry entry,
         string idempotencyKey,
+        bool isFifoQueue,
         SqsErrorMapping.Mapping?[] errors,
         bool[] transportFailures,
         int index,
@@ -234,6 +237,7 @@ internal static class AmqpSendMessageBatchHandlers
             attrs: entry.Attributes,
             messageId: idempotencyKey,
             groupId: entry.GroupId,
+            isFifoQueue,
             delaySeconds: entry.DelaySeconds);
         try
         {

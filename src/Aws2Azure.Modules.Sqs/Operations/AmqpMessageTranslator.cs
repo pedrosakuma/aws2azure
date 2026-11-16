@@ -80,15 +80,15 @@ internal static class AmqpMessageTranslator
             }
         }
 
-        // MessageGroupId: SB stamps the SQS MessageGroupId onto both
-        // properties.group-id (slice 7c.2 parsed it) and the SB
-        // session-id. Prefer the per-message value (it survives across
-        // session-receiver rebinds) but fall back to the receiver's
-        // bound session-id when the producer skipped the explicit
-        // properties section.
+        // FIFO MessageGroupId is carried by properties.group-id / the
+        // receiver's bound session. Standard queues use an application
+        // property instead so the metadata round-trips without enabling
+        // Service Bus session ordering.
         var messageGroupId = msg.Message.Properties.GroupId;
         if (string.IsNullOrEmpty(messageGroupId))
             messageGroupId = receiverSessionId;
+        if (string.IsNullOrEmpty(messageGroupId))
+            messageGroupId = SqsMessageGroupMetadata.Read(msg.Message.ApplicationProperties);
 
         var systemAttrs = BuildSystemAttributes(
             enqueuedTimeMillis, deliveryCount, sequenceNumber, messageGroupId,

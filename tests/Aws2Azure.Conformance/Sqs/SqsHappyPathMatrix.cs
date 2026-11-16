@@ -34,6 +34,7 @@ public static class SqsHappyPathMatrix
     public static IReadOnlyList<IConformanceCase> Cases { get; } =
     [
         CreateRoundTripCase(),
+        CreateFairQueueMetadataRoundTripCase(),
         CreatePaginationCase(),
         CreateBatchCase(),
         CreateQueueTaggingRoundTripCase(),
@@ -87,6 +88,72 @@ public static class SqsHappyPathMatrix
                         new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
                         new("ReceiptHandle", state.RequireXmlValue("receive-message", "ReceiptHandle")),
                     ])),
+                    new ConformanceRequestStep("delete-queue", state => BuildRequest(context, [
+                        new("Action", "DeleteQueue"),
+                        new("Version", "2012-11-05"),
+                        new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
+                    ])),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateFairQueueMetadataRoundTripCase()
+        => new(
+            "standard-queue-message-group-id-roundtrip",
+            "sqs:CreateQueue/SendMessage/ReceiveMessage/DeleteMessage/DeleteQueue",
+            ConformanceCaseExpectation.Success(
+            [
+                new(200, RequiredBodyAssertions: [new("CreateQueueResult.QueueUrl", "Returned by CreateQueue.")]),
+                new(200, RequiredBodyAssertions: [new("SendMessageResult.MessageId", "Standard queue accepts MessageGroupId.")]),
+                new(200, RequiredBodyAssertions: [new("ReceiveMessageResult.Message.Attribute.Value", "Equals tenant-a for the requested MessageGroupId attribute.")]),
+                new(200),
+                new(200),
+            ],
+            semanticAssertion:
+            "A standard queue must accept MessageGroupId, return the same value as a requested system attribute, and must not impose FIFO ordering semantics."),
+            static (context, _) =>
+            {
+                var queueName = context.GetProperty("fairQueueName")
+                    ?? ("conf-fair-queue-" + Guid.NewGuid().ToString("N")[..12]);
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("create-queue", _ => BuildRequest(context, [
+                        new("Action", "CreateQueue"),
+                        new("Version", "2012-11-05"),
+                        new("QueueName", queueName),
+                    ])),
+                    new ConformanceRequestStep("send-message", state => BuildRequest(context, [
+                        new("Action", "SendMessage"),
+                        new("Version", "2012-11-05"),
+                        new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
+                        new("MessageBody", "fair-queue-message"),
+                        new("MessageGroupId", "tenant-a"),
+                    ])),
+                    new ConformanceRequestStep("receive-message", state => BuildRequest(context, [
+                        new("Action", "ReceiveMessage"),
+                        new("Version", "2012-11-05"),
+                        new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
+                        new("MaxNumberOfMessages", "1"),
+                        new("WaitTimeSeconds", "5"),
+                        new("AttributeName.1", "MessageGroupId"),
+                    ])),
+                    new ConformanceRequestStep("delete-message", state =>
+                    {
+                        var attributeName = state.RequireXmlValue("receive-message", "Name");
+                        var attributeValue = state.RequireXmlValue("receive-message", "Value");
+                        if (!string.Equals(attributeName, "MessageGroupId", StringComparison.Ordinal)
+                            || !string.Equals(attributeValue, "tenant-a", StringComparison.Ordinal))
+                        {
+                            throw new InvalidOperationException(
+                                $"ReceiveMessage returned {attributeName}={attributeValue}; expected MessageGroupId=tenant-a.");
+                        }
+
+                        return BuildRequest(context, [
+                            new("Action", "DeleteMessage"),
+                            new("Version", "2012-11-05"),
+                            new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
+                            new("ReceiptHandle", state.RequireXmlValue("receive-message", "ReceiptHandle")),
+                        ]);
+                    }),
                     new ConformanceRequestStep("delete-queue", state => BuildRequest(context, [
                         new("Action", "DeleteQueue"),
                         new("Version", "2012-11-05"),
@@ -180,8 +247,10 @@ public static class SqsHappyPathMatrix
                         new("QueueUrl", state.RequireXmlValue("create-queue", "QueueUrl")),
                         new("SendMessageBatchRequestEntry.1.Id", "a"),
                         new("SendMessageBatchRequestEntry.1.MessageBody", "first"),
+                        new("SendMessageBatchRequestEntry.1.MessageGroupId", "tenant-a"),
                         new("SendMessageBatchRequestEntry.2.Id", "b"),
                         new("SendMessageBatchRequestEntry.2.MessageBody", "second"),
+                        new("SendMessageBatchRequestEntry.2.MessageGroupId", "tenant-b"),
                     ])),
                     new ConformanceRequestStep("delete-queue", state => BuildRequest(context, [
                         new("Action", "DeleteQueue"),
