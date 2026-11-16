@@ -6,6 +6,7 @@ internal enum SecretsManagerOperation
 {
     Unknown = 0,
     GetSecretValue,
+    BatchGetSecretValue,
     CreateSecret,
     PutSecretValue,
     UpdateSecret,
@@ -23,6 +24,7 @@ internal static class SecretsManagerOperationNames
     private static readonly Dictionary<string, SecretsManagerOperation> Map = new(System.StringComparer.Ordinal)
     {
         ["GetSecretValue"] = SecretsManagerOperation.GetSecretValue,
+        ["BatchGetSecretValue"] = SecretsManagerOperation.BatchGetSecretValue,
         ["CreateSecret"] = SecretsManagerOperation.CreateSecret,
         ["PutSecretValue"] = SecretsManagerOperation.PutSecretValue,
         ["UpdateSecret"] = SecretsManagerOperation.UpdateSecret,

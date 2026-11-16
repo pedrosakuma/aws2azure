@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:44e304261af5ec40c65d4fb0f7232d563069bf3c73ac320d538874a98c5da3cd",
+  "manifest_revision": "sha256:fd4a99008500eeb840651fcd021c26b0d1334e155e56894d64966072934b0ee7",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -36,7 +36,7 @@
     "contract_path": "docs/workloads/certification/authority.yaml",
     "evaluated_as_of_utc": "2026-09-28T02:13:05Z",
     "canonical_inputs_revision_type": "normalized_yaml_sha256",
-    "canonical_inputs_revision": "sha256:c77f3330c8ca37c811458c55c8547b9af0941f7b05353a5f569f36f271ba7cac",
+    "canonical_inputs_revision": "sha256:9efeef68a8c29bf8a93a252ec5dc898217e74c25c9de2006e88a06760abc298b",
     "evaluator_schema_version": 3,
     "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
     "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b"
@@ -1630,7 +1630,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:7ad260724aa754b059cabf5311b17c9a15949e3e51b2f88ee233129d24e07b32",
+      "revision": "sha256:dc4e691aa48869ad6c1660bf672e4fbeac855a62d9c10fcbeecbe76c63038ca9",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1642,7 +1642,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:71cf93f95119bb7cbbfeb661fe097e0eab8d14f35d430d57d13b07ec6c94ac4c",
+      "revision": "sha256:4273ce1c762d568b0930cd1330a0eef936d74dfb2f1c9e1c524b2ec35d0bf238",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1666,7 +1666,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:18f8b9ce31e9fe9d397a280cc25005a41f65f9248d9a98eb01b56347f6a26972",
+      "revision": "sha256:afe5cc3fd121b672b0ce65419f37cec958bf95328719566f4bee0f4123b03fbf",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1690,7 +1690,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:44aca865e19bb7f1426a95a8aa6a97d95b7fb8eb69fa82a91142f22b0035641f",
+      "revision": "sha256:1b1093ccbc57ba84305eff3262d781fe0187ca4c6db854bfca29eb00e8e73b5c",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1726,7 +1726,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:c6ba324abce920277220de4c23026740d55b375824c241aaa82221a547175a81",
+      "revision": "sha256:13fb91a9d2fb66a23cdfec7a5264f08db34be81b6688a781ee14c7e284e11876",
       "freshness": {
         "mode": "derived-current"
       }
@@ -1762,7 +1762,7 @@
       "scope": "site",
       "authority": "normative-capability",
       "provenance": "generated",
-      "revision": "sha256:7963bda113a0e74c193d6816c1fae2c99f3c5e022a4828d9353da0a6f028c5d0",
+      "revision": "sha256:1f5336da5530ac8d441f86f90031ab167cc57c90d4b4877265ba054a39480449",
       "freshness": {
         "mode": "derived-current"
       }
@@ -5225,6 +5225,36 @@
       }
     },
     {
+      "id": "operation:secretsmanager:batchgetsecretvalue:reference",
+      "canonical_id": "operation:secretsmanager:batchgetsecretvalue",
+      "path": "docs/site/operations/secretsmanager/batchgetsecretvalue.md",
+      "type": "operation-reference",
+      "scope": "operation",
+      "authority": "normative-capability",
+      "provenance": "generated",
+      "service": "secretsmanager",
+      "operation": "BatchGetSecretValue",
+      "revision": "sha256:eeb30b3556d5cb0b3fced9f6e2fcb960dba3ad95fc597f0c0583dca79106ed1f",
+      "freshness": {
+        "mode": "derived-current"
+      }
+    },
+    {
+      "id": "operation:secretsmanager:batchgetsecretvalue:source",
+      "canonical_id": "operation:secretsmanager:batchgetsecretvalue",
+      "path": "docs/gaps/secretsmanager/BatchGetSecretValue.yaml",
+      "type": "operation-gap-source",
+      "scope": "operation",
+      "authority": "normative-capability",
+      "provenance": "source",
+      "service": "secretsmanager",
+      "operation": "BatchGetSecretValue",
+      "revision": "sha256:c537cf08a2d87cba1cd17f8809f661d7fe75a681cb0e9a9b932a9aabf6cba37c",
+      "freshness": {
+        "mode": "current"
+      }
+    },
+    {
       "id": "operation:secretsmanager:createsecret:reference",
       "canonical_id": "operation:secretsmanager:createsecret",
       "path": "docs/site/operations/secretsmanager/createsecret.md",
@@ -7725,7 +7755,7 @@
       "scope": "current-workload-adoption",
       "authority": "canonical",
       "provenance": "source",
-      "revision": "sha256:3f31e5ff59fdcf0c864e2f53bf89e5b7c357b48f434bdce8b5952f67d6a01d29",
+      "revision": "sha256:8af8bc47ae6c281d548b219415e44bf6c4c5d2b879e71db819417420d9270399",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7739,7 +7769,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:ebd53065236884d0509fb1f5ee605ee3d7946931d7cdd788ce9c712aa406ca61",
+      "revision": "sha256:4c877b4d5261169e8eb0144951d267092bcebcf450da8555a9e27852d2c40a34",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"
@@ -7753,7 +7783,7 @@
       "scope": "current-workload-adoption",
       "authority": "current",
       "provenance": "generated",
-      "revision": "sha256:54ec753d1d06b62c3d23df358f169dbac075674798a67383bba6900b224f440f",
+      "revision": "sha256:8d9653c2c627166762de7ef6a7e1a66bbf7e80cab92fca33299826f064795d99",
       "freshness": {
         "mode": "point-in-time",
         "evaluated_as_of_utc": "2026-09-28T02:13:05Z"

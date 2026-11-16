@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
@@ -6,71 +7,123 @@ namespace Aws2Azure.Modules.SecretsManager.Operations;
 
 internal static class GetSecretValueHandler
 {
-    public static async Task HandleAsync(HttpContext context, KeyVaultSecretClient client, JsonDocument document, CancellationToken cancellationToken)
+    public static async Task HandleAsync(
+        HttpContext context,
+        KeyVaultSecretClient client,
+        JsonDocument document,
+        CancellationToken cancellationToken)
     {
-        var secretId = KeyVaultSecretClient.NormalizeSecretName(SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty);
-        var requestedVersionId = SecretsManagerOperationSupport.ReadString(document, "VersionId");
-        var requestedVersionStage = SecretsManagerOperationSupport.ReadString(document, "VersionStage");
+        var secretId = SecretsManagerOperationSupport.ReadString(document, "SecretId") ?? string.Empty;
+        KeyVaultSecretClient.NormalizeSecretName(secretId);
         var token = await client.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
+        var result = await RetrieveAsync(
+            client,
+            token,
+            secretId,
+            SecretsManagerOperationSupport.ReadString(document, "VersionId"),
+            SecretsManagerOperationSupport.ReadString(document, "VersionStage"),
+            cancellationToken).ConfigureAwait(false);
+
+        if (result.Value is { } value)
+        {
+            await SecretsManagerOperationSupport.WriteJsonAsync(
+                context,
+                value,
+                SecretsManagerJsonContext.Default.GetSecretValueResponse,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var error = result.Error!;
+        await SecretsManagerOperationSupport.WriteAwsErrorAsync(
+            context,
+            error.StatusCode,
+            error.Code,
+            error.Message).ConfigureAwait(false);
+    }
+
+    internal static async Task<GetSecretValueResult> RetrieveAsync(
+        KeyVaultSecretClient client,
+        string token,
+        string secretId,
+        string? requestedVersionId,
+        string? requestedVersionStage,
+        CancellationToken cancellationToken)
+    {
+        var normalizedSecretId = KeyVaultSecretClient.NormalizeSecretName(secretId);
 
         // When no explicit VersionId is requested, the resolved version is almost always the
         // Key Vault "current" (unversioned) version. Speculatively fetch it concurrently with the
         // mandatory version listing so the two Key Vault round trips overlap instead of serializing;
         // if it turns out to match the version resolved from the (still authoritative) full list
         // below, its response is reused directly and the second, version-specific GET is skipped.
-        // The fetch is linked to a cancellable token: if the mandatory list call fails or any other
-        // early return happens before the speculative response is actually consumed, the `finally`
-        // below cancels it, bounding wasted Key Vault load during backend outages/throttling instead
-        // of always waiting the fetch out to completion.
         using var speculativeCts = string.IsNullOrWhiteSpace(requestedVersionId)
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             : null;
         var speculativeLatestTask = speculativeCts is not null
-            ? FetchLatestAsync(client, token, secretId, speculativeCts.Token)
+            ? FetchLatestAsync(client, token, normalizedSecretId, speculativeCts.Token)
             : null;
 
         try
         {
-            var versions = await SecretVersionCoordinator.ListVersionsAsync(context, client, token, secretId, cancellationToken).ConfigureAwait(false);
-            if (versions is null)
+            var versionList = await SecretVersionCoordinator.ListVersionsCoreAsync(
+                client,
+                token,
+                normalizedSecretId,
+                cancellationToken).ConfigureAwait(false);
+            if (versionList.StatusCode is { } versionListStatus)
             {
-                return;
+                return BackendFailure(versionListStatus);
             }
 
+            var versions = versionList.Versions!;
             SecretVersionCoordinator.SecretVersionMetadata? selected;
             if (!string.IsNullOrWhiteSpace(requestedVersionId))
             {
                 selected = FindVersion(versions, requestedVersionId);
                 if (selected is null)
                 {
-                    using var directRequest = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(secretId, requestedVersionId)));
+                    using var directRequest = new HttpRequestMessage(
+                        HttpMethod.Get,
+                        client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(normalizedSecretId, requestedVersionId)));
                     directRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                     using var directResponse = await client.SendAsync(directRequest, cancellationToken).ConfigureAwait(false);
                     if (directResponse.IsSuccessStatusCode)
                     {
-                        using var directDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(directResponse.Content, cancellationToken).ConfigureAwait(false);
+                        using var directDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(
+                            directResponse.Content,
+                            cancellationToken).ConfigureAwait(false);
                         selected = SecretVersionCoordinator.ReadMetadata(directDocument.RootElement);
                     }
-                    else if (directResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    else if (directResponse.StatusCode == HttpStatusCode.NotFound)
                     {
-                        var tokenResolution = SecretVersionCoordinator.ResolveToken(versions, requestedVersionId, expectedPayloadSha256: null);
+                        var tokenResolution = SecretVersionCoordinator.ResolveToken(
+                            versions,
+                            requestedVersionId,
+                            expectedPayloadSha256: null);
                         if (tokenResolution.Conflict)
                         {
-                            await SecretVersionCoordinator.WriteConflictAsync(context, "ClientRequestToken is associated with conflicting Key Vault versions.").ConfigureAwait(false);
-                            return;
+                            return Failure(
+                                StatusCodes.Status400BadRequest,
+                                "ResourceExistsException",
+                                "ClientRequestToken is associated with conflicting Key Vault versions.");
                         }
 
                         selected = tokenResolution.Version;
                     }
                     else
                     {
-                        if (await SecretsManagerOperationSupport.TryWriteDisabledSecretVersionAsNotFoundAsync(context, directResponse, cancellationToken).ConfigureAwait(false))
+                        if (await SecretsManagerOperationSupport.IsDisabledSecretVersionAsync(
+                            directResponse,
+                            cancellationToken).ConfigureAwait(false))
                         {
-                            return;
+                            return Failure(
+                                StatusCodes.Status404NotFound,
+                                "ResourceNotFoundException",
+                                "Secrets Manager can't find the specified secret value because the requested Key Vault secret version is disabled.");
                         }
 
-                        await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(directResponse.StatusCode), SecretsManagerOperationSupport.MapErrorCode(directResponse.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
-                        return;
+                        return BackendFailure(directResponse.StatusCode);
                     }
                 }
             }
@@ -80,8 +133,10 @@ internal static class GetSecretValueHandler
                 var stageResolution = SecretVersionCoordinator.ResolveStage(versions, requestedVersionStage);
                 if (stageResolution.Conflict)
                 {
-                    await SecretVersionCoordinator.WriteConflictAsync(context, $"Multiple Key Vault versions hold staging label '{requestedVersionStage}'.").ConfigureAwait(false);
-                    return;
+                    return Failure(
+                        StatusCodes.Status400BadRequest,
+                        "ResourceExistsException",
+                        $"Multiple Key Vault versions hold staging label '{requestedVersionStage}'.");
                 }
 
                 selected = stageResolution.Version;
@@ -92,8 +147,10 @@ internal static class GetSecretValueHandler
                 var detail = requestedVersionStage is null
                     ? $"version '{requestedVersionId}'"
                     : $"staging label '{requestedVersionStage}'";
-                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status404NotFound, "ResourceNotFoundException", $"Secrets Manager can't find the specified secret value for {detail}.").ConfigureAwait(false);
-                return;
+                return Failure(
+                    StatusCodes.Status404NotFound,
+                    "ResourceNotFoundException",
+                    $"Secrets Manager can't find the specified secret value for {detail}.");
             }
 
             HttpResponseMessage? response = null;
@@ -101,19 +158,13 @@ internal static class GetSecretValueHandler
             if (speculativeLatestTask is not null)
             {
                 var speculativeResponse = await speculativeLatestTask.ConfigureAwait(false);
-                // The task is now fully awaited; clear it so the outer `finally` never touches it
-                // again, regardless of what happens later in this method (including exceptions).
                 speculativeLatestTask = null;
                 if (speculativeResponse.IsSuccessStatusCode)
                 {
-                    var speculativeDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(speculativeResponse.Content, cancellationToken).ConfigureAwait(false);
+                    var speculativeDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(
+                        speculativeResponse.Content,
+                        cancellationToken).ConfigureAwait(false);
                     var speculativeMetadata = SecretVersionCoordinator.ReadMetadata(speculativeDocument.RootElement);
-                    // Matching on VersionId alone is not sufficient: PutSecretValue publishes a new
-                    // version, then PATCHes its staging-label tags onto that *same* VersionId across
-                    // one or more later round trips (SecretVersionCoordinator.PublishVersionAsync). The
-                    // speculative GET can snapshot the version before those tags land while the
-                    // (still authoritative) list call observes them afterward, so the tags themselves
-                    // must also agree before the speculative response can be trusted.
                     if (string.Equals(speculativeMetadata.VersionId, selected.VersionId, StringComparison.Ordinal)
                         && TagsEqual(speculativeMetadata.Tags, selected.Tags))
                     {
@@ -134,23 +185,32 @@ internal static class GetSecretValueHandler
 
             if (secretDocument is null)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(secretId, selected.VersionId)));
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    client.BuildVaultUri(KeyVaultSecretClient.BuildSecretVersionPath(normalizedSecretId, selected.VersionId)));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
-                    if (await SecretsManagerOperationSupport.TryWriteDisabledSecretVersionAsNotFoundAsync(context, response, cancellationToken).ConfigureAwait(false))
+                    if (await SecretsManagerOperationSupport.IsDisabledSecretVersionAsync(
+                        response,
+                        cancellationToken).ConfigureAwait(false))
                     {
                         response.Dispose();
-                        return;
+                        return Failure(
+                            StatusCodes.Status404NotFound,
+                            "ResourceNotFoundException",
+                            "Secrets Manager can't find the specified secret value because the requested Key Vault secret version is disabled.");
                     }
 
-                    await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, SecretsManagerOperationSupport.MapStatusCode(response.StatusCode), SecretsManagerOperationSupport.MapErrorCode(response.StatusCode), "Key Vault request failed.").ConfigureAwait(false);
+                    var result = BackendFailure(response.StatusCode);
                     response.Dispose();
-                    return;
+                    return result;
                 }
 
-                secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                secretDocument = await SecretsManagerOperationSupport.ReadJsonDocumentAsync(
+                    response.Content,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             using var ownedResponse = response;
@@ -160,8 +220,10 @@ internal static class GetSecretValueHandler
             if (!string.IsNullOrWhiteSpace(requestedVersionStage)
                 && !ContainsStage(freshMetadata.VersionStages, requestedVersionStage))
             {
-                await SecretsManagerOperationSupport.WriteAwsErrorAsync(context, StatusCodes.Status400BadRequest, "InvalidRequestException", "VersionId and VersionStage must reference the same secret version.").ConfigureAwait(false);
-                return;
+                return Failure(
+                    StatusCodes.Status400BadRequest,
+                    "InvalidRequestException",
+                    "VersionId and VersionStage must reference the same secret version.");
             }
 
             var value = secret.TryGetProperty("value", out var valueElement) && valueElement.ValueKind == JsonValueKind.String
@@ -175,26 +237,43 @@ internal static class GetSecretValueHandler
                 : freshMetadata.VersionId;
             var versionStages = freshMetadata.HasStoredStages ? freshMetadata.VersionStages : ["AWSCURRENT"];
             var binary = string.Equals(contentType, "application/octet-stream", StringComparison.OrdinalIgnoreCase);
-            var payload = new GetSecretValueResponse(
-                Arn: KeyVaultSecretClient.BuildArn(secretId),
-                Name: secretId,
-                VersionId: responseVersionId,
-                SecretString: binary ? null : value,
-                SecretBinary: binary ? KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(value)) : null,
-                VersionStages: versionStages,
-                CreatedDate: KeyVaultSecretClient.GetCreatedDate(secret));
-            await SecretsManagerOperationSupport.WriteJsonAsync(context, payload, SecretsManagerJsonContext.Default.GetSecretValueResponse, cancellationToken).ConfigureAwait(false);
+            return new GetSecretValueResult(
+                new GetSecretValueResponse(
+                    Arn: KeyVaultSecretClient.BuildArn(normalizedSecretId),
+                    Name: normalizedSecretId,
+                    VersionId: responseVersionId,
+                    SecretString: binary ? null : value,
+                    SecretBinary: binary ? KeyVaultSecretClient.EncodeSecretBinary(KeyVaultSecretClient.DecodeSecretBinary(value)) : null,
+                    VersionStages: versionStages,
+                    CreatedDate: KeyVaultSecretClient.GetCreatedDate(secret)),
+                null);
         }
         finally
         {
-            // If the speculative task is still non-null here, it was never consumed (an early
-            // return or an exception happened first): cancel it so an in-flight speculative fetch
-            // doesn't keep loading Key Vault after the request it was prefetching for has already
-            // concluded, then guarantee it is always drained/disposed exactly once.
             speculativeCts?.Cancel();
             await DiscardAsync(speculativeLatestTask).ConfigureAwait(false);
         }
     }
+
+    private static GetSecretValueResult BackendFailure(HttpStatusCode statusCode)
+        => Failure(
+            SecretsManagerOperationSupport.MapStatusCode(statusCode),
+            SecretsManagerOperationSupport.MapErrorCode(statusCode),
+            "Key Vault request failed.",
+            IsRequestLevelFailure(statusCode));
+
+    private static GetSecretValueResult Failure(
+        int statusCode,
+        string code,
+        string message,
+        bool requestLevel = false)
+        => new(null, new GetSecretValueError(statusCode, code, message, requestLevel));
+
+    private static bool IsRequestLevelFailure(HttpStatusCode statusCode)
+        => statusCode is HttpStatusCode.Unauthorized
+            or HttpStatusCode.RequestTimeout
+            or HttpStatusCode.TooManyRequests
+            || statusCode >= HttpStatusCode.InternalServerError;
 
     private static SecretVersionCoordinator.SecretVersionMetadata? FindVersion(
         IReadOnlyList<SecretVersionCoordinator.SecretVersionMetadata> versions,
@@ -248,7 +327,9 @@ internal static class GetSecretValueHandler
         string secretId,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(secretId)));
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            client.BuildVaultUri(KeyVaultSecretClient.BuildSecretPath(secretId)));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
@@ -264,10 +345,23 @@ internal static class GetSecretValueHandler
         {
             (await task.ConfigureAwait(false)).Dispose();
         }
-        catch
+        catch (OperationCanceledException)
         {
-            // Best-effort cleanup of a speculative prefetch whose result is no longer needed;
-            // any failure here is irrelevant to the response already written for this request.
+            // The owning request completed before the speculative fetch.
+        }
+        catch (HttpRequestException)
+        {
+            // The authoritative request path has already produced the caller-visible result.
         }
     }
+
+    internal sealed record GetSecretValueError(
+        int StatusCode,
+        string Code,
+        string Message,
+        bool RequestLevel);
+
+    internal readonly record struct GetSecretValueResult(
+        GetSecretValueResponse? Value,
+        GetSecretValueError? Error);
 }

@@ -15,7 +15,7 @@ Legend: ✅ supported · 🟡 conditional · ⛔ blocked
 | [dynamodb](dynamodb.md) | Available | 7 | 12 | 0 | 0 | 17/19 |
 | [kinesis](kinesis.md) | Available | 0 | 7 | 0 | 0 | 7/7 |
 | [s3](s3.md) | Available | 27 | 23 | 7 | 17 | 33/74 |
-| [secretsmanager](secretsmanager.md) | Available | 6 | 3 | 0 | 2 | 7/11 |
+| [secretsmanager](secretsmanager.md) | Available | 6 | 4 | 0 | 2 | 7/12 |
 | [sns](sns.md) | Available | 3 | 11 | 0 | 0 | 14/14 |
 | [sqs](sqs.md) | Available | 10 | 8 | 2 | 0 | 10/20 |
 

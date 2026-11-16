@@ -12,7 +12,7 @@ Workload/profile maturity lives in [workload-compatibility](workload-compatibili
 | [dynamodb](dynamodb.md) | 7 | 12 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 48 |
 | [kinesis](kinesis.md) | 0 | 7 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 16 |
 | [s3](s3.md) | 27 | 23 | 7 | 17 | 0 | 46 | 1 | 2 | 0 | 129 |
-| [secretsmanager](secretsmanager.md) | 6 | 3 | 0 | 2 | 0 | 4 | 1 | 0 | 0 | 20 |
+| [secretsmanager](secretsmanager.md) | 6 | 4 | 0 | 2 | 1 | 4 | 1 | 1 | 0 | 20 |
 | [sns](sns.md) | 3 | 11 | 0 | 0 | 1 | 9 | 1 | 1 | 0 | 21 |
 | [sqs](sqs.md) | 10 | 8 | 2 | 0 | 3 | 7 | 0 | 1 | 0 | 30 |
 
@@ -275,13 +275,14 @@ _No remaining feasible backlog is documented for this service._
 | Status | Feasible backlog | By design | Non-goal |
 |---|---:|---:|---:|
 | ✅ implemented | 0 | 0 | 0 |
-| 🟡 partial | 0 | 3 | 0 |
+| 🟡 partial | 1 | 3 | 0 |
 | ⚪ stub | 0 | 0 | 0 |
 | ⛔ unsupported | 0 | 1 | 1 |
 
 ### Feasible backlog
 
-_No remaining feasible backlog is documented for this service._
+- Operation [BatchGetSecretValue](operations/secretsmanager/batchgetsecretvalue.md) — [#1107](https://github.com/pedrosakuma/aws2azure/issues/1107)
+- Sub-feature [BatchGetSecretValue](operations/secretsmanager/batchgetsecretvalue.md#sub-feature-filters-pagination) / Filters pagination — [#1107](https://github.com/pedrosakuma/aws2azure/issues/1107)
 
 ### Workload maturity
 
