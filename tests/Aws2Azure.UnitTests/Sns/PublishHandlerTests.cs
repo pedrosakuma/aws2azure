@@ -406,10 +406,11 @@ public sealed class PublishHandlerTests
     [Fact]
     public async Task HandleAsync_reloads_mutable_scope_instead_of_using_stale_cached_metadata()
     {
+        const string topicName = "authoritative-scope.fifo";
         var credentials = NewCredentials();
         SnsFifoPublishSupport.RecordServiceBusTopicState(
             credentials,
-            "orders.fifo",
+            topicName,
             requiresDuplicateDetection: true,
             contentBasedDeduplication: false,
             fifoThroughputScope: SnsTopicAttributeSupport.TopicFifoThroughputScope);
@@ -427,7 +428,7 @@ public sealed class PublishHandlerTests
         await PublishHandler.HandleAsync(
             context,
             NewParseResult(
-                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("TopicArn", $"arn:aws:sns:us-west-2:000000000000:{topicName}"),
                 ("Message", "hello"),
                 ("MessageGroupId", "group-1"),
                 ("MessageDeduplicationId", "dedup-1")),
@@ -439,7 +440,7 @@ public sealed class PublishHandlerTests
                 managementRequests++;
                 return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
                 {
-                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry(topicName, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
                 });
             }),
             sender,
@@ -447,6 +448,47 @@ public sealed class PublishHandlerTests
             CancellationToken.None);
 
         Assert.Equal(1, managementRequests);
+        Assert.NotEqual("dedup-1", sender.SingleCall!.Value.Message.Properties.MessageId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_uses_created_scope_when_backend_omits_metadata_from_immediate_read()
+    {
+        const string topicName = "created-scope.fifo";
+        var credentials = NewCredentials();
+        SnsFifoPublishSupport.RecordServiceBusTopicState(
+            credentials,
+            topicName,
+            requiresDuplicateDetection: true,
+            contentBasedDeduplication: false,
+            fifoThroughputScope: SnsTopicAttributeSupport.MessageGroupFifoThroughputScope);
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", $"arn:aws:sns:us-west-2:000000000000:{topicName}"),
+                ("Message", "hello"),
+                ("MessageGroupId", "group-1"),
+                ("MessageDeduplicationId", "dedup-1")),
+            credentials,
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) =>
+                Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildTopicEntry(
+                            topicName,
+                            requiresDuplicateDetection: true),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                })),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
         Assert.NotEqual("dedup-1", sender.SingleCall!.Value.Message.Properties.MessageId);
     }
 

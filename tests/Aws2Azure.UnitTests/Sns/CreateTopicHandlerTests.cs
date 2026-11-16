@@ -318,7 +318,8 @@ public sealed class CreateTopicHandlerTests
     public async Task HandleAsync_does_not_overwrite_cached_fifo_state_for_existing_topics()
     {
         var credentials = NewCredentials();
-        SnsFifoPublishSupport.RecordServiceBusTopicState(credentials, "orders.fifo", requiresDuplicateDetection: true, contentBasedDeduplication: false);
+        const string topicName = "existing-state.fifo";
+        SnsFifoPublishSupport.RecordServiceBusTopicState(credentials, topicName, requiresDuplicateDetection: true, contentBasedDeduplication: false);
         var managementClient = NewManagementClient((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)));
         var context = NewContext();
@@ -329,7 +330,7 @@ public sealed class CreateTopicHandlerTests
                 SnsOperation.CreateTopic,
                 new Dictionary<string, string>
                 {
-                    ["Name"] = "orders.fifo",
+                    ["Name"] = topicName,
                     ["Attributes.entry.1.key"] = "FifoTopic",
                     ["Attributes.entry.1.value"] = "true",
                     ["Attributes.entry.2.key"] = "ContentBasedDeduplication",
@@ -342,7 +343,7 @@ public sealed class CreateTopicHandlerTests
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-        Assert.False(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, "orders.fifo", out _));
+        Assert.False(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out _));
     }
 
     [Theory]

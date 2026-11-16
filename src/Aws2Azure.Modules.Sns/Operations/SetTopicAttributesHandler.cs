@@ -85,6 +85,15 @@ internal static class SetTopicAttributesHandler
         if (!string.Equals(attributeName, "ContentBasedDeduplication", StringComparison.Ordinal))
         {
             var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
+            if (SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(
+                    credentials,
+                    serviceBusTopicName,
+                    out var observedState))
+            {
+                metadata.ContentBasedDeduplication ??= observedState.ContentBasedDeduplication;
+                metadata.FifoThroughputScope ??= observedState.FifoThroughputScope;
+            }
+
             switch (attributeName)
             {
                 case "DisplayName":
@@ -166,7 +175,12 @@ internal static class SetTopicAttributesHandler
 
             if (string.Equals(attributeName, "FifoThroughputScope", StringComparison.Ordinal))
             {
-                SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, serviceBusTopicName);
+                SnsFifoPublishSupport.RecordServiceBusTopicState(
+                    credentials,
+                    serviceBusTopicName,
+                    updatedTopic.RequiresDuplicateDetection,
+                    metadata.ContentBasedDeduplication,
+                    metadata.FifoThroughputScope);
             }
 
             await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "SetTopicAttributes").ConfigureAwait(false);
