@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "status": "pending",
+  "gate": "real-azure",
+  "mode": "offline-covered",
+  "binding": {
+    "toolVersion": "validation-evidence-v1",
+    "baseCommit": "ce452480f5144f1779becc64d94c80addf94c096",
+    "mergeBase": "ce452480f5144f1779becc64d94c80addf94c096",
+    "headCommit": "939a835075fdf46d60ee6510c21135210ce5f0ea",
+    "diffSha256": "c2ed0a2b3a1376bfb64fddd5978e983c2cf4dc0186627e479ece78f7f5785a95",
+    "originalPlanSha256": "0daee3de7ef733eeb35e895d5e2ed6394d6dc57bed7d49301a5d32869af5157f",
+    "evidenceSourceCommit": null,
+    "evidenceDeltaSha256": null
+  },
+  "originalReasons": [
+    "src/Aws2Azure.Modules.Sns/Management/ServiceBusAtomXml.cs: authentication or transport behavior needs live-Azure coverage",
+    "src/Aws2Azure.Modules.Sns/Operations/CreateTopicHandler.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/GetTopicAttributesHandler.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/PublishBatchHandler.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/PublishHandler.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/SetTopicAttributesHandler.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/SnsBackendPublisher.cs: authentication or transport behavior needs live-Azure coverage",
+    "src/Aws2Azure.Modules.Sns/Operations/SnsFifoPublishSupport.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/SnsPublishSupport.cs: backend behavior may differ from emulators",
+    "src/Aws2Azure.Modules.Sns/Operations/SnsTopicAttributeSupport.cs: backend behavior may differ from emulators",
+    "tests/Aws2Azure.IntegrationTests/Sns/SnsPublishServiceBusTests.cs: backend behavior may differ from emulators",
+    "tests/Aws2Azure.IntegrationTests/Sns/SnsServiceBusTestSupport.cs: backend behavior may differ from emulators",
+    "tests/Aws2Azure.IntegrationTests/Sns/SnsTopicLifecycleServiceBusTests.cs: backend behavior may differ from emulators"
+  ],
+  "rationale": "Propose narrowly scoped offline coverage for exact PR #1125 target 939a835075fdf46d60ee6510c21135210ce5f0ea. Two owner-authorized source-validation real-Azure runs reached the new SNS fifo-throughput-scope evidence case after their planned unit and integration suites, provisioning, reporting, evidence upload, correctness-candidate generation, and cleanup succeeded; the shared exporter failed because Service Bus management returned HTTP 400. Run 43925077640 exposed missing XML insertion anchors and run 43943424124 proved the first SupportOrdering/AutoDeleteOnIdle-only fix incomplete. The exact Azure.Messaging.ServiceBus 7.21.0 assembly used by the target was imported and decompiled: TopicPropertiesExtensions.Serialize canonically writes UserMetadata before SupportOrdering, AutoDeleteOnIdle, EnablePartitioning, EnableSubscriptionPartitioning, EnableExpress, and MaxMessageSizeInKilobytes. The final target adds precisely those complete later-property anchors. Its focused regression reproduces the observed response shape where SupportOrdering and AutoDeleteOnIdle are absent while EnablePartitioning and EnableExpress remain; the target test fails against prior implementation fe0347edcead04e991c7cdf07e40f8f3c10a5f2c and passes against the exact target. Release build, focused SNS tests, GapDocs, Documentation, and passing focused/free checks provide deterministic corroboration. The unrelated free CI build-test check remains failed on a SecretsManager background-purge timeout after 4,569 unit tests passed; one bounded base/target comparison passed, no workflow was rerun, and this decision does not waive that check. The complete base-to-target diff and final two-file fix were reviewed. This acceptance would cover only deterministic XML serialization ordering for this exact target and base. It is not successful live Azure confirmation, current Azure health, throughput or latency qualification, renewed workload qualification, permission to spend, authorization to apply labels or execute workflows, merge approval, or a branch-protection override. Changed base, merge base, head, diff, plan, tool semantics, evidence bytes, approval, withdrawal, incident, or revocation invalidates it. The short validity window ends 2026-11-17T23:59:59Z. Status remains pending until pedrosakuma explicitly approves the exact prospective final accepted decision SHA256 at the attributable approval reference.",
+  "approvedBy": "pedrosakuma",
+  "approvalReference": "https://github.com/pedrosakuma/aws2azure/pull/1125#issuecomment-6928504512",
+  "reviewedAtUtc": "2026-11-16T20:34:00Z",
+  "validUntilUtc": "2026-11-17T23:59:59Z",
+  "evidencePath": "pr-1125/evidence.json",
+  "evidenceSha256": "c924def2686ef197bf51a9b6dcce35022a2bca54fceb1c6aee0223a240f7ef51"
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "kind": "offline-covered",
+  "repository": "pedrosakuma/aws2azure",
+  "sourceCommit": "939a835075fdf46d60ee6510c21135210ce5f0ea",
+  "scope": "Deterministic evidence covers only the exact target's Service Bus topic XML ordering fix. The exact Azure.Messaging.ServiceBus 7.21.0 assembly (SHA256 10eab238aeb9ba30e3ddba5886dbc0fc5e3e50e5b6e2dee69ba87c2877e6ca32, MVID 69b250fa-8bd3-4255-b7c7-2b574927ce95) was imported and decompiled; TopicPropertiesExtensions.Serialize places UserMetadata before SupportOrdering, AutoDeleteOnIdle, EnablePartitioning, EnableSubscriptionPartitioning, EnableExpress, and MaxMessageSizeInKilobytes. The focused target regression models the real-Azure response shape with SupportOrdering and AutoDeleteOnIdle absent but EnablePartitioning and EnableExpress retained; it fails against prior implementation fe0347edcead04e991c7cdf07e40f8f3c10a5f2c and passes against exact target 939a835075fdf46d60ee6510c21135210ce5f0ea. Release build, focused SNS unit/conformance validation, GapDocs, and Documentation checks pass. This is not successful live Azure execution, current Azure health, throughput qualification, renewed workload qualification, permission to spend, label/workflow authorization, merge approval, or a branch-protection override.",
+  "verifiedBy": "Copilot policy session (deterministic assembly, regression, diff, and validation inspection; not owner approval)",
+  "verificationReference": "https://github.com/pedrosakuma/aws2azure/pull/1125#issuecomment-6928504512",
+  "verifiedAtUtc": "2026-11-16T20:34:00Z",
+  "revoked": false,
+  "offline": {
+    "verifier": "Azure.Messaging.ServiceBus 7.21.0 TopicPropertiesExtensions.Serialize decompilation plus SetTopicAttributesHandlerTests.Topic_update_inserts_missing_user_metadata_before_first_later_schema_property",
+    "verifierVersion": "939a835075fdf46d60ee6510c21135210ce5f0ea",
+    "command": "Run the exact target regression test against prior implementation fe0347edcead04e991c7cdf07e40f8f3c10a5f2c and target 939a835075fdf46d60ee6510c21135210ce5f0ea; import and decompile exact restored Azure.Messaging.ServiceBus 7.21.0 assembly; run Release build, focused SNS unit/conformance/integration discovery, Aws2Azure.GapDocs --validate, and Aws2Azure.Documentation --check.",
+    "result": "pass",
+    "report": {
+      "path": "evidence-review.md",
+      "sha256": "005c4bd40081a3537dbd1fd55a6abb0a23a3c170ad346a15f95473451e298b3f"
+    }
+  },
+  "run": null
+}
