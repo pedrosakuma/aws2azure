@@ -4,7 +4,7 @@ These verdicts are generated from versioned profile manifests, gap docs, real-Az
 
 > **Current adoption authority (as of `2026-09-28T02:13:05Z`):** This generated certification has the highest precedence for current workload adoption. Release notes are immutable historical records and cannot override a current `candidate`, `conditional`, or `blocked` verdict.
 >
-> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b`; contract: `docs/workloads/certification/authority.yaml`.
+> Source repository: `pedrosakuma/aws2azure`; canonical inputs: `normalized_yaml_sha256:e25ce651acb7c0191a35e4c6c1b9bc303d59d35bcea770ca7f612ea0b5b6c8e6`; evaluator schema: `3`; evaluator implementation: `gapdocs_evaluator_implementation_sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b`; contract: `docs/workloads/certification/authority.yaml`.
 
 ## Authority precedence
 

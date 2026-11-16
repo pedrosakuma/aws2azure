@@ -86,11 +86,11 @@ internal static class SnsFifoPublishSupport
         }
 
         var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
+        TopicStateCache.TryGetValue(cacheKey, out var cachedState);
         var backendState = new ServiceBusFifoTopicBackendState(
             topic.RequiresDuplicateDetection,
-            metadata.ContentBasedDeduplication,
-            metadata.FifoThroughputScope);
-        TopicStateCache[cacheKey] = backendState;
+            metadata.ContentBasedDeduplication ?? cachedState.ContentBasedDeduplication,
+            metadata.FifoThroughputScope ?? cachedState.FifoThroughputScope);
         return CreateTopicState(snsTopicName, backendState);
     }
 

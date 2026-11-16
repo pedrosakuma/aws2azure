@@ -124,11 +124,12 @@ public sealed class SetTopicAttributesHandlerTests
     [Fact]
     public async Task HandleAsync_updates_fifo_throughput_scope_metadata()
     {
+        const string topicName = "scope-update.fifo";
         string? updateBody = null;
         var credentials = SnsManagementClientTestSupport.NewCredentials();
         SnsFifoPublishSupport.RecordServiceBusTopicState(
             credentials,
-            "orders.fifo",
+            topicName,
             requiresDuplicateDetection: true,
             contentBasedDeduplication: false,
             SnsTopicAttributeSupport.TopicFifoThroughputScope);
@@ -140,16 +141,8 @@ public sealed class SetTopicAttributesHandlerTests
                 {
                     Content = new StringContent(
                         SnsManagementClientTestSupport.BuildTopicEntry(
-                            "orders.fifo",
-                            requiresDuplicateDetection: true,
-                            userMetadata: JsonSerializer.Serialize(
-                                new SnsTopicMetadata
-                                {
-                                    FifoTopic = true,
-                                    ContentBasedDeduplication = false,
-                                    FifoThroughputScope = SnsTopicAttributeSupport.TopicFifoThroughputScope,
-                                },
-                                SnsTopicJsonContext.Default.SnsTopicMetadata)),
+                            topicName,
+                            requiresDuplicateDetection: true),
                         Encoding.UTF8,
                         "application/atom+xml"),
                 };
@@ -162,7 +155,7 @@ public sealed class SetTopicAttributesHandlerTests
         var context = SnsManagementClientTestSupport.NewContext();
         await SetTopicAttributesHandler.HandleAsync(
             context,
-            NewParseResult("FifoThroughputScope", "MessageGroup", "orders.fifo"),
+            NewParseResult("FifoThroughputScope", "MessageGroup", topicName),
             credentials,
             managementClient,
             CancellationToken.None);
@@ -172,7 +165,10 @@ public sealed class SetTopicAttributesHandlerTests
             SnsManagementClientTestSupport.ReadElementValue(updateBody!, "UserMetadata"),
             SnsTopicJsonContext.Default.SnsTopicMetadata);
         Assert.Equal("MessageGroup", metadata!.FifoThroughputScope);
-        Assert.False(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, "orders.fifo", out _));
+        Assert.False(metadata.ContentBasedDeduplication);
+        Assert.True(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out var cachedState));
+        Assert.False(cachedState.ContentBasedDeduplication);
+        Assert.Equal(SnsTopicAttributeSupport.MessageGroupFifoThroughputScope, cachedState.FifoThroughputScope);
     }
 
     [Theory]
