@@ -173,7 +173,7 @@ public sealed class SnsPublishServiceBusTests
     }
 
     [SkippableFact]
-    public async Task PublishBatch_on_fifo_topic_preserves_session_order_and_deduplicates_by_message_id()
+    public async Task PublishBatch_on_fifo_topic_defaults_to_topic_scoped_deduplication_and_preserves_session_order()
     {
         Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
 
@@ -188,7 +188,7 @@ public sealed class SnsPublishServiceBusTests
             var entries = new[]
             {
                 (Id: "first", Body: "fifo-body-1", GroupId: "group-1", DedupId: "dedup-1"),
-                (Id: "duplicate", Body: "fifo-body-2", GroupId: "group-1", DedupId: "dedup-1"),
+                (Id: "duplicate", Body: "fifo-body-2", GroupId: "group-2", DedupId: "dedup-1"),
                 (Id: "third", Body: "fifo-body-3", GroupId: "group-1", DedupId: "dedup-3"),
             };
             var parameters = new List<KeyValuePair<string, string>>
@@ -259,6 +259,117 @@ public sealed class SnsPublishServiceBusTests
             Assert.Equal("group-1", message.SessionId);
             Assert.Equal(body, message.Body.ToString());
             await SnsServiceBusTestSupport.CompleteMessagesAsync(receiver, messages).ConfigureAwait(false);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
+    }
+
+    [SkippableFact]
+    public async Task PublishBatch_message_group_scope_deduplicates_retries_per_group()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(
+                client,
+                "sns-fifo-group-scope",
+                contentBasedDeduplication: false,
+                fifoThroughputScope: "MessageGroup")
+            .ConfigureAwait(false);
+        var topicName = topicArn.Split(':', 6)[5];
+        var subscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+        try
+        {
+            var entries = new[]
+            {
+                (Id: "group-a", Body: "first", GroupId: "group-a", DedupId: "shared"),
+                (Id: "group-b", Body: "second", GroupId: "group-b", DedupId: "shared"),
+                (Id: "retry-a", Body: "retry", GroupId: "group-a", DedupId: "shared"),
+            };
+            var parameters = new List<KeyValuePair<string, string>>
+            {
+                new("TopicArn", topicArn),
+            };
+            for (var i = 0; i < entries.Length; i++)
+            {
+                var ordinal = i + 1;
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.Id", entries[i].Id));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.Message", entries[i].Body));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.MessageGroupId", entries[i].GroupId));
+                parameters.Add(new($"PublishBatchRequestEntries.member.{ordinal}.MessageDeduplicationId", entries[i].DedupId));
+            }
+
+            var publish = await SnsQueryApiClient.SendActionAsync(client, "PublishBatch", parameters).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, "PublishBatch[MessageGroup scope]");
+
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var receiver = serviceBusClient.CreateReceiver(topicName, subscriptionName);
+            var messages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(receiver, expectedCount: 2, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+
+            Assert.Equal(2, messages.Count);
+            Assert.Equal(["group-a", "group-b"], messages.Select(message => message.SessionId).OrderBy(value => value).ToArray());
+            Assert.Equal(2, messages.Select(message => message.MessageId).Distinct(StringComparer.Ordinal).Count());
+            Assert.All(messages, message =>
+            {
+                Assert.Equal("shared", Assert.IsType<string>(
+                    message.ApplicationProperties["AWS.Aws2Azure.MessageDeduplicationId"]));
+                Assert.True(message.MessageId.Length <= 128);
+            });
+
+            await SnsServiceBusTestSupport.CompleteMessagesAsync(receiver, messages).ConfigureAwait(false);
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(receiver, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
+    }
+
+    [SkippableFact]
+    public async Task Publish_message_group_scope_applies_to_content_based_deduplication()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(
+                client,
+                "sns-fifo-content-group-scope",
+                contentBasedDeduplication: true,
+                fifoThroughputScope: "MessageGroup")
+            .ConfigureAwait(false);
+        var topicName = topicArn.Split(':', 6)[5];
+        var subscriptionArn = await SnsServiceBusTestSupport.CreateSubscriptionAsync(client, topicArn).ConfigureAwait(false);
+        var subscriptionName = SnsQueryApiClient.ExtractSubscriptionName(subscriptionArn);
+
+        try
+        {
+            foreach (var groupId in new[] { "group-a", "group-b", "group-a" })
+            {
+                var publish = await SnsQueryApiClient.SendActionAsync(client, "Publish",
+                [
+                    new("TopicArn", topicArn),
+                    new("Message", "same-body"),
+                    new("MessageGroupId", groupId),
+                ]).ConfigureAwait(false);
+                SnsServiceBusTestSupport.AssertStatus(publish, HttpStatusCode.OK, $"Publish[{groupId}]");
+            }
+
+            await using var serviceBusClient = CreateServiceBusClient();
+            await using var receiver = serviceBusClient.CreateReceiver(topicName, subscriptionName);
+            var messages = await SnsServiceBusTestSupport.ReceiveMessagesAsync(receiver, expectedCount: 2, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+
+            Assert.Equal(2, messages.Count);
+            Assert.Equal(["group-a", "group-b"], messages.Select(message => message.SessionId).OrderBy(value => value).ToArray());
+            Assert.All(messages, message => Assert.Equal(
+                "6576dc2e62a31f6b78c13f619a380625a6b69882d1f3ebe0933a9a826ed41efe",
+                Assert.IsType<string>(message.ApplicationProperties["AWS.Aws2Azure.MessageDeduplicationId"])));
+
+            await SnsServiceBusTestSupport.CompleteMessagesAsync(receiver, messages).ConfigureAwait(false);
+            await SnsServiceBusTestSupport.AssertNoMessagesAsync(receiver, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         }
         finally
         {

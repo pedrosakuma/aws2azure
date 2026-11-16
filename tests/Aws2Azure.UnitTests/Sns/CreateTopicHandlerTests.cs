@@ -194,6 +194,7 @@ public sealed class CreateTopicHandlerTests
             Assert.Contains("\"policyJson\":\"{", body);
             Assert.Contains("\"deliveryPolicyJson\":\"{", body);
             Assert.Contains("<RequiresDuplicateDetection>true</RequiresDuplicateDetection>", body);
+            Assert.Contains("\"fifoThroughputScope\":\"MessageGroup\"", body);
             return new HttpResponseMessage(HttpStatusCode.Created);
         });
 
@@ -215,6 +216,8 @@ public sealed class CreateTopicHandlerTests
                     ["Attributes.entry.4.value"] = "true",
                     ["Attributes.entry.5.key"] = "ContentBasedDeduplication",
                     ["Attributes.entry.5.value"] = "true",
+                    ["Attributes.entry.6.key"] = "FifoThroughputScope",
+                    ["Attributes.entry.6.value"] = "MessageGroup",
                 },
                 null),
             NewCredentials(),
@@ -239,6 +242,7 @@ public sealed class CreateTopicHandlerTests
             Assert.Contains("<RequiresDuplicateDetection>true</RequiresDuplicateDetection>", body);
             Assert.Contains("<DuplicateDetectionHistoryTimeWindow>PT5M</DuplicateDetectionHistoryTimeWindow>", body);
             Assert.Contains("\"contentBasedDeduplication\":false", body);
+            Assert.Contains("\"fifoThroughputScope\":\"Topic\"", body);
             return new HttpResponseMessage(HttpStatusCode.Created);
         });
 
@@ -407,6 +411,8 @@ public sealed class CreateTopicHandlerTests
     [InlineData("orders.fifo", "FifoTopic", "false", "cannot be false")]
     [InlineData("orders", "ContentBasedDeduplication", "true", "supported only for FIFO topics")]
     [InlineData("orders", "ContentBasedDeduplication", "false", "supported only for FIFO topics")]
+    [InlineData("orders", "FifoThroughputScope", "Topic", "supported only for FIFO topics")]
+    [InlineData("orders.fifo", "FifoThroughputScope", "messagegroup", "must be either 'Topic' or 'MessageGroup'")]
     public async Task HandleAsync_rejects_invalid_fifo_attribute_combinations(
         string topicName,
         string attributeName,

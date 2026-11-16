@@ -35,6 +35,7 @@ internal static class SetTopicAttributesHandler
             case "Policy":
             case "DeliveryPolicy":
             case "ContentBasedDeduplication":
+            case "FifoThroughputScope":
                 break;
             case "EffectiveDeliveryPolicy":
             case "KmsMasterKeyId":
@@ -111,6 +112,27 @@ internal static class SetTopicAttributesHandler
                     }
 
                     break;
+                case "FifoThroughputScope":
+                    if (!topicName.EndsWith(".fifo", StringComparison.Ordinal))
+                    {
+                        await SnsTopicSupport.WriteInvalidParameterAsync(
+                                context,
+                                "Attribute 'FifoThroughputScope' is supported only for FIFO topics whose names end with '.fifo'.")
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (!SnsTopicAttributeSupport.TryParseFifoThroughputScope(attributeValue, out var fifoThroughputScope))
+                    {
+                        await SnsTopicSupport.WriteInvalidParameterAsync(
+                                context,
+                                "Attribute 'FifoThroughputScope' must be either 'Topic' or 'MessageGroup'.")
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    metadata.FifoThroughputScope = fifoThroughputScope;
+                    break;
             }
 
             if (!SnsTopicAttributeSupport.TryBuildUserMetadata(metadata, out var serializedMetadata))
@@ -140,6 +162,11 @@ internal static class SetTopicAttributesHandler
             {
                 await SnsTopicSupport.WriteManagementErrorAsync(context, ex).ConfigureAwait(false);
                 return;
+            }
+
+            if (string.Equals(attributeName, "FifoThroughputScope", StringComparison.Ordinal))
+            {
+                SnsFifoPublishSupport.InvalidateServiceBusTopicState(credentials, serviceBusTopicName);
             }
 
             await SnsResponseWriter.WriteMetadataOnlyResponseAsync(context, "SetTopicAttributes").ConfigureAwait(false);

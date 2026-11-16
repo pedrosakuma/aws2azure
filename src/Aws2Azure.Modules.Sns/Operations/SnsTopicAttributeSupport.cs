@@ -7,6 +7,8 @@ namespace Aws2Azure.Modules.Sns.Operations;
 internal static class SnsTopicAttributeSupport
 {
     internal const int UserMetadataMaxLength = 1024;
+    internal const string TopicFifoThroughputScope = "Topic";
+    internal const string MessageGroupFifoThroughputScope = "MessageGroup";
 
     public static bool TryParseCreateTopicAttributes(
         IReadOnlyDictionary<string, string> parameters,
@@ -30,6 +32,8 @@ internal static class SnsTopicAttributeSupport
         bool? fifoTopic = null;
         var contentBasedDeduplication = false;
         var hasContentBasedDeduplication = false;
+        var fifoThroughputScope = TopicFifoThroughputScope;
+        var hasFifoThroughputScope = false;
         var isFifoTopic = topicName.EndsWith(".fifo", StringComparison.Ordinal);
         foreach (var (name, value) in parsedAttributes)
         {
@@ -72,6 +76,15 @@ internal static class SnsTopicAttributeSupport
 
                     hasContentBasedDeduplication = true;
                     break;
+                case "FifoThroughputScope":
+                    if (!TryParseFifoThroughputScope(value, out fifoThroughputScope))
+                    {
+                        error = "Attribute 'FifoThroughputScope' must be either 'Topic' or 'MessageGroup'.";
+                        return false;
+                    }
+
+                    hasFifoThroughputScope = true;
+                    break;
             }
         }
 
@@ -99,8 +112,15 @@ internal static class SnsTopicAttributeSupport
             return false;
         }
 
+        if (hasFifoThroughputScope && !isFifoTopic)
+        {
+            error = "Attribute 'FifoThroughputScope' is supported only for FIFO topics whose names end with '.fifo'.";
+            return false;
+        }
+
         metadata.FifoTopic = isFifoTopic ? true : null;
         metadata.ContentBasedDeduplication = isFifoTopic ? contentBasedDeduplication : null;
+        metadata.FifoThroughputScope = isFifoTopic ? fifoThroughputScope : null;
         if (!TryBuildUserMetadata(metadata, out var userMetadata))
         {
             error = $"Topic metadata exceeds the Azure Service Bus UserMetadata limit of {UserMetadataMaxLength} characters.";
@@ -123,7 +143,8 @@ internal static class SnsTopicAttributeSupport
             && string.IsNullOrWhiteSpace(metadata.PolicyJson)
             && string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson)
             && metadata.FifoTopic is null
-            && metadata.ContentBasedDeduplication is null)
+            && metadata.ContentBasedDeduplication is null
+            && metadata.FifoThroughputScope is null)
         {
             userMetadata = null;
             return true;
@@ -131,6 +152,24 @@ internal static class SnsTopicAttributeSupport
 
         userMetadata = JsonSerializer.Serialize(metadata, SnsTopicJsonContext.Default.SnsTopicMetadata);
         return userMetadata.Length <= UserMetadataMaxLength;
+    }
+
+    public static bool TryParseFifoThroughputScope(string? value, out string scope)
+    {
+        if (string.Equals(value, TopicFifoThroughputScope, StringComparison.Ordinal))
+        {
+            scope = TopicFifoThroughputScope;
+            return true;
+        }
+
+        if (string.Equals(value, MessageGroupFifoThroughputScope, StringComparison.Ordinal))
+        {
+            scope = MessageGroupFifoThroughputScope;
+            return true;
+        }
+
+        scope = string.Empty;
+        return false;
     }
 
     private static Dictionary<string, string> ReadCreateTopicAttributes(IReadOnlyDictionary<string, string> parameters, out string? error)
@@ -225,6 +264,7 @@ internal sealed class SnsTopicMetadata
     public string? DeliveryPolicyJson { get; set; }
     public bool? FifoTopic { get; set; }
     public bool? ContentBasedDeduplication { get; set; }
+    public string? FifoThroughputScope { get; set; }
 }
 
 [JsonSourceGenerationOptions(

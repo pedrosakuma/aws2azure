@@ -22,6 +22,7 @@ public sealed class GetTopicAttributesHandlerTests
                 PolicyJson = "{\"Statement\":[]}",
                 DeliveryPolicyJson = "{\"healthyRetryPolicy\":{\"numRetries\":3}}",
                 ContentBasedDeduplication = true,
+                FifoThroughputScope = SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
             },
             SnsTopicJsonContext.Default.SnsTopicMetadata);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
@@ -54,6 +55,7 @@ public sealed class GetTopicAttributesHandlerTests
         Assert.Equal(string.Empty, attributes["KmsMasterKeyId"]);
         Assert.Equal("false", attributes["FifoTopic"]);
         Assert.Equal("true", attributes["ContentBasedDeduplication"]);
+        Assert.DoesNotContain("FifoThroughputScope", attributes);
         Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["DeliveryPolicy"]);
         Assert.Equal("{\"healthyRetryPolicy\":{\"numRetries\":3}}", attributes["EffectiveDeliveryPolicy"]);
     }
@@ -65,6 +67,7 @@ public sealed class GetTopicAttributesHandlerTests
             new SnsTopicMetadata
             {
                 ContentBasedDeduplication = false,
+                FifoThroughputScope = SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
             },
             SnsTopicJsonContext.Default.SnsTopicMetadata);
         var managementClient = SnsManagementClientTestSupport.NewManagementClient((_, _) =>
@@ -84,6 +87,7 @@ public sealed class GetTopicAttributesHandlerTests
         var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
         Assert.Equal("true", attributes["FifoTopic"]);
         Assert.Equal("false", attributes["ContentBasedDeduplication"]);
+        Assert.Equal("MessageGroup", attributes["FifoThroughputScope"]);
     }
 
     [Fact]
@@ -143,6 +147,7 @@ public sealed class GetTopicAttributesHandlerTests
         var attributes = SnsManagementClientTestSupport.ReadAttributes(SnsManagementClientTestSupport.ReadBody(context));
         Assert.Equal("true", attributes["FifoTopic"]);
         Assert.Equal("true", attributes["ContentBasedDeduplication"]);
+        Assert.Equal("Topic", attributes["FifoThroughputScope"]);
     }
 
     [Fact]

@@ -20,14 +20,19 @@ internal static class SnsServiceBusTestSupport
         return SnsQueryApiClient.ReadTopicArn(response);
     }
 
-    public static async Task<string> CreateFifoTopicAsync(HttpClient client, string prefix, bool contentBasedDeduplication)
+    public static async Task<string> CreateFifoTopicAsync(
+        HttpClient client,
+        string prefix,
+        bool contentBasedDeduplication,
+        string fifoThroughputScope = "Topic")
     {
         var topicName = SnsQueryApiClient.CreateTopicName(prefix) + ".fifo";
         var response = await SnsQueryApiClient.CreateTopicAsync(
                 client,
                 topicName,
                 ("FifoTopic", "true"),
-                ("ContentBasedDeduplication", contentBasedDeduplication ? "true" : "false"))
+                ("ContentBasedDeduplication", contentBasedDeduplication ? "true" : "false"),
+                ("FifoThroughputScope", fifoThroughputScope))
             .ConfigureAwait(false);
         AssertStatus(response, HttpStatusCode.OK, "CreateTopic[fifo]");
         return SnsQueryApiClient.ReadTopicArn(response);

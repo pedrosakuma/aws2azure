@@ -122,6 +122,94 @@ public sealed class SetTopicAttributesHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_updates_fifo_throughput_scope_metadata()
+    {
+        string? updateBody = null;
+        var credentials = SnsManagementClientTestSupport.NewCredentials();
+        SnsFifoPublishSupport.RecordServiceBusTopicState(
+            credentials,
+            "orders.fifo",
+            requiresDuplicateDetection: true,
+            contentBasedDeduplication: false,
+            SnsTopicAttributeSupport.TopicFifoThroughputScope);
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        SnsManagementClientTestSupport.BuildTopicEntry(
+                            "orders.fifo",
+                            requiresDuplicateDetection: true,
+                            userMetadata: JsonSerializer.Serialize(
+                                new SnsTopicMetadata
+                                {
+                                    FifoTopic = true,
+                                    ContentBasedDeduplication = false,
+                                    FifoThroughputScope = SnsTopicAttributeSupport.TopicFifoThroughputScope,
+                                },
+                                SnsTopicJsonContext.Default.SnsTopicMetadata)),
+                        Encoding.UTF8,
+                        "application/atom+xml"),
+                };
+            }
+
+            updateBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("FifoThroughputScope", "MessageGroup", "orders.fifo"),
+            credentials,
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var metadata = JsonSerializer.Deserialize(
+            SnsManagementClientTestSupport.ReadElementValue(updateBody!, "UserMetadata"),
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+        Assert.Equal("MessageGroup", metadata!.FifoThroughputScope);
+        Assert.False(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, "orders.fifo", out _));
+    }
+
+    [Theory]
+    [InlineData("orders.fifo", "invalid", "must be either 'Topic' or 'MessageGroup'")]
+    [InlineData("orders", "MessageGroup", "supported only for FIFO topics")]
+    public async Task HandleAsync_rejects_invalid_fifo_throughput_scope(
+        string topicName,
+        string attributeValue,
+        string expectedError)
+    {
+        var managementClient = SnsManagementClientTestSupport.NewManagementClient((request, _) =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    SnsManagementClientTestSupport.BuildTopicEntry(
+                        topicName,
+                        requiresDuplicateDetection: topicName.EndsWith(".fifo", StringComparison.Ordinal)),
+                    Encoding.UTF8,
+                    "application/atom+xml"),
+            });
+        });
+
+        var context = SnsManagementClientTestSupport.NewContext();
+        await SetTopicAttributesHandler.HandleAsync(
+            context,
+            NewParseResult("FifoThroughputScope", attributeValue, topicName),
+            SnsManagementClientTestSupport.NewCredentials(),
+            managementClient,
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Contains(expectedError, SnsManagementClientTestSupport.ReadBody(context));
+    }
+
+    [Fact]
     public async Task HandleAsync_rejects_unknown_attribute_names()
     {
         var context = SnsManagementClientTestSupport.NewContext();
@@ -136,12 +224,15 @@ public sealed class SetTopicAttributesHandlerTests
         Assert.Contains("Invalid attribute name: UnknownAttribute", SnsManagementClientTestSupport.ReadBody(context));
     }
 
-    private static SnsParseResult NewParseResult(string attributeName, string attributeValue)
+    private static SnsParseResult NewParseResult(
+        string attributeName,
+        string attributeValue,
+        string topicName = "orders")
         => new(
             SnsOperation.SetTopicAttributes,
             new Dictionary<string, string>
             {
-                ["TopicArn"] = "arn:aws:sns:us-west-2:000000000000:orders",
+                ["TopicArn"] = $"arn:aws:sns:us-west-2:000000000000:{topicName}",
                 ["AttributeName"] = attributeName,
                 ["AttributeValue"] = attributeValue,
             },

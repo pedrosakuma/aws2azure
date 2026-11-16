@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,12 +9,14 @@ namespace Aws2Azure.Modules.Sns.Operations;
 
 internal readonly record struct ServiceBusFifoTopicBackendState(
     bool RequiresDuplicateDetection,
-    bool? ContentBasedDeduplication);
+    bool? ContentBasedDeduplication,
+    string? FifoThroughputScope);
 
 internal readonly record struct ServiceBusFifoTopicState(
     bool IsFifoTopic,
     bool RequiresDuplicateDetection,
-    bool ContentBasedDeduplication);
+    bool ContentBasedDeduplication,
+    string FifoThroughputScope);
 
 internal static class SnsFifoPublishSupport
 {
@@ -38,7 +41,8 @@ internal static class SnsFifoPublishSupport
         ServiceBusTopicsCredentials credentials,
         string serviceBusTopicName,
         bool requiresDuplicateDetection,
-        bool? contentBasedDeduplication)
+        bool? contentBasedDeduplication,
+        string? fifoThroughputScope = null)
     {
         if (string.IsNullOrWhiteSpace(serviceBusTopicName))
         {
@@ -46,7 +50,10 @@ internal static class SnsFifoPublishSupport
         }
 
         TopicStateCache[CreateCacheKey(credentials, serviceBusTopicName)] =
-            new ServiceBusFifoTopicBackendState(requiresDuplicateDetection, contentBasedDeduplication);
+            new ServiceBusFifoTopicBackendState(
+                requiresDuplicateDetection,
+                contentBasedDeduplication,
+                fifoThroughputScope);
     }
 
     public static bool TryGetCachedServiceBusTopicState(
@@ -64,11 +71,6 @@ internal static class SnsFifoPublishSupport
         CancellationToken cancellationToken)
     {
         var cacheKey = CreateCacheKey(credentials, serviceBusTopicName);
-        if (TopicStateCache.TryGetValue(cacheKey, out var cachedState))
-        {
-            return CreateTopicState(snsTopicName, cachedState);
-        }
-
         var topic = await managementClient.GetTopicAsync(
                 credentials,
                 SnsTopicSupport.ResolveNamespaceFqdn(credentials),
@@ -86,7 +88,8 @@ internal static class SnsFifoPublishSupport
         var metadata = SnsTopicAttributeSupport.ParseMetadata(topic.UserMetadata);
         var backendState = new ServiceBusFifoTopicBackendState(
             topic.RequiresDuplicateDetection,
-            metadata.ContentBasedDeduplication);
+            metadata.ContentBasedDeduplication,
+            metadata.FifoThroughputScope);
         TopicStateCache[cacheKey] = backendState;
         return CreateTopicState(snsTopicName, backendState);
     }
@@ -118,6 +121,7 @@ internal static class SnsFifoPublishSupport
         string? messageDeduplicationId,
         string messageBody,
         out string brokerMessageId,
+        out string effectiveDeduplicationId,
         out string? error)
     {
         if (!topicState.IsFifoTopic)
@@ -125,51 +129,77 @@ internal static class SnsFifoPublishSupport
             if (HasFifoFields(messageGroupId, messageDeduplicationId))
             {
                 brokerMessageId = string.Empty;
+                effectiveDeduplicationId = string.Empty;
                 error = "MessageGroupId and MessageDeduplicationId are supported only for FIFO topics whose names end with '.fifo'.";
                 return false;
             }
 
             brokerMessageId = string.Empty;
+            effectiveDeduplicationId = string.Empty;
             error = null;
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(messageGroupId))
+        if (string.IsNullOrEmpty(messageGroupId))
         {
             brokerMessageId = string.Empty;
+            effectiveDeduplicationId = string.Empty;
             error = "Parameter 'MessageGroupId' is required for FIFO topic publishes.";
+            return false;
+        }
+
+        if (!TryValidateFifoIdentifier("MessageGroupId", messageGroupId, out error))
+        {
+            brokerMessageId = string.Empty;
+            effectiveDeduplicationId = string.Empty;
             return false;
         }
 
         if (!topicState.RequiresDuplicateDetection)
         {
             brokerMessageId = string.Empty;
+            effectiveDeduplicationId = string.Empty;
             error = "The FIFO topic is not provisioned with Service Bus duplicate detection, so SNS FIFO deduplication cannot be honoured.";
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(messageDeduplicationId))
+        if (!string.IsNullOrEmpty(messageDeduplicationId))
         {
-            brokerMessageId = messageDeduplicationId;
-            error = null;
-            return true;
+            if (!TryValidateFifoIdentifier("MessageDeduplicationId", messageDeduplicationId, out error))
+            {
+                brokerMessageId = string.Empty;
+                effectiveDeduplicationId = string.Empty;
+                return false;
+            }
+
+            effectiveDeduplicationId = messageDeduplicationId;
+        }
+        else
+        {
+            if (!topicState.ContentBasedDeduplication)
+            {
+                brokerMessageId = string.Empty;
+                effectiveDeduplicationId = string.Empty;
+                error = "Parameter 'MessageDeduplicationId' is required for FIFO topic publishes when ContentBasedDeduplication is not enabled.";
+                return false;
+            }
+
+            effectiveDeduplicationId = CreateContentBasedDeduplicationId(messageBody);
         }
 
-        if (!topicState.ContentBasedDeduplication)
-        {
-            brokerMessageId = string.Empty;
-            error = "Parameter 'MessageDeduplicationId' is required for FIFO topic publishes when ContentBasedDeduplication is not enabled.";
-            return false;
-        }
-
-        brokerMessageId = CreateContentBasedDeduplicationId(messageBody);
+        brokerMessageId = string.Equals(
+            topicState.FifoThroughputScope,
+            SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
+            StringComparison.Ordinal)
+            ? CreateMessageGroupScopedBrokerMessageId(messageGroupId, effectiveDeduplicationId)
+            : effectiveDeduplicationId;
         error = null;
         return true;
     }
 
     private static bool HasFifoFields(string? messageGroupId, string? messageDeduplicationId)
-        => !string.IsNullOrWhiteSpace(messageGroupId)
-            || !string.IsNullOrWhiteSpace(messageDeduplicationId);
+        => !string.IsNullOrEmpty(messageGroupId)
+            || !string.IsNullOrEmpty(messageDeduplicationId);
 
     private static ServiceBusFifoTopicState CreateTopicState(
         string snsTopicName,
@@ -178,10 +208,16 @@ internal static class SnsFifoPublishSupport
         var isFifoTopic = snsTopicName.EndsWith(".fifo", StringComparison.Ordinal);
         var contentBasedDeduplication = backendState.ContentBasedDeduplication
             ?? (isFifoTopic && backendState.RequiresDuplicateDetection);
+        var fifoThroughputScope = SnsTopicAttributeSupport.TryParseFifoThroughputScope(
+            backendState.FifoThroughputScope,
+            out var parsedScope)
+            ? parsedScope
+            : SnsTopicAttributeSupport.TopicFifoThroughputScope;
         return new ServiceBusFifoTopicState(
             isFifoTopic,
             backendState.RequiresDuplicateDetection,
-            contentBasedDeduplication);
+            contentBasedDeduplication,
+            fifoThroughputScope);
     }
 
     private static string CreateCacheKey(ServiceBusTopicsCredentials credentials, string serviceBusTopicName)
@@ -200,6 +236,58 @@ internal static class SnsFifoPublishSupport
         var bytes = Encoding.UTF8.GetBytes(messageBody);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string CreateMessageGroupScopedBrokerMessageId(
+        string messageGroupId,
+        string deduplicationId)
+    {
+        Span<byte> composite = stackalloc byte[4 + 128 + 128];
+        BinaryPrimitives.WriteUInt16BigEndian(composite, (ushort)messageGroupId.Length);
+        for (var i = 0; i < messageGroupId.Length; i++)
+        {
+            composite[2 + i] = (byte)messageGroupId[i];
+        }
+
+        var deduplicationLengthOffset = 2 + messageGroupId.Length;
+        BinaryPrimitives.WriteUInt16BigEndian(
+            composite[deduplicationLengthOffset..],
+            (ushort)deduplicationId.Length);
+        var deduplicationOffset = deduplicationLengthOffset + 2;
+        for (var i = 0; i < deduplicationId.Length; i++)
+        {
+            composite[deduplicationOffset + i] = (byte)deduplicationId[i];
+        }
+
+        Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
+        SHA256.HashData(
+            composite[..(deduplicationOffset + deduplicationId.Length)],
+            hash);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static bool TryValidateFifoIdentifier(
+        string parameterName,
+        string value,
+        out string? error)
+    {
+        if (value.Length is < 1 or > 128)
+        {
+            error = $"Parameter '{parameterName}' must contain between 1 and 128 characters.";
+            return false;
+        }
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] is < '!' or > '~')
+            {
+                error = $"Parameter '{parameterName}' may contain only ASCII alphanumeric characters and punctuation.";
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
     }
 }
 

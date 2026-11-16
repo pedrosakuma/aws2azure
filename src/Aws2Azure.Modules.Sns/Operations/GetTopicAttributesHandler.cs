@@ -75,8 +75,19 @@ internal static class GetTopicAttributesHandler
         }
 
         contentBasedDeduplication ??= isFifo && topic.RequiresDuplicateDetection;
+        var fifoThroughputScope = metadata.FifoThroughputScope;
+        if (fifoThroughputScope is null
+            && SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, serviceBusTopicName, out cachedState))
+        {
+            fifoThroughputScope = cachedState.FifoThroughputScope;
+        }
 
-        var attributes = new List<KeyValuePair<string, string>>(12)
+        if (!SnsTopicAttributeSupport.TryParseFifoThroughputScope(fifoThroughputScope, out fifoThroughputScope))
+        {
+            fifoThroughputScope = SnsTopicAttributeSupport.TopicFifoThroughputScope;
+        }
+
+        var attributes = new List<KeyValuePair<string, string>>(13)
         {
             new("TopicArn", topicArn),
             new("Owner", accountId),
@@ -89,6 +100,11 @@ internal static class GetTopicAttributesHandler
             new("FifoTopic", isFifo ? "true" : "false"),
             new("ContentBasedDeduplication", contentBasedDeduplication.Value ? "true" : "false"),
         };
+
+        if (isFifo)
+        {
+            attributes.Add(new("FifoThroughputScope", fifoThroughputScope));
+        }
 
         if (!string.IsNullOrWhiteSpace(metadata.DeliveryPolicyJson))
         {

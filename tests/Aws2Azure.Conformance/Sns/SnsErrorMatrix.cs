@@ -99,6 +99,16 @@ public static class SnsErrorMatrix
             "InvalidAction",
             Body: "Action=NotARealAction&Version=2010-03-31"),
 
+        new SnsErrorCase(
+            "sns-invalid-fifo-throughput-scope",
+            "sns:CreateTopic",
+            400,
+            "InvalidParameter",
+            Body:
+                "Action=CreateTopic&Version=2010-03-31&Name=orders.fifo" +
+                "&Attributes.entry.1.key=FifoTopic&Attributes.entry.1.value=true" +
+                "&Attributes.entry.2.key=FifoThroughputScope&Attributes.entry.2.value=Invalid"),
+
         // A Query request signed with the WRONG secret. SNS's REST-XML auth
         // vocabulary (default EmitSigV4FailureAsync) answers
         // SignatureDoesNotMatch / 403.

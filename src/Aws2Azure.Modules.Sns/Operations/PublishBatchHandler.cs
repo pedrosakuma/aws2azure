@@ -55,6 +55,7 @@ internal static class PublishBatchHandler
         }
 
         var brokerMessageIds = new string[entries.Count];
+        var effectiveDeduplicationIds = new string[entries.Count];
         if (route.Backend == SnsTopicBackend.ServiceBusTopics
             && (topicName.EndsWith(".fifo", StringComparison.Ordinal) || hasFifoFields))
         {
@@ -92,6 +93,7 @@ internal static class PublishBatchHandler
                         entries[i].MessageDeduplicationId,
                         entries[i].Message,
                         out brokerMessageIds[i],
+                        out effectiveDeduplicationIds[i],
                         out error))
                 {
                     await SnsTopicSupport.WriteInvalidParameterAsync(context, $"Entry {i + 1}: {error}").ConfigureAwait(false);
@@ -104,13 +106,21 @@ internal static class PublishBatchHandler
             for (var i = 0; i < brokerMessageIds.Length; i++)
             {
                 brokerMessageIds[i] = string.Empty;
+                effectiveDeduplicationIds[i] = string.Empty;
             }
         }
 
         var publisher = SnsBackendPublisherFactory.Create(
             route, credentials, eventGridCredentials, amqpSender, eventGridPublisher);
 
-        var sendResult = await publisher.PublishBatchAsync(topicArn, entries, messageIds, brokerMessageIds, cancellationToken).ConfigureAwait(false);
+        var sendResult = await publisher.PublishBatchAsync(
+                topicArn,
+                entries,
+                messageIds,
+                brokerMessageIds,
+                effectiveDeduplicationIds,
+                cancellationToken)
+            .ConfigureAwait(false);
 
         var successful = new List<PublishBatchSuccess>(entries.Count);
         var failedEntries = new List<PublishBatchFailure>(entries.Count);

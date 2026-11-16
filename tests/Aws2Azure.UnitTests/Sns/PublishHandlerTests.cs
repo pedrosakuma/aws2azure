@@ -321,6 +321,9 @@ public sealed class PublishHandlerTests
         Assert.Equal("orders.fifo", sender.SingleCall!.Value.TopicName);
         Assert.Equal("group-1", sender.SingleCall.Value.Message.Properties.GroupId);
         Assert.Equal("dedup-1", sender.SingleCall.Value.Message.Properties.MessageId);
+        Assert.Equal(
+            "dedup-1",
+            sender.SingleCall.Value.Message.ApplicationProperties![SnsPublishSupport.MessageDeduplicationIdPropertyName]);
     }
 
     [Fact]
@@ -354,6 +357,97 @@ public sealed class PublishHandlerTests
             CancellationToken.None);
 
         Assert.Equal("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", sender.SingleCall!.Value.Message.Properties.MessageId);
+        Assert.Equal(
+            sender.SingleCall.Value.Message.Properties.MessageId,
+            sender.SingleCall.Value.Message.ApplicationProperties![SnsPublishSupport.MessageDeduplicationIdPropertyName]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_uses_group_scoped_broker_identity_and_preserves_aws_deduplication_id()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+        var metadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+                FifoThroughputScope = SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("Message", "hello"),
+                ("MessageGroupId", "group-1"),
+                ("MessageDeduplicationId", "dedup-1")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", subscriptionCount: 0, requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+            })),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        var message = sender.SingleCall!.Value.Message;
+        Assert.Equal("group-1", message.Properties.GroupId);
+        Assert.NotEqual("dedup-1", message.Properties.MessageId);
+        Assert.Equal(64, Assert.IsType<string>(message.Properties.MessageId).Length);
+        Assert.Equal(
+            "dedup-1",
+            message.ApplicationProperties![SnsPublishSupport.MessageDeduplicationIdPropertyName]);
+    }
+
+    [Fact]
+    public async Task HandleAsync_reloads_mutable_scope_instead_of_using_stale_cached_metadata()
+    {
+        var credentials = NewCredentials();
+        SnsFifoPublishSupport.RecordServiceBusTopicState(
+            credentials,
+            "orders.fifo",
+            requiresDuplicateDetection: true,
+            contentBasedDeduplication: false,
+            fifoThroughputScope: SnsTopicAttributeSupport.TopicFifoThroughputScope);
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+        var managementRequests = 0;
+        var metadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+                FifoThroughputScope = SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+
+        await PublishHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("Message", "hello"),
+                ("MessageGroupId", "group-1"),
+                ("MessageDeduplicationId", "dedup-1")),
+            credentials,
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) =>
+            {
+                managementRequests++;
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+                });
+            }),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(1, managementRequests);
+        Assert.NotEqual("dedup-1", sender.SingleCall!.Value.Message.Properties.MessageId);
     }
 
     [Fact]
