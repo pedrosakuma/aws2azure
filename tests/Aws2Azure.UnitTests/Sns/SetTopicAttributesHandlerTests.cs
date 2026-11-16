@@ -173,7 +173,7 @@ public sealed class SetTopicAttributesHandlerTests
     }
 
     [Fact]
-    public void Topic_update_inserts_missing_user_metadata_before_support_ordering()
+    public void Topic_update_inserts_missing_user_metadata_before_first_later_schema_property()
     {
         const string serviceBusNamespace = "http://schemas.microsoft.com/netservices/2010/10/servicebus/connect";
         var description = new ServiceBusTopicDescription(
@@ -188,16 +188,16 @@ public sealed class SetTopicAttributesHandlerTests
                 new("RequiresDuplicateDetection", $"<RequiresDuplicateDetection xmlns=\"{serviceBusNamespace}\">true</RequiresDuplicateDetection>"),
                 new("DuplicateDetectionHistoryTimeWindow", $"<DuplicateDetectionHistoryTimeWindow xmlns=\"{serviceBusNamespace}\">PT5M</DuplicateDetectionHistoryTimeWindow>"),
                 new("EnableBatchedOperations", $"<EnableBatchedOperations xmlns=\"{serviceBusNamespace}\">true</EnableBatchedOperations>"),
-                new("SupportOrdering", $"<SupportOrdering xmlns=\"{serviceBusNamespace}\">false</SupportOrdering>"),
-                new("AutoDeleteOnIdle", $"<AutoDeleteOnIdle xmlns=\"{serviceBusNamespace}\">P10675199DT2H48M5.4775807S</AutoDeleteOnIdle>"),
+                new("EnablePartitioning", $"<EnablePartitioning xmlns=\"{serviceBusNamespace}\">false</EnablePartitioning>"),
+                new("EnableExpress", $"<EnableExpress xmlns=\"{serviceBusNamespace}\">false</EnableExpress>"),
             ]);
 
         var body = ServiceBusAtomXml.BuildTopicDescriptionEntry(description);
 
         var userMetadataIndex = body.IndexOf("<UserMetadata", StringComparison.Ordinal);
-        var supportOrderingIndex = body.IndexOf("<SupportOrdering", StringComparison.Ordinal);
+        var enablePartitioningIndex = body.IndexOf("<EnablePartitioning", StringComparison.Ordinal);
         Assert.True(userMetadataIndex >= 0);
-        Assert.True(supportOrderingIndex > userMetadataIndex);
+        Assert.True(enablePartitioningIndex > userMetadataIndex);
     }
 
     [Theory]

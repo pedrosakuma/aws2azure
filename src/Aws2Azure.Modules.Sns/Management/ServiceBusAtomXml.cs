@@ -474,7 +474,7 @@ internal static class ServiceBusAtomXml
             }
 
             if (!wroteUserMetadata
-                && property.LocalName is "SupportOrdering" or "AutoDeleteOnIdle")
+                && IsTopicPropertyAfterUserMetadata(property.LocalName))
             {
                 writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
                 wroteUserMetadata = true;
@@ -506,6 +506,15 @@ internal static class ServiceBusAtomXml
                 description.RequiresDuplicateDetection ? "true" : "false");
         }
     }
+
+    private static bool IsTopicPropertyAfterUserMetadata(string localName)
+        => localName is
+            "SupportOrdering"
+            or "AutoDeleteOnIdle"
+            or "EnablePartitioning"
+            or "EnableSubscriptionPartitioning"
+            or "EnableExpress"
+            or "MaxMessageSizeInKilobytes";
 
     private static void WriteMergedSubscriptionProperties(XmlWriter writer, ServiceBusSubscriptionDescription description)
     {
