@@ -129,8 +129,12 @@ internal static class SendMessageHandlers
             return;
         }
 
-        TryGetParam(parsed, "MessageGroupId", out var groupId);
-        TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
+        string? groupId = TryGetParam(parsed, "MessageGroupId", out var parsedGroupId)
+            ? parsedGroupId
+            : null;
+        string? dedupId = TryGetParam(parsed, "MessageDeduplicationId", out var parsedDedupId)
+            ? parsedDedupId
+            : null;
 
         if (SqsFifoSendValidator.Validate(queueName, groupId, dedupId) is { } fifoError)
         {
@@ -138,6 +142,7 @@ internal static class SendMessageHandlers
             return;
         }
 
+        var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
         var defaultDelaySeconds = QueueAttributeTranslator.DefaultDelaySeconds;
         if (!parsed.Parameters.ContainsKey("DelaySeconds"))
         {
@@ -157,8 +162,6 @@ internal static class SendMessageHandlers
             return;
         }
 
-        var isFifoQueue = queueName.EndsWith(".fifo", StringComparison.Ordinal);
-
         // Mint a stable idempotency key BEFORE entering the HTTP retry path
         // so every retry attempt of this logical send carries the same
         // SB MessageId. On queues with duplicate-detection enabled (Premium
@@ -169,8 +172,13 @@ internal static class SendMessageHandlers
         // IS the MessageId (validated above to be present).
         var idempotencyKey = isFifoQueue ? dedupId! : Guid.NewGuid().ToString();
 
-        var brokerProps = BuildBrokerProperties(messageId: idempotencyKey, sessionId: groupId, delaySeconds);
-        var appHeaders = BuildAppPropertyHeaders(attrs);
+        var brokerProps = BuildBrokerProperties(
+            messageId: idempotencyKey,
+            sessionId: isFifoQueue ? groupId : null,
+            delaySeconds);
+        var appHeaders = BuildAppPropertyHeaders(
+            attrs,
+            standardMessageGroupId: isFifoQueue ? null : groupId);
 
         using var content = new ByteArrayContent(bodyBytes);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
@@ -283,7 +291,7 @@ internal static class SendMessageHandlers
         }
 
         // Build the SB batch envelope.
-        var batchJson = BuildSbBatchEnvelope(entries, idempotencyKeys);
+        var batchJson = BuildSbBatchEnvelope(entries, idempotencyKeys, batchIsFifoQueue);
         using var response = await sb.SendMessageBatchAsync(queueName, batchJson, ct).ConfigureAwait(false);
 
         // SB returns a single status for the whole batch. If anything failed
@@ -470,16 +478,22 @@ internal static class SendMessageHandlers
     }
 
     private static IReadOnlyDictionary<string, string>? BuildAppPropertyHeaders(
-        IReadOnlyDictionary<string, SqsMessageAttribute> attrs)
+        IReadOnlyDictionary<string, SqsMessageAttribute> attrs,
+        string? standardMessageGroupId)
     {
-        if (attrs.Count == 0) return null;
+        if (attrs.Count == 0 && string.IsNullOrEmpty(standardMessageGroupId))
+            return null;
 
         // Each SQS attribute becomes a single application-property HTTP
         // header. Binary attributes are base64-encoded so the value is
         // header-safe. The data-type registry is sent on the
         // Aws2Azure-AttrTypes side channel so the receive path can
-        // round-trip the original SQS view without ambiguity.
-        var headers = new Dictionary<string, string>(StringComparer.Ordinal);
+        // round-trip the original SQS view without ambiguity. Standard
+        // queue MessageGroupId is carried separately so it does not turn
+        // on Service Bus sessions or ordering.
+        var headers = new Dictionary<string, string>(
+            attrs.Count + (string.IsNullOrEmpty(standardMessageGroupId) ? 1 : 2),
+            StringComparer.Ordinal);
         foreach (var kv in attrs)
         {
             var name = kv.Key;
@@ -489,11 +503,17 @@ internal static class SendMessageHandlers
                 : (attr.StringValue ?? string.Empty);
             headers[name] = headerValue;
         }
-        headers[AttrTypesHeader] = SqsAttributeTypeRegistry.Build(attrs);
+        if (attrs.Count > 0)
+            headers[AttrTypesHeader] = SqsAttributeTypeRegistry.Build(attrs);
+        if (!string.IsNullOrEmpty(standardMessageGroupId))
+            headers[SqsMessageGroupMetadata.PropertyName] = standardMessageGroupId;
         return headers;
     }
 
-    private static string BuildSbBatchEnvelope(IReadOnlyList<BatchEntry> entries, IReadOnlyList<string> messageIds)
+    private static string BuildSbBatchEnvelope(
+        IReadOnlyList<BatchEntry> entries,
+        IReadOnlyList<string> messageIds,
+        bool isFifoQueue)
     {
         // Service Bus expects an array of:
         //   { "Body": "...", "BrokerProperties": {...}, "UserProperties": {...} }
@@ -511,7 +531,10 @@ internal static class SendMessageHandlers
             // of the batch don't double-publish entries on dedup-enabled
             // queues. For FIFO with a caller-supplied DeduplicationId this
             // collapses to the dedup id (same value).
-            var bp = BuildBrokerProperties(messageIds[i], e.GroupId, e.DelaySeconds);
+            var bp = BuildBrokerProperties(
+                messageIds[i],
+                isFifoQueue ? e.GroupId : null,
+                e.DelaySeconds);
             if (!string.IsNullOrEmpty(bp))
             {
                 sb.Append("\"BrokerProperties\":").Append(bp).Append(',');
@@ -529,13 +552,17 @@ internal static class SendMessageHandlers
                 sb.Append('"').Append(JsonEncodedText.Encode(kv.Key)).Append("\":\"")
                   .Append(JsonEncodedText.Encode(headerValue)).Append('"');
             }
-            if (e.Attributes.Count > 0)
+            if (!isFifoQueue && !string.IsNullOrEmpty(e.GroupId))
             {
-                sb.Append(',');
+                if (!firstProp) sb.Append(',');
+                firstProp = false;
+                sb.Append('"').Append(SqsMessageGroupMetadata.PropertyName).Append("\":\"")
+                  .Append(JsonEncodedText.Encode(e.GroupId)).Append('"');
             }
             var typeRegistry = SqsAttributeTypeRegistry.Build(e.Attributes);
             if (typeRegistry.Length > 0)
             {
+                if (!firstProp) sb.Append(',');
                 sb.Append('"').Append(AttrTypesHeader).Append("\":\"")
                   .Append(JsonEncodedText.Encode(typeRegistry.ToString())).Append('"');
             }

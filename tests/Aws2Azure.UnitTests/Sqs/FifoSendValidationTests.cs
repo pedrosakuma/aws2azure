@@ -19,7 +19,8 @@ namespace Aws2Azure.UnitTests.Sqs;
 /// <summary>
 /// Slice-5 FIFO send-path validation: <c>.fifo</c> queues must reject
 /// SendMessage / SendMessageBatch requests that omit <c>MessageGroupId</c>,
-/// and standard queues must reject FIFO-only attributes.
+/// while standard queues accept MessageGroupId but still reject FIFO-only
+/// MessageDeduplicationId.
 /// </summary>
 public sealed class FifoSendValidationTests
 {
@@ -49,22 +50,22 @@ public sealed class FifoSendValidationTests
     }
 
     [Fact]
-    public async Task SendMessage_on_standard_queue_with_message_group_id_is_rejected()
+    public async Task SendMessage_on_standard_queue_with_message_group_id_is_accepted()
     {
         var ctx = NewCtx();
         var parsed = QueryParsed(SqsOperation.SendMessage,
             ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/plain"),
             ("MessageBody", "hi"),
-            ("MessageGroupId", "g1"));
+            ("MessageGroupId", "g1"),
+            ("DelaySeconds", "0"));
 
-        using var http = new AzureHttpClient(new RecordingHandler(), ownsHandler: true);
+        var handler = new RecordingHandler(HttpStatusCode.Created);
+        using var http = new AzureHttpClient(handler, ownsHandler: true);
         var sb = new ServiceBusClient(http, Creds);
         await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
 
-        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
-        var body = ReadBody(ctx);
-        Assert.Contains("InvalidParameterValue", body);
-        Assert.Contains("MessageGroupId", body);
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(1, handler.InvocationCount);
     }
 
     [Fact]
@@ -109,6 +110,48 @@ public sealed class FifoSendValidationTests
         Assert.Contains("MessageGroupId", body);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("tenant with space")]
+    [InlineData("tenant\twith-tab")]
+    public async Task SendMessage_rejects_message_group_id_with_invalid_characters(string groupId)
+    {
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/plain"),
+            ("MessageBody", "hi"),
+            ("MessageGroupId", groupId));
+
+        var handler = new RecordingHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: true);
+        var sb = new ServiceBusClient(http, Creds);
+        await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("MessageGroupId", ReadBody(ctx));
+        Assert.Equal(0, handler.InvocationCount);
+    }
+
+    [Fact]
+    public async Task SendMessageBatch_rejects_message_group_id_longer_than_128_characters()
+    {
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessageBatch,
+            ("QueueUrl", "https://sqs.us-east-1.amazonaws.com/000000000000/plain"),
+            ("SendMessageBatchRequestEntry.1.Id", "e1"),
+            ("SendMessageBatchRequestEntry.1.MessageBody", "m1"),
+            ("SendMessageBatchRequestEntry.1.MessageGroupId", new string('g', 129)));
+
+        var handler = new RecordingHandler();
+        using var http = new AzureHttpClient(handler, ownsHandler: true);
+        var sb = new ServiceBusClient(http, Creds);
+        await SendMessageHandlers.HandleAsync(ctx, parsed, sb, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, ctx.Response.StatusCode);
+        Assert.Contains("MessageGroupId", ReadBody(ctx));
+        Assert.Equal(0, handler.InvocationCount);
+    }
+
     // --- helpers ---------------------------------------------------------
 
     private static HttpContext NewCtx()
@@ -142,14 +185,19 @@ public sealed class FifoSendValidationTests
     /// </summary>
     private sealed class RecordingHandler : HttpMessageHandler
     {
+        private readonly HttpStatusCode _statusCode;
+
+        public RecordingHandler(HttpStatusCode statusCode = HttpStatusCode.InternalServerError)
+        {
+            _statusCode = statusCode;
+        }
+
         public int InvocationCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             InvocationCount++;
-            // Return a synthetic 500 so the test fails loudly if it ever
-            // reaches the Service Bus path on a validation-only scenario.
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            return Task.FromResult(new HttpResponseMessage(_statusCode));
         }
     }
 }

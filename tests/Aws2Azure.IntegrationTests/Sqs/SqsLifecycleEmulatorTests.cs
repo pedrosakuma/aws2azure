@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -80,6 +81,100 @@ public sealed class SqsLifecycleEmulatorTests
         {
             Assert.Equal(HttpStatusCode.OK, delResp.StatusCode);
         }
+    }
+
+    [SkippableFact]
+    public async Task Standard_queue_send_and_batch_roundtrip_message_group_id_without_sessions()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        var queueName = ServiceBusEmulatorFixture.StandardQueue;
+        var run = Guid.NewGuid().ToString("N");
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["fair-single-" + run] = "tenant-single-" + run,
+            ["fair-batch-a-" + run] = "tenant-a-" + run,
+            ["fair-batch-b-" + run] = "tenant-b-" + run,
+        };
+        using var client = _fixture.CreateSqsClient();
+
+        using (var send = await PostAsync(client, "SendMessage", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            MessageBody = expected.Keys.First(),
+            MessageGroupId = expected.Values.First(),
+        }).ConfigureAwait(false))
+        {
+            var payload = await send.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.True(send.StatusCode == HttpStatusCode.OK,
+                $"SendMessage status={(int)send.StatusCode}, body={payload}");
+        }
+
+        using (var batch = await PostAsync(client, "SendMessageBatch", new
+        {
+            QueueUrl = QueueUrl(queueName),
+            Entries = new[]
+            {
+                new
+                {
+                    Id = "a",
+                    MessageBody = "fair-batch-a-" + run,
+                    MessageGroupId = "tenant-a-" + run,
+                },
+                new
+                {
+                    Id = "b",
+                    MessageBody = "fair-batch-b-" + run,
+                    MessageGroupId = "tenant-b-" + run,
+                },
+            },
+        }).ConfigureAwait(false))
+        {
+            var payload = await batch.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.True(batch.StatusCode == HttpStatusCode.OK,
+                $"SendMessageBatch status={(int)batch.StatusCode}, body={payload}");
+            using var document = JsonDocument.Parse(payload);
+            Assert.Equal(2, document.RootElement.GetProperty("Successful").GetArrayLength());
+        }
+
+        var observed = new Dictionary<string, string>(StringComparer.Ordinal);
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(15);
+        while (observed.Count < expected.Count && DateTimeOffset.UtcNow < deadline)
+        {
+            using var receive = await PostAsync(client, "ReceiveMessage", new
+            {
+                QueueUrl = QueueUrl(queueName),
+                MaxNumberOfMessages = 10,
+                WaitTimeSeconds = 1,
+                MessageSystemAttributeNames = new[] { "MessageGroupId" },
+            }).ConfigureAwait(false);
+            var payload = await receive.Content.ReadAsStringAsync().ConfigureAwait(false);
+            Assert.True(receive.StatusCode == HttpStatusCode.OK,
+                $"ReceiveMessage status={(int)receive.StatusCode}, body={payload}");
+
+            using var document = JsonDocument.Parse(payload);
+            foreach (var message in document.RootElement.GetProperty("Messages").EnumerateArray())
+            {
+                var body = message.GetProperty("Body").GetString()!;
+                if (expected.ContainsKey(body))
+                {
+                    observed[body] = message.GetProperty("Attributes")
+                        .GetProperty("MessageGroupId")
+                        .GetString()!;
+                }
+
+                using var delete = await PostAsync(client, "DeleteMessage", new
+                {
+                    QueueUrl = QueueUrl(queueName),
+                    ReceiptHandle = message.GetProperty("ReceiptHandle").GetString()!,
+                }).ConfigureAwait(false);
+                Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
+            }
+        }
+
+        Assert.Equal(expected.Count, observed.Count);
+        foreach (var (body, groupId) in expected)
+            Assert.Equal(groupId, observed[body]);
     }
 
     [SkippableFact]

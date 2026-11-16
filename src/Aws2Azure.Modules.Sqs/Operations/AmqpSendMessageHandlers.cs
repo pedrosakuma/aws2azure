@@ -26,8 +26,9 @@ namespace Aws2Azure.Modules.Sqs.Operations;
 /// <para>SQS → AMQP mapping:</para>
 /// <list type="bullet">
 ///   <item><c>MessageBody</c> → AMQP <c>data</c> section (UTF-8 bytes).</item>
-///   <item><c>MessageGroupId</c> (FIFO only) → <c>properties.group-id</c>
-///         (Service Bus session-id).</item>
+///   <item><c>MessageGroupId</c> → <c>properties.group-id</c> for FIFO
+///         queues (Service Bus session-id), or a namespaced application
+///         property for standard queues so no session semantics are enabled.</item>
 ///   <item>Idempotency key → <c>properties.message-id</c>. For FIFO
 ///         queues this is the caller's <c>MessageDeduplicationId</c>
 ///         (so SB's dedup window collapses retries); for standard
@@ -120,8 +121,12 @@ internal static class AmqpSendMessageHandlers
             return;
         }
 
-        SendMessageHandlers.TryGetParam(parsed, "MessageGroupId", out var groupId);
-        SendMessageHandlers.TryGetParam(parsed, "MessageDeduplicationId", out var dedupId);
+        string? groupId = SendMessageHandlers.TryGetParam(parsed, "MessageGroupId", out var parsedGroupId)
+            ? parsedGroupId
+            : null;
+        string? dedupId = SendMessageHandlers.TryGetParam(parsed, "MessageDeduplicationId", out var parsedDedupId)
+            ? parsedDedupId
+            : null;
 
         if (SqsFifoSendValidator.Validate(queueName, groupId, dedupId) is { } fifoError)
         {
@@ -134,7 +139,13 @@ internal static class AmqpSendMessageHandlers
         // Idempotency-key contract identical to the REST handler.
         var idempotencyKey = isFifoQueue ? dedupId! : Guid.NewGuid().ToString();
 
-        var amqpMessage = BuildAmqpMessage(bodyBytes, attrs, idempotencyKey, groupId, delaySeconds);
+        var amqpMessage = BuildAmqpMessage(
+            bodyBytes,
+            attrs,
+            idempotencyKey,
+            groupId,
+            isFifoQueue,
+            delaySeconds);
 
         try
         {
@@ -194,6 +205,7 @@ internal static class AmqpSendMessageHandlers
         IReadOnlyDictionary<string, SqsMessageAttribute> attrs,
         string messageId,
         string? groupId,
+        bool isFifoQueue,
         int delaySeconds)
     {
         var msg = new AmqpMessage
@@ -201,14 +213,17 @@ internal static class AmqpSendMessageHandlers
             Properties = new AmqpProperties
             {
                 MessageId = messageId,
-                GroupId = string.IsNullOrEmpty(groupId) ? null : groupId,
+                GroupId = isFifoQueue && !string.IsNullOrEmpty(groupId) ? groupId : null,
             },
             Body = body,
         };
 
-        if (attrs.Count > 0)
+        var standardMessageGroupId = isFifoQueue ? null : groupId;
+        if (attrs.Count > 0 || !string.IsNullOrEmpty(standardMessageGroupId))
         {
-            var ap = new Dictionary<string, object?>(attrs.Count + 1, StringComparer.Ordinal);
+            var ap = new Dictionary<string, object?>(
+                attrs.Count + (attrs.Count > 0 ? 1 : 0) + (string.IsNullOrEmpty(standardMessageGroupId) ? 0 : 1),
+                StringComparer.Ordinal);
             foreach (var kv in attrs)
             {
                 var value = kv.Value.IsBinary
@@ -216,7 +231,10 @@ internal static class AmqpSendMessageHandlers
                     : (kv.Value.StringValue ?? string.Empty);
                 ap[kv.Key] = value;
             }
-            ap[SqsAttributeTypeRegistry.HeaderName] = SqsAttributeTypeRegistry.Build(attrs);
+            if (attrs.Count > 0)
+                ap[SqsAttributeTypeRegistry.HeaderName] = SqsAttributeTypeRegistry.Build(attrs);
+            if (!string.IsNullOrEmpty(standardMessageGroupId))
+                ap[SqsMessageGroupMetadata.PropertyName] = standardMessageGroupId;
             msg.ApplicationProperties = ap;
         }
 

@@ -44,6 +44,7 @@ public sealed class AmqpSendMessageHandlersTests
             attrs: new Dictionary<string, SqsMessageAttribute>(),
             messageId: "id-1",
             groupId: null,
+            isFifoQueue: false,
             delaySeconds: 0);
 
         Assert.Equal("id-1", msg.Properties.MessageId?.ToString());
@@ -61,6 +62,7 @@ public sealed class AmqpSendMessageHandlersTests
             attrs: new Dictionary<string, SqsMessageAttribute>(),
             messageId: "dedup-1",
             groupId: "g1",
+            isFifoQueue: true,
             delaySeconds: 0);
 
         Assert.Equal("dedup-1", msg.Properties.MessageId?.ToString());
@@ -76,6 +78,7 @@ public sealed class AmqpSendMessageHandlersTests
             attrs: new Dictionary<string, SqsMessageAttribute>(),
             messageId: "m",
             groupId: null,
+            isFifoQueue: false,
             delaySeconds: 30);
         var after = DateTimeOffset.UtcNow;
 
@@ -101,6 +104,7 @@ public sealed class AmqpSendMessageHandlersTests
             attrs: attrs,
             messageId: "m",
             groupId: null,
+            isFifoQueue: false,
             delaySeconds: 0);
 
         Assert.NotNull(msg.ApplicationProperties);
@@ -115,6 +119,33 @@ public sealed class AmqpSendMessageHandlersTests
         Assert.Contains("strKey=String", registry);
         Assert.Contains("numKey=Number", registry);
         Assert.Contains("binKey=Binary", registry);
+    }
+
+    [Fact]
+    public void BuildAmqpMessage_carries_standard_group_as_metadata_without_enabling_sessions()
+    {
+        var attrs = new Dictionary<string, SqsMessageAttribute>(StringComparer.Ordinal);
+        for (var i = 0; i < 10; i++)
+        {
+            attrs["attribute-" + i] = new SqsMessageAttribute
+            {
+                DataType = "String",
+                StringValue = "value-" + i,
+            };
+        }
+
+        var msg = AmqpSendMessageHandlers.BuildAmqpMessage(
+            body: Encoding.UTF8.GetBytes("x"),
+            attrs,
+            messageId: "m",
+            groupId: "tenant-42",
+            isFifoQueue: false,
+            delaySeconds: 0);
+
+        Assert.Null(msg.Properties.GroupId);
+        Assert.NotNull(msg.ApplicationProperties);
+        Assert.Equal("tenant-42", msg.ApplicationProperties![SqsMessageGroupMetadata.PropertyName]);
+        Assert.Equal(12, msg.ApplicationProperties.Count);
     }
 
     // --- Handler dispatch + happy path -------------------------------------
@@ -139,6 +170,27 @@ public sealed class AmqpSendMessageHandlersTests
 
         var received = await harness.WaitForMessageAsync();
         Assert.Equal("hello-amqp", Encoding.UTF8.GetString(received.Body.Span));
+    }
+
+    [Fact]
+    public async Task SendMessage_standard_queue_forwards_group_metadata_without_session_id()
+    {
+        await using var harness = await SenderHarness.OpenAsync(QueueName);
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("MessageBody", "fair"),
+            ("MessageGroupId", "tenant-1"));
+
+        await AmqpSendMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var received = await harness.WaitForMessageAsync();
+        Assert.Null(received.Properties.GroupId);
+        Assert.Equal(
+            "tenant-1",
+            received.ApplicationProperties![SqsMessageGroupMetadata.PropertyName]);
     }
 
     [Fact]

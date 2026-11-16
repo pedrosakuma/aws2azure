@@ -349,8 +349,9 @@ internal static class ReceiveMessageHandlers
         var typeRegistry = SqsAttributeTypeRegistry.Parse(response);
         var (msgAttrs, md5OfAttrs) = BuildMessageAttributes(response, typeRegistry, messageAttrFilter);
 
+        var messageGroupId = sessionId ?? SqsMessageGroupMetadata.Read(response);
         var systemAttrs = BuildSystemAttributes(enqueuedTime, deliveryCount, sequenceNumber,
-            messageGroupId: sessionId, messageDeduplicationId: messageId, systemAttrFilter);
+            messageGroupId, messageDeduplicationId: messageId, systemAttrFilter);
 
         var handle = ReceiptHandle.Encode(messageId!, lockToken!, sequenceNumber ?? string.Empty, lockedUntil);
         return new ReceivedSqsMessage(

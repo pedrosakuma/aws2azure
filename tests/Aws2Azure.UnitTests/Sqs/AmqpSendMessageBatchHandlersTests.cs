@@ -132,6 +132,32 @@ public sealed class AmqpSendMessageBatchHandlersTests
     }
 
     [Fact]
+    public async Task SendMessageBatch_standard_queue_forwards_each_group_without_session_ordering()
+    {
+        await using var harness = await SenderHarness.OpenAsync(QueueName);
+        var ctx = NewCtx();
+        var parsed = QueryParsed(SqsOperation.SendMessageBatch,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("SendMessageBatchRequestEntry.1.Id", "e1"),
+            ("SendMessageBatchRequestEntry.1.MessageBody", "first"),
+            ("SendMessageBatchRequestEntry.1.MessageGroupId", "tenant-a"),
+            ("SendMessageBatchRequestEntry.2.Id", "e2"),
+            ("SendMessageBatchRequestEntry.2.MessageBody", "second"),
+            ("SendMessageBatchRequestEntry.2.MessageGroupId", "tenant-b"));
+
+        await AmqpSendMessageBatchHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        var received = await harness.WaitForMessagesAsync(2);
+        Assert.All(received, message => Assert.Null(message.Properties.GroupId));
+        var groups = received.ConvertAll(
+            message => (string?)message.ApplicationProperties![SqsMessageGroupMetadata.PropertyName]);
+        Assert.Contains("tenant-a", groups);
+        Assert.Contains("tenant-b", groups);
+    }
+
+    [Fact]
     public async Task SendMessageBatch_rejects_empty_batch()
     {
         await using var harness = await SenderHarness.OpenAsync(QueueName);

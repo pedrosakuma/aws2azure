@@ -527,7 +527,31 @@ public sealed class AmqpReceiveMessageHandlersTests
         await AmqpReceiveMessageHandlers.HandleAsync(ctx, parsed, harness.Provider, CancellationToken.None);
 
         Assert.Equal(0, harness.Provider.AcquireSessionCount);
+    }
+
+    [Fact]
+    public async Task ReceiveMessage_on_standard_queue_returns_group_metadata_without_session_acquire()
+    {
+        await using var harness = await TestHarness.OpenAsync(
+            QueueName,
+            (Guid.Parse("45454545-5656-6767-7878-898989898989").ToByteArray(),
+                EncodeMessage("fair-message", standardMessageGroupId: "tenant-7")));
+
+        var ctx = NewCtx();
+        var parsed = QueryParsed(
+            SqsOperation.ReceiveMessage,
+            ("QueueUrl", $"https://sqs.us-east-1.amazonaws.com/000000000000/{QueueName}"),
+            ("AttributeName.1", "MessageGroupId"));
+
+        await AmqpReceiveMessageHandlers.HandleAsync(
+            ctx, parsed, harness.Provider, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, ctx.Response.StatusCode);
+        Assert.Equal(0, harness.Provider.AcquireSessionCount);
         var body = ReadBody(ctx);
+        Assert.Contains(
+            "<Name>MessageGroupId</Name><Value>tenant-7</Value>",
+            body);
         // Non-FIFO keeps emitting the v2 (non-session) receipt handle prefix.
         Assert.Contains("<ReceiptHandle>Mjo", body);
         Assert.DoesNotContain("Mzo", body);
@@ -1507,15 +1531,26 @@ public sealed class AmqpReceiveMessageHandlersTests
     private static byte[] EncodeMessage(string body)
         => EncodeMessage(body, groupId: null);
 
+    private static byte[] EncodeMessage(string body, string standardMessageGroupId)
+        => EncodeMessage(
+            body,
+            groupId: null,
+            deadLetterSource: null,
+            deadLetterReason: null,
+            deadLetterErrorDescription: null,
+            standardMessageGroupId: standardMessageGroupId);
+
     private static byte[] EncodeMessage(string body, string? groupId, uint? deliveryCount = null)
         => EncodeMessage(body, groupId: groupId, deadLetterSource: null,
-            deadLetterReason: null, deadLetterErrorDescription: null, deliveryCount);
+            deadLetterReason: null, deadLetterErrorDescription: null, deliveryCount,
+            standardMessageGroupId: null);
 
     private static byte[] EncodeMessage(string body, string? groupId,
         string? deadLetterSource,
         string? deadLetterReason,
         string? deadLetterErrorDescription,
-        uint? deliveryCount = null)
+        uint? deliveryCount = null,
+        string? standardMessageGroupId = null)
     {
         // Build the optional message-annotations + application-properties
         // sections by hand (AmqpMessage.Write does not author annotations
@@ -1548,11 +1583,15 @@ public sealed class AmqpReceiveMessageHandlersTests
         var msg = new AmqpMessage { Body = Encoding.UTF8.GetBytes(body) };
         if (!string.IsNullOrEmpty(groupId))
             msg.Properties = msg.Properties with { GroupId = groupId };
-        if (!string.IsNullOrEmpty(deadLetterReason) || !string.IsNullOrEmpty(deadLetterErrorDescription))
+        if (!string.IsNullOrEmpty(deadLetterReason) ||
+            !string.IsNullOrEmpty(deadLetterErrorDescription) ||
+            !string.IsNullOrEmpty(standardMessageGroupId))
         {
             var app = new Dictionary<string, object?>(StringComparer.Ordinal);
             if (!string.IsNullOrEmpty(deadLetterReason)) app["DeadLetterReason"] = deadLetterReason;
             if (!string.IsNullOrEmpty(deadLetterErrorDescription)) app["DeadLetterErrorDescription"] = deadLetterErrorDescription;
+            if (!string.IsNullOrEmpty(standardMessageGroupId))
+                app[SqsMessageGroupMetadata.PropertyName] = standardMessageGroupId;
             msg.ApplicationProperties = app;
         }
         var rented = ArrayPool<byte>.Shared.Rent(4096);

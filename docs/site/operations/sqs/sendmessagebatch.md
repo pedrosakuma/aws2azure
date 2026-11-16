@@ -44,6 +44,13 @@ SQS counts each entry's body + message attributes (name + data type + value byte
 
 Reviewed real-Azure evidence covers ordered FIFO batch send plus replay of the identical entry set, confirming per-entry MessageGroupId routing and deduplication before the session-bound receive path drains the group.
 
+### Per-entry MessageGroupId (standard fair-queue wire compatibility) {#sub-feature-per-entry-messagegroupid--standard-fair-queue-wire-compatibility}
+
+- **Capability ID:** `sub-feature:sqs:sendmessagebatch:per-entry-messagegroupid--standard-fair-queue-wire-compatibility`
+- **Status:** ✅ implemented
+
+Accepted per entry and stored in the reserved AWS.Aws2Azure.MessageGroupId application property without enabling Service Bus sessions. Covered by Aws2Azure.UnitTests.Sqs.SqsFairQueueCompatibilityTests.Rest_SendMessageBatch_carries_each_standard_group_without_session_id and Aws2Azure.UnitTests.Sqs.AmqpSendMessageBatchHandlersTests.SendMessageBatch_standard_queue_forwards_each_group_without_session_ordering.
+
 ### Successful / Failed result partitioning {#sub-feature-successful---failed-result-partitioning}
 
 - **Capability ID:** `sub-feature:sqs:sendmessagebatch:successful---failed-result-partitioning`
@@ -57,7 +64,8 @@ See behavior_differences — SB batch is atomic.
 - AMQP transport does not inspect the Premium-namespace sender-attach vendor property `com.microsoft:max-message-batch-size`. This is currently non-observable for supported SQS batches because the proxy caps aggregate batch payload size at 1 MiB, well below any Service Bus limit that property would raise.
 - FIFO AMQP batches are dispatched sequentially in request order. Standard AMQP batches remain pipelined. This avoids relying on SemaphoreSlim waiter ordering for same-MessageGroupId transfer order.
 - SB's runtime batch send is atomic: the whole batch either succeeds or fails together (no AMQP-style per-message ack). The proxy preserves SQS's BatchResultErrorEntry shape: on a batch-level SB error every entry surfaces in Failed[] with the mapped SQS error code (SenderFault=true for client-side rejections, false for server-side). Genuine per-entry partial success (one bad entry mixed with good ones) is not available over SB REST.
-- FIFO required-param validation (Slice 5): on a .fifo queue, every entry must carry a MessageGroupId; the proxy rejects the whole batch with MissingParameter on the first violating entry (validation runs before the SB call). On standard queues, MessageGroupId / MessageDeduplicationId on any entry yields InvalidParameterValue.
+- MessageGroupId validation and queue semantics: on a .fifo queue, every entry must carry a MessageGroupId and maps to Service Bus SessionId; the proxy rejects the whole batch with MissingParameter on the first violating entry before the SB call. Standard entries may carry MessageGroupId, which is preserved only as AWS.Aws2Azure.MessageGroupId metadata and does not switch the entity or receive path to sessions. Standard-queue MessageDeduplicationId remains invalid. Covered by Aws2Azure.UnitTests.Sqs.FifoSendValidationTests.SendMessageBatch_on_fifo_queue_rejects_entry_without_group_id, Aws2Azure.UnitTests.Sqs.SqsFairQueueCompatibilityTests.Rest_SendMessageBatch_carries_each_standard_group_without_session_id, and Aws2Azure.UnitTests.Sqs.AmqpSendMessageBatchHandlersTests.SendMessageBatch_standard_queue_forwards_each_group_without_session_ordering.
+- Azure Service Bus does not expose AWS fair queues' noisy-neighbor detection or quiet-group prioritization. Standard batch compatibility is limited to accepting and round-tripping each tenant identifier; delivery fairness and dwell-time isolation are not guaranteed. Aws2Azure.UnitTests.Sqs.SqsFairQueueCompatibilityTests.Rest_SendMessageBatch_carries_each_standard_group_without_session_id and Aws2Azure.UnitTests.Sqs.AmqpSendMessageBatchHandlersTests.SendMessageBatch_standard_queue_forwards_each_group_without_session_ordering assert that standard entries remain non-session messages.
 - Same attribute-flattening + Aws2Azure-AttrTypes side-channel as SendMessage. The 1 MiB aggregate cap is computed over body + attribute name/type/value bytes per the SQS quota docs (raised from 256 KiB in August 2025).
 - Payloads larger than 1 MiB require the AWS Extended Client Library (S3-backed pointer); the same caveat as SendMessage applies — the pointer flows through unchanged and resolves against the proxy's S3 → Blob translation.
 - Entry MessageId returned to the caller is proxy-synthesised (Guid, or MessageDeduplicationId for FIFO).
@@ -66,5 +74,6 @@ See behavior_differences — SB batch is atomic.
 ## References
 
 - <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html>
+- <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-fair-queues.html>
 - <https://learn.microsoft.com/rest/api/servicebus/send-message-batch>
 
