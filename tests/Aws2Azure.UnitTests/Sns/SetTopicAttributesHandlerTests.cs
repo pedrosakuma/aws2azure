@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Aws2Azure.Modules.Sns;
+using Aws2Azure.Modules.Sns.Management;
 using Aws2Azure.Modules.Sns.Operations;
 using Aws2Azure.Modules.Sns.WireProtocol;
 using Microsoft.AspNetCore.Http;
@@ -169,6 +170,34 @@ public sealed class SetTopicAttributesHandlerTests
         Assert.True(SnsFifoPublishSupport.TryGetCachedServiceBusTopicState(credentials, topicName, out var cachedState));
         Assert.False(cachedState.ContentBasedDeduplication);
         Assert.Equal(SnsTopicAttributeSupport.MessageGroupFifoThroughputScope, cachedState.FifoThroughputScope);
+    }
+
+    [Fact]
+    public void Topic_update_inserts_missing_user_metadata_before_support_ordering()
+    {
+        const string serviceBusNamespace = "http://schemas.microsoft.com/netservices/2010/10/servicebus/connect";
+        var description = new ServiceBusTopicDescription(
+            "orders.fifo",
+            SubscriptionCount: 0,
+            RequiresDuplicateDetection: true,
+            UserMetadata: "{\"fifoThroughputScope\":\"Topic\"}",
+            Properties:
+            [
+                new("DefaultMessageTimeToLive", $"<DefaultMessageTimeToLive xmlns=\"{serviceBusNamespace}\">P14D</DefaultMessageTimeToLive>"),
+                new("MaxSizeInMegabytes", $"<MaxSizeInMegabytes xmlns=\"{serviceBusNamespace}\">1024</MaxSizeInMegabytes>"),
+                new("RequiresDuplicateDetection", $"<RequiresDuplicateDetection xmlns=\"{serviceBusNamespace}\">true</RequiresDuplicateDetection>"),
+                new("DuplicateDetectionHistoryTimeWindow", $"<DuplicateDetectionHistoryTimeWindow xmlns=\"{serviceBusNamespace}\">PT5M</DuplicateDetectionHistoryTimeWindow>"),
+                new("EnableBatchedOperations", $"<EnableBatchedOperations xmlns=\"{serviceBusNamespace}\">true</EnableBatchedOperations>"),
+                new("SupportOrdering", $"<SupportOrdering xmlns=\"{serviceBusNamespace}\">false</SupportOrdering>"),
+                new("AutoDeleteOnIdle", $"<AutoDeleteOnIdle xmlns=\"{serviceBusNamespace}\">P10675199DT2H48M5.4775807S</AutoDeleteOnIdle>"),
+            ]);
+
+        var body = ServiceBusAtomXml.BuildTopicDescriptionEntry(description);
+
+        var userMetadataIndex = body.IndexOf("<UserMetadata", StringComparison.Ordinal);
+        var supportOrderingIndex = body.IndexOf("<SupportOrdering", StringComparison.Ordinal);
+        Assert.True(userMetadataIndex >= 0);
+        Assert.True(supportOrderingIndex > userMetadataIndex);
     }
 
     [Theory]

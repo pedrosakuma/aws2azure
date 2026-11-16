@@ -474,7 +474,7 @@ internal static class ServiceBusAtomXml
             }
 
             if (!wroteUserMetadata
-                && string.Equals(property.LocalName, "AutoDeleteOnIdle", StringComparison.Ordinal))
+                && property.LocalName is "SupportOrdering" or "AutoDeleteOnIdle")
             {
                 writer.WriteElementString("UserMetadata", ServiceBusNamespace, description.UserMetadata ?? string.Empty);
                 wroteUserMetadata = true;
