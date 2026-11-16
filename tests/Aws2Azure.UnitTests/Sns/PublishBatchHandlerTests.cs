@@ -343,6 +343,51 @@ public sealed class PublishBatchHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_group_scope_separates_identical_deduplication_ids_across_groups()
+    {
+        SnsFifoPublishSupport.InvalidateServiceBusTopicState(SnsManagementClientTestSupport.NewCredentials(), "orders.fifo");
+        var context = NewContext();
+        var sender = new FakeSnsAmqpSender();
+        var metadata = System.Text.Json.JsonSerializer.Serialize(
+            new SnsTopicMetadata
+            {
+                ContentBasedDeduplication = false,
+                FifoThroughputScope = SnsTopicAttributeSupport.MessageGroupFifoThroughputScope,
+            },
+            SnsTopicJsonContext.Default.SnsTopicMetadata);
+
+        await PublishBatchHandler.HandleAsync(
+            context,
+            NewParseResult(
+                ("TopicArn", "arn:aws:sns:us-west-2:000000000000:orders.fifo"),
+                ("PublishBatchRequestEntries.member.1.Id", "a"),
+                ("PublishBatchRequestEntries.member.1.Message", "one"),
+                ("PublishBatchRequestEntries.member.1.MessageGroupId", "group-a"),
+                ("PublishBatchRequestEntries.member.1.MessageDeduplicationId", "shared"),
+                ("PublishBatchRequestEntries.member.2.Id", "b"),
+                ("PublishBatchRequestEntries.member.2.Message", "two"),
+                ("PublishBatchRequestEntries.member.2.MessageGroupId", "group-b"),
+                ("PublishBatchRequestEntries.member.2.MessageDeduplicationId", "shared")),
+            NewCredentials(),
+            eventGridCredentials: null,
+            new SnsSettings(),
+            SnsManagementClientTestSupport.NewManagementClient((_, _) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(SnsManagementClientTestSupport.BuildTopicEntry("orders.fifo", requiresDuplicateDetection: true, userMetadata: metadata), Encoding.UTF8, "application/atom+xml"),
+            })),
+            sender,
+            new FakeEventGridPublisher(),
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var first = sender.BatchCall!.Value.Messages[0];
+        var second = sender.BatchCall.Value.Messages[1];
+        Assert.NotEqual(first.Properties.MessageId, second.Properties.MessageId);
+        Assert.Equal("shared", first.ApplicationProperties![SnsPublishSupport.MessageDeduplicationIdPropertyName]);
+        Assert.Equal("shared", second.ApplicationProperties![SnsPublishSupport.MessageDeduplicationIdPropertyName]);
+    }
+
+    [Fact]
     public async Task HandleAsync_rejects_fifo_batch_on_event_grid_backend()
     {
         var context = NewContext();

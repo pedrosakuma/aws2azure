@@ -148,7 +148,8 @@ internal static class CreateTopicHandler
                 credentials,
                 route.ServiceBusTopicName,
                 attributes.RequiresDuplicateDetection,
-                metadata.ContentBasedDeduplication);
+                metadata.ContentBasedDeduplication,
+                metadata.FifoThroughputScope);
         }
         else
         {

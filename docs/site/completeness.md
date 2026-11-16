@@ -336,7 +336,7 @@ _No remaining feasible backlog is documented for this service._
 - Design gap [Event Grid publish auth omits SAS-token mode](design-gaps/sns/event-grid-publish-auth-omits-sas-token-mode.md) — 🔵 by design
 - Design gap [Event Grid subscription management is excluded](design-gaps/sns/event-grid-subscription-management-is-excluded.md) — 🔵 by design
 - Design gap [Event Grid topic lifecycle remains external](design-gaps/sns/event-grid-topic-lifecycle-remains-external.md) — 🔵 by design
-- Design gap [FIFO topics are deferred](design-gaps/sns/fifo-topics-are-deferred.md) — 🔵 by design
+- Design gap [FIFO topics have bounded Service Bus semantics](design-gaps/sns/fifo-topics-have-bounded-service-bus-semantics.md) — 🔵 by design
 - Design gap [No AWS region / account namespace](design-gaps/sns/no-aws-region---account-namespace.md) — 🔵 by design
 - Design gap [No IAM-backed policy surface](design-gaps/sns/no-iam-backed-policy-surface.md) — 🔵 by design
 - Design gap [Service Bus Geo-DR requires alias-based failover planning](design-gaps/sns/service-bus-geo-dr-requires-alias-based-failover-planning.md) — 🔵 by design

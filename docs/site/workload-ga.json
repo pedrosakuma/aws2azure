@@ -69,7 +69,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -175,7 +175,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -365,7 +365,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -477,7 +477,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -607,7 +607,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -683,7 +683,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -789,7 +789,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -913,7 +913,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -1037,7 +1037,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -1179,7 +1179,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -1315,7 +1315,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -1415,7 +1415,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",
@@ -1497,7 +1497,7 @@
       "source": {
         "repository": "pedrosakuma/aws2azure",
         "canonical_inputs_revision_type": "normalized_yaml_sha256",
-        "canonical_inputs_revision": "sha256:eda302db3963a98fcc8d67b8cabeda0609e30db579543214fe81e6eb6b3468db",
+        "canonical_inputs_revision": "sha256:6e445d7f58f2c129bc7865351c29733a6adb7f0f3580646cbe976a07e3972ff6",
         "evaluator_schema_version": 3,
         "evaluator_implementation_revision_type": "gapdocs_evaluator_implementation_sha256",
         "evaluator_implementation_revision": "sha256:a47742ace01ec894295cd5bb4587901e9405a78da1077f4a891c8f8b504cae6b",

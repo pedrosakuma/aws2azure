@@ -9,6 +9,7 @@ internal static class SnsPublishSupport
 {
     internal const int MaxBatchEntries = 10;
     internal const string SubjectPropertyName = "aws.sns.Subject";
+    internal const string MessageDeduplicationIdPropertyName = "AWS.Aws2Azure.MessageDeduplicationId";
 
     internal static bool TryParsePublishRequest(
         IReadOnlyDictionary<string, string> parameters,
@@ -130,21 +131,29 @@ internal static class SnsPublishSupport
         return true;
     }
 
-    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishRequest request, string brokerMessageId)
+    internal static SnsAmqpSendMessage CreateAmqpMessage(
+        PublishRequest request,
+        string brokerMessageId,
+        string effectiveDeduplicationId)
         => CreateAmqpMessage(
             request.Message,
             request.Subject,
             request.MessageGroupId,
             request.MessageAttributes,
-            brokerMessageId);
+            brokerMessageId,
+            effectiveDeduplicationId);
 
-    internal static SnsAmqpSendMessage CreateAmqpMessage(PublishBatchRequestEntry request, string brokerMessageId)
+    internal static SnsAmqpSendMessage CreateAmqpMessage(
+        PublishBatchRequestEntry request,
+        string brokerMessageId,
+        string effectiveDeduplicationId)
         => CreateAmqpMessage(
             request.Message,
             request.Subject,
             request.MessageGroupId,
             request.MessageAttributes,
-            brokerMessageId);
+            brokerMessageId,
+            effectiveDeduplicationId);
 
     internal static EventGridPublishMessage CreateEventGridMessage(PublishRequest request, Guid messageId)
         => new(
@@ -173,7 +182,8 @@ internal static class SnsPublishSupport
         string? subject,
         string? messageGroupId,
         IReadOnlyList<SnsMessageAttribute> messageAttributes,
-        string brokerMessageId)
+        string brokerMessageId,
+        string effectiveDeduplicationId)
     {
         Dictionary<string, object?>? applicationProperties = null;
         if (messageAttributes.Count > 0
@@ -196,6 +206,11 @@ internal static class SnsPublishSupport
         if (applicationProperties is null)
         {
             applicationProperties = new Dictionary<string, object?>(StringComparer.Ordinal);
+        }
+
+        if (!string.IsNullOrEmpty(effectiveDeduplicationId))
+        {
+            applicationProperties[MessageDeduplicationIdPropertyName] = effectiveDeduplicationId;
         }
 
         SnsSubscriptionFilterSupport.AddFilterProperties(applicationProperties, messageAttributes, message);

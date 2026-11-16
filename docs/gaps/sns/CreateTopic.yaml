@@ -12,15 +12,16 @@ sub_features:
   notes: Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}?api-version=2021-05 with an empty TopicDescription Atom entry. 200/201 both succeed so create remains idempotent from the SNS caller's perspective. Real-Azure probe coverage on 2026-08-27 also confirmed that the live 2021-05 management REST endpoint accepts the AWS-valid leading/trailing hyphen-or-underscore boundary names previously thought to need extra Azure-side rejection, so aws2azure now relies on the AWS CreateTopic name contract alone instead of imposing a narrower Service Bus-specific rule.
 - name: Attribute translation
   status: implemented
-  notes: CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only ContentBasedDeduplication flag inside TopicDescription.UserMetadata for later GetTopicAttributes / Publish projection.
+  notes: CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only ContentBasedDeduplication / FifoThroughputScope attributes inside TopicDescription.UserMetadata for later GetTopicAttributes / Publish projection.
 - name: Service Bus-backed FIFO topic provisioning
   status: implemented
-  notes: Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, and uses the stored ContentBasedDeduplication flag later during Publish / PublishBatch when MessageDeduplicationId is omitted.
+  notes: Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, defaults FifoThroughputScope to Topic, and uses the stored ContentBasedDeduplication / FifoThroughputScope values during Publish / PublishBatch.
 behavior_differences:
 - When credentials.serviceBusTopics.topics[*].serviceBusTopicName is configured for an exact SNS topic name, CreateTopic provisions that mapped Azure Service Bus topic path while preserving the SNS-facing Name and returned TopicArn.
 - TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace.
 - DisplayName, Policy, and DeliveryPolicy are stored in Service Bus TopicDescription.UserMetadata for round-tripping. Azure does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes are metadata-only compatibility state rather than native enforcement.
 - FIFO topics are recognised only when the SNS name ends in .fifo and the request explicitly sets FifoTopic=true. FifoTopic=true without a .fifo suffix, omitting FifoTopic on a .fifo name, FifoTopic=false on a .fifo name, and ContentBasedDeduplication on a non-FIFO name are rejected with InvalidParameter.
+- FifoThroughputScope accepts only Topic or MessageGroup and is valid only for .fifo topics. Omitted values default to Topic, preserving the existing topic-wide broker MessageId behavior. Covered by CreateTopicHandlerTests.HandleAsync_creates_fifo_topics_with_duplicate_detection_enabled and CreateTopicHandlerTests.HandleAsync_rejects_invalid_fifo_attribute_combinations.
 - For FIFO topics aws2azure always enables Service Bus duplicate detection because the supported subset maps SNS MessageDeduplicationId or content-based deduplication onto the broker MessageId within Service Bus's duplicate-detection window.
 - ContentBasedDeduplication controls publish-time fallback when MessageDeduplicationId is omitted; it does not imply full SNS FIFO parity beyond the Service Bus-backed subset documented in Publish / PublishBatch / _design.
 - FIFO CreateTopic requests are rejected when the resolved SNS backend is Event Grid because that backend cannot honor SNS FIFO ordering or deduplication semantics. Non-FIFO topics still create the backing Service Bus topic because subscription metadata continues to live there while Event Grid handles Publish / PublishBatch.
@@ -29,6 +30,7 @@ behavior_differences:
 - Service Bus duplicate detection remains time-windowed. aws2azure creates FIFO topics with the SNS-sized 5-minute window, but sends retried after that window expire are accepted as new messages.
 references:
 - https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html
+- https://docs.aws.amazon.com/sns/latest/dg/fifo-message-dedup.html
 - https://learn.microsoft.com/en-us/rest/api/servicebus/create-topic
 - https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection
 - https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-quotas

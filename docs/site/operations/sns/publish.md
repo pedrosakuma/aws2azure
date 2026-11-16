@@ -31,7 +31,7 @@ Sends SNS Publish requests to Azure Event Grid custom topics over the classic Ev
 - **Capability ID:** `sub-feature:sns:publish:service-bus-fifo-subset`
 - **Status:** ✅ implemented
 
-For Service Bus-backed topics whose SNS names end in .fifo, Publish requires MessageGroupId, maps it to the AMQP group-id/Service Bus SessionId, maps MessageDeduplicationId to the broker MessageId, and falls back to a SHA-256-of-message-body broker MessageId when the topic was created with ContentBasedDeduplication=true. The underlying Service Bus topic must have duplicate detection enabled.
+For Service Bus-backed topics whose SNS names end in .fifo, Publish requires MessageGroupId and maps it to AMQP group-id/Service Bus SessionId. Topic scope preserves the effective AWS deduplication ID as the broker MessageId. MessageGroup scope derives a deterministic SHA-256 broker MessageId from length-prefixed MessageGroupId plus the effective explicit or content-based deduplication ID, while retaining that AWS deduplication ID in the AWS.Aws2Azure.MessageDeduplicationId application property. The underlying Service Bus topic must have duplicate detection enabled.
 
 ## Behaviour differences
 
@@ -53,6 +53,11 @@ For Service Bus-backed topics whose SNS names end in .fifo, Publish requires Mes
 - On the Event Grid backend, Publish targets classic Event Grid custom topics. Regional recovery for those topics is metadata-only and Microsoft-managed on a best-effort timeline, so the proxy cannot provide rapid, customer-controlled regional failover by itself.
 - Subject is exposed both as the AMQP subject property and as the 'aws.sns.Subject' application property on the Service Bus Topics backend.
 - For Service Bus-backed FIFO topics, broker-side duplicate detection is limited to Service Bus's duplicate-detection window. aws2azure provisions new FIFO topics with a 5-minute window, but out-of-band topic changes or publishes outside that window are treated as new messages.
+- Topic FifoThroughputScope keeps the prior broker identity unchanged, so identical effective deduplication IDs are duplicates even when MessageGroupId differs. MessageGroup scope uses a fixed 64-character collision-resistant composite broker MessageId, so identical IDs in different groups remain independent while retries in the same group remain deterministic. The original/effective AWS deduplication ID is retained separately in AWS.Aws2Azure.MessageDeduplicationId because the composite broker MessageId is an Azure implementation detail. Covered by SnsFifoPublishSupportTests.Topic_scope_preserves_the_effective_deduplication_id_as_broker_identity, SnsFifoPublishSupportTests.MessageGroup_scope_is_deterministic_and_separates_identical_ids_across_groups, and SnsPublishServiceBusTests.PublishBatch_message_group_scope_deduplicates_retries_per_group.
+- MessageGroup scope reproduces SNS deduplication scope only; it does not create independent Azure throughput quotas, reserve capacity per session, or raise Service Bus namespace/entity limits. Azure throughput and throttling remain governed by the selected Service Bus tier, namespace capacity, messaging units, partitions, and workload shape.
+- FIFO Publish re-reads the Service Bus topic description before resolving broker identity because FifoThroughputScope is mutable. This management-plane lookup avoids stale per-process scope across proxy replicas but adds backend latency compared with standard-topic publishes and the former immutable FIFO metadata cache. Covered by PublishHandlerTests.HandleAsync_reloads_mutable_scope_instead_of_using_stale_cached_metadata.
+- MessageGroupId and explicit MessageDeduplicationId enforce AWS's 1-128 character visible-ASCII contract before reaching Service Bus, ensuring the SessionId and raw Topic-scope MessageId stay within Azure's 128-character limits. Covered by SnsFifoPublishSupportTests.Fifo_identifiers_enforce_the_aws_length_limit and SnsFifoPublishSupportTests.Fifo_identifiers_reject_characters_outside_the_aws_ascii_set.
+- ContentBasedDeduplication uses the same SHA-256(message body) effective AWS deduplication ID in both scopes. Under MessageGroup scope the group is included only in the broker identity, allowing identical bodies in different groups while suppressing retries within one group. Covered by SnsFifoPublishSupportTests.MessageGroup_scope_applies_to_content_based_deduplication and SnsPublishServiceBusTests.Publish_message_group_scope_applies_to_content_based_deduplication.
 - For Service Bus-backed FIFO topics, the proxy does not synthesize or return an SNS FIFO SequenceNumber because Service Bus does not expose an SNS-compatible publish sequence identifier on send.
 - For standard (non-.fifo) SNS topic names, MessageGroupId and MessageDeduplicationId are rejected with InvalidParameter instead of being silently approximated.
 - FIFO topics are unsupported on the Event Grid backend. Publish rejects .fifo topics and FIFO-only request parameters there with InvalidParameter instead of dropping them.
@@ -63,6 +68,7 @@ For Service Bus-backed topics whose SNS names end in .fifo, Publish requires Mes
 ## References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_Publish.html>
+- <https://docs.aws.amazon.com/sns/latest/dg/fifo-message-dedup.html>
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-amqp-protocol-guide>
 - <https://learn.microsoft.com/en-us/azure/service-bus-messaging/message-sessions>
 - <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>

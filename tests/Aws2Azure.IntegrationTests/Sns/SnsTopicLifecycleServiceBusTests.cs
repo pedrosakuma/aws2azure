@@ -66,11 +66,49 @@ public sealed class SnsTopicLifecycleServiceBusTests
         var attributes = SnsQueryApiClient.ReadAttributes(attrsResponse);
         Assert.Equal("true", attributes["FifoTopic"]);
         Assert.Equal("false", attributes["ContentBasedDeduplication"]);
+        Assert.Equal("Topic", attributes["FifoThroughputScope"]);
 
         var list = await SnsQueryApiClient.ListTopicsAsync(client).ConfigureAwait(false);
         SnsServiceBusTestSupport.AssertStatus(list, HttpStatusCode.OK, "ListTopics[fifo]");
         Assert.Contains(topicArn, SnsQueryApiClient.ReadTopicArns(list));
 
         await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+    }
+
+    [SkippableFact]
+    public async Task Fifo_throughput_scope_create_get_and_set_roundtrips_on_service_bus_emulator()
+    {
+        Skip.IfNot(_fixture.DockerAvailable, "Docker not available.");
+
+        using var client = _fixture.CreateSnsClient();
+        var topicArn = await SnsServiceBusTestSupport.CreateFifoTopicAsync(
+                client,
+                "sns-fifo-scope",
+                contentBasedDeduplication: false,
+                fifoThroughputScope: "MessageGroup")
+            .ConfigureAwait(false);
+
+        try
+        {
+            var getAfterCreate = await SnsQueryApiClient.GetTopicAttributesAsync(client, topicArn).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(getAfterCreate, HttpStatusCode.OK, "GetTopicAttributes[MessageGroup]");
+            Assert.Equal("MessageGroup", SnsQueryApiClient.ReadAttributes(getAfterCreate)["FifoThroughputScope"]);
+
+            var set = await SnsQueryApiClient.SendActionAsync(client, "SetTopicAttributes",
+            [
+                new("TopicArn", topicArn),
+                new("AttributeName", "FifoThroughputScope"),
+                new("AttributeValue", "Topic"),
+            ]).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(set, HttpStatusCode.OK, "SetTopicAttributes[FifoThroughputScope]");
+
+            var getAfterSet = await SnsQueryApiClient.GetTopicAttributesAsync(client, topicArn).ConfigureAwait(false);
+            SnsServiceBusTestSupport.AssertStatus(getAfterSet, HttpStatusCode.OK, "GetTopicAttributes[Topic]");
+            Assert.Equal("Topic", SnsQueryApiClient.ReadAttributes(getAfterSet)["FifoThroughputScope"]);
+        }
+        finally
+        {
+            await SnsServiceBusTestSupport.DeleteTopicAsync(client, topicArn).ConfigureAwait(false);
+        }
     }
 }

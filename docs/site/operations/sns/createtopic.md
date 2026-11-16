@@ -21,14 +21,14 @@ Maps CreateTopic(Name) to PUT https://{namespace}.servicebus.windows.net/{topic}
 - **Capability ID:** `sub-feature:sns:createtopic:attribute-translation`
 - **Status:** ✅ implemented
 
-CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only ContentBasedDeduplication flag inside TopicDescription.UserMetadata for later GetTopicAttributes / Publish projection.
+CreateTopic persists DisplayName, Policy, DeliveryPolicy, and the FIFO-only ContentBasedDeduplication / FifoThroughputScope attributes inside TopicDescription.UserMetadata for later GetTopicAttributes / Publish projection.
 
 ### Service Bus-backed FIFO topic provisioning {#sub-feature-service-bus-backed-fifo-topic-provisioning}
 
 - **Capability ID:** `sub-feature:sns:createtopic:service-bus-backed-fifo-topic-provisioning`
 - **Status:** ✅ implemented
 
-Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, and uses the stored ContentBasedDeduplication flag later during Publish / PublishBatch when MessageDeduplicationId is omitted.
+Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables Service Bus duplicate detection, sets DuplicateDetectionHistoryTimeWindow=PT5M to match SNS's 5-minute dedup window, defaults FifoThroughputScope to Topic, and uses the stored ContentBasedDeduplication / FifoThroughputScope values during Publish / PublishBatch.
 
 ## Behaviour differences
 
@@ -36,6 +36,7 @@ Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables
 - TopicArn is proxy-synthesised as arn:aws:sns:{sigv4-region}:000000000000:{topicName}. The account id is a stable placeholder because the proxy is not backed by an AWS account namespace.
 - DisplayName, Policy, and DeliveryPolicy are stored in Service Bus TopicDescription.UserMetadata for round-tripping. Azure does not evaluate SNS IAM-style topic policies or SNS delivery retry JSON, so those attributes are metadata-only compatibility state rather than native enforcement.
 - FIFO topics are recognised only when the SNS name ends in .fifo and the request explicitly sets FifoTopic=true. FifoTopic=true without a .fifo suffix, omitting FifoTopic on a .fifo name, FifoTopic=false on a .fifo name, and ContentBasedDeduplication on a non-FIFO name are rejected with InvalidParameter.
+- FifoThroughputScope accepts only Topic or MessageGroup and is valid only for .fifo topics. Omitted values default to Topic, preserving the existing topic-wide broker MessageId behavior. Covered by CreateTopicHandlerTests.HandleAsync_creates_fifo_topics_with_duplicate_detection_enabled and CreateTopicHandlerTests.HandleAsync_rejects_invalid_fifo_attribute_combinations.
 - For FIFO topics aws2azure always enables Service Bus duplicate detection because the supported subset maps SNS MessageDeduplicationId or content-based deduplication onto the broker MessageId within Service Bus's duplicate-detection window.
 - ContentBasedDeduplication controls publish-time fallback when MessageDeduplicationId is omitted; it does not imply full SNS FIFO parity beyond the Service Bus-backed subset documented in Publish / PublishBatch / _design.
 - FIFO CreateTopic requests are rejected when the resolved SNS backend is Event Grid because that backend cannot honor SNS FIFO ordering or deduplication semantics. Non-FIFO topics still create the backing Service Bus topic because subscription metadata continues to live there while Event Grid handles Publish / PublishBatch.
@@ -46,6 +47,7 @@ Names ending in .fifo are accepted on the Service Bus backend. aws2azure enables
 ## References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html>
+- <https://docs.aws.amazon.com/sns/latest/dg/fifo-message-dedup.html>
 - <https://learn.microsoft.com/en-us/rest/api/servicebus/create-topic>
 - <https://learn.microsoft.com/en-us/azure/service-bus-messaging/duplicate-detection>
 - <https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-quotas>

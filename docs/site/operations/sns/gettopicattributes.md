@@ -15,7 +15,7 @@
 - **Capability ID:** `sub-feature:sns:gettopicattributes:topic-property-projection`
 - **Status:** ✅ implemented
 
-Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface, and projects DisplayName / Policy / DeliveryPolicy from TopicDescription.UserMetadata.
+Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader, maps SubscriptionCount / RequiresDuplicateDetection into the closest SNS attribute surface, and projects DisplayName / Policy / DeliveryPolicy / FifoThroughputScope from TopicDescription.UserMetadata.
 
 ## Behaviour differences
 
@@ -24,12 +24,13 @@ Fetches the Service Bus topic Atom entry, parses TopicDescription with XmlReader
 - Policy and DeliveryPolicy remain metadata-only compatibility state. Azure Service Bus does not evaluate SNS IAM-style topic policies or SNS delivery retry policies, so GetTopicAttributes surfaces what aws2azure stored rather than a Service Bus-native enforcement model.
 - SubscriptionsConfirmed is populated from Service Bus SubscriptionCount. Pending and deleted counts are always reported as 0 because aws2azure auto-confirms subscriptions and Service Bus does not expose the SNS lifecycle split.
 - KmsMasterKeyId is returned empty because Service Bus encryption is configured at the namespace level, not per topic.
-- FifoTopic is surfaced only for SNS topic names ending in .fifo. ContentBasedDeduplication is read from aws2azure metadata stored at create time; legacy FIFO topics without that metadata fall back to the raw Service Bus RequiresDuplicateDetection flag for backward compatibility.
+- FifoTopic and FifoThroughputScope are surfaced only for SNS topic names ending in .fifo. ContentBasedDeduplication and FifoThroughputScope are read from aws2azure metadata stored at create time; legacy FIFO topics without scope metadata report Topic so their existing topic-wide broker MessageId behavior remains unchanged. Covered by GetTopicAttributesHandlerTests.HandleAsync_detects_fifo_topics_from_name_suffix and GetTopicAttributesHandlerTests.HandleAsync_preserves_legacy_fifo_content_based_deduplication_when_metadata_is_missing.
 - AWS-only attributes such as SignatureVersion and TracingConfig are omitted.
 - Real-Azure verification covers the live Service Bus-backed TopicArn / Owner / subscription-count projection plus metadata-backed DisplayName / Policy / DeliveryPolicy round-trip (see SnsRealAzureConformanceTests.Topic_metadata_attributes_round_trip_against_real_service_bus).
 
 ## References
 
 - <https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html>
+- <https://docs.aws.amazon.com/sns/latest/dg/fifo-message-dedup.html>
 - <https://learn.microsoft.com/azure/service-bus-messaging/service-bus-resource-manager-rest>
 

@@ -26,6 +26,7 @@ public static class SnsHappyPathMatrix
         CreatePaginationCase(),
         CreateBatchCase(),
         CreateTopicAttributesRoundTripCase(),
+        CreateFifoThroughputScopeRoundTripCase(),
         CreateSubscribeConfirmUnsubscribeRoundTripCase(),
         CreateListSubscriptionsRoundTripCase(),
     ];
@@ -182,6 +183,59 @@ public static class SnsHappyPathMatrix
                         new("Action", "DeleteTopic"),
                         new("Version", "2010-03-31"),
                         new("TopicArn", state.RequireXmlValue("create-topic", "TopicArn")),
+                    ])),
+                ], Tier1SkipReason));
+            });
+
+    private static PlannedConformanceCase CreateFifoThroughputScopeRoundTripCase()
+        => new(
+            "fifo-throughput-scope-roundtrip",
+            "sns:CreateTopic/GetTopicAttributes/SetTopicAttributes/GetTopicAttributes/DeleteTopic",
+            ConformanceCaseExpectation.Success(
+            [
+                new(200, RequiredBodyAssertions: [new("CreateTopicResult.TopicArn", "Returned by FIFO CreateTopic.")]),
+                new(200, RequiredBodyAssertions: [new("GetTopicAttributesResult.Attributes", "Contains FifoThroughputScope=MessageGroup.")]),
+                new(200),
+                new(200, RequiredBodyAssertions: [new("GetTopicAttributesResult.Attributes", "Reflects FifoThroughputScope=Topic after the update.")]),
+                new(200),
+            ],
+            semanticAssertion:
+            "CreateTopic must persist MessageGroup scope, GetTopicAttributes must return it, and SetTopicAttributes must switch the same FIFO topic back to Topic scope."),
+            static (context, _) =>
+            {
+                var topicName = context.GetProperty("topicName") ?? ("conf-fifo-scope-" + Guid.NewGuid().ToString("N")[..12] + ".fifo");
+                return new ValueTask<ConformanceExecutionPlan>(new ConformanceExecutionPlan(
+                [
+                    new ConformanceRequestStep("create-fifo-topic", _ => BuildRequest(context, [
+                        new("Action", "CreateTopic"),
+                        new("Version", "2010-03-31"),
+                        new("Name", topicName),
+                        new("Attributes.entry.1.key", "FifoTopic"),
+                        new("Attributes.entry.1.value", "true"),
+                        new("Attributes.entry.2.key", "FifoThroughputScope"),
+                        new("Attributes.entry.2.value", "MessageGroup"),
+                    ])),
+                    new ConformanceRequestStep("get-fifo-topic-attributes-before", state => BuildRequest(context, [
+                        new("Action", "GetTopicAttributes"),
+                        new("Version", "2010-03-31"),
+                        new("TopicArn", state.RequireXmlValue("create-fifo-topic", "TopicArn")),
+                    ])),
+                    new ConformanceRequestStep("set-fifo-throughput-scope", state => BuildRequest(context, [
+                        new("Action", "SetTopicAttributes"),
+                        new("Version", "2010-03-31"),
+                        new("TopicArn", state.RequireXmlValue("create-fifo-topic", "TopicArn")),
+                        new("AttributeName", "FifoThroughputScope"),
+                        new("AttributeValue", "Topic"),
+                    ])),
+                    new ConformanceRequestStep("get-fifo-topic-attributes-after", state => BuildRequest(context, [
+                        new("Action", "GetTopicAttributes"),
+                        new("Version", "2010-03-31"),
+                        new("TopicArn", state.RequireXmlValue("create-fifo-topic", "TopicArn")),
+                    ])),
+                    new ConformanceRequestStep("delete-fifo-topic", state => BuildRequest(context, [
+                        new("Action", "DeleteTopic"),
+                        new("Version", "2010-03-31"),
+                        new("TopicArn", state.RequireXmlValue("create-fifo-topic", "TopicArn")),
                     ])),
                 ], Tier1SkipReason));
             });

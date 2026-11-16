@@ -26,6 +26,7 @@ internal interface ISnsBackendPublisher
         PublishRequest request,
         Guid messageId,
         string brokerMessageId,
+        string effectiveDeduplicationId,
         CancellationToken cancellationToken);
 
     Task<SnsBatchSendResult> PublishBatchAsync(
@@ -33,6 +34,7 @@ internal interface ISnsBackendPublisher
         IReadOnlyList<PublishBatchRequestEntry> entries,
         Guid[] messageIds,
         string[] brokerMessageIds,
+        string[] effectiveDeduplicationIds,
         CancellationToken cancellationToken);
 }
 
@@ -96,6 +98,7 @@ internal sealed class EventGridBackendPublisher(
         PublishRequest request,
         Guid messageId,
         string brokerMessageId,
+        string effectiveDeduplicationId,
         CancellationToken cancellationToken)
     {
         try
@@ -117,6 +120,7 @@ internal sealed class EventGridBackendPublisher(
         IReadOnlyList<PublishBatchRequestEntry> entries,
         Guid[] messageIds,
         string[] brokerMessageIds,
+        string[] effectiveDeduplicationIds,
         CancellationToken cancellationToken)
     {
         var messages = new EventGridPublishMessage[entries.Count];
@@ -141,6 +145,7 @@ internal sealed class ServiceBusAmqpBackendPublisher(
         PublishRequest request,
         Guid messageId,
         string brokerMessageId,
+        string effectiveDeduplicationId,
         CancellationToken cancellationToken)
     {
         try
@@ -149,7 +154,10 @@ internal sealed class ServiceBusAmqpBackendPublisher(
                 credentials,
                 namespaceFqdn,
                 topicName,
-                SnsPublishSupport.CreateAmqpMessage(request, string.IsNullOrEmpty(brokerMessageId) ? messageId.ToString() : brokerMessageId),
+                SnsPublishSupport.CreateAmqpMessage(
+                    request,
+                    string.IsNullOrEmpty(brokerMessageId) ? messageId.ToString() : brokerMessageId,
+                    effectiveDeduplicationId),
                 cancellationToken).ConfigureAwait(false);
             return SnsPublishOutcome.Success;
         }
@@ -164,13 +172,17 @@ internal sealed class ServiceBusAmqpBackendPublisher(
         IReadOnlyList<PublishBatchRequestEntry> entries,
         Guid[] messageIds,
         string[] brokerMessageIds,
+        string[] effectiveDeduplicationIds,
         CancellationToken cancellationToken)
     {
         var messages = new SnsAmqpSendMessage[entries.Count];
         for (var i = 0; i < entries.Count; i++)
         {
             messageIds[i] = Guid.NewGuid();
-            messages[i] = SnsPublishSupport.CreateAmqpMessage(entries[i], string.IsNullOrEmpty(brokerMessageIds[i]) ? messageIds[i].ToString() : brokerMessageIds[i]);
+            messages[i] = SnsPublishSupport.CreateAmqpMessage(
+                entries[i],
+                string.IsNullOrEmpty(brokerMessageIds[i]) ? messageIds[i].ToString() : brokerMessageIds[i],
+                effectiveDeduplicationIds[i]);
         }
 
         try

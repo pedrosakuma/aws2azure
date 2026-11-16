@@ -45,6 +45,7 @@ internal static class PublishHandler
         }
 
         var brokerMessageId = messageId.ToString();
+        var effectiveDeduplicationId = string.Empty;
         if (route.Backend == SnsTopicBackend.ServiceBusTopics
             && (request.TopicName.EndsWith(".fifo", StringComparison.Ordinal) || SnsFifoPublishSupport.HasFifoFields(request)))
         {
@@ -80,6 +81,7 @@ internal static class PublishHandler
                     request.MessageDeduplicationId,
                     request.Message,
                     out brokerMessageId,
+                    out effectiveDeduplicationId,
                     out error))
             {
                 await SnsTopicSupport.WriteInvalidParameterAsync(context, error!).ConfigureAwait(false);
@@ -95,7 +97,13 @@ internal static class PublishHandler
         var publisher = SnsBackendPublisherFactory.Create(
             route, credentials, eventGridCredentials, amqpSender, eventGridPublisher);
 
-        var outcome = await publisher.PublishAsync(request, messageId, brokerMessageId, cancellationToken).ConfigureAwait(false);
+        var outcome = await publisher.PublishAsync(
+                request,
+                messageId,
+                brokerMessageId,
+                effectiveDeduplicationId,
+                cancellationToken)
+            .ConfigureAwait(false);
         if (!outcome.Succeeded)
         {
             await SnsPublishErrorMapper.WriteSendErrorAsync(context, outcome).ConfigureAwait(false);
