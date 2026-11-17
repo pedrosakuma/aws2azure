@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "accepted",
+  "status": "pending",
   "gate": "real-azure",
   "mode": "offline-covered",
   "binding": {
@@ -34,5 +34,5 @@
   "reviewedAtUtc": "2026-11-16T20:34:00Z",
   "validUntilUtc": "2026-11-17T23:59:59Z",
   "evidencePath": "pr-1125/evidence.json",
-  "evidenceSha256": "c924def2686ef197bf51a9b6dcce35022a2bca54fceb1c6aee0223a240f7ef51"
+  "evidenceSha256": "f5d30430b9e95b05aa2b94ac23fc48af9a989245a2dfd8386817ed6aee8b0e82"
 }
