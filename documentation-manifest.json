@@ -3,7 +3,7 @@
   "repository": "pedrosakuma/aws2azure",
   "source_base_url": "https://raw.githubusercontent.com/pedrosakuma/aws2azure/main/",
   "publication_base_url": "https://pedrosakuma.github.io/aws2azure/",
-  "manifest_revision": "sha256:8f7a552d9844354ac09248d467ab94967068368bd3aa3386c21e1a293565dd69",
+  "manifest_revision": "sha256:deca4ef43b29b82b262ae205c76ba11fccd004da3567fc7640d9e93974c49f3a",
   "revision_semantics": {
     "document_revision_type": "normalized_text_sha256",
     "document_revision_normalization": "UTF-8 text, optional BOM removed, CRLF and CR normalized to LF",
@@ -2047,7 +2047,7 @@
       "scope": "validation-policy",
       "authority": "explanatory",
       "provenance": "source",
-      "revision": "sha256:b13d57171e840d86ce400340cc0630594629de14a4078f274ae0463ffc81bce9",
+      "revision": "sha256:a54176ef949784902f453f837df2cff19974ccd64da8bec5f1f1773e323349b0",
       "freshness": {
         "mode": "current"
       }
